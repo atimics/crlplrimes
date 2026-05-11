@@ -292,6 +292,62 @@ static int build_gap_datasets(const Sieve *sieve,
     return 1;
 }
 
+static int copy_gap_slice(const GapDataset *source, size_t start, size_t count, GapDataset *target)
+{
+    memset(target, 0, sizeof(*target));
+
+    if (start > source->count) {
+        return 0;
+    }
+    if (count > source->count - start) {
+        count = source->count - start;
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+        uint32_t p = source->prime[start + i];
+        uint32_t gap = source->gap[start + i];
+        ++target->total_seen;
+        if (gap > G_MAX) {
+            ++target->overflow_count;
+        }
+        if (!append_gap(target, p, gap)) {
+            free_gap_dataset(target);
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static int split_train_calibration(const GapDataset *source,
+                                   GapDataset *fit,
+                                   GapDataset *calibration)
+{
+    size_t calibration_count = source->count / 5u;
+    size_t fit_count;
+
+    if (source->count < 2) {
+        return 0;
+    }
+    if (calibration_count == 0) {
+        calibration_count = 1;
+    }
+    fit_count = source->count - calibration_count;
+    if (fit_count == 0) {
+        return 0;
+    }
+
+    if (!copy_gap_slice(source, 0, fit_count, fit)) {
+        return 0;
+    }
+    if (!copy_gap_slice(source, fit_count, calibration_count, calibration)) {
+        free_gap_dataset(fit);
+        return 0;
+    }
+
+    return 1;
+}
+
 static void shuffle_order(size_t *order, size_t count, uint32_t *rng)
 {
     for (size_t i = count; i > 1; --i) {
@@ -352,40 +408,77 @@ static size_t candidate_signature(uint32_t p, size_t action)
     return signature;
 }
 
-static void fill_candidate_features_masked(nn_real *inputs,
-                                           uint32_t p,
-                                           double log_scale,
-                                           const FeatureMask *mask)
+static int action_survives_feature_wheel(uint32_t p, size_t action)
+{
+    return action_is_overflow(action) || candidate_signature(p, action) == 0;
+}
+
+static void fill_action_features(nn_real *row,
+                                 uint32_t p,
+                                 size_t action,
+                                 double log_scale,
+                                 const FeatureMask *mask)
 {
     if (mask == NULL) {
         mask = &FEATURE_MASK_FULL;
     }
 
     double log_p = log((double)p) / log_scale;
+    row[0] = mask->use_log ? (nn_real)log_p : (nn_real)0;
+    row[1] = mask->use_gap ? (nn_real)((double)action_gap(action) / (double)G_MAX)
+                           : (nn_real)0;
+    row[2] = mask->use_overflow && action_is_overflow(action) ? (nn_real)1 : (nn_real)0;
+    if (action_is_overflow(action)) {
+        for (size_t i = 0; i < FEATURE_MOD_COUNT; ++i) {
+            row[3 + i] = 0;
+        }
+        return;
+    }
+
+    uint32_t gap = (uint32_t)action_gap(action);
+    uint32_t candidate = p + gap;
+    for (size_t i = 0; i < FEATURE_MOD_COUNT; ++i) {
+        uint32_t mod = FEATURE_MODS[i];
+        row[3 + i] = mask->use_residue && candidate > mod && candidate % mod == 0
+                         ? (nn_real)1
+                         : (nn_real)0;
+    }
+}
+
+static void fill_candidate_features_masked(nn_real *inputs,
+                                           uint32_t p,
+                                           double log_scale,
+                                           const FeatureMask *mask)
+{
 
     for (size_t action = 0; action < ACTION_COUNT; ++action) {
-        nn_real *row = &inputs[action * FEATURE_COUNT];
+        fill_action_features(&inputs[action * FEATURE_COUNT], p, action, log_scale, mask);
+    }
+}
 
-        row[0] = mask->use_log ? (nn_real)log_p : (nn_real)0;
-        row[1] = mask->use_gap ? (nn_real)((double)action_gap(action) / (double)G_MAX)
-                               : (nn_real)0;
-        row[2] = mask->use_overflow && action_is_overflow(action) ? (nn_real)1 : (nn_real)0;
-        if (action_is_overflow(action)) {
-            for (size_t i = 0; i < FEATURE_MOD_COUNT; ++i) {
-                row[3 + i] = 0;
-            }
+static size_t fill_wheel_survivor_features(nn_real *inputs,
+                                           uint32_t p,
+                                           size_t true_action,
+                                           double log_scale,
+                                           const FeatureMask *mask,
+                                           size_t *target_index)
+{
+    size_t count = 0;
+    *target_index = ACTION_COUNT;
+
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        if (!action_survives_feature_wheel(p, action)) {
             continue;
         }
 
-        uint32_t gap = (uint32_t)action_gap(action);
-        uint32_t candidate = p + gap;
-        for (size_t i = 0; i < FEATURE_MOD_COUNT; ++i) {
-            uint32_t mod = FEATURE_MODS[i];
-            row[3 + i] = mask->use_residue && candidate > mod && candidate % mod == 0
-                             ? (nn_real)1
-                             : (nn_real)0;
+        if (action == true_action) {
+            *target_index = count;
         }
+        fill_action_features(&inputs[count * FEATURE_COUNT], p, action, log_scale, mask);
+        ++count;
     }
+
+    return count;
 }
 
 #if defined(PRIME_GAP_NO_MAIN)
@@ -412,6 +505,38 @@ static void rank_actions(const nn_real *scores, size_t *ranked)
         size_t tmp = ranked[i];
         ranked[i] = ranked[best];
         ranked[best] = tmp;
+    }
+}
+
+static void rank_actions_wheel(const nn_real *scores, uint32_t p, size_t *ranked)
+{
+    size_t survivor_count = 0;
+    size_t rejected_count = 0;
+    size_t rejected[ACTION_COUNT];
+
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        if (action_survives_feature_wheel(p, action)) {
+            ranked[survivor_count++] = action;
+        } else {
+            rejected[rejected_count++] = action;
+        }
+    }
+
+    for (size_t i = 0; i < survivor_count; ++i) {
+        size_t best = i;
+        for (size_t j = i + 1; j < survivor_count; ++j) {
+            if (scores[ranked[j]] > scores[ranked[best]]) {
+                best = j;
+            }
+        }
+
+        size_t tmp = ranked[i];
+        ranked[i] = ranked[best];
+        ranked[best] = tmp;
+    }
+
+    for (size_t i = 0; i < rejected_count; ++i) {
+        ranked[survivor_count + i] = rejected[i];
     }
 }
 
@@ -448,6 +573,67 @@ static void softmax_temperature(const nn_real *scores,
 
     for (size_t i = 0; i < count; ++i) {
         probabilities[i] /= denominator;
+    }
+}
+
+static void softmax_temperature_wheel(const nn_real *scores,
+                                      nn_real *probabilities,
+                                      uint32_t p,
+                                      double temperature)
+{
+    int have_score = 0;
+    size_t survivor_count = 0;
+    nn_real max_score = 0;
+
+    if (temperature <= 0.0) {
+        temperature = 1.0;
+    }
+
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        probabilities[action] = 0;
+        if (!action_survives_feature_wheel(p, action)) {
+            continue;
+        }
+
+        ++survivor_count;
+        nn_real scaled = (nn_real)((double)scores[action] / temperature);
+        if (!have_score || scaled > max_score) {
+            max_score = scaled;
+            have_score = 1;
+        }
+    }
+
+    if (!have_score) {
+        nn_real uniform = (nn_real)1 / (nn_real)ACTION_COUNT;
+        for (size_t action = 0; action < ACTION_COUNT; ++action) {
+            probabilities[action] = uniform;
+        }
+        return;
+    }
+
+    nn_real denominator = 0;
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        if (!action_survives_feature_wheel(p, action)) {
+            continue;
+        }
+
+        probabilities[action] =
+            (nn_real)exp((double)scores[action] / temperature - (double)max_score);
+        denominator += probabilities[action];
+    }
+
+    if (denominator <= (nn_real)0) {
+        nn_real uniform = survivor_count == 0
+                              ? (nn_real)1 / (nn_real)ACTION_COUNT
+                              : (nn_real)1 / (nn_real)survivor_count;
+        for (size_t action = 0; action < ACTION_COUNT; ++action) {
+            probabilities[action] = action_survives_feature_wheel(p, action) ? uniform : 0;
+        }
+        return;
+    }
+
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        probabilities[action] /= denominator;
     }
 }
 
@@ -929,6 +1115,7 @@ static EvalMetrics evaluate_model(NeuralNet *net,
                                   double log_scale,
                                   const FeatureMask *mask,
                                   double temperature,
+                                  int wheel_survivors_only,
                                   int include_verifier,
                                   nn_real *candidate_inputs,
                                   nn_real *scores,
@@ -950,8 +1137,13 @@ static EvalMetrics evaluate_model(NeuralNet *net,
 
         fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
         nn_forward_batch(net, candidate_inputs, scores, ACTION_COUNT);
-        softmax_temperature(scores, probabilities, ACTION_COUNT, temperature);
-        rank_actions(scores, ranked);
+        if (wheel_survivors_only) {
+            softmax_temperature_wheel(scores, probabilities, p, temperature);
+            rank_actions_wheel(scores, p, ranked);
+        } else {
+            softmax_temperature(scores, probabilities, ACTION_COUNT, temperature);
+            rank_actions(scores, ranked);
+        }
         accumulate_eval_sample(&metrics,
                                sieve,
                                dataset,
@@ -1024,6 +1216,7 @@ static double tune_temperature(NeuralNet *net,
                                              log_scale,
                                              mask,
                                              temperature,
+                                             0,
                                              0,
                                              candidate_inputs,
                                              scores,
@@ -1208,6 +1401,81 @@ static void build_frequency_policy(const GapDataset *dataset,
     rank_actions(scores, ranked);
 }
 
+static void score_wheel_frequency_policy(const nn_real *base_probabilities,
+                                         uint32_t p,
+                                         size_t *ranked,
+                                         nn_real *probabilities)
+{
+    nn_real scores[ACTION_COUNT];
+    double sum = 0.0;
+    size_t survivor_count = 0;
+
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        if (!action_survives_feature_wheel(p, action)) {
+            probabilities[action] = 0;
+            scores[action] = 0;
+            continue;
+        }
+
+        ++survivor_count;
+        scores[action] = base_probabilities[action];
+        sum += (double)scores[action];
+    }
+
+    if (sum <= 0.0) {
+        nn_real uniform = survivor_count == 0
+                              ? (nn_real)1 / (nn_real)ACTION_COUNT
+                              : (nn_real)1 / (nn_real)survivor_count;
+        for (size_t action = 0; action < ACTION_COUNT; ++action) {
+            probabilities[action] = action_survives_feature_wheel(p, action) ? uniform : 0;
+        }
+    } else {
+        for (size_t action = 0; action < ACTION_COUNT; ++action) {
+            probabilities[action] = action_survives_feature_wheel(p, action)
+                                        ? (nn_real)((double)scores[action] / sum)
+                                        : (nn_real)0;
+        }
+    }
+
+    rank_actions_wheel(scores, p, ranked);
+}
+
+static EvalMetrics evaluate_wheel_frequency_policy(const Sieve *sieve,
+                                                   const GapDataset *dataset,
+                                                   const nn_real *base_probabilities,
+                                                   size_t max_states,
+                                                   int include_verifier,
+                                                   nn_real *probabilities)
+{
+    EvalMetrics metrics;
+    memset(&metrics, 0, sizeof(metrics));
+
+    size_t samples = dataset->count;
+    if (max_states != 0 && max_states < samples) {
+        samples = max_states;
+    }
+
+    size_t ranked[ACTION_COUNT];
+    for (size_t sample = 0; sample < samples; ++sample) {
+        size_t index = eval_sample_index(dataset, sample, samples);
+        score_wheel_frequency_policy(
+            base_probabilities, dataset->prime[index], ranked, probabilities);
+        accumulate_eval_sample(&metrics,
+                               sieve,
+                               dataset,
+                               dataset->prime[index],
+                               dataset->gap[index],
+                               ranked,
+                               probabilities,
+                               include_verifier);
+    }
+
+    metrics.samples = samples;
+    metrics.temperature = 1.0;
+    finalize_eval_metrics(&metrics);
+    return metrics;
+}
+
 static void free_conditioned_policy(ConditionedPolicy *policy)
 {
     free(policy->counts);
@@ -1311,6 +1579,7 @@ static int train_supervised(NeuralNet *net,
                             double log_scale,
                             const FeatureMask *mask,
                             nn_real entropy_weight,
+                            int wheel_survivors_only,
                             nn_real *candidate_inputs,
                             size_t *order,
                             uint32_t *rng)
@@ -1327,18 +1596,36 @@ static int train_supervised(NeuralNet *net,
 
         for (size_t step = 0; step < train_steps; ++step) {
             size_t index = order[step];
-            fill_candidate_features_masked(candidate_inputs, dataset->prime[index], log_scale, mask);
+            size_t target_action = gap_to_action(dataset->gap[index]);
+            size_t target_index = target_action;
+            size_t candidate_count = ACTION_COUNT;
+
+            if (wheel_survivors_only) {
+                candidate_count = fill_wheel_survivor_features(candidate_inputs,
+                                                               dataset->prime[index],
+                                                               target_action,
+                                                               log_scale,
+                                                               mask,
+                                                               &target_index);
+                if (candidate_count == 0 || target_index >= candidate_count) {
+                    return 0;
+                }
+            } else {
+                fill_candidate_features_masked(
+                    candidate_inputs, dataset->prime[index], log_scale, mask);
+            }
+
             nn_real step_loss = entropy_weight > (nn_real)0
                                     ? nn_train_softmax_scorer_entropy(net,
                                                                       candidate_inputs,
-                                                                      ACTION_COUNT,
-                                                                      gap_to_action(dataset->gap[index]),
+                                                                      candidate_count,
+                                                                      target_index,
                                                                       entropy_weight,
                                                                       learning_rate)
                                     : nn_train_softmax_scorer(net,
                                                               candidate_inputs,
-                                                              ACTION_COUNT,
-                                                              gap_to_action(dataset->gap[index]),
+                                                              candidate_count,
+                                                              target_index,
                                                               learning_rate);
             if (isnan((double)step_loss)) {
                 return 0;
@@ -1458,6 +1745,7 @@ static int run_supervised_ablation(const char *label,
                           log_scale,
                           mask,
                           (nn_real)0,
+                          0,
                           candidate_inputs,
                           order,
                           rng);
@@ -1470,6 +1758,7 @@ static int run_supervised_ablation(const char *label,
                                      log_scale,
                                      mask,
                                      1.0,
+                                     0,
                                      0,
                                      candidate_inputs,
                                      scores,
@@ -1489,9 +1778,11 @@ int main(int argc, char **argv)
     size_t rl_epochs = parse_size_arg(argc, argv, 4, DEFAULT_RL_EPOCHS);
     size_t max_train_states = parse_size_arg(argc, argv, 5, DEFAULT_MAX_TRAIN_STATES);
     size_t max_test_states = parse_size_arg(argc, argv, 6, DEFAULT_MAX_TEST_STATES);
-    Sieve sieve;
-    GapDataset train;
-    GapDataset test;
+    Sieve sieve = {0, 0, 0, 0};
+    GapDataset train = {0, 0, 0, 0, 0, 0};
+    GapDataset fit = {0, 0, 0, 0, 0, 0};
+    GapDataset calibration = {0, 0, 0, 0, 0, 0};
+    GapDataset test = {0, 0, 0, 0, 0, 0};
     ConditionedPolicy residue_policy = {0, 0};
     uint32_t rng = 20240511u;
     EvalMetrics supervised_metrics;
@@ -1542,24 +1833,38 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    printf("dataset train=%zu exact_action_coverage=%.2f%% test=%zu exact_action_coverage=%.2f%% "
-           "overflow_actions train=%zu test=%zu\n",
+    if (!split_train_calibration(&train, &fit, &calibration)) {
+        fputs("failed to split fit/calibration datasets\n", stderr);
+        free_gap_dataset(&train);
+        free_gap_dataset(&test);
+        free_sieve(&sieve);
+        return EXIT_FAILURE;
+    }
+
+    printf("dataset raw_train=%zu fit=%zu calibration=%zu test=%zu "
+           "exact_action_coverage train=%.2f%% test=%.2f%% "
+           "overflow_actions train=%zu calibration=%zu test=%zu\n",
            train.count,
+           fit.count,
+           calibration.count,
+           test.count,
            train.total_seen == 0
                ? 0.0
                : 100.0 * (double)(train.total_seen - train.overflow_count) /
                      (double)train.total_seen,
-           test.count,
            test.total_seen == 0
                ? 0.0
                : 100.0 * (double)(test.total_seen - test.overflow_count) /
                      (double)test.total_seen,
            train.overflow_count,
+           calibration.overflow_count,
            test.overflow_count);
 
-    if (train.count == 0 || test.count == 0) {
-        fputs("empty train or test split\n", stderr);
+    if (fit.count == 0 || calibration.count == 0 || test.count == 0) {
+        fputs("empty fit, calibration, or test split\n", stderr);
         free_gap_dataset(&train);
+        free_gap_dataset(&fit);
+        free_gap_dataset(&calibration);
         free_gap_dataset(&test);
         free_sieve(&sieve);
         return EXIT_FAILURE;
@@ -1574,12 +1879,18 @@ int main(int argc, char **argv)
     config.output_activation = NN_ACTIVATION_LINEAR;
     config.loss = NN_LOSS_MSE;
 
+    const size_t linear_layers[] = {FEATURE_COUNT, 1};
+    NNConfig linear_config = config;
+    linear_config.layer_sizes = linear_layers;
+    linear_config.layer_count = sizeof(linear_layers) / sizeof(linear_layers[0]);
+
     NeuralNet *net = nn_create_config(&config);
     NeuralNet *entropy_net = NULL;
+    NeuralNet *wheel_net = NULL;
     nn_real *candidate_inputs = calloc((size_t)ACTION_COUNT * FEATURE_COUNT, sizeof(*candidate_inputs));
     nn_real *scores = calloc(ACTION_COUNT, sizeof(*scores));
     nn_real *probabilities = calloc(ACTION_COUNT, sizeof(*probabilities));
-    size_t *order = calloc(train.count, sizeof(*order));
+    size_t *order = calloc(fit.count, sizeof(*order));
     if (net == NULL || candidate_inputs == NULL || scores == NULL || probabilities == NULL ||
         order == NULL) {
         fputs("failed to allocate model buffers\n", stderr);
@@ -1587,7 +1898,7 @@ int main(int argc, char **argv)
         goto cleanup;
     }
 
-    for (size_t i = 0; i < train.count; ++i) {
+    for (size_t i = 0; i < fit.count; ++i) {
         order[i] = i;
     }
 
@@ -1596,7 +1907,7 @@ int main(int argc, char **argv)
     nn_real frequency_probabilities[ACTION_COUNT];
 
     printf("\n=== Baselines ===\n");
-    build_frequency_policy(&train, frequency_ranked, frequency_probabilities);
+    build_frequency_policy(&fit, frequency_ranked, frequency_probabilities);
     print_metrics("baseline empirical-gap",
                   evaluate_static_policy(&sieve,
                                          &test,
@@ -1604,8 +1915,15 @@ int main(int argc, char **argv)
                                          frequency_probabilities,
                                          max_test_states,
                                          1));
+    print_metrics("baseline wheel-frequency",
+                  evaluate_wheel_frequency_policy(&sieve,
+                                                  &test,
+                                                  frequency_probabilities,
+                                                  max_test_states,
+                                                  0,
+                                                  probabilities));
 
-    if (!build_residue_conditioned_policy(&train, &residue_policy)) {
+    if (!build_residue_conditioned_policy(&fit, &residue_policy)) {
         fputs("failed to build residue-conditioned baseline\n", stderr);
         ok = 0;
         goto cleanup;
@@ -1626,6 +1944,7 @@ int main(int argc, char **argv)
                                  log_scale,
                                  &FEATURE_MASK_FULL,
                                  1.0,
+                                 0,
                                  1,
                                  candidate_inputs,
                                  scores,
@@ -1633,11 +1952,30 @@ int main(int argc, char **argv)
 
     printf("\n=== Feature Ablations ===\n");
     printf("Supervised-only runs; verifier diagnostics skipped to keep these capability-focused.\n");
+    ok = run_supervised_ablation("baseline linear-full",
+                                 &FEATURE_MASK_FULL,
+                                 &linear_config,
+                                 &sieve,
+                                 &fit,
+                                 &test,
+                                 max_train_states,
+                                 max_test_states,
+                                 supervised_epochs,
+                                 log_scale,
+                                 candidate_inputs,
+                                 scores,
+                                 probabilities,
+                                 order,
+                                 &rng);
+    if (!ok) {
+        goto cleanup;
+    }
+
     ok = run_supervised_ablation("ablation log-only",
                                  &FEATURE_MASK_LOG_ONLY,
                                  &config,
                                  &sieve,
-                                 &train,
+                                 &fit,
                                  &test,
                                  max_train_states,
                                  max_test_states,
@@ -1656,7 +1994,7 @@ int main(int argc, char **argv)
                                  &FEATURE_MASK_GAP_ONLY,
                                  &config,
                                  &sieve,
-                                 &train,
+                                 &fit,
                                  &test,
                                  max_train_states,
                                  max_test_states,
@@ -1675,7 +2013,7 @@ int main(int argc, char **argv)
                                  &FEATURE_MASK_RESIDUE_ONLY,
                                  &config,
                                  &sieve,
-                                 &train,
+                                 &fit,
                                  &test,
                                  max_train_states,
                                  max_test_states,
@@ -1693,13 +2031,14 @@ int main(int argc, char **argv)
     printf("\n=== Full Model Training ===\n");
     ok = train_supervised(net,
                           "model supervised",
-                          &train,
+                          &fit,
                           max_train_states,
                           supervised_epochs,
                           (nn_real)0.005,
                           log_scale,
                           &FEATURE_MASK_FULL,
                           (nn_real)0,
+                          0,
                           candidate_inputs,
                           order,
                           &rng);
@@ -1714,6 +2053,7 @@ int main(int argc, char **argv)
                                         log_scale,
                                         &FEATURE_MASK_FULL,
                                         1.0,
+                                        0,
                                         1,
                                         candidate_inputs,
                                         scores,
@@ -1722,7 +2062,7 @@ int main(int argc, char **argv)
 
     supervised_temperature = tune_temperature(net,
                                               &sieve,
-                                              &train,
+                                              &calibration,
                                               max_train_states,
                                               log_scale,
                                               &FEATURE_MASK_FULL,
@@ -1737,10 +2077,65 @@ int main(int argc, char **argv)
                                                     &FEATURE_MASK_FULL,
                                                     supervised_temperature,
                                                     0,
+                                                    0,
                                                     candidate_inputs,
                                                     scores,
                                                     probabilities);
     print_metrics("model supervised temp-scaled", supervised_temperature_metrics);
+
+    printf("\n=== Wheel-Survivor Task ===\n");
+    printf("Ranks only candidates that survive the small-prime feature wheel; verifier diagnostics skipped.\n");
+    print_metrics("model supervised wheel-survivor eval",
+                  evaluate_model(net,
+                                 &sieve,
+                                 &test,
+                                 max_test_states,
+                                 log_scale,
+                                 &FEATURE_MASK_FULL,
+                                 1.0,
+                                 1,
+                                 0,
+                                 candidate_inputs,
+                                 scores,
+                                 probabilities));
+
+    wheel_net = nn_create_config(&config);
+    if (wheel_net == NULL) {
+        fputs("failed to allocate wheel-survivor model\n", stderr);
+        ok = 0;
+        goto cleanup;
+    }
+
+    ok = train_supervised(wheel_net,
+                          "model wheel-survivor-supervised",
+                          &fit,
+                          max_train_states,
+                          supervised_epochs,
+                          (nn_real)0.005,
+                          log_scale,
+                          &FEATURE_MASK_FULL,
+                          (nn_real)0,
+                          1,
+                          candidate_inputs,
+                          order,
+                          &rng);
+    if (!ok) {
+        goto cleanup;
+    }
+
+    print_metrics("model wheel-survivor-supervised",
+                  evaluate_model(wheel_net,
+                                 &sieve,
+                                 &test,
+                                 max_test_states,
+                                 log_scale,
+                                 &FEATURE_MASK_FULL,
+                                 1.0,
+                                 1,
+                                 0,
+                                 candidate_inputs,
+                                 scores,
+                                 probabilities));
 
     printf("\n=== Entropy-Regularized Training ===\n");
     entropy_net = nn_create_config(&config);
@@ -1752,13 +2147,14 @@ int main(int argc, char **argv)
 
     ok = train_supervised(entropy_net,
                           "model entropy-supervised",
-                          &train,
+                          &fit,
                           max_train_states,
                           supervised_epochs,
                           (nn_real)0.005,
                           log_scale,
                           &FEATURE_MASK_FULL,
                           SUPERVISED_ENTROPY_WEIGHT,
+                          0,
                           candidate_inputs,
                           order,
                           &rng);
@@ -1774,6 +2170,7 @@ int main(int argc, char **argv)
                                      &FEATURE_MASK_FULL,
                                      1.0,
                                      0,
+                                     0,
                                      candidate_inputs,
                                      scores,
                                      probabilities);
@@ -1781,7 +2178,7 @@ int main(int argc, char **argv)
 
     entropy_temperature = tune_temperature(entropy_net,
                                            &sieve,
-                                           &train,
+                                           &calibration,
                                            max_train_states,
                                            log_scale,
                                            &FEATURE_MASK_FULL,
@@ -1796,6 +2193,7 @@ int main(int argc, char **argv)
                                                  &FEATURE_MASK_FULL,
                                                  entropy_temperature,
                                                  0,
+                                                 0,
                                                  candidate_inputs,
                                                  scores,
                                                  probabilities);
@@ -1807,7 +2205,7 @@ int main(int argc, char **argv)
     } else {
         ok = train_strict_verifier_rl(net,
                                       "model strict-rl",
-                                      &train,
+                                      &fit,
                                       max_train_states,
                                       rl_epochs,
                                       (nn_real)0.001,
@@ -1829,6 +2227,7 @@ int main(int argc, char **argv)
                                            log_scale,
                                            &FEATURE_MASK_FULL,
                                            1.0,
+                                           0,
                                            1,
                                            candidate_inputs,
                                            scores,
@@ -1838,7 +2237,7 @@ int main(int argc, char **argv)
 
         strict_rl_temperature = tune_temperature(net,
                                                  &sieve,
-                                                 &train,
+                                                 &calibration,
                                                  max_train_states,
                                                  log_scale,
                                                  &FEATURE_MASK_FULL,
@@ -1852,6 +2251,7 @@ int main(int argc, char **argv)
                                                        log_scale,
                                                        &FEATURE_MASK_FULL,
                                                        strict_rl_temperature,
+                                                       0,
                                                        0,
                                                        candidate_inputs,
                                                        scores,
@@ -1875,10 +2275,13 @@ cleanup:
     free(probabilities);
     free(scores);
     free(candidate_inputs);
+    nn_free(wheel_net);
     nn_free(entropy_net);
     nn_free(net);
     free_conditioned_policy(&residue_policy);
     free_gap_dataset(&train);
+    free_gap_dataset(&fit);
+    free_gap_dataset(&calibration);
     free_gap_dataset(&test);
     free_sieve(&sieve);
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;

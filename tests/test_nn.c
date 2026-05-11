@@ -735,6 +735,89 @@ static int test_prime_gap_dataset_tracks_overflow_actions(void)
     return ok;
 }
 
+static int test_prime_gap_train_calibration_split(void)
+{
+    GapDataset source;
+    GapDataset fit;
+    GapDataset calibration;
+    int ok = 1;
+
+    memset(&source, 0, sizeof(source));
+    memset(&fit, 0, sizeof(fit));
+    memset(&calibration, 0, sizeof(calibration));
+
+    for (uint32_t i = 0; i < 10; ++i) {
+        ok = ok && append_gap(&source, 11 + i * 2, 2 + 2 * (i % 3));
+    }
+    if (!ok) {
+        free_gap_dataset(&source);
+        return 0;
+    }
+
+    ok = split_train_calibration(&source, &fit, &calibration);
+    ok = ok && fit.count == 8 && calibration.count == 2;
+    ok = ok && fit.prime[0] == source.prime[0] && fit.prime[7] == source.prime[7];
+    ok = ok && calibration.prime[0] == source.prime[8] &&
+         calibration.prime[1] == source.prime[9];
+    ok = ok && fit.total_seen == fit.count && calibration.total_seen == calibration.count;
+
+    free_gap_dataset(&calibration);
+    free_gap_dataset(&fit);
+    free_gap_dataset(&source);
+    return ok;
+}
+
+static int test_prime_gap_wheel_survivor_features_include_target(void)
+{
+    nn_real inputs[ACTION_COUNT * FEATURE_COUNT];
+    size_t target_index = ACTION_COUNT;
+    size_t true_action = gap_to_action(2);
+    size_t count = fill_wheel_survivor_features(inputs,
+                                                11,
+                                                true_action,
+                                                log(1000.0),
+                                                &FEATURE_MASK_FULL,
+                                                &target_index);
+    const nn_real *target = &inputs[target_index * FEATURE_COUNT];
+
+    return count > 0 && count < ACTION_COUNT && target_index < count &&
+           action_survives_feature_wheel(11, true_action) &&
+           !action_survives_feature_wheel(11, gap_to_action(4)) &&
+           nearly_equal(target[1], (nn_real)(2.0 / (double)G_MAX), (nn_real)1e-6, (nn_real)1e-6) &&
+           target[2] == (nn_real)0 && target[3] == (nn_real)0;
+}
+
+static int test_prime_gap_wheel_frequency_policy_masks_rejected_actions(void)
+{
+    GapDataset dataset;
+    size_t ranked[ACTION_COUNT];
+    nn_real base_probabilities[ACTION_COUNT];
+    nn_real wheel_probabilities[ACTION_COUNT];
+    double sum = 0.0;
+    int ok;
+
+    memset(&dataset, 0, sizeof(dataset));
+    ok = append_gap(&dataset, 11, 4) && append_gap(&dataset, 13, 4) &&
+         append_gap(&dataset, 17, 2);
+    if (!ok) {
+        free_gap_dataset(&dataset);
+        return 0;
+    }
+
+    build_frequency_policy(&dataset, ranked, base_probabilities);
+    score_wheel_frequency_policy(base_probabilities, 11, ranked, wheel_probabilities);
+    for (size_t i = 0; i < ACTION_COUNT; ++i) {
+        sum += (double)wheel_probabilities[i];
+    }
+
+    ok = wheel_probabilities[gap_to_action(4)] == (nn_real)0 &&
+         ranked[0] != gap_to_action(4) &&
+         fabs(sum - 1.0) < 1e-5;
+
+    free_gap_dataset(&dataset);
+    return ok;
+}
+
 int main(void)
 {
     check(test_forward_batch_matches_scalar(), "batched forward matches scalar");
@@ -762,6 +845,12 @@ int main(void)
           "prime-gap wheel verifier accounting");
     check(test_prime_gap_dataset_tracks_overflow_actions(),
           "prime-gap dataset tracks overflow actions");
+    check(test_prime_gap_train_calibration_split(),
+          "prime-gap train/calibration split is chronological");
+    check(test_prime_gap_wheel_survivor_features_include_target(),
+          "prime-gap wheel-survivor features include target");
+    check(test_prime_gap_wheel_frequency_policy_masks_rejected_actions(),
+          "prime-gap wheel-frequency masks rejected actions");
 
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

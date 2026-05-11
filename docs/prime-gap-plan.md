@@ -73,10 +73,13 @@ Capability metrics:
 Ablation metrics:
 
 - empirical gap-frequency baseline
+- hand-coded wheel-frequency baseline
 - residue-signature conditioned frequency baseline
+- linear full-feature scorer
 - log-only candidate scorer
 - gap-only candidate scorer
 - candidate residue-only scorer
+- wheel-survivor-only scorer
 - entropy-regularized full scorer
 - full scorer
 
@@ -93,16 +96,28 @@ Verifier diagnostics are useful, but they are not the headline success criterion
 
 The learned policy is a strong ranker.
 
-The new ablation and baseline results separate ranking from calibrated probability estimation.
+The ablation and baseline results separate ranking from calibrated probability estimation.
 Candidate residue features alone can rank well because they expose a learned soft sieve, but their
-probability estimates are poorly calibrated. A residue-signature conditioned frequency baseline gives
-a non-neural check on that same effect: small-prime divisibility structure carries much of the ranking
-signal, but it is not enough to make confidence reliable.
+probability estimates are poorly calibrated. The hand-coded wheel-frequency baseline is now the most
+important non-neural comparison: it takes empirical gap frequencies and masks candidates eliminated
+by small-prime divisibility. It reaches roughly the same top-k regime as the neural scorer on the
+default split, which means a large part of the current task is explained by cheap sieve structure.
+
+The linear full-feature scorer is also competitive with the MLP. That is useful negative pressure on
+the project: before adding larger networks, we need task variants where nonlinear learning has
+something meaningful to do.
 
 The full feature set improves held-out negative log likelihood and true-action probability while
-preserving strong top-k ranking behavior. Strict verifier RL tends to increase confidence more than
-accuracy; post-hoc temperature scaling is therefore useful as a calibration diagnostic. Entropy-
-regularized supervised training is now available as a simple pressure against overconfident policies.
+preserving strong top-k ranking behavior. Temperature scaling now uses a chronological calibration
+split carved from the training range instead of reusing the fit split. Strict verifier RL tends to
+increase confidence more than accuracy; post-hoc temperature scaling is therefore useful as a
+calibration diagnostic. Entropy-regularized supervised training is available as a simple pressure
+against overconfident policies.
+
+The wheel-survivor task is implemented. It trains and evaluates only over candidates that survive the
+small-prime feature wheel. On the current feature set this does not materially improve ranking,
+which suggests that the remaining error is mostly gap-frequency ambiguity among plausible survivors,
+not failure to reject obvious composites.
 
 The deterministic verifier remains the correctness mechanism.
 
@@ -112,17 +127,19 @@ Model-assisted exact verification currently does not beat wheel or block verific
 
 1. Improve calibration.
    - tune entropy weight across prime-size buckets
-   - add a held-out calibration split instead of reusing the training split for temperature selection
    - compare temperature scaling against label smoothing
+   - tune temperature by ECE as well as NLL
 
-2. Add stronger non-neural baselines.
-   - hand-coded wheel ranking
-   - linear/logistic scorer
+2. Make the task harder.
+   - larger held-out ranges where prime gaps exceed the current action cap
+   - explicit overflow prediction and top-k conditional on overflow
+   - fixed interval candidate ranking rather than next-gap-only ranking
 
 3. Expand ablations.
    - different small-prime feature sets
    - remove overflow action
-   - train on wheel survivors only
+   - compare raw residues against divisibility flags
+   - compare chronological vs randomized train splits
 
 4. Add RL-only experiments.
    - no supervised warm start
@@ -133,7 +150,9 @@ Model-assisted exact verification currently does not beat wheel or block verific
 5. Add capability-oriented task variants.
    - find any prime after `p`
    - rank prime candidates in a fixed interval
-   - rank wheel-surviving candidates only
    - predict overflow probability for larger gaps
 
-The most promising next implementation is calibration improvement. The current metrics show the policy can rank candidates well, but confidence is not yet a reliable probability of correctness.
+The most promising next implementation is a harder task variant. The current metrics show the policy
+can rank candidates well, but the strongest classical wheel baseline explains much of that lift.
+The next experiment should keep the perfect verifier but ask the model for something less reducible
+to small-prime masking plus empirical gap frequency.

@@ -103,9 +103,10 @@ score = f(input)
 policy = softmax(scores across candidate gaps 2..256 plus an overflow action)
 ```
 
-The example first evaluates empirical gap-frequency and residue-conditioned frequency baselines, then runs supervised feature ablations:
+The example first evaluates empirical gap-frequency, hand-coded wheel-frequency, and residue-conditioned frequency baselines, then runs supervised scorer comparisons:
 
 ```text
+linear full-feature scorer
 log-only
 gap-only
 candidate residue-only
@@ -117,11 +118,13 @@ The full model trains with supervised softmax cross-entropy over all candidate a
 It also evaluates calibration interventions:
 
 ```text
-temperature scaling selected on the training split
+temperature scaling selected on a chronological calibration split
 entropy-regularized supervised training
 raw supervised vs raw strict-RL calibration
 temperature-scaled supervised vs temperature-scaled strict-RL calibration
 ```
+
+The train range is split chronologically into fit and calibration subsets before evaluation on the held-out prime range. The example also includes a wheel-survivor task variant that ranks only candidate gaps not eliminated by the small-prime feature wheel; this makes the "learned proposal" question stricter by comparing against a cheap non-neural sieve prior.
 
 The CLI output is split into human-readable sections:
 
@@ -134,7 +137,7 @@ verifier diagnostics: exact classical work needed to verify or correct proposals
 
 `proposal_steps` measures how quickly the true action appears in the model's proposal order. `wheel exact` measures how many exact sieve primality probes remain after small-prime divisibility filters eliminate obvious composites. `assisted_wheel` tries the model's top-10 proposals before falling back to wheel scan. `block cost` estimates segmented interval-proof work by marking composites with base primes up to `sqrt(p + g)`, and `assisted_block` tries model proposals before falling back to the block scan. These verifier metrics are reported separately because an exact next-prime verifier still has to rule out earlier candidates.
 
-Current interpretation: the network learns a strong gap-ranking prior, but exact next-prime verification remains the classical algorithm's job. That is expected and useful: the experiment is about learned proposal capability under perfect verification, not replacing the verifier.
+Current interpretation: the network learns a strong gap-ranking prior, but much of the easy top-k lift comes from small-prime divisibility structure. The wheel-frequency and linear-scorer baselines are intentionally strong checks on that. Exact next-prime verification remains the classical algorithm's job. That is expected and useful: the experiment is about learned proposal capability under perfect verification, not replacing the verifier.
 
 Run a larger split sweep with:
 
