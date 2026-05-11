@@ -145,6 +145,20 @@ verifier diagnostics: exact classical work needed to verify or correct proposals
 
 `proposal_steps` measures how quickly the true action appears in the model's proposal order. `wheel exact` measures how many exact sieve primality probes remain after small-prime divisibility filters eliminate obvious composites. `assisted_wheel` tries the model's top-10 proposals before falling back to wheel scan. `block cost` estimates segmented interval-proof work by marking composites with base primes up to `sqrt(p + g)`, and `assisted_block` tries model proposals before falling back to the block scan. These verifier metrics are reported separately because an exact next-prime verifier still has to rule out earlier candidates.
 
+The prime-gap code is split so the experiment can keep growing without turning the CLI into the architecture:
+
+```text
+include/prime_gap.h        public experiment types and helper APIs
+src/prime_gap_data.c       sieve, datasets, constants, and utility routines
+src/prime_gap_features.c   gap/action features, ranking, and softmax helpers
+src/prime_gap_verifier.c   exact verifier accounting and segmented scan diagnostics
+src/prime_gap_eval.c       baselines, metrics, calibration, and interval-target caching
+src/prime_gap_train.c      supervised, interval, verifier-RL, and ablation training loops
+examples/prime_gap.c       CLI orchestration for the current experiment suite
+```
+
+Interval-prime evaluation caches verifier-generated target distributions for each sampled test window. This keeps repeated baseline/model evaluations from recomputing the same exact `is_prime` labels while preserving the verifier as the source of truth.
+
 Current interpretation: the network learns a strong gap-ranking prior, but much of the easy top-k lift comes from small-prime divisibility structure. The wheel-frequency and linear-scorer baselines are intentionally strong checks on that. The interval-prime task shows the same pattern: the MLP improves probability quality, but top-rank behavior is still largely explained by the wheel prior. The raw-residue interval variant removes the direct composite flags while keeping compact modular information; on the default run the raw-residue MLP recovers most of the wheel behavior. In the wider sweep, the MLP keeps stronger MAP, total prime probability, and wheel-surviving top choices than the raw linear model, though top-1 prime accuracy narrows at larger windows. Exact next-prime verification remains the classical algorithm's job. That is expected and useful: the experiment is about learned proposal capability under perfect verification, not replacing the verifier.
 
 Run a larger split sweep with:

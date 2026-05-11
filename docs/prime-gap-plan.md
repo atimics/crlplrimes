@@ -148,6 +148,13 @@ The deterministic verifier remains the correctness mechanism.
 
 Model-assisted exact verification currently does not beat wheel or block verification, because wrong proposals create extra proof obligations. This is expected for exact next-prime verification.
 
+The implementation has been split into reusable prime-gap modules and a thin CLI. Data generation,
+feature construction, verifier accounting, evaluation, and training each live in separate
+`src/prime_gap_*.c` files behind `include/prime_gap.h`; `examples/prime_gap.c` just wires those
+pieces into the current experiment suite. Interval-prime evaluation also caches verifier-generated
+target distributions for sampled held-out windows, so repeated baseline and model evaluations reuse
+exact labels instead of recomputing the same primality checks.
+
 ## Next Work
 
 1. Improve calibration.
@@ -179,6 +186,12 @@ Model-assisted exact verification currently does not beat wheel or block verific
    - find any prime after `p`
    - rank prime candidates in a fixed interval
    - predict overflow probability for larger gaps
+
+6. Continue structural/performance cleanup.
+   - tighten which prime-gap helpers are public vs module-local once APIs stabilize
+   - cache reusable candidate feature blocks for repeated evaluation passes
+   - add timing counters around target generation, feature generation, model inference, and metric aggregation
+   - keep the CLI as orchestration only; new task variants should land in reusable module functions first
 
 The most promising next implementation is a harder task variant. The current metrics show the policy
 can rank candidates well, but the strongest classical wheel baseline explains much of that lift.

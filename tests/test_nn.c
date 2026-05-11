@@ -1,24 +1,10 @@
 #include "nn.h"
+#include "prime_gap.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunused-function"
-#elif defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-#endif
-#define PRIME_GAP_NO_MAIN
-#include "../examples/prime_gap.c"
-#undef PRIME_GAP_NO_MAIN
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#elif defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
+#include <string.h>
 
 #if NN_REAL_IS_FLOAT
 #define TEST_EPS ((nn_real)1e-2)
@@ -970,6 +956,48 @@ static int test_prime_gap_interval_wheel_frequency_masks_rejected_actions(void)
            fabs(sum - 1.0) < 1e-5;
 }
 
+static int test_prime_gap_interval_target_cache_matches_direct_targets(void)
+{
+    Sieve sieve = {0, 0, 0, 0};
+    GapDataset train = {0, 0, 0, 0, 0, 0};
+    GapDataset test = {0, 0, 0, 0, 0, 0};
+    IntervalTargetCache cache = {0, 0, 0, 0};
+    nn_real direct[EXACT_ACTION_COUNT];
+    int ok = 1;
+
+    if (!build_sieve(300 + G_MAX, &sieve)) {
+        return 0;
+    }
+    if (!build_gap_datasets(&sieve, 50, 300, &train, &test)) {
+        free_sieve(&sieve);
+        return 0;
+    }
+    if (!build_interval_eval_target_cache(&sieve, &test, 5, EXACT_ACTION_COUNT, &cache)) {
+        free_gap_dataset(&train);
+        free_gap_dataset(&test);
+        free_sieve(&sieve);
+        return 0;
+    }
+
+    for (size_t sample = 0; sample < cache.sample_count; ++sample) {
+        size_t index = eval_sample_index(&test, sample, cache.sample_count);
+        size_t positives =
+            build_interval_prime_targets(&sieve, test.prime[index], EXACT_ACTION_COUNT, direct);
+        const nn_real *cached = &cache.targets[sample * cache.candidate_count];
+
+        ok = ok && positives == cache.positive_counts[sample];
+        for (size_t action = 0; action < cache.candidate_count; ++action) {
+            ok = ok && fabs((double)(direct[action] - cached[action])) < 1e-7;
+        }
+    }
+
+    free_interval_target_cache(&cache);
+    free_gap_dataset(&train);
+    free_gap_dataset(&test);
+    free_sieve(&sieve);
+    return ok;
+}
+
 static int test_prime_gap_wide_interval_targets_fit_buffer(void)
 {
     Sieve sieve;
@@ -1036,6 +1064,8 @@ int main(void)
           "prime-gap interval targets include all primes");
     check(test_prime_gap_interval_wheel_frequency_masks_rejected_actions(),
           "prime-gap interval wheel-frequency masks rejected actions");
+    check(test_prime_gap_interval_target_cache_matches_direct_targets(),
+          "prime-gap interval target cache matches direct targets");
     check(test_prime_gap_wide_interval_targets_fit_buffer(),
           "prime-gap wide interval targets fit buffer");
 

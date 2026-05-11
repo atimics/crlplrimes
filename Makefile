@@ -14,6 +14,12 @@ LDLIBS ?= -lm
 BUILD_DIR := build/$(REAL)
 NN_OBJ := $(BUILD_DIR)/nn.o
 NN_TEST_OBJ := $(BUILD_DIR)/nn_test.o
+PRIME_GAP_OBJS := \
+	$(BUILD_DIR)/prime_gap_data.o \
+	$(BUILD_DIR)/prime_gap_features.o \
+	$(BUILD_DIR)/prime_gap_verifier.o \
+	$(BUILD_DIR)/prime_gap_eval.o \
+	$(BUILD_DIR)/prime_gap_train.o
 XOR_EXAMPLE := $(BUILD_DIR)/xor
 PRIME_GAP_EXAMPLE := $(BUILD_DIR)/prime_gap
 BENCHMARK := $(BUILD_DIR)/benchmark
@@ -32,17 +38,20 @@ $(NN_OBJ): src/nn.c include/nn.h | $(BUILD_DIR)
 $(NN_TEST_OBJ): src/nn.c include/nn.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn.c -o $@
 
+$(BUILD_DIR)/prime_gap_%.o: src/prime_gap_%.c include/prime_gap.h include/nn.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
 $(XOR_EXAMPLE): examples/xor.c $(NN_OBJ) include/nn.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/xor.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(PRIME_GAP_EXAMPLE): examples/prime_gap.c $(NN_OBJ) include/nn.h | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_gap.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+$(PRIME_GAP_EXAMPLE): examples/prime_gap.c $(PRIME_GAP_OBJS) $(NN_OBJ) include/prime_gap.h include/nn.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_gap.c $(PRIME_GAP_OBJS) $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(BENCHMARK): benchmarks/benchmark.c $(NN_OBJ) include/nn.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) benchmarks/benchmark.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(TEST_RUNNER): tests/test_nn.c examples/prime_gap.c $(NN_TEST_OBJ) include/nn.h | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) tests/test_nn.c $(NN_TEST_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+$(TEST_RUNNER): tests/test_nn.c $(PRIME_GAP_OBJS) $(NN_TEST_OBJ) include/prime_gap.h include/nn.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) tests/test_nn.c $(PRIME_GAP_OBJS) $(NN_TEST_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
 run: $(XOR_EXAMPLE)
 	./$(XOR_EXAMPLE)
