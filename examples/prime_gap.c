@@ -39,7 +39,7 @@ int main(int argc, char **argv)
     prime_gap_profile_set(&profile);
 
     if (test_limit_arg <= train_limit_arg || train_limit_arg < 16 ||
-        test_limit_arg > (size_t)UINT32_MAX - (size_t)G_MAX ||
+        test_limit_arg > (size_t)UINT32_MAX - (size_t)INTERVAL_MAX_GAP ||
         train_limit_arg > (size_t)UINT32_MAX) {
         fputs("usage: prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] "
               "[max_train_states] [max_test_states]\n",
@@ -561,8 +561,10 @@ int main(int argc, char **argv)
     interval_raw_net = NULL;
 
     printf("\n=== Wider Raw-Residue Interval Sweep ===\n");
-    size_t sweep_train_states = max_train_states < 5000 ? max_train_states : 5000;
-    size_t sweep_test_states = max_test_states < 5000 ? max_test_states : 5000;
+    size_t sweep_train_states =
+        max_train_states == 0 || max_train_states > 5000 ? 5000 : max_train_states;
+    size_t sweep_test_states =
+        max_test_states == 0 || max_test_states > 5000 ? 5000 : max_test_states;
     size_t sweep_epochs = supervised_epochs == 0 ? 0 : 1;
     printf("Each window trains fresh raw-residue linear and MLP scorers without explicit divisibility flags.\n");
     printf("Wide-window runs are capped at train_states=%zu test_states=%zu epochs=%zu for CLI runtime.\n",
