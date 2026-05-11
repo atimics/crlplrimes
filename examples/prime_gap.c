@@ -22,9 +22,13 @@ enum {
     DEFAULT_MAX_TEST_STATES = 30000,
     CALIBRATION_BINS = 10,
     PRIME_BUCKET_COUNT = 4,
+    RESIDUE_SIGNATURE_COUNT = 1u << FEATURE_MOD_COUNT,
+    CONDITIONED_SIGNATURE_COUNT = RESIDUE_SIGNATURE_COUNT + 1,
 };
 
 static const uint32_t FEATURE_MODS[FEATURE_MOD_COUNT] = {3, 5, 7, 11, 13, 17, 19, 23, 29, 31};
+static const double TEMPERATURE_GRID[] = {0.50, 0.75, 1.00, 1.25, 1.50, 2.00, 3.00, 4.00, 6.00, 8.00};
+static const nn_real SUPERVISED_ENTROPY_WEIGHT = (nn_real)0.10;
 
 typedef struct {
     const char *name;
@@ -69,6 +73,11 @@ typedef struct {
 } BlockWork;
 
 typedef struct {
+    size_t *counts;
+    size_t *totals;
+} ConditionedPolicy;
+
+typedef struct {
     size_t samples;
     size_t top1;
     size_t top5;
@@ -96,6 +105,7 @@ typedef struct {
     double calibration_correct[CALIBRATION_BINS];
     double bucket_nll[PRIME_BUCKET_COUNT];
     double bucket_true_rank[PRIME_BUCKET_COUNT];
+    double temperature;
     double mean_abs_gap_error;
     double direct_scan_exact_tests;
     double wheel_scan_mod_tests;
@@ -324,6 +334,24 @@ static double gap_error_for_action(size_t action, uint32_t true_gap)
     return fabs((double)action_gap(action) - (double)true_gap);
 }
 
+static size_t candidate_signature(uint32_t p, size_t action)
+{
+    if (action_is_overflow(action)) {
+        return RESIDUE_SIGNATURE_COUNT;
+    }
+
+    size_t signature = 0;
+    uint32_t candidate = p + (uint32_t)action_gap(action);
+    for (size_t i = 0; i < FEATURE_MOD_COUNT; ++i) {
+        uint32_t mod = FEATURE_MODS[i];
+        if (candidate > mod && candidate % mod == 0) {
+            signature |= (size_t)1u << i;
+        }
+    }
+
+    return signature;
+}
+
 static void fill_candidate_features_masked(nn_real *inputs,
                                            uint32_t p,
                                            double log_scale,
@@ -384,6 +412,42 @@ static void rank_actions(const nn_real *scores, size_t *ranked)
         size_t tmp = ranked[i];
         ranked[i] = ranked[best];
         ranked[best] = tmp;
+    }
+}
+
+static void softmax_temperature(const nn_real *scores,
+                                nn_real *probabilities,
+                                size_t count,
+                                double temperature)
+{
+    if (temperature <= 0.0) {
+        temperature = 1.0;
+    }
+
+    nn_real max_score = (nn_real)((double)scores[0] / temperature);
+    for (size_t i = 1; i < count; ++i) {
+        nn_real scaled = (nn_real)((double)scores[i] / temperature);
+        if (scaled > max_score) {
+            max_score = scaled;
+        }
+    }
+
+    nn_real denominator = 0;
+    for (size_t i = 0; i < count; ++i) {
+        probabilities[i] = (nn_real)exp((double)scores[i] / temperature - (double)max_score);
+        denominator += probabilities[i];
+    }
+
+    if (denominator <= (nn_real)0) {
+        nn_real uniform = (nn_real)1 / (nn_real)count;
+        for (size_t i = 0; i < count; ++i) {
+            probabilities[i] = uniform;
+        }
+        return;
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+        probabilities[i] /= denominator;
     }
 }
 
@@ -864,6 +928,7 @@ static EvalMetrics evaluate_model(NeuralNet *net,
                                   size_t max_states,
                                   double log_scale,
                                   const FeatureMask *mask,
+                                  double temperature,
                                   int include_verifier,
                                   nn_real *candidate_inputs,
                                   nn_real *scores,
@@ -885,7 +950,7 @@ static EvalMetrics evaluate_model(NeuralNet *net,
 
         fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
         nn_forward_batch(net, candidate_inputs, scores, ACTION_COUNT);
-        nn_softmax(scores, probabilities, ACTION_COUNT);
+        softmax_temperature(scores, probabilities, ACTION_COUNT, temperature);
         rank_actions(scores, ranked);
         accumulate_eval_sample(&metrics,
                                sieve,
@@ -898,6 +963,7 @@ static EvalMetrics evaluate_model(NeuralNet *net,
     }
 
     metrics.samples = samples;
+    metrics.temperature = temperature <= 0.0 ? 1.0 : temperature;
     finalize_eval_metrics(&metrics);
     return metrics;
 }
@@ -930,8 +996,45 @@ static EvalMetrics evaluate_static_policy(const Sieve *sieve,
     }
 
     metrics.samples = samples;
+    metrics.temperature = 1.0;
     finalize_eval_metrics(&metrics);
     return metrics;
+}
+
+static double tune_temperature(NeuralNet *net,
+                               const Sieve *sieve,
+                               const GapDataset *dataset,
+                               size_t max_states,
+                               double log_scale,
+                               const FeatureMask *mask,
+                               nn_real *candidate_inputs,
+                               nn_real *scores,
+                               nn_real *probabilities)
+{
+    double best_temperature = 1.0;
+    double best_nll = HUGE_VAL;
+    size_t grid_count = sizeof(TEMPERATURE_GRID) / sizeof(TEMPERATURE_GRID[0]);
+
+    for (size_t i = 0; i < grid_count; ++i) {
+        double temperature = TEMPERATURE_GRID[i];
+        EvalMetrics metrics = evaluate_model(net,
+                                             sieve,
+                                             dataset,
+                                             max_states,
+                                             log_scale,
+                                             mask,
+                                             temperature,
+                                             0,
+                                             candidate_inputs,
+                                             scores,
+                                             probabilities);
+        if (metrics.nll < best_nll) {
+            best_nll = metrics.nll;
+            best_temperature = temperature;
+        }
+    }
+
+    return best_temperature;
 }
 
 static void print_metrics(const char *label, EvalMetrics metrics)
@@ -966,8 +1069,9 @@ static void print_metrics(const char *label, EvalMetrics metrics)
 
     printf("\n[%s]\n", label);
     printf("  capability\n");
-    printf("    samples=%zu top1=%.2f%% top5=%.2f%% top10=%.2f%% top1_prime=%.2f%%\n",
+    printf("    samples=%zu temperature=%.2f top1=%.2f%% top5=%.2f%% top10=%.2f%% top1_prime=%.2f%%\n",
            metrics.samples,
+           metrics.temperature,
            100.0 * (double)metrics.top1 / samples,
            100.0 * (double)metrics.top5 / samples,
            100.0 * (double)metrics.top10 / samples,
@@ -993,6 +1097,19 @@ static void print_metrics(const char *label, EvalMetrics metrics)
     printf("    conf>=0.50 coverage=%.2f%% accuracy=%.2f%%\n",
            high_confidence_coverage,
            high_confidence_accuracy);
+    printf("    bins\n");
+    for (size_t bin = 0; bin < CALIBRATION_BINS; ++bin) {
+        if (metrics.calibration_count[bin] == 0) {
+            continue;
+        }
+
+        printf("      %.1f-%.1f n=%zu conf=%.4f acc=%.4f\n",
+               (double)bin / (double)CALIBRATION_BINS,
+               (double)(bin + 1) / (double)CALIBRATION_BINS,
+               metrics.calibration_count[bin],
+               metrics.calibration_confidence[bin],
+               metrics.calibration_correct[bin]);
+    }
 
     printf("  prime buckets\n");
     for (size_t bucket = 0; bucket < PRIME_BUCKET_COUNT; ++bucket) {
@@ -1034,6 +1151,42 @@ static void print_metrics(const char *label, EvalMetrics metrics)
            block_delta_pct);
 }
 
+static void print_calibration_comparison(const char *label,
+                                         EvalMetrics supervised,
+                                         EvalMetrics entropy,
+                                         EvalMetrics strict_rl)
+{
+    printf("\n[%s]\n", label);
+    printf("  model                 nll     p_true  top1_conf  ece     high_conf_acc\n");
+    printf("  supervised            %.4f  %.4f  %.4f     %.4f  %.2f%%\n",
+           supervised.nll,
+           supervised.true_action_probability,
+           supervised.top1_confidence,
+           supervised.expected_calibration_error,
+           supervised.high_confidence == 0
+               ? 0.0
+               : 100.0 * (double)supervised.high_confidence_correct /
+                     (double)supervised.high_confidence);
+    printf("  entropy-supervised    %.4f  %.4f  %.4f     %.4f  %.2f%%\n",
+           entropy.nll,
+           entropy.true_action_probability,
+           entropy.top1_confidence,
+           entropy.expected_calibration_error,
+           entropy.high_confidence == 0
+               ? 0.0
+               : 100.0 * (double)entropy.high_confidence_correct /
+                     (double)entropy.high_confidence);
+    printf("  strict-rl             %.4f  %.4f  %.4f     %.4f  %.2f%%\n",
+           strict_rl.nll,
+           strict_rl.true_action_probability,
+           strict_rl.top1_confidence,
+           strict_rl.expected_calibration_error,
+           strict_rl.high_confidence == 0
+               ? 0.0
+               : 100.0 * (double)strict_rl.high_confidence_correct /
+                     (double)strict_rl.high_confidence);
+}
+
 static void build_frequency_policy(const GapDataset *dataset,
                                    size_t *ranked,
                                    nn_real *probabilities)
@@ -1055,6 +1208,100 @@ static void build_frequency_policy(const GapDataset *dataset,
     rank_actions(scores, ranked);
 }
 
+static void free_conditioned_policy(ConditionedPolicy *policy)
+{
+    free(policy->counts);
+    free(policy->totals);
+    memset(policy, 0, sizeof(*policy));
+}
+
+static int build_residue_conditioned_policy(const GapDataset *dataset, ConditionedPolicy *policy)
+{
+    memset(policy, 0, sizeof(*policy));
+    policy->counts = calloc((size_t)CONDITIONED_SIGNATURE_COUNT * ACTION_COUNT,
+                            sizeof(*policy->counts));
+    policy->totals = calloc(CONDITIONED_SIGNATURE_COUNT, sizeof(*policy->totals));
+    if (policy->counts == NULL || policy->totals == NULL) {
+        free_conditioned_policy(policy);
+        return 0;
+    }
+
+    for (size_t i = 0; i < dataset->count; ++i) {
+        size_t action = gap_to_action(dataset->gap[i]);
+        size_t signature = candidate_signature(dataset->prime[i], action);
+        ++policy->counts[signature * ACTION_COUNT + action];
+        ++policy->totals[signature];
+    }
+
+    return 1;
+}
+
+static void score_residue_conditioned_policy(const ConditionedPolicy *policy,
+                                             uint32_t p,
+                                             size_t *ranked,
+                                             nn_real *probabilities)
+{
+    nn_real scores[ACTION_COUNT];
+    double sum = 0.0;
+
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        size_t signature = candidate_signature(p, action);
+        size_t count = policy->counts[signature * ACTION_COUNT + action];
+        size_t total = policy->totals[signature];
+        scores[action] = (nn_real)(((double)count + 1.0) /
+                                   ((double)total + (double)ACTION_COUNT));
+        sum += (double)scores[action];
+    }
+
+    if (sum <= 0.0) {
+        nn_real uniform = (nn_real)1 / (nn_real)ACTION_COUNT;
+        for (size_t action = 0; action < ACTION_COUNT; ++action) {
+            probabilities[action] = uniform;
+        }
+    } else {
+        for (size_t action = 0; action < ACTION_COUNT; ++action) {
+            probabilities[action] = (nn_real)((double)scores[action] / sum);
+        }
+    }
+
+    rank_actions(scores, ranked);
+}
+
+static EvalMetrics evaluate_residue_conditioned_policy(const ConditionedPolicy *policy,
+                                                       const Sieve *sieve,
+                                                       const GapDataset *dataset,
+                                                       size_t max_states,
+                                                       int include_verifier,
+                                                       nn_real *probabilities)
+{
+    EvalMetrics metrics;
+    memset(&metrics, 0, sizeof(metrics));
+
+    size_t samples = dataset->count;
+    if (max_states != 0 && max_states < samples) {
+        samples = max_states;
+    }
+
+    size_t ranked[ACTION_COUNT];
+    for (size_t sample = 0; sample < samples; ++sample) {
+        size_t index = eval_sample_index(dataset, sample, samples);
+        score_residue_conditioned_policy(policy, dataset->prime[index], ranked, probabilities);
+        accumulate_eval_sample(&metrics,
+                               sieve,
+                               dataset,
+                               dataset->prime[index],
+                               dataset->gap[index],
+                               ranked,
+                               probabilities,
+                               include_verifier);
+    }
+
+    metrics.samples = samples;
+    metrics.temperature = 1.0;
+    finalize_eval_metrics(&metrics);
+    return metrics;
+}
+
 static int train_supervised(NeuralNet *net,
                             const char *label,
                             const GapDataset *dataset,
@@ -1063,6 +1310,7 @@ static int train_supervised(NeuralNet *net,
                             nn_real learning_rate,
                             double log_scale,
                             const FeatureMask *mask,
+                            nn_real entropy_weight,
                             nn_real *candidate_inputs,
                             size_t *order,
                             uint32_t *rng)
@@ -1080,11 +1328,18 @@ static int train_supervised(NeuralNet *net,
         for (size_t step = 0; step < train_steps; ++step) {
             size_t index = order[step];
             fill_candidate_features_masked(candidate_inputs, dataset->prime[index], log_scale, mask);
-            nn_real step_loss = nn_train_softmax_scorer(net,
-                                                        candidate_inputs,
-                                                        ACTION_COUNT,
-                                                        gap_to_action(dataset->gap[index]),
-                                                        learning_rate);
+            nn_real step_loss = entropy_weight > (nn_real)0
+                                    ? nn_train_softmax_scorer_entropy(net,
+                                                                      candidate_inputs,
+                                                                      ACTION_COUNT,
+                                                                      gap_to_action(dataset->gap[index]),
+                                                                      entropy_weight,
+                                                                      learning_rate)
+                                    : nn_train_softmax_scorer(net,
+                                                              candidate_inputs,
+                                                              ACTION_COUNT,
+                                                              gap_to_action(dataset->gap[index]),
+                                                              learning_rate);
             if (isnan((double)step_loss)) {
                 return 0;
             }
@@ -1092,10 +1347,11 @@ static int train_supervised(NeuralNet *net,
         }
 
         double elapsed = now_seconds() - started;
-        printf("%s epoch %zu loss=%.4f updates=%zu %.0f states/s\n",
+        printf("%s epoch %zu loss=%.4f entropy_weight=%.3f updates=%zu %.0f states/s\n",
                label,
                epoch + 1,
                loss / (double)train_steps,
+               (double)entropy_weight,
                train_steps,
                elapsed > 0.0 ? (double)train_steps / elapsed : 0.0);
     }
@@ -1201,6 +1457,7 @@ static int run_supervised_ablation(const char *label,
                           (nn_real)0.005,
                           log_scale,
                           mask,
+                          (nn_real)0,
                           candidate_inputs,
                           order,
                           rng);
@@ -1212,6 +1469,7 @@ static int run_supervised_ablation(const char *label,
                                      max_test_states,
                                      log_scale,
                                      mask,
+                                     1.0,
                                      0,
                                      candidate_inputs,
                                      scores,
@@ -1234,7 +1492,18 @@ int main(int argc, char **argv)
     Sieve sieve;
     GapDataset train;
     GapDataset test;
+    ConditionedPolicy residue_policy = {0, 0};
     uint32_t rng = 20240511u;
+    EvalMetrics supervised_metrics;
+    EvalMetrics supervised_temperature_metrics;
+    EvalMetrics entropy_metrics;
+    EvalMetrics entropy_temperature_metrics;
+    EvalMetrics strict_rl_metrics;
+    EvalMetrics strict_rl_temperature_metrics;
+    double supervised_temperature = 1.0;
+    double entropy_temperature = 1.0;
+    double strict_rl_temperature = 1.0;
+    int have_strict_rl_metrics = 0;
     int ok = 1;
 
     if (test_limit_arg <= train_limit_arg || train_limit_arg < 16 ||
@@ -1306,6 +1575,7 @@ int main(int argc, char **argv)
     config.loss = NN_LOSS_MSE;
 
     NeuralNet *net = nn_create_config(&config);
+    NeuralNet *entropy_net = NULL;
     nn_real *candidate_inputs = calloc((size_t)ACTION_COUNT * FEATURE_COUNT, sizeof(*candidate_inputs));
     nn_real *scores = calloc(ACTION_COUNT, sizeof(*scores));
     nn_real *probabilities = calloc(ACTION_COUNT, sizeof(*probabilities));
@@ -1335,6 +1605,19 @@ int main(int argc, char **argv)
                                          max_test_states,
                                          1));
 
+    if (!build_residue_conditioned_policy(&train, &residue_policy)) {
+        fputs("failed to build residue-conditioned baseline\n", stderr);
+        ok = 0;
+        goto cleanup;
+    }
+    print_metrics("baseline residue-conditioned",
+                  evaluate_residue_conditioned_policy(&residue_policy,
+                                                      &sieve,
+                                                      &test,
+                                                      max_test_states,
+                                                      1,
+                                                      probabilities));
+
     print_metrics("model before",
                   evaluate_model(net,
                                  &sieve,
@@ -1342,6 +1625,7 @@ int main(int argc, char **argv)
                                  max_test_states,
                                  log_scale,
                                  &FEATURE_MASK_FULL,
+                                 1.0,
                                  1,
                                  candidate_inputs,
                                  scores,
@@ -1415,6 +1699,7 @@ int main(int argc, char **argv)
                           (nn_real)0.005,
                           log_scale,
                           &FEATURE_MASK_FULL,
+                          (nn_real)0,
                           candidate_inputs,
                           order,
                           &rng);
@@ -1422,17 +1707,99 @@ int main(int argc, char **argv)
         goto cleanup;
     }
 
-    print_metrics("model supervised",
-                  evaluate_model(net,
-                                 &sieve,
-                                 &test,
-                                 max_test_states,
-                                 log_scale,
-                                 &FEATURE_MASK_FULL,
-                                 1,
-                                 candidate_inputs,
-                                 scores,
-                                 probabilities));
+    supervised_metrics = evaluate_model(net,
+                                        &sieve,
+                                        &test,
+                                        max_test_states,
+                                        log_scale,
+                                        &FEATURE_MASK_FULL,
+                                        1.0,
+                                        1,
+                                        candidate_inputs,
+                                        scores,
+                                        probabilities);
+    print_metrics("model supervised", supervised_metrics);
+
+    supervised_temperature = tune_temperature(net,
+                                              &sieve,
+                                              &train,
+                                              max_train_states,
+                                              log_scale,
+                                              &FEATURE_MASK_FULL,
+                                              candidate_inputs,
+                                              scores,
+                                              probabilities);
+    supervised_temperature_metrics = evaluate_model(net,
+                                                    &sieve,
+                                                    &test,
+                                                    max_test_states,
+                                                    log_scale,
+                                                    &FEATURE_MASK_FULL,
+                                                    supervised_temperature,
+                                                    0,
+                                                    candidate_inputs,
+                                                    scores,
+                                                    probabilities);
+    print_metrics("model supervised temp-scaled", supervised_temperature_metrics);
+
+    printf("\n=== Entropy-Regularized Training ===\n");
+    entropy_net = nn_create_config(&config);
+    if (entropy_net == NULL) {
+        fputs("failed to allocate entropy model\n", stderr);
+        ok = 0;
+        goto cleanup;
+    }
+
+    ok = train_supervised(entropy_net,
+                          "model entropy-supervised",
+                          &train,
+                          max_train_states,
+                          supervised_epochs,
+                          (nn_real)0.005,
+                          log_scale,
+                          &FEATURE_MASK_FULL,
+                          SUPERVISED_ENTROPY_WEIGHT,
+                          candidate_inputs,
+                          order,
+                          &rng);
+    if (!ok) {
+        goto cleanup;
+    }
+
+    entropy_metrics = evaluate_model(entropy_net,
+                                     &sieve,
+                                     &test,
+                                     max_test_states,
+                                     log_scale,
+                                     &FEATURE_MASK_FULL,
+                                     1.0,
+                                     0,
+                                     candidate_inputs,
+                                     scores,
+                                     probabilities);
+    print_metrics("model entropy-supervised", entropy_metrics);
+
+    entropy_temperature = tune_temperature(entropy_net,
+                                           &sieve,
+                                           &train,
+                                           max_train_states,
+                                           log_scale,
+                                           &FEATURE_MASK_FULL,
+                                           candidate_inputs,
+                                           scores,
+                                           probabilities);
+    entropy_temperature_metrics = evaluate_model(entropy_net,
+                                                 &sieve,
+                                                 &test,
+                                                 max_test_states,
+                                                 log_scale,
+                                                 &FEATURE_MASK_FULL,
+                                                 entropy_temperature,
+                                                 0,
+                                                 candidate_inputs,
+                                                 scores,
+                                                 probabilities);
+    print_metrics("model entropy-supervised temp-scaled", entropy_temperature_metrics);
 
     printf("\n=== Strict Verifier RL ===\n");
     if (rl_epochs == 0) {
@@ -1455,17 +1822,52 @@ int main(int argc, char **argv)
             goto cleanup;
         }
 
-        print_metrics("model strict-rl",
-                      evaluate_model(net,
-                                     &sieve,
-                                     &test,
-                                     max_test_states,
-                                     log_scale,
-                                     &FEATURE_MASK_FULL,
-                                     1,
-                                     candidate_inputs,
-                                     scores,
-                                     probabilities));
+        strict_rl_metrics = evaluate_model(net,
+                                           &sieve,
+                                           &test,
+                                           max_test_states,
+                                           log_scale,
+                                           &FEATURE_MASK_FULL,
+                                           1.0,
+                                           1,
+                                           candidate_inputs,
+                                           scores,
+                                           probabilities);
+        have_strict_rl_metrics = 1;
+        print_metrics("model strict-rl", strict_rl_metrics);
+
+        strict_rl_temperature = tune_temperature(net,
+                                                 &sieve,
+                                                 &train,
+                                                 max_train_states,
+                                                 log_scale,
+                                                 &FEATURE_MASK_FULL,
+                                                 candidate_inputs,
+                                                 scores,
+                                                 probabilities);
+        strict_rl_temperature_metrics = evaluate_model(net,
+                                                       &sieve,
+                                                       &test,
+                                                       max_test_states,
+                                                       log_scale,
+                                                       &FEATURE_MASK_FULL,
+                                                       strict_rl_temperature,
+                                                       0,
+                                                       candidate_inputs,
+                                                       scores,
+                                                       probabilities);
+        print_metrics("model strict-rl temp-scaled", strict_rl_temperature_metrics);
+    }
+
+    if (have_strict_rl_metrics) {
+        print_calibration_comparison("calibration comparison raw",
+                                     supervised_metrics,
+                                     entropy_metrics,
+                                     strict_rl_metrics);
+        print_calibration_comparison("calibration comparison temp-scaled",
+                                     supervised_temperature_metrics,
+                                     entropy_temperature_metrics,
+                                     strict_rl_temperature_metrics);
     }
 
 cleanup:
@@ -1473,7 +1875,9 @@ cleanup:
     free(probabilities);
     free(scores);
     free(candidate_inputs);
+    nn_free(entropy_net);
     nn_free(net);
+    free_conditioned_policy(&residue_policy);
     free_gap_dataset(&train);
     free_gap_dataset(&test);
     free_sieve(&sieve);

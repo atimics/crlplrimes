@@ -83,6 +83,12 @@ nn_real nn_train_softmax_scorer(NeuralNet *net,
                                 size_t candidate_count,
                                 size_t target_index,
                                 nn_real learning_rate);
+nn_real nn_train_softmax_scorer_entropy(NeuralNet *net,
+                                        const nn_real *candidate_inputs,
+                                        size_t candidate_count,
+                                        size_t target_index,
+                                        nn_real entropy_weight,
+                                        nn_real learning_rate);
 nn_real nn_train_softmax_scorer_weighted(NeuralNet *net,
                                          const nn_real *candidate_inputs,
                                          size_t candidate_count,

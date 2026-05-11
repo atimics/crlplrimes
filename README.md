@@ -103,7 +103,7 @@ score = f(input)
 policy = softmax(scores across candidate gaps 2..256 plus an overflow action)
 ```
 
-The example first evaluates an empirical gap-frequency baseline, then runs supervised feature ablations:
+The example first evaluates empirical gap-frequency and residue-conditioned frequency baselines, then runs supervised feature ablations:
 
 ```text
 log-only
@@ -114,11 +114,20 @@ full feature set
 
 The full model trains with supervised softmax cross-entropy over all candidate actions, then runs a strict verifier-guided policy-gradient pass where reward is `1` only when the sampled action matches the exact next gap or the overflow class.
 
+It also evaluates calibration interventions:
+
+```text
+temperature scaling selected on the training split
+entropy-regularized supervised training
+raw supervised vs raw strict-RL calibration
+temperature-scaled supervised vs temperature-scaled strict-RL calibration
+```
+
 The CLI output is split into human-readable sections:
 
 ```text
 capability: top-k accuracy, NLL, true-action probability, mean rank, MRR, gap error
-calibration: top-1 confidence, correct/incorrect confidence, ECE, high-confidence accuracy
+calibration: top-1 confidence, correct/incorrect confidence, ECE, high-confidence accuracy, binned calibration curve
 prime buckets: capability metrics over four increasing held-out prime ranges
 verifier diagnostics: exact classical work needed to verify or correct proposals
 ```
@@ -192,6 +201,17 @@ nn_real loss = nn_train_softmax_scorer(scorer,
                                        candidate_count,
                                        true_candidate_index,
                                        0.005f);
+```
+
+Use entropy-regularized scorer training when you want to penalize overconfident distributions:
+
+```c
+nn_real loss = nn_train_softmax_scorer_entropy(scorer,
+                                               candidate_inputs,
+                                               candidate_count,
+                                               true_candidate_index,
+                                               0.10f,
+                                               0.005f);
 ```
 
 Training a dataset uses contiguous row-major buffers:

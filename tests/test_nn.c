@@ -133,6 +133,34 @@ static nn_real scorer_loss(NeuralNet *net,
     return nn_softmax_cross_entropy(scores, targets, candidate_count);
 }
 
+static nn_real scorer_entropy_loss(NeuralNet *net,
+                                   const nn_real *candidate_inputs,
+                                   size_t candidate_count,
+                                   size_t target_index,
+                                   nn_real entropy_weight)
+{
+    nn_real scores[8];
+    nn_real probabilities[8];
+    nn_real targets[8] = {0};
+    nn_real entropy = 0;
+
+    if (candidate_count > sizeof(scores) / sizeof(scores[0]) || target_index >= candidate_count) {
+        return (nn_real)NAN;
+    }
+
+    nn_forward_batch(net, candidate_inputs, scores, candidate_count);
+    nn_softmax(scores, probabilities, candidate_count);
+    targets[target_index] = (nn_real)1;
+    for (size_t i = 0; i < candidate_count; ++i) {
+        if (probabilities[i] > (nn_real)0) {
+            entropy -= probabilities[i] * (nn_real)log((double)probabilities[i]);
+        }
+    }
+
+    return nn_softmax_cross_entropy(scores, targets, candidate_count) -
+           entropy_weight * entropy;
+}
+
 static int test_forward_batch_matches_scalar(void)
 {
     const size_t layers[] = {5, 7, 3};
@@ -401,6 +429,80 @@ static int test_softmax_scorer_gradient_matches_finite_difference(void)
     return ok;
 }
 
+static int test_softmax_scorer_entropy_gradient_matches_finite_difference(void)
+{
+    const size_t layers[] = {4, 5, 1};
+    const size_t candidate_count = 4;
+    const size_t target_index = 2;
+    const nn_real learning_rate = (nn_real)1e-3;
+    const nn_real entropy_weight = (nn_real)0.05;
+    const nn_real candidate_inputs[] = {
+        0.10, 0.20, 0.30, 0.40,
+        0.30, 0.10, 0.70, 0.20,
+        0.80, 0.20, 0.10, 0.60,
+        0.25, 0.50, 0.25, 0.75,
+    };
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = 3;
+    config.seed = 9753;
+    config.hidden_activation = NN_ACTIVATION_TANH;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+
+    NeuralNet *base_net = nn_create_config(&config);
+    NeuralNet *update_net = nn_create_config(&config);
+    int ok = 1;
+
+    if (base_net == NULL || update_net == NULL) {
+        nn_free(base_net);
+        nn_free(update_net);
+        return 0;
+    }
+
+    nn_train_softmax_scorer_entropy(update_net,
+                                    candidate_inputs,
+                                    candidate_count,
+                                    target_index,
+                                    entropy_weight,
+                                    learning_rate);
+
+    for (size_t i = 0; i < nn_parameter_count(base_net); ++i) {
+        nn_real original = nn_test_get_parameter(base_net, i);
+        nn_real updated = nn_test_get_parameter(update_net, i);
+        nn_real analytic = (original - updated) / learning_rate;
+
+        nn_test_set_parameter(base_net, i, original + TEST_EPS);
+        nn_real plus_loss = scorer_entropy_loss(base_net,
+                                                candidate_inputs,
+                                                candidate_count,
+                                                target_index,
+                                                entropy_weight);
+        nn_test_set_parameter(base_net, i, original - TEST_EPS);
+        nn_real minus_loss = scorer_entropy_loss(base_net,
+                                                 candidate_inputs,
+                                                 candidate_count,
+                                                 target_index,
+                                                 entropy_weight);
+        nn_test_set_parameter(base_net, i, original);
+
+        nn_real numeric = (plus_loss - minus_loss) / ((nn_real)2 * TEST_EPS);
+        if (!nearly_equal(analytic, numeric, TEST_ABS_TOL, TEST_REL_TOL)) {
+            fprintf(stderr,
+                    "entropy scorer gradient mismatch param=%zu analytic=%g numeric=%g\n",
+                    i,
+                    (double)analytic,
+                    (double)numeric);
+            ok = 0;
+            break;
+        }
+    }
+
+    nn_free(base_net);
+    nn_free(update_net);
+    return ok;
+}
+
 static int test_softmax_cross_entropy_requires_linear_output(void)
 {
     const size_t layers[] = {3, 4, 3};
@@ -526,6 +628,42 @@ static int test_prime_gap_frequency_policy_is_smoothed(void)
     return ok;
 }
 
+static int test_prime_gap_residue_conditioned_policy_scores_candidates(void)
+{
+    GapDataset dataset;
+    ConditionedPolicy policy;
+    size_t ranked[ACTION_COUNT];
+    nn_real probabilities[ACTION_COUNT];
+    double sum = 0.0;
+    int ok;
+
+    memset(&dataset, 0, sizeof(dataset));
+    memset(&policy, 0, sizeof(policy));
+    ok = append_gap(&dataset, 11, 2) && append_gap(&dataset, 17, 2) &&
+         append_gap(&dataset, 29, 2);
+    if (!ok) {
+        free_gap_dataset(&dataset);
+        return 0;
+    }
+
+    ok = build_residue_conditioned_policy(&dataset, &policy);
+    if (ok) {
+        score_residue_conditioned_policy(&policy, 11, ranked, probabilities);
+        for (size_t i = 0; i < ACTION_COUNT; ++i) {
+            sum += (double)probabilities[i];
+        }
+
+        ok = ranked[0] == gap_to_action(2) &&
+             candidate_signature(11, gap_to_action(4)) != 0 &&
+             probabilities[ranked[0]] > probabilities[gap_to_action(4)] &&
+             fabs(sum - 1.0) < 1e-5;
+    }
+
+    free_conditioned_policy(&policy);
+    free_gap_dataset(&dataset);
+    return ok;
+}
+
 static int test_prime_gap_wheel_verifier_accounting(void)
 {
     Sieve sieve;
@@ -608,6 +746,8 @@ int main(void)
           "softmax cross-entropy config learns logits");
     check(test_softmax_scorer_gradient_matches_finite_difference(),
           "softmax scorer gradient matches finite difference");
+    check(test_softmax_scorer_entropy_gradient_matches_finite_difference(),
+          "softmax scorer entropy gradient matches finite difference");
     check(test_softmax_cross_entropy_requires_linear_output(),
           "softmax cross-entropy requires linear output");
     check(test_softmax_scorer_cached_matches_regular(),
@@ -616,6 +756,8 @@ int main(void)
           "prime-gap features are divisibility flags");
     check(test_prime_gap_frequency_policy_is_smoothed(),
           "prime-gap frequency policy is smoothed");
+    check(test_prime_gap_residue_conditioned_policy_scores_candidates(),
+          "prime-gap residue-conditioned policy scores candidates");
     check(test_prime_gap_wheel_verifier_accounting(),
           "prime-gap wheel verifier accounting");
     check(test_prime_gap_dataset_tracks_overflow_actions(),

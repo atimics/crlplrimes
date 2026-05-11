@@ -1373,9 +1373,10 @@ static nn_real train_softmax_scorer_from_workspace(NeuralNet *net,
                                                    size_t candidate_count,
                                                    size_t selected_index,
                                                    nn_real weight,
+                                                   nn_real entropy_weight,
                                                    nn_real learning_rate)
 {
-    if (weight == (nn_real)0) {
+    if (weight == (nn_real)0 && entropy_weight == (nn_real)0) {
         return (nn_real)0;
     }
 
@@ -1389,12 +1390,25 @@ static nn_real train_softmax_scorer_from_workspace(NeuralNet *net,
     const nn_real *scores = net->batch_activations[output_layer];
     nn_real *output_deltas = net->batch_deltas[output_layer];
     nn_softmax(scores, output_deltas, candidate_count);
-    nn_real loss = weight * softmax_cross_entropy_index(scores, candidate_count, selected_index);
+    nn_real entropy = 0;
+    for (size_t sample = 0; sample < candidate_count; ++sample) {
+        nn_real probability = output_deltas[sample];
+        if (probability > (nn_real)0) {
+            entropy -= probability * NN_LOG(probability);
+        }
+    }
+
+    nn_real loss = weight * softmax_cross_entropy_index(scores, candidate_count, selected_index) -
+                   entropy_weight * entropy;
 
     for (size_t sample = 0; sample < candidate_count; ++sample) {
         nn_real target = sample == selected_index ? (nn_real)1 : (nn_real)0;
         nn_real score = scores[sample];
-        output_deltas[sample] = weight * (output_deltas[sample] - target) *
+        nn_real probability = output_deltas[sample];
+        nn_real log_probability = probability > (nn_real)0 ? NN_LOG(probability) : (nn_real)-27.631021;
+        nn_real entropy_delta =
+            entropy_weight * probability * (log_probability + entropy);
+        output_deltas[sample] = (weight * (probability - target) + entropy_delta) *
                                 activation_derivative_from_activation(score, net->output_activation);
     }
 
@@ -1431,7 +1445,7 @@ nn_real nn_train_softmax_scorer_cached(NeuralNet *net,
     }
 
     return train_softmax_scorer_from_workspace(
-        net, candidate_count, selected_index, weight, learning_rate);
+        net, candidate_count, selected_index, weight, (nn_real)0, learning_rate);
 }
 
 nn_real nn_train_softmax_scorer_weighted(NeuralNet *net,
@@ -1461,7 +1475,7 @@ nn_real nn_train_softmax_scorer_weighted(NeuralNet *net,
            candidate_count * input_width * sizeof(*candidate_inputs));
     forward_batch_workspace(net, candidate_count);
     return train_softmax_scorer_from_workspace(
-        net, candidate_count, selected_index, weight, learning_rate);
+        net, candidate_count, selected_index, weight, (nn_real)0, learning_rate);
 }
 
 nn_real nn_train_softmax_scorer(NeuralNet *net,
@@ -1472,6 +1486,33 @@ nn_real nn_train_softmax_scorer(NeuralNet *net,
 {
     return nn_train_softmax_scorer_weighted(
         net, candidate_inputs, candidate_count, target_index, (nn_real)1, learning_rate);
+}
+
+nn_real nn_train_softmax_scorer_entropy(NeuralNet *net,
+                                        const nn_real *candidate_inputs,
+                                        size_t candidate_count,
+                                        size_t target_index,
+                                        nn_real entropy_weight,
+                                        nn_real learning_rate)
+{
+    if (net == NULL || candidate_inputs == NULL || candidate_count == 0 ||
+        target_index >= candidate_count || entropy_weight < (nn_real)0 ||
+        learning_rate <= (nn_real)0 || nn_output_size(net) != 1 ||
+        net->output_activation != NN_ACTIVATION_LINEAR) {
+        return (nn_real)NAN;
+    }
+
+    if (!ensure_batch_workspace(net, candidate_count)) {
+        return (nn_real)NAN;
+    }
+
+    size_t input_width = nn_input_size(net);
+    memcpy(net->batch_activations[0],
+           candidate_inputs,
+           candidate_count * input_width * sizeof(*candidate_inputs));
+    forward_batch_workspace(net, candidate_count);
+    return train_softmax_scorer_from_workspace(
+        net, candidate_count, target_index, (nn_real)1, entropy_weight, learning_rate);
 }
 
 nn_real nn_train(NeuralNet *net,

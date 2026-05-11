@@ -64,6 +64,8 @@ Capability metrics:
 - probability assigned to the true gap
 - calibration of policy probabilities
 - high-confidence coverage and accuracy
+- binned calibration curves
+- temperature-scaled calibration
 - generalization by prime-size bucket
 - sample efficiency
 - supervised-only vs verifier-guided fine-tuning
@@ -71,9 +73,11 @@ Capability metrics:
 Ablation metrics:
 
 - empirical gap-frequency baseline
+- residue-signature conditioned frequency baseline
 - log-only candidate scorer
 - gap-only candidate scorer
 - candidate residue-only scorer
+- entropy-regularized full scorer
 - full scorer
 
 Verifier diagnostics:
@@ -89,10 +93,16 @@ Verifier diagnostics are useful, but they are not the headline success criterion
 
 The learned policy is a strong ranker.
 
-The new ablation results separate ranking from calibrated probability estimation. Candidate residue
-features alone can rank well because they expose a learned soft sieve, but their probability estimates
-are poorly calibrated. The full feature set improves held-out negative log likelihood and true-action
-probability while preserving the strong top-k ranking behavior.
+The new ablation and baseline results separate ranking from calibrated probability estimation.
+Candidate residue features alone can rank well because they expose a learned soft sieve, but their
+probability estimates are poorly calibrated. A residue-signature conditioned frequency baseline gives
+a non-neural check on that same effect: small-prime divisibility structure carries much of the ranking
+signal, but it is not enough to make confidence reliable.
+
+The full feature set improves held-out negative log likelihood and true-action probability while
+preserving strong top-k ranking behavior. Strict verifier RL tends to increase confidence more than
+accuracy; post-hoc temperature scaling is therefore useful as a calibration diagnostic. Entropy-
+regularized supervised training is now available as a simple pressure against overconfident policies.
 
 The deterministic verifier remains the correctness mechanism.
 
@@ -101,12 +111,11 @@ Model-assisted exact verification currently does not beat wheel or block verific
 ## Next Work
 
 1. Improve calibration.
-   - temperature scaling
-   - entropy regularization
-   - compare post-RL calibration against supervised-only calibration
+   - tune entropy weight across prime-size buckets
+   - add a held-out calibration split instead of reusing the training split for temperature selection
+   - compare temperature scaling against label smoothing
 
 2. Add stronger non-neural baselines.
-   - frequency conditioned on divisibility flags
    - hand-coded wheel ranking
    - linear/logistic scorer
 
