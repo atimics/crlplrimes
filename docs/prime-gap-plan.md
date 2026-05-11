@@ -80,6 +80,7 @@ Ablation metrics:
 - gap-only candidate scorer
 - candidate residue-only scorer
 - wheel-survivor-only scorer
+- fixed-window interval-prime scorer
 - entropy-regularized full scorer
 - full scorer
 
@@ -119,6 +120,23 @@ small-prime feature wheel. On the current feature set this does not materially i
 which suggests that the remaining error is mostly gap-frequency ambiguity among plausible survivors,
 not failure to reject obvious composites.
 
+The fixed-window interval-prime task is also implemented. Instead of training on only the true next
+gap, it builds a target distribution over every prime candidate in the local `2..256` even-gap
+window. This is a better capability probe because there are multiple correct answers per state.
+The result is still sobering: interval-wheel-frequency explains most top-rank behavior, while the MLP
+mostly improves probability quality such as NLL and total probability assigned to prime candidates.
+
+The raw-residue interval variant removes explicit divisibility flags. It keeps `log(p)`,
+`normalized_gap`, and normalized remainders `(p + g) % m / m` for the small moduli. This is a better
+test of whether the model can learn sieve-like behavior from modular inputs instead of receiving
+binary composite indicators directly.
+
+On the default split, the raw-residue MLP recovers most of the explicit wheel behavior: top-1 prime
+ranking is close to the interval-wheel-frequency baseline, and almost all top-1 choices survive the
+feature wheel even though that survival flag is not given directly. The raw-residue linear model is
+meaningfully weaker. That is the first result in this project where the MLP is doing something more
+interesting than matching a linear scorer over explicit flags.
+
 The deterministic verifier remains the correctness mechanism.
 
 Model-assisted exact verification currently does not beat wheel or block verification, because wrong proposals create extra proof obligations. This is expected for exact next-prime verification.
@@ -133,12 +151,14 @@ Model-assisted exact verification currently does not beat wheel or block verific
 2. Make the task harder.
    - larger held-out ranges where prime gaps exceed the current action cap
    - explicit overflow prediction and top-k conditional on overflow
-   - fixed interval candidate ranking rather than next-gap-only ranking
+   - interval ranking over larger windows such as 512, 1024, and 2048
+   - binary or bit-sliced representations without hand-selected small moduli
 
 3. Expand ablations.
    - different small-prime feature sets
    - remove overflow action
    - compare raw residues against divisibility flags
+   - compare interval-prime learning with and without `normalized_gap`
    - compare chronological vs randomized train splits
 
 4. Add RL-only experiments.
@@ -155,4 +175,5 @@ Model-assisted exact verification currently does not beat wheel or block verific
 The most promising next implementation is a harder task variant. The current metrics show the policy
 can rank candidates well, but the strongest classical wheel baseline explains much of that lift.
 The next experiment should keep the perfect verifier but ask the model for something less reducible
-to small-prime masking plus empirical gap frequency.
+to small-prime masking plus empirical gap frequency. The cleanest next version is a wider interval
+or a less hand-engineered binary representation.

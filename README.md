@@ -126,6 +126,14 @@ temperature-scaled supervised vs temperature-scaled strict-RL calibration
 
 The train range is split chronologically into fit and calibration subsets before evaluation on the held-out prime range. The example also includes a wheel-survivor task variant that ranks only candidate gaps not eliminated by the small-prime feature wheel; this makes the "learned proposal" question stricter by comparing against a cheap non-neural sieve prior.
 
+It also includes a fixed-window interval task:
+
+```text
+target = uniform distribution over every prime p + g for even gaps 2..256
+```
+
+This is deliberately not next-gap prediction. It asks whether the scorer can rank all prime candidates in a local interval, with interval-frequency and interval-wheel-frequency baselines reported beside linear and MLP scorers. The same interval task is also run with raw normalized residue features instead of explicit divisibility flags, so we can test whether the network learns a sieve-like rule rather than receiving one directly.
+
 The CLI output is split into human-readable sections:
 
 ```text
@@ -137,7 +145,7 @@ verifier diagnostics: exact classical work needed to verify or correct proposals
 
 `proposal_steps` measures how quickly the true action appears in the model's proposal order. `wheel exact` measures how many exact sieve primality probes remain after small-prime divisibility filters eliminate obvious composites. `assisted_wheel` tries the model's top-10 proposals before falling back to wheel scan. `block cost` estimates segmented interval-proof work by marking composites with base primes up to `sqrt(p + g)`, and `assisted_block` tries model proposals before falling back to the block scan. These verifier metrics are reported separately because an exact next-prime verifier still has to rule out earlier candidates.
 
-Current interpretation: the network learns a strong gap-ranking prior, but much of the easy top-k lift comes from small-prime divisibility structure. The wheel-frequency and linear-scorer baselines are intentionally strong checks on that. Exact next-prime verification remains the classical algorithm's job. That is expected and useful: the experiment is about learned proposal capability under perfect verification, not replacing the verifier.
+Current interpretation: the network learns a strong gap-ranking prior, but much of the easy top-k lift comes from small-prime divisibility structure. The wheel-frequency and linear-scorer baselines are intentionally strong checks on that. The interval-prime task shows the same pattern: the MLP improves probability quality, but top-rank behavior is still largely explained by the wheel prior. The raw-residue interval variant removes the direct composite flags while keeping compact modular information; on the default run the raw-residue MLP recovers most of the wheel behavior, while the raw-residue linear scorer lags. Exact next-prime verification remains the classical algorithm's job. That is expected and useful: the experiment is about learned proposal capability under perfect verification, not replacing the verifier.
 
 Run a larger split sweep with:
 
@@ -214,6 +222,16 @@ nn_real loss = nn_train_softmax_scorer_entropy(scorer,
                                                candidate_count,
                                                true_candidate_index,
                                                0.10f,
+                                               0.005f);
+```
+
+Use target-distribution scorer training when more than one candidate should be treated as correct:
+
+```c
+nn_real loss = nn_train_softmax_scorer_targets(scorer,
+                                               candidate_inputs,
+                                               candidate_count,
+                                               target_distribution,
                                                0.005f);
 ```
 

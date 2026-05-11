@@ -161,6 +161,29 @@ static nn_real scorer_entropy_loss(NeuralNet *net,
            entropy_weight * entropy;
 }
 
+static nn_real scorer_targets_loss(NeuralNet *net,
+                                   const nn_real *candidate_inputs,
+                                   const nn_real *targets,
+                                   size_t candidate_count)
+{
+    nn_real scores[8];
+    nn_real target_sum = 0;
+
+    if (candidate_count > sizeof(scores) / sizeof(scores[0])) {
+        return (nn_real)NAN;
+    }
+
+    nn_forward_batch(net, candidate_inputs, scores, candidate_count);
+    for (size_t i = 0; i < candidate_count; ++i) {
+        target_sum += targets[i];
+    }
+    if (target_sum <= (nn_real)0) {
+        return (nn_real)NAN;
+    }
+
+    return nn_softmax_cross_entropy(scores, targets, candidate_count) / target_sum;
+}
+
 static int test_forward_batch_matches_scalar(void)
 {
     const size_t layers[] = {5, 7, 3};
@@ -503,6 +526,70 @@ static int test_softmax_scorer_entropy_gradient_matches_finite_difference(void)
     return ok;
 }
 
+static int test_softmax_scorer_targets_gradient_matches_finite_difference(void)
+{
+    const size_t layers[] = {4, 5, 1};
+    const size_t candidate_count = 4;
+    const nn_real learning_rate = (nn_real)1e-3;
+    const nn_real candidate_inputs[] = {
+        0.10, 0.20, 0.30, 0.40,
+        0.30, 0.10, 0.70, 0.20,
+        0.80, 0.20, 0.10, 0.60,
+        0.25, 0.50, 0.25, 0.75,
+    };
+    const nn_real targets[] = {0, 2, 1, 0};
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = 3;
+    config.seed = 7531;
+    config.hidden_activation = NN_ACTIVATION_TANH;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+
+    NeuralNet *base_net = nn_create_config(&config);
+    NeuralNet *update_net = nn_create_config(&config);
+    int ok = 1;
+
+    if (base_net == NULL || update_net == NULL) {
+        nn_free(base_net);
+        nn_free(update_net);
+        return 0;
+    }
+
+    nn_train_softmax_scorer_targets(update_net,
+                                    candidate_inputs,
+                                    candidate_count,
+                                    targets,
+                                    learning_rate);
+
+    for (size_t i = 0; i < nn_parameter_count(base_net); ++i) {
+        nn_real original = nn_test_get_parameter(base_net, i);
+        nn_real updated = nn_test_get_parameter(update_net, i);
+        nn_real analytic = (original - updated) / learning_rate;
+
+        nn_test_set_parameter(base_net, i, original + TEST_EPS);
+        nn_real plus_loss = scorer_targets_loss(base_net, candidate_inputs, targets, candidate_count);
+        nn_test_set_parameter(base_net, i, original - TEST_EPS);
+        nn_real minus_loss = scorer_targets_loss(base_net, candidate_inputs, targets, candidate_count);
+        nn_test_set_parameter(base_net, i, original);
+
+        nn_real numeric = (plus_loss - minus_loss) / ((nn_real)2 * TEST_EPS);
+        if (!nearly_equal(analytic, numeric, TEST_ABS_TOL, TEST_REL_TOL)) {
+            fprintf(stderr,
+                    "target scorer gradient mismatch param=%zu analytic=%g numeric=%g\n",
+                    i,
+                    (double)analytic,
+                    (double)numeric);
+            ok = 0;
+            break;
+        }
+    }
+
+    nn_free(base_net);
+    nn_free(update_net);
+    return ok;
+}
+
 static int test_softmax_cross_entropy_requires_linear_output(void)
 {
     const size_t layers[] = {3, 4, 3};
@@ -596,6 +683,22 @@ static int test_prime_gap_features_are_divisibility_flags(void)
            gap2[7] == (nn_real)0 && overflow[2] == (nn_real)1 &&
            masked_gap4[0] == (nn_real)0 && masked_gap4[1] > (nn_real)0 &&
            masked_gap4[3] == (nn_real)0 && masked_overflow[2] == (nn_real)1;
+}
+
+static int test_prime_gap_raw_residue_features_are_not_divisibility_flags(void)
+{
+    nn_real inputs[ACTION_COUNT * FEATURE_COUNT];
+    fill_candidate_features_masked(inputs, 11, log(1000.0), &FEATURE_MASK_RAW_RESIDUE);
+
+    const nn_real *gap2 = &inputs[0 * FEATURE_COUNT];
+    const nn_real *gap4 = &inputs[1 * FEATURE_COUNT];
+
+    return nearly_equal(gap2[3], (nn_real)(1.0 / 3.0), (nn_real)1e-6, (nn_real)1e-6) &&
+           gap4[3] == (nn_real)0 &&
+           gap4[4] == (nn_real)0 &&
+           gap4[3] != (nn_real)1 &&
+           gap2[1] > (nn_real)0 &&
+           gap2[2] == (nn_real)0;
 }
 
 static int test_prime_gap_frequency_policy_is_smoothed(void)
@@ -818,6 +921,54 @@ static int test_prime_gap_wheel_frequency_policy_masks_rejected_actions(void)
     return ok;
 }
 
+static int test_prime_gap_interval_targets_include_all_primes(void)
+{
+    Sieve sieve;
+    nn_real targets[EXACT_ACTION_COUNT];
+    double sum = 0.0;
+    size_t positives;
+    int ok;
+
+    if (!build_sieve(300, &sieve)) {
+        return 0;
+    }
+
+    positives = build_interval_prime_targets(&sieve, 11, targets);
+    for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
+        sum += (double)targets[action];
+    }
+
+    ok = positives > 1 &&
+         targets[gap_to_action(2)] > (nn_real)0 &&
+         targets[gap_to_action(4)] == (nn_real)0 &&
+         targets[gap_to_action(6)] > (nn_real)0 &&
+         fabs(sum - 1.0) < 1e-5;
+
+    free_sieve(&sieve);
+    return ok;
+}
+
+static int test_prime_gap_interval_wheel_frequency_masks_rejected_actions(void)
+{
+    nn_real base_probabilities[EXACT_ACTION_COUNT];
+    nn_real wheel_probabilities[EXACT_ACTION_COUNT];
+    size_t ranked[EXACT_ACTION_COUNT];
+    double sum = 0.0;
+
+    for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
+        base_probabilities[action] = (nn_real)1 / (nn_real)EXACT_ACTION_COUNT;
+    }
+
+    score_interval_wheel_frequency_policy(base_probabilities, 11, ranked, wheel_probabilities);
+    for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
+        sum += (double)wheel_probabilities[action];
+    }
+
+    return wheel_probabilities[gap_to_action(4)] == (nn_real)0 &&
+           ranked[0] != gap_to_action(4) &&
+           fabs(sum - 1.0) < 1e-5;
+}
+
 int main(void)
 {
     check(test_forward_batch_matches_scalar(), "batched forward matches scalar");
@@ -831,12 +982,16 @@ int main(void)
           "softmax scorer gradient matches finite difference");
     check(test_softmax_scorer_entropy_gradient_matches_finite_difference(),
           "softmax scorer entropy gradient matches finite difference");
+    check(test_softmax_scorer_targets_gradient_matches_finite_difference(),
+          "softmax scorer target distribution gradient matches finite difference");
     check(test_softmax_cross_entropy_requires_linear_output(),
           "softmax cross-entropy requires linear output");
     check(test_softmax_scorer_cached_matches_regular(),
           "softmax scorer cached update matches regular update");
     check(test_prime_gap_features_are_divisibility_flags(),
           "prime-gap features are divisibility flags");
+    check(test_prime_gap_raw_residue_features_are_not_divisibility_flags(),
+          "prime-gap raw residue features are not divisibility flags");
     check(test_prime_gap_frequency_policy_is_smoothed(),
           "prime-gap frequency policy is smoothed");
     check(test_prime_gap_residue_conditioned_policy_scores_candidates(),
@@ -851,6 +1006,10 @@ int main(void)
           "prime-gap wheel-survivor features include target");
     check(test_prime_gap_wheel_frequency_policy_masks_rejected_actions(),
           "prime-gap wheel-frequency masks rejected actions");
+    check(test_prime_gap_interval_targets_include_all_primes(),
+          "prime-gap interval targets include all primes");
+    check(test_prime_gap_interval_wheel_frequency_masks_rejected_actions(),
+          "prime-gap interval wheel-frequency masks rejected actions");
 
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

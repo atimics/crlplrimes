@@ -1430,6 +1430,54 @@ static nn_real train_softmax_scorer_from_workspace(NeuralNet *net,
     return loss;
 }
 
+static nn_real train_softmax_scorer_targets_from_workspace(NeuralNet *net,
+                                                           size_t candidate_count,
+                                                           const nn_real *target_distribution,
+                                                           nn_real learning_rate)
+{
+    if (!ensure_gradient_buffers(net)) {
+        return (nn_real)NAN;
+    }
+
+    zero_gradients(net);
+
+    size_t output_layer = net->layer_count - 1;
+    const nn_real *scores = net->batch_activations[output_layer];
+    nn_real *output_deltas = net->batch_deltas[output_layer];
+    nn_softmax(scores, output_deltas, candidate_count);
+    nn_real target_sum = 0;
+    for (size_t sample = 0; sample < candidate_count; ++sample) {
+        target_sum += target_distribution[sample];
+    }
+    nn_real loss =
+        nn_softmax_cross_entropy(scores, target_distribution, candidate_count) / target_sum;
+
+    for (size_t sample = 0; sample < candidate_count; ++sample) {
+        nn_real score = scores[sample];
+        nn_real normalized_target = target_distribution[sample] / target_sum;
+        output_deltas[sample] =
+            (output_deltas[sample] - normalized_target) *
+            activation_derivative_from_activation(score, net->output_activation);
+    }
+
+    for (size_t layer = net->layer_count - 2; layer > 0; --layer) {
+        size_t current = net->sizes[layer];
+        size_t next = net->sizes[layer + 1];
+        dense_backprop_deltas_batch(net->batch_deltas[layer + 1],
+                                    net->weights[layer + 1],
+                                    net->batch_activations[layer],
+                                    net->batch_deltas[layer],
+                                    candidate_count,
+                                    current,
+                                    next,
+                                    activation_for_layer(net, layer));
+    }
+
+    accumulate_batch_gradients(net, candidate_count);
+    apply_gradients(net, learning_rate);
+    return loss;
+}
+
 nn_real nn_train_softmax_scorer_cached(NeuralNet *net,
                                        size_t candidate_count,
                                        size_t selected_index,
@@ -1513,6 +1561,42 @@ nn_real nn_train_softmax_scorer_entropy(NeuralNet *net,
     forward_batch_workspace(net, candidate_count);
     return train_softmax_scorer_from_workspace(
         net, candidate_count, target_index, (nn_real)1, entropy_weight, learning_rate);
+}
+
+nn_real nn_train_softmax_scorer_targets(NeuralNet *net,
+                                        const nn_real *candidate_inputs,
+                                        size_t candidate_count,
+                                        const nn_real *target_distribution,
+                                        nn_real learning_rate)
+{
+    if (net == NULL || candidate_inputs == NULL || target_distribution == NULL ||
+        candidate_count == 0 || learning_rate <= (nn_real)0 || nn_output_size(net) != 1 ||
+        net->output_activation != NN_ACTIVATION_LINEAR) {
+        return (nn_real)NAN;
+    }
+
+    nn_real target_sum = 0;
+    for (size_t i = 0; i < candidate_count; ++i) {
+        if (target_distribution[i] < (nn_real)0) {
+            return (nn_real)NAN;
+        }
+        target_sum += target_distribution[i];
+    }
+    if (target_sum <= (nn_real)0) {
+        return (nn_real)NAN;
+    }
+
+    if (!ensure_batch_workspace(net, candidate_count)) {
+        return (nn_real)NAN;
+    }
+
+    size_t input_width = nn_input_size(net);
+    memcpy(net->batch_activations[0],
+           candidate_inputs,
+           candidate_count * input_width * sizeof(*candidate_inputs));
+    forward_batch_workspace(net, candidate_count);
+    return train_softmax_scorer_targets_from_workspace(
+        net, candidate_count, target_distribution, learning_rate);
 }
 
 nn_real nn_train(NeuralNet *net,
