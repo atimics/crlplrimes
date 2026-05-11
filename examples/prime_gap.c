@@ -12,6 +12,8 @@ enum {
     EXACT_ACTION_COUNT = G_MAX / 2,
     OVERFLOW_ACTION = EXACT_ACTION_COUNT,
     ACTION_COUNT = EXACT_ACTION_COUNT + 1,
+    INTERVAL_MAX_GAP = 2048,
+    INTERVAL_MAX_ACTION_COUNT = INTERVAL_MAX_GAP / 2,
     FEATURE_MOD_COUNT = 10,
     FEATURE_COUNT = 3 + FEATURE_MOD_COUNT,
     DEFAULT_TRAIN_LIMIT = 1000000,
@@ -27,6 +29,7 @@ enum {
 };
 
 static const uint32_t FEATURE_MODS[FEATURE_MOD_COUNT] = {3, 5, 7, 11, 13, 17, 19, 23, 29, 31};
+static const uint32_t INTERVAL_SWEEP_GAPS[] = {512, 1024, 2048};
 static const double TEMPERATURE_GRID[] = {0.50, 0.75, 1.00, 1.25, 1.50, 2.00, 3.00, 4.00, 6.00, 8.00};
 static const nn_real SUPERVISED_ENTROPY_WEIGHT = (nn_real)0.10;
 
@@ -390,6 +393,11 @@ static size_t action_gap(size_t action)
     return (action + 1) * 2;
 }
 
+static uint32_t indexed_gap(size_t action)
+{
+    return (uint32_t)((action + 1u) * 2u);
+}
+
 static size_t gap_to_action(uint32_t gap)
 {
     if (gap > G_MAX) {
@@ -413,14 +421,10 @@ static double gap_error_for_action(size_t action, uint32_t true_gap)
     return fabs((double)action_gap(action) - (double)true_gap);
 }
 
-static size_t candidate_signature(uint32_t p, size_t action)
+static size_t candidate_gap_signature(uint32_t p, uint32_t gap)
 {
-    if (action_is_overflow(action)) {
-        return RESIDUE_SIGNATURE_COUNT;
-    }
-
     size_t signature = 0;
-    uint32_t candidate = p + (uint32_t)action_gap(action);
+    uint32_t candidate = p + gap;
     for (size_t i = 0; i < FEATURE_MOD_COUNT; ++i) {
         uint32_t mod = FEATURE_MODS[i];
         if (candidate > mod && candidate % mod == 0) {
@@ -431,16 +435,32 @@ static size_t candidate_signature(uint32_t p, size_t action)
     return signature;
 }
 
+static size_t candidate_signature(uint32_t p, size_t action)
+{
+    if (action_is_overflow(action)) {
+        return RESIDUE_SIGNATURE_COUNT;
+    }
+
+    return candidate_gap_signature(p, (uint32_t)action_gap(action));
+}
+
+static int gap_survives_feature_wheel(uint32_t p, uint32_t gap)
+{
+    return candidate_gap_signature(p, gap) == 0;
+}
+
 static int action_survives_feature_wheel(uint32_t p, size_t action)
 {
     return action_is_overflow(action) || candidate_signature(p, action) == 0;
 }
 
-static void fill_action_features(nn_real *row,
-                                 uint32_t p,
-                                 size_t action,
-                                 double log_scale,
-                                 const FeatureMask *mask)
+static void fill_gap_features(nn_real *row,
+                              uint32_t p,
+                              uint32_t gap,
+                              int overflow,
+                              double gap_scale,
+                              double log_scale,
+                              const FeatureMask *mask)
 {
     if (mask == NULL) {
         mask = &FEATURE_MASK_FULL;
@@ -448,17 +468,15 @@ static void fill_action_features(nn_real *row,
 
     double log_p = log((double)p) / log_scale;
     row[0] = mask->use_log ? (nn_real)log_p : (nn_real)0;
-    row[1] = mask->use_gap ? (nn_real)((double)action_gap(action) / (double)G_MAX)
-                           : (nn_real)0;
-    row[2] = mask->use_overflow && action_is_overflow(action) ? (nn_real)1 : (nn_real)0;
-    if (action_is_overflow(action)) {
+    row[1] = mask->use_gap ? (nn_real)((double)gap / gap_scale) : (nn_real)0;
+    row[2] = mask->use_overflow && overflow ? (nn_real)1 : (nn_real)0;
+    if (overflow) {
         for (size_t i = 0; i < FEATURE_MOD_COUNT; ++i) {
             row[3 + i] = 0;
         }
         return;
     }
 
-    uint32_t gap = (uint32_t)action_gap(action);
     uint32_t candidate = p + gap;
     for (size_t i = 0; i < FEATURE_MOD_COUNT; ++i) {
         uint32_t mod = FEATURE_MODS[i];
@@ -472,6 +490,21 @@ static void fill_action_features(nn_real *row,
             row[3 + i] = 0;
         }
     }
+}
+
+static void fill_action_features(nn_real *row,
+                                 uint32_t p,
+                                 size_t action,
+                                 double log_scale,
+                                 const FeatureMask *mask)
+{
+    fill_gap_features(row,
+                      p,
+                      (uint32_t)action_gap(action),
+                      action_is_overflow(action),
+                      (double)G_MAX,
+                      log_scale,
+                      mask);
 }
 
 static void fill_candidate_features_masked(nn_real *inputs,
@@ -1244,22 +1277,31 @@ static EvalMetrics evaluate_static_policy(const Sieve *sieve,
 
 static void fill_interval_candidate_features(nn_real *inputs,
                                              uint32_t p,
+                                             size_t candidate_count,
+                                             double gap_scale,
                                              double log_scale,
                                              const FeatureMask *mask)
 {
-    for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
-        fill_action_features(&inputs[action * FEATURE_COUNT], p, action, log_scale, mask);
+    for (size_t action = 0; action < candidate_count; ++action) {
+        fill_gap_features(&inputs[action * FEATURE_COUNT],
+                          p,
+                          indexed_gap(action),
+                          0,
+                          gap_scale,
+                          log_scale,
+                          mask);
     }
 }
 
 static size_t build_interval_prime_targets(const Sieve *sieve,
                                            uint32_t p,
+                                           size_t candidate_count,
                                            nn_real *targets)
 {
     size_t positive_count = 0;
 
-    for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
-        uint32_t candidate = p + (uint32_t)action_gap(action);
+    for (size_t action = 0; action < candidate_count; ++action) {
+        uint32_t candidate = p + indexed_gap(action);
         int positive = is_prime_sieve(sieve, candidate);
         targets[action] = positive ? (nn_real)1 : (nn_real)0;
         positive_count += positive ? 1u : 0u;
@@ -1270,7 +1312,7 @@ static size_t build_interval_prime_targets(const Sieve *sieve,
     }
 
     nn_real target = (nn_real)1 / (nn_real)positive_count;
-    for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
+    for (size_t action = 0; action < candidate_count; ++action) {
         if (targets[action] > (nn_real)0) {
             targets[action] = target;
         }
@@ -1284,23 +1326,24 @@ static void accumulate_interval_sample(IntervalMetrics *metrics,
                                        const size_t *ranked,
                                        const nn_real *probabilities,
                                        const nn_real *targets,
+                                       size_t candidate_count,
                                        size_t positive_count)
 {
-    size_t top_limit_5 = EXACT_ACTION_COUNT < 5 ? EXACT_ACTION_COUNT : 5;
-    size_t top_limit_10 = EXACT_ACTION_COUNT < 10 ? EXACT_ACTION_COUNT : 10;
+    size_t top_limit_5 = candidate_count < 5 ? candidate_count : 5;
+    size_t top_limit_10 = candidate_count < 10 ? candidate_count : 10;
     size_t hits = 0;
     size_t hits5 = 0;
     size_t hits10 = 0;
     double average_precision = 0.0;
     double positive_probability = 0.0;
     double nll = 0.0;
-    size_t first_rank = EXACT_ACTION_COUNT;
+    size_t first_rank = candidate_count;
 
     if (positive_count == 0) {
         return;
     }
 
-    for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
+    for (size_t action = 0; action < candidate_count; ++action) {
         if (targets[action] <= (nn_real)0) {
             continue;
         }
@@ -1308,13 +1351,13 @@ static void accumulate_interval_sample(IntervalMetrics *metrics,
         nll -= (double)targets[action] * log(safe_probability((double)probabilities[action]));
     }
 
-    for (size_t rank = 0; rank < EXACT_ACTION_COUNT; ++rank) {
+    for (size_t rank = 0; rank < candidate_count; ++rank) {
         size_t action = ranked[rank];
         if (targets[action] <= (nn_real)0) {
             continue;
         }
 
-        if (first_rank == EXACT_ACTION_COUNT) {
+        if (first_rank == candidate_count) {
             first_rank = rank;
         }
         ++hits;
@@ -1332,7 +1375,8 @@ static void accumulate_interval_sample(IntervalMetrics *metrics,
     metrics->top1_prime += targets[ranked[0]] > (nn_real)0 ? 1u : 0u;
     metrics->top5_any_prime += hits5 != 0 ? 1u : 0u;
     metrics->top10_any_prime += hits10 != 0 ? 1u : 0u;
-    metrics->top1_wheel_survivor += action_survives_feature_wheel(p, ranked[0]) ? 1u : 0u;
+    metrics->top1_wheel_survivor +=
+        gap_survives_feature_wheel(p, indexed_gap(ranked[0])) ? 1u : 0u;
     metrics->positive_probability += positive_probability;
     metrics->nll += nll;
     metrics->mean_average_precision += average_precision / (double)positive_count;
@@ -1359,6 +1403,8 @@ static IntervalMetrics evaluate_interval_model(NeuralNet *net,
                                                const Sieve *sieve,
                                                const GapDataset *dataset,
                                                size_t max_states,
+                                               size_t candidate_count,
+                                               double gap_scale,
                                                double log_scale,
                                                const FeatureMask *mask,
                                                nn_real *candidate_inputs,
@@ -1373,25 +1419,31 @@ static IntervalMetrics evaluate_interval_model(NeuralNet *net,
     if (max_states != 0 && max_states < samples) {
         samples = max_states;
     }
+    if (candidate_count == 0 || candidate_count > INTERVAL_MAX_ACTION_COUNT) {
+        finalize_interval_metrics(&metrics);
+        return metrics;
+    }
 
-    size_t ranked[EXACT_ACTION_COUNT];
+    size_t ranked[INTERVAL_MAX_ACTION_COUNT];
     for (size_t sample = 0; sample < samples; ++sample) {
         size_t index = eval_sample_index(dataset, sample, samples);
         uint32_t p = dataset->prime[index];
-        size_t positive_count = build_interval_prime_targets(sieve, p, targets);
+        size_t positive_count = build_interval_prime_targets(sieve, p, candidate_count, targets);
         if (positive_count == 0) {
             continue;
         }
 
-        fill_interval_candidate_features(candidate_inputs, p, log_scale, mask);
-        nn_forward_batch(net, candidate_inputs, scores, EXACT_ACTION_COUNT);
-        softmax_temperature(scores, probabilities, EXACT_ACTION_COUNT, 1.0);
-        rank_actions_count(scores, EXACT_ACTION_COUNT, ranked);
+        fill_interval_candidate_features(
+            candidate_inputs, p, candidate_count, gap_scale, log_scale, mask);
+        nn_forward_batch(net, candidate_inputs, scores, candidate_count);
+        softmax_temperature(scores, probabilities, candidate_count, 1.0);
+        rank_actions_count(scores, candidate_count, ranked);
         accumulate_interval_sample(&metrics,
                                    p,
                                    ranked,
                                    probabilities,
                                    targets,
+                                   candidate_count,
                                    positive_count);
     }
 
@@ -1713,43 +1765,51 @@ static EvalMetrics evaluate_wheel_frequency_policy(const Sieve *sieve,
 
 static void build_interval_frequency_policy(const Sieve *sieve,
                                             const GapDataset *dataset,
+                                            size_t candidate_count,
                                             size_t *ranked,
                                             nn_real *probabilities)
 {
-    size_t counts[EXACT_ACTION_COUNT] = {0};
-    nn_real scores[EXACT_ACTION_COUNT];
+    size_t counts[INTERVAL_MAX_ACTION_COUNT] = {0};
+    nn_real scores[INTERVAL_MAX_ACTION_COUNT];
     double sum = 0.0;
+
+    if (candidate_count > INTERVAL_MAX_ACTION_COUNT) {
+        candidate_count = INTERVAL_MAX_ACTION_COUNT;
+    }
 
     for (size_t i = 0; i < dataset->count; ++i) {
         uint32_t p = dataset->prime[i];
-        for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
-            uint32_t candidate = p + (uint32_t)action_gap(action);
+        for (size_t action = 0; action < candidate_count; ++action) {
+            uint32_t candidate = p + indexed_gap(action);
             if (is_prime_sieve(sieve, candidate)) {
                 ++counts[action];
             }
         }
     }
 
-    for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
+    for (size_t action = 0; action < candidate_count; ++action) {
         scores[action] = (nn_real)((double)counts[action] + 1.0);
         sum += (double)scores[action];
     }
 
-    for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
+    for (size_t action = 0; action < candidate_count; ++action) {
         probabilities[action] = (nn_real)((double)scores[action] / sum);
     }
 
-    rank_actions_count(scores, EXACT_ACTION_COUNT, ranked);
+    rank_actions_count(scores, candidate_count, ranked);
 }
 
-static void rank_interval_wheel(const nn_real *scores, uint32_t p, size_t *ranked)
+static void rank_interval_wheel(const nn_real *scores,
+                                uint32_t p,
+                                size_t candidate_count,
+                                size_t *ranked)
 {
     size_t survivor_count = 0;
     size_t rejected_count = 0;
-    size_t rejected[EXACT_ACTION_COUNT];
+    size_t rejected[INTERVAL_MAX_ACTION_COUNT];
 
-    for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
-        if (action_survives_feature_wheel(p, action)) {
+    for (size_t action = 0; action < candidate_count; ++action) {
+        if (gap_survives_feature_wheel(p, indexed_gap(action))) {
             ranked[survivor_count++] = action;
         } else {
             rejected[rejected_count++] = action;
@@ -1776,15 +1836,16 @@ static void rank_interval_wheel(const nn_real *scores, uint32_t p, size_t *ranke
 
 static void score_interval_wheel_frequency_policy(const nn_real *base_probabilities,
                                                   uint32_t p,
+                                                  size_t candidate_count,
                                                   size_t *ranked,
                                                   nn_real *probabilities)
 {
-    nn_real scores[EXACT_ACTION_COUNT];
+    nn_real scores[INTERVAL_MAX_ACTION_COUNT];
     double sum = 0.0;
     size_t survivor_count = 0;
 
-    for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
-        if (!action_survives_feature_wheel(p, action)) {
+    for (size_t action = 0; action < candidate_count; ++action) {
+        if (!gap_survives_feature_wheel(p, indexed_gap(action))) {
             probabilities[action] = 0;
             scores[action] = 0;
             continue;
@@ -1797,27 +1858,30 @@ static void score_interval_wheel_frequency_policy(const nn_real *base_probabilit
 
     if (sum <= 0.0) {
         nn_real uniform = survivor_count == 0
-                              ? (nn_real)1 / (nn_real)EXACT_ACTION_COUNT
+                              ? (nn_real)1 / (nn_real)candidate_count
                               : (nn_real)1 / (nn_real)survivor_count;
-        for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
+        for (size_t action = 0; action < candidate_count; ++action) {
             probabilities[action] =
-                survivor_count == 0 || action_survives_feature_wheel(p, action) ? uniform : 0;
+                survivor_count == 0 || gap_survives_feature_wheel(p, indexed_gap(action))
+                    ? uniform
+                    : 0;
         }
     } else {
-        for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
-            probabilities[action] = action_survives_feature_wheel(p, action)
+        for (size_t action = 0; action < candidate_count; ++action) {
+            probabilities[action] = gap_survives_feature_wheel(p, indexed_gap(action))
                                         ? (nn_real)((double)scores[action] / sum)
                                         : (nn_real)0;
         }
     }
 
-    rank_interval_wheel(scores, p, ranked);
+    rank_interval_wheel(scores, p, candidate_count, ranked);
 }
 
 static IntervalMetrics evaluate_interval_static_policy(const Sieve *sieve,
                                                        const GapDataset *dataset,
                                                        const size_t *ranked,
                                                        const nn_real *probabilities,
+                                                       size_t candidate_count,
                                                        size_t max_states,
                                                        nn_real *targets)
 {
@@ -1828,17 +1892,21 @@ static IntervalMetrics evaluate_interval_static_policy(const Sieve *sieve,
     if (max_states != 0 && max_states < samples) {
         samples = max_states;
     }
+    if (candidate_count == 0 || candidate_count > INTERVAL_MAX_ACTION_COUNT) {
+        finalize_interval_metrics(&metrics);
+        return metrics;
+    }
 
     for (size_t sample = 0; sample < samples; ++sample) {
         size_t index = eval_sample_index(dataset, sample, samples);
         uint32_t p = dataset->prime[index];
-        size_t positive_count = build_interval_prime_targets(sieve, p, targets);
+        size_t positive_count = build_interval_prime_targets(sieve, p, candidate_count, targets);
         if (positive_count == 0) {
             continue;
         }
 
         accumulate_interval_sample(
-            &metrics, p, ranked, probabilities, targets, positive_count);
+            &metrics, p, ranked, probabilities, targets, candidate_count, positive_count);
     }
 
     finalize_interval_metrics(&metrics);
@@ -1848,6 +1916,7 @@ static IntervalMetrics evaluate_interval_static_policy(const Sieve *sieve,
 static IntervalMetrics evaluate_interval_wheel_frequency_policy(const Sieve *sieve,
                                                                 const GapDataset *dataset,
                                                                 const nn_real *base_probabilities,
+                                                                size_t candidate_count,
                                                                 size_t max_states,
                                                                 nn_real *probabilities,
                                                                 nn_real *targets)
@@ -1859,19 +1928,24 @@ static IntervalMetrics evaluate_interval_wheel_frequency_policy(const Sieve *sie
     if (max_states != 0 && max_states < samples) {
         samples = max_states;
     }
+    if (candidate_count == 0 || candidate_count > INTERVAL_MAX_ACTION_COUNT) {
+        finalize_interval_metrics(&metrics);
+        return metrics;
+    }
 
-    size_t ranked[EXACT_ACTION_COUNT];
+    size_t ranked[INTERVAL_MAX_ACTION_COUNT];
     for (size_t sample = 0; sample < samples; ++sample) {
         size_t index = eval_sample_index(dataset, sample, samples);
         uint32_t p = dataset->prime[index];
-        size_t positive_count = build_interval_prime_targets(sieve, p, targets);
+        size_t positive_count = build_interval_prime_targets(sieve, p, candidate_count, targets);
         if (positive_count == 0) {
             continue;
         }
 
-        score_interval_wheel_frequency_policy(base_probabilities, p, ranked, probabilities);
+        score_interval_wheel_frequency_policy(
+            base_probabilities, p, candidate_count, ranked, probabilities);
         accumulate_interval_sample(
-            &metrics, p, ranked, probabilities, targets, positive_count);
+            &metrics, p, ranked, probabilities, targets, candidate_count, positive_count);
     }
 
     finalize_interval_metrics(&metrics);
@@ -2053,6 +2127,8 @@ static int train_interval_supervised(NeuralNet *net,
                                      const Sieve *sieve,
                                      const GapDataset *dataset,
                                      size_t max_states,
+                                     size_t candidate_count,
+                                     double gap_scale,
                                      size_t epochs,
                                      nn_real learning_rate,
                                      double log_scale,
@@ -2066,6 +2142,9 @@ static int train_interval_supervised(NeuralNet *net,
     if (max_states != 0 && max_states < train_steps) {
         train_steps = max_states;
     }
+    if (candidate_count == 0 || candidate_count > INTERVAL_MAX_ACTION_COUNT) {
+        return 0;
+    }
 
     for (size_t epoch = 0; epoch < epochs; ++epoch) {
         shuffle_order(order, dataset->count, rng);
@@ -2077,15 +2156,16 @@ static int train_interval_supervised(NeuralNet *net,
         for (size_t step = 0; step < train_steps; ++step) {
             size_t index = order[step];
             uint32_t p = dataset->prime[index];
-            size_t positive_count = build_interval_prime_targets(sieve, p, targets);
+            size_t positive_count = build_interval_prime_targets(sieve, p, candidate_count, targets);
             if (positive_count == 0) {
                 continue;
             }
 
-            fill_interval_candidate_features(candidate_inputs, p, log_scale, mask);
+            fill_interval_candidate_features(
+                candidate_inputs, p, candidate_count, gap_scale, log_scale, mask);
             nn_real step_loss = nn_train_softmax_scorer_targets(net,
                                                                 candidate_inputs,
-                                                                EXACT_ACTION_COUNT,
+                                                                candidate_count,
                                                                 targets,
                                                                 learning_rate);
             if (isnan((double)step_loss)) {
@@ -2276,7 +2356,7 @@ int main(int argc, char **argv)
 
     uint32_t train_limit = (uint32_t)train_limit_arg;
     uint32_t test_limit = (uint32_t)test_limit_arg;
-    uint32_t sieve_limit = test_limit + (uint32_t)G_MAX;
+    uint32_t sieve_limit = test_limit + (uint32_t)INTERVAL_MAX_GAP;
 
     printf("prime-gap scorer train_limit=%u test_limit=%u g_max=%d actions=%d features=%d\n",
            train_limit,
@@ -2359,10 +2439,14 @@ int main(int argc, char **argv)
     NeuralNet *interval_linear_net = NULL;
     NeuralNet *interval_raw_net = NULL;
     NeuralNet *interval_raw_linear_net = NULL;
-    nn_real *candidate_inputs = calloc((size_t)ACTION_COUNT * FEATURE_COUNT, sizeof(*candidate_inputs));
-    nn_real *scores = calloc(ACTION_COUNT, sizeof(*scores));
-    nn_real *probabilities = calloc(ACTION_COUNT, sizeof(*probabilities));
-    nn_real *target_distribution = calloc(EXACT_ACTION_COUNT, sizeof(*target_distribution));
+    size_t max_candidate_rows = ACTION_COUNT > INTERVAL_MAX_ACTION_COUNT
+                                    ? ACTION_COUNT
+                                    : INTERVAL_MAX_ACTION_COUNT;
+    nn_real *candidate_inputs =
+        calloc(max_candidate_rows * FEATURE_COUNT, sizeof(*candidate_inputs));
+    nn_real *scores = calloc(max_candidate_rows, sizeof(*scores));
+    nn_real *probabilities = calloc(max_candidate_rows, sizeof(*probabilities));
+    nn_real *target_distribution = calloc(INTERVAL_MAX_ACTION_COUNT, sizeof(*target_distribution));
     size_t *order = calloc(fit.count, sizeof(*order));
     if (net == NULL || candidate_inputs == NULL || scores == NULL || probabilities == NULL ||
         target_distribution == NULL || order == NULL) {
@@ -2613,10 +2697,11 @@ int main(int argc, char **argv)
     printf("\n=== Interval Prime Ranking Task ===\n");
     printf("Target is a distribution over every prime p+g in the 2..%d gap window, not only the next gap.\n",
            G_MAX);
-    size_t interval_frequency_ranked[EXACT_ACTION_COUNT];
-    nn_real interval_frequency_probabilities[EXACT_ACTION_COUNT];
+    size_t interval_frequency_ranked[INTERVAL_MAX_ACTION_COUNT];
+    nn_real interval_frequency_probabilities[INTERVAL_MAX_ACTION_COUNT];
     build_interval_frequency_policy(&sieve,
                                     &fit,
+                                    EXACT_ACTION_COUNT,
                                     interval_frequency_ranked,
                                     interval_frequency_probabilities);
     print_interval_metrics("baseline interval-frequency",
@@ -2624,12 +2709,14 @@ int main(int argc, char **argv)
                                                            &test,
                                                            interval_frequency_ranked,
                                                            interval_frequency_probabilities,
+                                                           EXACT_ACTION_COUNT,
                                                            max_test_states,
                                                            target_distribution));
     print_interval_metrics("baseline interval-wheel-frequency",
                            evaluate_interval_wheel_frequency_policy(&sieve,
                                                                     &test,
                                                                     interval_frequency_probabilities,
+                                                                    EXACT_ACTION_COUNT,
                                                                     max_test_states,
                                                                     probabilities,
                                                                     target_distribution));
@@ -2645,6 +2732,8 @@ int main(int argc, char **argv)
                                    &sieve,
                                    &fit,
                                    max_train_states,
+                                   EXACT_ACTION_COUNT,
+                                   (double)G_MAX,
                                    supervised_epochs,
                                    (nn_real)0.005,
                                    log_scale,
@@ -2661,6 +2750,8 @@ int main(int argc, char **argv)
                                                    &sieve,
                                                    &test,
                                                    max_test_states,
+                                                   EXACT_ACTION_COUNT,
+                                                   (double)G_MAX,
                                                    log_scale,
                                                    &FEATURE_MASK_FULL,
                                                    candidate_inputs,
@@ -2679,6 +2770,8 @@ int main(int argc, char **argv)
                                    &sieve,
                                    &fit,
                                    max_train_states,
+                                   EXACT_ACTION_COUNT,
+                                   (double)G_MAX,
                                    supervised_epochs,
                                    (nn_real)0.005,
                                    log_scale,
@@ -2695,6 +2788,8 @@ int main(int argc, char **argv)
                                                    &sieve,
                                                    &test,
                                                    max_test_states,
+                                                   EXACT_ACTION_COUNT,
+                                                   (double)G_MAX,
                                                    log_scale,
                                                    &FEATURE_MASK_FULL,
                                                    candidate_inputs,
@@ -2714,6 +2809,8 @@ int main(int argc, char **argv)
                                    &sieve,
                                    &fit,
                                    max_train_states,
+                                   EXACT_ACTION_COUNT,
+                                   (double)G_MAX,
                                    supervised_epochs,
                                    (nn_real)0.005,
                                    log_scale,
@@ -2730,6 +2827,8 @@ int main(int argc, char **argv)
                                                    &sieve,
                                                    &test,
                                                    max_test_states,
+                                                   EXACT_ACTION_COUNT,
+                                                   (double)G_MAX,
                                                    log_scale,
                                                    &FEATURE_MASK_RAW_RESIDUE,
                                                    candidate_inputs,
@@ -2748,6 +2847,8 @@ int main(int argc, char **argv)
                                    &sieve,
                                    &fit,
                                    max_train_states,
+                                   EXACT_ACTION_COUNT,
+                                   (double)G_MAX,
                                    supervised_epochs,
                                    (nn_real)0.005,
                                    log_scale,
@@ -2764,12 +2865,146 @@ int main(int argc, char **argv)
                                                    &sieve,
                                                    &test,
                                                    max_test_states,
+                                                   EXACT_ACTION_COUNT,
+                                                   (double)G_MAX,
                                                    log_scale,
                                                    &FEATURE_MASK_RAW_RESIDUE,
                                                    candidate_inputs,
                                                    scores,
                                                    probabilities,
                                                    target_distribution));
+
+    nn_free(interval_raw_linear_net);
+    interval_raw_linear_net = NULL;
+    nn_free(interval_raw_net);
+    interval_raw_net = NULL;
+
+    printf("\n=== Wider Raw-Residue Interval Sweep ===\n");
+    size_t sweep_train_states = max_train_states < 5000 ? max_train_states : 5000;
+    size_t sweep_test_states = max_test_states < 5000 ? max_test_states : 5000;
+    size_t sweep_epochs = supervised_epochs == 0 ? 0 : 1;
+    printf("Each window trains fresh raw-residue linear and MLP scorers without explicit divisibility flags.\n");
+    printf("Wide-window runs are capped at train_states=%zu test_states=%zu epochs=%zu for CLI runtime.\n",
+           sweep_train_states,
+           sweep_test_states,
+           sweep_epochs);
+    size_t interval_sweep_count = sizeof(INTERVAL_SWEEP_GAPS) / sizeof(INTERVAL_SWEEP_GAPS[0]);
+    for (size_t sweep = 0; sweep < interval_sweep_count; ++sweep) {
+        uint32_t window_gap = INTERVAL_SWEEP_GAPS[sweep];
+        size_t candidate_count = window_gap / 2u;
+        char label[96];
+
+        printf("\n-- interval window 2..%u --\n", window_gap);
+        build_interval_frequency_policy(&sieve,
+                                        &fit,
+                                        candidate_count,
+                                        interval_frequency_ranked,
+                                        interval_frequency_probabilities);
+
+        snprintf(label, sizeof(label), "baseline interval-frequency-%u", window_gap);
+        print_interval_metrics(label,
+                               evaluate_interval_static_policy(&sieve,
+                                                               &test,
+                                                               interval_frequency_ranked,
+                                                               interval_frequency_probabilities,
+                                                               candidate_count,
+                                                               sweep_test_states,
+                                                               target_distribution));
+
+        snprintf(label, sizeof(label), "baseline interval-wheel-frequency-%u", window_gap);
+        print_interval_metrics(label,
+                               evaluate_interval_wheel_frequency_policy(&sieve,
+                                                                        &test,
+                                                                        interval_frequency_probabilities,
+                                                                        candidate_count,
+                                                                        sweep_test_states,
+                                                                        probabilities,
+                                                                        target_distribution));
+
+        interval_raw_linear_net = nn_create_config(&linear_config);
+        if (interval_raw_linear_net == NULL) {
+            fputs("failed to allocate sweep raw-residue interval linear model\n", stderr);
+            ok = 0;
+            goto cleanup;
+        }
+
+        snprintf(label, sizeof(label), "model interval-raw-linear-%u", window_gap);
+        ok = train_interval_supervised(interval_raw_linear_net,
+                                       label,
+                                       &sieve,
+                                       &fit,
+                                       sweep_train_states,
+                                       candidate_count,
+                                       (double)window_gap,
+                                       sweep_epochs,
+                                       (nn_real)0.005,
+                                       log_scale,
+                                       &FEATURE_MASK_RAW_RESIDUE,
+                                       candidate_inputs,
+                                       target_distribution,
+                                       order,
+                                       &rng);
+        if (!ok) {
+            goto cleanup;
+        }
+        print_interval_metrics(label,
+                               evaluate_interval_model(interval_raw_linear_net,
+                                                       &sieve,
+                                                       &test,
+                                                       sweep_test_states,
+                                                       candidate_count,
+                                                       (double)window_gap,
+                                                       log_scale,
+                                                       &FEATURE_MASK_RAW_RESIDUE,
+                                                       candidate_inputs,
+                                                       scores,
+                                                       probabilities,
+                                                       target_distribution));
+        nn_free(interval_raw_linear_net);
+        interval_raw_linear_net = NULL;
+
+        interval_raw_net = nn_create_config(&config);
+        if (interval_raw_net == NULL) {
+            fputs("failed to allocate sweep raw-residue interval model\n", stderr);
+            ok = 0;
+            goto cleanup;
+        }
+
+        snprintf(label, sizeof(label), "model interval-raw-mlp-%u", window_gap);
+        ok = train_interval_supervised(interval_raw_net,
+                                       label,
+                                       &sieve,
+                                       &fit,
+                                       sweep_train_states,
+                                       candidate_count,
+                                       (double)window_gap,
+                                       sweep_epochs,
+                                       (nn_real)0.005,
+                                       log_scale,
+                                       &FEATURE_MASK_RAW_RESIDUE,
+                                       candidate_inputs,
+                                       target_distribution,
+                                       order,
+                                       &rng);
+        if (!ok) {
+            goto cleanup;
+        }
+        print_interval_metrics(label,
+                               evaluate_interval_model(interval_raw_net,
+                                                       &sieve,
+                                                       &test,
+                                                       sweep_test_states,
+                                                       candidate_count,
+                                                       (double)window_gap,
+                                                       log_scale,
+                                                       &FEATURE_MASK_RAW_RESIDUE,
+                                                       candidate_inputs,
+                                                       scores,
+                                                       probabilities,
+                                                       target_distribution));
+        nn_free(interval_raw_net);
+        interval_raw_net = NULL;
+    }
 
     printf("\n=== Entropy-Regularized Training ===\n");
     entropy_net = nn_create_config(&config);

@@ -933,7 +933,7 @@ static int test_prime_gap_interval_targets_include_all_primes(void)
         return 0;
     }
 
-    positives = build_interval_prime_targets(&sieve, 11, targets);
+    positives = build_interval_prime_targets(&sieve, 11, EXACT_ACTION_COUNT, targets);
     for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
         sum += (double)targets[action];
     }
@@ -959,7 +959,8 @@ static int test_prime_gap_interval_wheel_frequency_masks_rejected_actions(void)
         base_probabilities[action] = (nn_real)1 / (nn_real)EXACT_ACTION_COUNT;
     }
 
-    score_interval_wheel_frequency_policy(base_probabilities, 11, ranked, wheel_probabilities);
+    score_interval_wheel_frequency_policy(
+        base_probabilities, 11, EXACT_ACTION_COUNT, ranked, wheel_probabilities);
     for (size_t action = 0; action < EXACT_ACTION_COUNT; ++action) {
         sum += (double)wheel_probabilities[action];
     }
@@ -967,6 +968,31 @@ static int test_prime_gap_interval_wheel_frequency_masks_rejected_actions(void)
     return wheel_probabilities[gap_to_action(4)] == (nn_real)0 &&
            ranked[0] != gap_to_action(4) &&
            fabs(sum - 1.0) < 1e-5;
+}
+
+static int test_prime_gap_wide_interval_targets_fit_buffer(void)
+{
+    Sieve sieve;
+    nn_real targets[INTERVAL_MAX_ACTION_COUNT];
+    size_t positives;
+    double sum = 0.0;
+    int ok;
+
+    if (!build_sieve(11 + INTERVAL_MAX_GAP, &sieve)) {
+        return 0;
+    }
+
+    positives = build_interval_prime_targets(
+        &sieve, 11, INTERVAL_MAX_ACTION_COUNT, targets);
+    for (size_t action = 0; action < INTERVAL_MAX_ACTION_COUNT; ++action) {
+        sum += (double)targets[action];
+    }
+
+    ok = positives > 0 && fabs(sum - 1.0) < 1e-5 &&
+         targets[INTERVAL_MAX_ACTION_COUNT - 1] >= (nn_real)0;
+
+    free_sieve(&sieve);
+    return ok;
 }
 
 int main(void)
@@ -1010,6 +1036,8 @@ int main(void)
           "prime-gap interval targets include all primes");
     check(test_prime_gap_interval_wheel_frequency_masks_rejected_actions(),
           "prime-gap interval wheel-frequency masks rejected actions");
+    check(test_prime_gap_wide_interval_targets_fit_buffer(),
+          "prime-gap wide interval targets fit buffer");
 
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

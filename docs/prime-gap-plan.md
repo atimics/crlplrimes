@@ -137,6 +137,13 @@ feature wheel even though that survival flag is not given directly. The raw-resi
 meaningfully weaker. That is the first result in this project where the MLP is doing something more
 interesting than matching a linear scorer over explicit flags.
 
+The wider interval sweep now tests raw-residue models at windows `512`, `1024`, and `2048`. These
+wide runs are intentionally capped at 5k train/test states and one epoch in the default CLI. The
+result is mixed but useful: raw MLP maintains much better total probability on prime candidates,
+MAP, and top-1 wheel survival than raw linear. Top-1 prime accuracy is not a clean monotonic win at
+larger windows, so the claim should be conservative: the nonlinear model is learning a better
+sieve-like distribution from residues, not reliably dominating every top-1 metric.
+
 The deterministic verifier remains the correctness mechanism.
 
 Model-assisted exact verification currently does not beat wheel or block verification, because wrong proposals create extra proof obligations. This is expected for exact next-prime verification.
@@ -151,7 +158,7 @@ Model-assisted exact verification currently does not beat wheel or block verific
 2. Make the task harder.
    - larger held-out ranges where prime gaps exceed the current action cap
    - explicit overflow prediction and top-k conditional on overflow
-   - interval ranking over larger windows such as 512, 1024, and 2048
+   - full-sample interval ranking over larger windows such as 512, 1024, and 2048
    - binary or bit-sliced representations without hand-selected small moduli
 
 3. Expand ablations.
@@ -160,6 +167,7 @@ Model-assisted exact verification currently does not beat wheel or block verific
    - compare raw residues against divisibility flags
    - compare interval-prime learning with and without `normalized_gap`
    - compare chronological vs randomized train splits
+   - sweep MLP capacity and epochs on the wider raw-residue task
 
 4. Add RL-only experiments.
    - no supervised warm start
