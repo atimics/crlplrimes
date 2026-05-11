@@ -159,6 +159,23 @@ examples/prime_gap.c       CLI orchestration for the current experiment suite
 
 Interval-prime evaluation caches verifier-generated target distributions for each sampled test window. This keeps repeated baseline/model evaluations from recomputing the same exact `is_prime` labels while preserving the verifier as the source of truth.
 
+The CLI ends with a compact runtime profile:
+
+```text
+phase          wall-clock seconds, call count, and percent of total wall time
+targets        verifier-generated labels and interval-frequency label scans
+features       candidate feature block construction
+forward        explicit model inference passes during evaluation and RL sampling
+train_update   scorer update calls, including their internal forward/backward work
+metrics_verifier ranking, softmax, calibration, and verifier diagnostic aggregation
+```
+
+Run a fixed-size profiling configuration with:
+
+```sh
+make prime-gap-profile
+```
+
 Current interpretation: the network learns a strong gap-ranking prior, but much of the easy top-k lift comes from small-prime divisibility structure. The wheel-frequency and linear-scorer baselines are intentionally strong checks on that. The interval-prime task shows the same pattern: the MLP improves probability quality, but top-rank behavior is still largely explained by the wheel prior. The raw-residue interval variant removes the direct composite flags while keeping compact modular information; on the default run the raw-residue MLP recovers most of the wheel behavior. In the wider sweep, the MLP keeps stronger MAP, total prime probability, and wheel-surviving top choices than the raw linear model, though top-1 prime accuracy narrows at larger windows. Exact next-prime verification remains the classical algorithm's job. That is expected and useful: the experiment is about learned proposal capability under perfect verification, not replacing the verifier.
 
 Run a larger split sweep with:

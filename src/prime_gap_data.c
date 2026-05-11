@@ -6,7 +6,6 @@
 #include <string.h>
 #include <time.h>
 
-
 const uint32_t FEATURE_MODS[FEATURE_MOD_COUNT] = {3, 5, 7, 11, 13, 17, 19, 23, 29, 31};
 const uint32_t INTERVAL_SWEEP_GAPS[INTERVAL_SWEEP_COUNT] = {512, 1024, 2048};
 const nn_real SUPERVISED_ENTROPY_WEIGHT = (nn_real)0.10;
@@ -16,6 +15,17 @@ const FeatureMask FEATURE_MASK_LOG_ONLY = {"log-only", 1, 0, 0, RESIDUE_FEATURE_
 const FeatureMask FEATURE_MASK_GAP_ONLY = {"gap-only", 0, 1, 1, RESIDUE_FEATURE_NONE};
 const FeatureMask FEATURE_MASK_RESIDUE_ONLY = {"residue-only", 0, 0, 1, RESIDUE_FEATURE_DIVISIBILITY};
 const FeatureMask FEATURE_MASK_RAW_RESIDUE = {"raw-residue", 1, 1, 0, RESIDUE_FEATURE_RAW_NORMALIZED};
+
+static PrimeGapProfile *active_profile = NULL;
+static const char *const PROFILE_PHASE_NAMES[PRIME_GAP_PROFILE_PHASE_COUNT] = {
+    "sieve",
+    "dataset",
+    "targets",
+    "features",
+    "forward",
+    "train_update",
+    "metrics_verifier",
+};
 
 double now_seconds(void)
 {
@@ -55,6 +65,70 @@ size_t parse_size_arg(int argc, char **argv, int index, size_t fallback)
     return end != argv[index] && *end == '\0' ? (size_t)value : fallback;
 }
 
+void prime_gap_profile_reset(PrimeGapProfile *profile)
+{
+    if (profile != NULL) {
+        memset(profile, 0, sizeof(*profile));
+    }
+}
+
+void prime_gap_profile_set(PrimeGapProfile *profile)
+{
+    active_profile = profile;
+}
+
+void prime_gap_profile_add(PrimeGapProfilePhase phase, double seconds)
+{
+    if (active_profile == NULL || phase < 0 || phase >= PRIME_GAP_PROFILE_PHASE_COUNT ||
+        seconds < 0.0) {
+        return;
+    }
+
+    active_profile->seconds[phase] += seconds;
+    ++active_profile->calls[phase];
+}
+
+double prime_gap_profile_start(void)
+{
+    return active_profile == NULL ? 0.0 : now_seconds();
+}
+
+void prime_gap_profile_stop(PrimeGapProfilePhase phase, double started)
+{
+    if (active_profile != NULL && started > 0.0) {
+        prime_gap_profile_add(phase, now_seconds() - started);
+    }
+}
+
+void prime_gap_profile_print(const PrimeGapProfile *profile, double total_seconds)
+{
+    double accounted = 0.0;
+
+    if (profile == NULL) {
+        return;
+    }
+
+    printf("\n=== Runtime Profile ===\n");
+    printf("  phase              seconds      calls   wall%%\n");
+    for (size_t phase = 0; phase < PRIME_GAP_PROFILE_PHASE_COUNT; ++phase) {
+        double seconds = profile->seconds[phase];
+        accounted += seconds;
+        printf("  %-16s %9.4f %10zu %6.1f%%\n",
+               PROFILE_PHASE_NAMES[phase],
+               seconds,
+               profile->calls[phase],
+               total_seconds > 0.0 ? 100.0 * seconds / total_seconds : 0.0);
+    }
+    printf("  %-16s %9.4f %10s %6.1f%%\n",
+           "untracked_wall",
+           total_seconds > accounted ? total_seconds - accounted : 0.0,
+           "-",
+           total_seconds > 0.0 && total_seconds > accounted
+               ? 100.0 * (total_seconds - accounted) / total_seconds
+               : 0.0);
+    printf("  %-16s %9.4f %10s %6.1f%%\n", "total_wall", total_seconds, "-", 100.0);
+}
+
 void free_sieve(Sieve *sieve)
 {
     free(sieve->composite);
@@ -64,10 +138,13 @@ void free_sieve(Sieve *sieve)
 
 int build_sieve(uint32_t limit, Sieve *sieve)
 {
+    double profiled = prime_gap_profile_start();
+
     memset(sieve, 0, sizeof(*sieve));
     sieve->limit = limit;
     sieve->composite = calloc((size_t)limit + 1, sizeof(*sieve->composite));
     if (sieve->composite == NULL) {
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_SIEVE, profiled);
         return 0;
     }
 
@@ -93,6 +170,7 @@ int build_sieve(uint32_t limit, Sieve *sieve)
     sieve->primes = calloc(sieve->prime_count, sizeof(*sieve->primes));
     if (sieve->primes == NULL) {
         free_sieve(sieve);
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_SIEVE, profiled);
         return 0;
     }
 
@@ -103,6 +181,7 @@ int build_sieve(uint32_t limit, Sieve *sieve)
         }
     }
 
+    prime_gap_profile_stop(PRIME_GAP_PROFILE_SIEVE, profiled);
     return 1;
 }
 
@@ -154,6 +233,8 @@ int build_gap_datasets(const Sieve *sieve,
                               GapDataset *train,
                               GapDataset *test)
 {
+    double profiled = prime_gap_profile_start();
+
     memset(train, 0, sizeof(*train));
     memset(test, 0, sizeof(*test));
 
@@ -185,10 +266,12 @@ int build_gap_datasets(const Sieve *sieve,
         if (!append_gap(target, p, gap)) {
             free_gap_dataset(train);
             free_gap_dataset(test);
+            prime_gap_profile_stop(PRIME_GAP_PROFILE_DATASET, profiled);
             return 0;
         }
     }
 
+    prime_gap_profile_stop(PRIME_GAP_PROFILE_DATASET, profiled);
     return 1;
 }
 
@@ -225,8 +308,10 @@ int split_train_calibration(const GapDataset *source,
 {
     size_t calibration_count = source->count / 5u;
     size_t fit_count;
+    double profiled = prime_gap_profile_start();
 
     if (source->count < 2) {
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_DATASET, profiled);
         return 0;
     }
     if (calibration_count == 0) {
@@ -234,17 +319,21 @@ int split_train_calibration(const GapDataset *source,
     }
     fit_count = source->count - calibration_count;
     if (fit_count == 0) {
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_DATASET, profiled);
         return 0;
     }
 
     if (!copy_gap_slice(source, 0, fit_count, fit)) {
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_DATASET, profiled);
         return 0;
     }
     if (!copy_gap_slice(source, fit_count, calibration_count, calibration)) {
         free_gap_dataset(fit);
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_DATASET, profiled);
         return 0;
     }
 
+    prime_gap_profile_stop(PRIME_GAP_PROFILE_DATASET, profiled);
     return 1;
 }
 

@@ -998,6 +998,21 @@ static int test_prime_gap_interval_target_cache_matches_direct_targets(void)
     return ok;
 }
 
+static int test_prime_gap_profile_accumulates_phase_time(void)
+{
+    PrimeGapProfile profile;
+
+    prime_gap_profile_reset(&profile);
+    prime_gap_profile_set(&profile);
+    prime_gap_profile_add(PRIME_GAP_PROFILE_FEATURES, 0.25);
+    prime_gap_profile_add(PRIME_GAP_PROFILE_FEATURES, 0.50);
+    prime_gap_profile_set(NULL);
+
+    return profile.calls[PRIME_GAP_PROFILE_FEATURES] == 2 &&
+           fabs(profile.seconds[PRIME_GAP_PROFILE_FEATURES] - 0.75) < 1e-12 &&
+           profile.calls[PRIME_GAP_PROFILE_FORWARD] == 0;
+}
+
 static int test_prime_gap_wide_interval_targets_fit_buffer(void)
 {
     Sieve sieve;
@@ -1066,6 +1081,8 @@ int main(void)
           "prime-gap interval wheel-frequency masks rejected actions");
     check(test_prime_gap_interval_target_cache_matches_direct_targets(),
           "prime-gap interval target cache matches direct targets");
+    check(test_prime_gap_profile_accumulates_phase_time(),
+          "prime-gap profile accumulates phase time");
     check(test_prime_gap_wide_interval_targets_fit_buffer(),
           "prime-gap wide interval targets fit buffer");
 

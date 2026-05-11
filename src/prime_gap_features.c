@@ -131,10 +131,13 @@ void fill_candidate_features_masked(nn_real *inputs,
                                            double log_scale,
                                            const FeatureMask *mask)
 {
+    double profiled = prime_gap_profile_start();
 
     for (size_t action = 0; action < ACTION_COUNT; ++action) {
         fill_action_features(&inputs[action * FEATURE_COUNT], p, action, log_scale, mask);
     }
+
+    prime_gap_profile_stop(PRIME_GAP_PROFILE_FEATURES, profiled);
 }
 
 size_t fill_wheel_survivor_features(nn_real *inputs,
@@ -145,6 +148,7 @@ size_t fill_wheel_survivor_features(nn_real *inputs,
                                            size_t *target_index)
 {
     size_t count = 0;
+    double profiled = prime_gap_profile_start();
     *target_index = ACTION_COUNT;
 
     for (size_t action = 0; action < ACTION_COUNT; ++action) {
@@ -159,6 +163,7 @@ size_t fill_wheel_survivor_features(nn_real *inputs,
         ++count;
     }
 
+    prime_gap_profile_stop(PRIME_GAP_PROFILE_FEATURES, profiled);
     return count;
 }
 

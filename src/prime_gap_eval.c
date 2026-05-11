@@ -209,7 +209,11 @@ EvalMetrics evaluate_model(NeuralNet *net,
         uint32_t gap = dataset->gap[index];
 
         fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
+        double profiled = prime_gap_profile_start();
         nn_forward_batch(net, candidate_inputs, scores, ACTION_COUNT);
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_FORWARD, profiled);
+
+        profiled = prime_gap_profile_start();
         if (wheel_survivors_only) {
             softmax_temperature_wheel(scores, probabilities, p, temperature);
             rank_actions_wheel(scores, p, ranked);
@@ -225,6 +229,7 @@ EvalMetrics evaluate_model(NeuralNet *net,
                                ranked,
                                probabilities,
                                include_verifier);
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_METRICS, profiled);
     }
 
     metrics.samples = samples;
@@ -250,6 +255,7 @@ EvalMetrics evaluate_static_policy(const Sieve *sieve,
 
     for (size_t sample = 0; sample < samples; ++sample) {
         size_t index = eval_sample_index(dataset, sample, samples);
+        double profiled = prime_gap_profile_start();
         accumulate_eval_sample(&metrics,
                                sieve,
                                dataset,
@@ -258,6 +264,7 @@ EvalMetrics evaluate_static_policy(const Sieve *sieve,
                                ranked,
                                probabilities,
                                include_verifier);
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_METRICS, profiled);
     }
 
     metrics.samples = samples;
@@ -273,6 +280,8 @@ void fill_interval_candidate_features(nn_real *inputs,
                                              double log_scale,
                                              const FeatureMask *mask)
 {
+    double profiled = prime_gap_profile_start();
+
     for (size_t action = 0; action < candidate_count; ++action) {
         fill_gap_features(&inputs[action * FEATURE_COUNT],
                           p,
@@ -282,6 +291,8 @@ void fill_interval_candidate_features(nn_real *inputs,
                           log_scale,
                           mask);
     }
+
+    prime_gap_profile_stop(PRIME_GAP_PROFILE_FEATURES, profiled);
 }
 
 size_t build_interval_prime_targets(const Sieve *sieve,
@@ -290,6 +301,7 @@ size_t build_interval_prime_targets(const Sieve *sieve,
                                            nn_real *targets)
 {
     size_t positive_count = 0;
+    double profiled = prime_gap_profile_start();
 
     for (size_t action = 0; action < candidate_count; ++action) {
         uint32_t candidate = p + indexed_gap(action);
@@ -299,6 +311,7 @@ size_t build_interval_prime_targets(const Sieve *sieve,
     }
 
     if (positive_count == 0) {
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_TARGETS, profiled);
         return 0;
     }
 
@@ -309,6 +322,7 @@ size_t build_interval_prime_targets(const Sieve *sieve,
         }
     }
 
+    prime_gap_profile_stop(PRIME_GAP_PROFILE_TARGETS, profiled);
     return positive_count;
 }
 
@@ -478,7 +492,11 @@ IntervalMetrics evaluate_interval_model(NeuralNet *net,
 
         fill_interval_candidate_features(
             candidate_inputs, p, candidate_count, gap_scale, log_scale, mask);
+        double profiled = prime_gap_profile_start();
         nn_forward_batch(net, candidate_inputs, scores, candidate_count);
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_FORWARD, profiled);
+
+        profiled = prime_gap_profile_start();
         softmax_temperature(scores, probabilities, candidate_count, 1.0);
         rank_actions_count(scores, candidate_count, ranked);
         accumulate_interval_sample(&metrics,
@@ -488,6 +506,7 @@ IntervalMetrics evaluate_interval_model(NeuralNet *net,
                                    targets,
                                    candidate_count,
                                    positive_count);
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_METRICS, profiled);
     }
 
     finalize_interval_metrics(&metrics);
@@ -529,7 +548,11 @@ IntervalMetrics evaluate_interval_model_cached(NeuralNet *net,
                                          gap_scale,
                                          log_scale,
                                          mask);
+        double profiled = prime_gap_profile_start();
         nn_forward_batch(net, candidate_inputs, scores, cache->candidate_count);
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_FORWARD, profiled);
+
+        profiled = prime_gap_profile_start();
         softmax_temperature(scores, probabilities, cache->candidate_count, 1.0);
         rank_actions_count(scores, cache->candidate_count, ranked);
         accumulate_interval_sample(&metrics,
@@ -539,6 +562,7 @@ IntervalMetrics evaluate_interval_model_cached(NeuralNet *net,
                                    targets,
                                    cache->candidate_count,
                                    positive_count);
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_METRICS, profiled);
     }
 
     finalize_interval_metrics(&metrics);
@@ -839,6 +863,7 @@ EvalMetrics evaluate_wheel_frequency_policy(const Sieve *sieve,
     size_t ranked[ACTION_COUNT];
     for (size_t sample = 0; sample < samples; ++sample) {
         size_t index = eval_sample_index(dataset, sample, samples);
+        double profiled = prime_gap_profile_start();
         score_wheel_frequency_policy(
             base_probabilities, dataset->prime[index], ranked, probabilities);
         accumulate_eval_sample(&metrics,
@@ -849,6 +874,7 @@ EvalMetrics evaluate_wheel_frequency_policy(const Sieve *sieve,
                                ranked,
                                probabilities,
                                include_verifier);
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_METRICS, profiled);
     }
 
     metrics.samples = samples;
@@ -866,6 +892,7 @@ void build_interval_frequency_policy(const Sieve *sieve,
     size_t counts[INTERVAL_MAX_ACTION_COUNT] = {0};
     nn_real scores[INTERVAL_MAX_ACTION_COUNT];
     double sum = 0.0;
+    double profiled = prime_gap_profile_start();
 
     if (candidate_count > INTERVAL_MAX_ACTION_COUNT) {
         candidate_count = INTERVAL_MAX_ACTION_COUNT;
@@ -891,6 +918,7 @@ void build_interval_frequency_policy(const Sieve *sieve,
     }
 
     rank_actions_count(scores, candidate_count, ranked);
+    prime_gap_profile_stop(PRIME_GAP_PROFILE_TARGETS, profiled);
 }
 
 void rank_interval_wheel(const nn_real *scores,
@@ -999,8 +1027,10 @@ IntervalMetrics evaluate_interval_static_policy(const Sieve *sieve,
             continue;
         }
 
+        double profiled = prime_gap_profile_start();
         accumulate_interval_sample(
             &metrics, p, ranked, probabilities, targets, candidate_count, positive_count);
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_METRICS, profiled);
     }
 
     finalize_interval_metrics(&metrics);
@@ -1030,6 +1060,7 @@ IntervalMetrics evaluate_interval_static_policy_cached(const GapDataset *dataset
             continue;
         }
 
+        double profiled = prime_gap_profile_start();
         accumulate_interval_sample(&metrics,
                                    p,
                                    ranked,
@@ -1037,6 +1068,7 @@ IntervalMetrics evaluate_interval_static_policy_cached(const GapDataset *dataset
                                    targets,
                                    cache->candidate_count,
                                    positive_count);
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_METRICS, profiled);
     }
 
     finalize_interval_metrics(&metrics);
@@ -1072,10 +1104,12 @@ IntervalMetrics evaluate_interval_wheel_frequency_policy(const Sieve *sieve,
             continue;
         }
 
+        double profiled = prime_gap_profile_start();
         score_interval_wheel_frequency_policy(
             base_probabilities, p, candidate_count, ranked, probabilities);
         accumulate_interval_sample(
             &metrics, p, ranked, probabilities, targets, candidate_count, positive_count);
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_METRICS, profiled);
     }
 
     finalize_interval_metrics(&metrics);
@@ -1107,6 +1141,7 @@ IntervalMetrics evaluate_interval_wheel_frequency_policy_cached(
             continue;
         }
 
+        double profiled = prime_gap_profile_start();
         score_interval_wheel_frequency_policy(
             base_probabilities, p, cache->candidate_count, ranked, probabilities);
         accumulate_interval_sample(&metrics,
@@ -1116,6 +1151,7 @@ IntervalMetrics evaluate_interval_wheel_frequency_policy_cached(
                                    targets,
                                    cache->candidate_count,
                                    positive_count);
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_METRICS, profiled);
     }
 
     finalize_interval_metrics(&metrics);
@@ -1199,6 +1235,7 @@ EvalMetrics evaluate_residue_conditioned_policy(const ConditionedPolicy *policy,
     size_t ranked[ACTION_COUNT];
     for (size_t sample = 0; sample < samples; ++sample) {
         size_t index = eval_sample_index(dataset, sample, samples);
+        double profiled = prime_gap_profile_start();
         score_residue_conditioned_policy(policy, dataset->prime[index], ranked, probabilities);
         accumulate_eval_sample(&metrics,
                                sieve,
@@ -1208,6 +1245,7 @@ EvalMetrics evaluate_residue_conditioned_policy(const ConditionedPolicy *policy,
                                ranked,
                                probabilities,
                                include_verifier);
+        prime_gap_profile_stop(PRIME_GAP_PROFILE_METRICS, profiled);
     }
 
     metrics.samples = samples;

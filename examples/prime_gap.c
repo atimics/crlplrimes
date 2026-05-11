@@ -13,6 +13,8 @@ int main(int argc, char **argv)
     size_t rl_epochs = parse_size_arg(argc, argv, 4, DEFAULT_RL_EPOCHS);
     size_t max_train_states = parse_size_arg(argc, argv, 5, DEFAULT_MAX_TRAIN_STATES);
     size_t max_test_states = parse_size_arg(argc, argv, 6, DEFAULT_MAX_TEST_STATES);
+    PrimeGapProfile profile;
+    double total_started = now_seconds();
     Sieve sieve = {0, 0, 0, 0};
     GapDataset train = {0, 0, 0, 0, 0, 0};
     GapDataset fit = {0, 0, 0, 0, 0, 0};
@@ -32,6 +34,9 @@ int main(int argc, char **argv)
     double strict_rl_temperature = 1.0;
     int have_strict_rl_metrics = 0;
     int ok = 1;
+
+    prime_gap_profile_reset(&profile);
+    prime_gap_profile_set(&profile);
 
     if (test_limit_arg <= train_limit_arg || train_limit_arg < 16 ||
         test_limit_arg > (size_t)UINT32_MAX - (size_t)G_MAX ||
@@ -810,6 +815,8 @@ int main(int argc, char **argv)
     }
 
 cleanup:
+    prime_gap_profile_print(&profile, now_seconds() - total_started);
+    prime_gap_profile_set(NULL);
     free_interval_target_cache(&interval_eval_cache);
     free(order);
     free(target_distribution);

@@ -139,6 +139,22 @@ typedef struct {
     size_t *positive_counts;
 } IntervalTargetCache;
 
+typedef enum {
+    PRIME_GAP_PROFILE_SIEVE = 0,
+    PRIME_GAP_PROFILE_DATASET = 1,
+    PRIME_GAP_PROFILE_TARGETS = 2,
+    PRIME_GAP_PROFILE_FEATURES = 3,
+    PRIME_GAP_PROFILE_FORWARD = 4,
+    PRIME_GAP_PROFILE_TRAIN_UPDATE = 5,
+    PRIME_GAP_PROFILE_METRICS = 6,
+    PRIME_GAP_PROFILE_PHASE_COUNT = 7,
+} PrimeGapProfilePhase;
+
+typedef struct {
+    double seconds[PRIME_GAP_PROFILE_PHASE_COUNT];
+    size_t calls[PRIME_GAP_PROFILE_PHASE_COUNT];
+} PrimeGapProfile;
+
 extern const uint32_t FEATURE_MODS[FEATURE_MOD_COUNT];
 extern const uint32_t INTERVAL_SWEEP_GAPS[INTERVAL_SWEEP_COUNT];
 extern const nn_real SUPERVISED_ENTROPY_WEIGHT;
@@ -153,6 +169,12 @@ uint32_t rng_next(uint32_t *state);
 double rng_uniform(uint32_t *state);
 size_t rng_bounded(uint32_t *state, size_t bound);
 size_t parse_size_arg(int argc, char **argv, int index, size_t fallback);
+void prime_gap_profile_reset(PrimeGapProfile *profile);
+void prime_gap_profile_set(PrimeGapProfile *profile);
+void prime_gap_profile_add(PrimeGapProfilePhase phase, double seconds);
+double prime_gap_profile_start(void);
+void prime_gap_profile_stop(PrimeGapProfilePhase phase, double started);
+void prime_gap_profile_print(const PrimeGapProfile *profile, double total_seconds);
 
 void free_sieve(Sieve *sieve);
 int build_sieve(uint32_t limit, Sieve *sieve);

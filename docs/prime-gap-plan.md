@@ -155,6 +155,12 @@ pieces into the current experiment suite. Interval-prime evaluation also caches 
 target distributions for sampled held-out windows, so repeated baseline and model evaluations reuse
 exact labels instead of recomputing the same primality checks.
 
+Runtime profiling is now built into the experiment. `make prime-gap-profile` runs a fixed-size
+configuration and the CLI reports phase timings for sieve setup, dataset construction, target-label
+generation, feature construction, explicit inference, scorer updates, and metric/verifier
+aggregation. This gives the next optimization pass a concrete target instead of guessing from the
+shape of the code.
+
 ## Next Work
 
 1. Improve calibration.
@@ -190,7 +196,7 @@ exact labels instead of recomputing the same primality checks.
 6. Continue structural/performance cleanup.
    - tighten which prime-gap helpers are public vs module-local once APIs stabilize
    - cache reusable candidate feature blocks for repeated evaluation passes
-   - add timing counters around target generation, feature generation, model inference, and metric aggregation
+   - use runtime-profile output to choose the next hot path instead of optimizing by inspection
    - keep the CLI as orchestration only; new task variants should land in reusable module functions first
 
 The most promising next implementation is a harder task variant. The current metrics show the policy

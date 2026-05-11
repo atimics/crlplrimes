@@ -25,7 +25,7 @@ PRIME_GAP_EXAMPLE := $(BUILD_DIR)/prime_gap
 BENCHMARK := $(BUILD_DIR)/benchmark
 TEST_RUNNER := $(BUILD_DIR)/test_nn
 
-.PHONY: all run prime-gap prime-gap-sweep benchmark test clean
+.PHONY: all run prime-gap prime-gap-profile prime-gap-sweep benchmark test clean
 
 all: $(XOR_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(BENCHMARK)
 
@@ -58,6 +58,9 @@ run: $(XOR_EXAMPLE)
 
 prime-gap: $(PRIME_GAP_EXAMPLE)
 	./$(PRIME_GAP_EXAMPLE)
+
+prime-gap-profile: $(PRIME_GAP_EXAMPLE)
+	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 1 0 10000 10000
 
 prime-gap-sweep: $(PRIME_GAP_EXAMPLE)
 	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 2 1 30000 30000
