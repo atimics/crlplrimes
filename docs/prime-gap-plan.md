@@ -58,13 +58,23 @@ Capability metrics:
 
 - top-1/top-5/top-10 gap-action accuracy
 - rank of the true action
+- mean reciprocal rank
 - mean absolute gap error
-- cross-entropy on held-out ranges
+- negative log likelihood on held-out ranges
 - probability assigned to the true gap
 - calibration of policy probabilities
-- generalization by prime range
+- high-confidence coverage and accuracy
+- generalization by prime-size bucket
 - sample efficiency
 - supervised-only vs verifier-guided fine-tuning
+
+Ablation metrics:
+
+- empirical gap-frequency baseline
+- log-only candidate scorer
+- gap-only candidate scorer
+- candidate residue-only scorer
+- full scorer
 
 Verifier diagnostics:
 
@@ -79,30 +89,31 @@ Verifier diagnostics are useful, but they are not the headline success criterion
 
 The learned policy is a strong ranker.
 
+The new ablation results separate ranking from calibrated probability estimation. Candidate residue
+features alone can rank well because they expose a learned soft sieve, but their probability estimates
+are poorly calibrated. The full feature set improves held-out negative log likelihood and true-action
+probability while preserving the strong top-k ranking behavior.
+
 The deterministic verifier remains the correctness mechanism.
 
 Model-assisted exact verification currently does not beat wheel or block verification, because wrong proposals create extra proof obligations. This is expected for exact next-prime verification.
 
 ## Next Work
 
-1. Add calibration and loss reporting.
-   - held-out cross-entropy
-   - average true-action probability
-   - rank histogram
-   - expected calibration error
+1. Improve calibration.
+   - temperature scaling
+   - entropy regularization
+   - compare post-RL calibration against supervised-only calibration
 
 2. Add stronger non-neural baselines.
-   - empirical gap frequency
    - frequency conditioned on divisibility flags
    - hand-coded wheel ranking
    - linear/logistic scorer
 
-3. Add ablations.
-   - no `log(p)`
-   - no `normalized_gap`
-   - only gap frequency
-   - only divisibility flags
+3. Expand ablations.
    - different small-prime feature sets
+   - remove overflow action
+   - train on wheel survivors only
 
 4. Add RL-only experiments.
    - no supervised warm start
@@ -116,4 +127,4 @@ Model-assisted exact verification currently does not beat wheel or block verific
    - rank wheel-surviving candidates only
    - predict overflow probability for larger gaps
 
-The most promising next implementation is calibration plus ablations. That will tell us whether the neural policy is learning beyond empirical gap frequency and small-prime divisibility.
+The most promising next implementation is calibration improvement. The current metrics show the policy can rank candidates well, but confidence is not yet a reliable probability of correctness.
