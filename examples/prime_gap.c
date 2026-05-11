@@ -20,9 +20,24 @@ enum {
     DEFAULT_RL_EPOCHS = 1,
     DEFAULT_MAX_TRAIN_STATES = 30000,
     DEFAULT_MAX_TEST_STATES = 30000,
+    CALIBRATION_BINS = 10,
+    PRIME_BUCKET_COUNT = 4,
 };
 
 static const uint32_t FEATURE_MODS[FEATURE_MOD_COUNT] = {3, 5, 7, 11, 13, 17, 19, 23, 29, 31};
+
+typedef struct {
+    const char *name;
+    int use_log;
+    int use_gap;
+    int use_overflow;
+    int use_residue;
+} FeatureMask;
+
+static const FeatureMask FEATURE_MASK_FULL = {"full", 1, 1, 1, 1};
+static const FeatureMask FEATURE_MASK_LOG_ONLY = {"log-only", 1, 0, 0, 0};
+static const FeatureMask FEATURE_MASK_GAP_ONLY = {"gap-only", 0, 1, 1, 0};
+static const FeatureMask FEATURE_MASK_RESIDUE_ONLY = {"residue-only", 0, 0, 1, 1};
 
 typedef struct {
     uint8_t *composite;
@@ -59,6 +74,28 @@ typedef struct {
     size_t top5;
     size_t top10;
     size_t top1_prime;
+    size_t correct_top1_confidence_count;
+    size_t incorrect_top1_confidence_count;
+    size_t high_confidence;
+    size_t high_confidence_correct;
+    size_t verifier_samples;
+    size_t calibration_count[CALIBRATION_BINS];
+    size_t bucket_samples[PRIME_BUCKET_COUNT];
+    size_t bucket_top1[PRIME_BUCKET_COUNT];
+    size_t bucket_top5[PRIME_BUCKET_COUNT];
+    size_t bucket_top10[PRIME_BUCKET_COUNT];
+    double nll;
+    double true_action_probability;
+    double mean_true_rank;
+    double mean_reciprocal_rank;
+    double top1_confidence;
+    double correct_top1_confidence;
+    double incorrect_top1_confidence;
+    double expected_calibration_error;
+    double calibration_confidence[CALIBRATION_BINS];
+    double calibration_correct[CALIBRATION_BINS];
+    double bucket_nll[PRIME_BUCKET_COUNT];
+    double bucket_true_rank[PRIME_BUCKET_COUNT];
     double mean_abs_gap_error;
     double direct_scan_exact_tests;
     double wheel_scan_mod_tests;
@@ -287,16 +324,24 @@ static double gap_error_for_action(size_t action, uint32_t true_gap)
     return fabs((double)action_gap(action) - (double)true_gap);
 }
 
-static void fill_candidate_features(nn_real *inputs, uint32_t p, double log_scale)
+static void fill_candidate_features_masked(nn_real *inputs,
+                                           uint32_t p,
+                                           double log_scale,
+                                           const FeatureMask *mask)
 {
+    if (mask == NULL) {
+        mask = &FEATURE_MASK_FULL;
+    }
+
     double log_p = log((double)p) / log_scale;
 
     for (size_t action = 0; action < ACTION_COUNT; ++action) {
         nn_real *row = &inputs[action * FEATURE_COUNT];
 
-        row[0] = (nn_real)log_p;
-        row[1] = (nn_real)((double)action_gap(action) / (double)G_MAX);
-        row[2] = action_is_overflow(action) ? (nn_real)1 : (nn_real)0;
+        row[0] = mask->use_log ? (nn_real)log_p : (nn_real)0;
+        row[1] = mask->use_gap ? (nn_real)((double)action_gap(action) / (double)G_MAX)
+                               : (nn_real)0;
+        row[2] = mask->use_overflow && action_is_overflow(action) ? (nn_real)1 : (nn_real)0;
         if (action_is_overflow(action)) {
             for (size_t i = 0; i < FEATURE_MOD_COUNT; ++i) {
                 row[3 + i] = 0;
@@ -308,11 +353,19 @@ static void fill_candidate_features(nn_real *inputs, uint32_t p, double log_scal
         uint32_t candidate = p + gap;
         for (size_t i = 0; i < FEATURE_MOD_COUNT; ++i) {
             uint32_t mod = FEATURE_MODS[i];
-            row[3 + i] =
-                (nn_real)(candidate > mod && candidate % mod == 0 ? 1 : 0);
+            row[3 + i] = mask->use_residue && candidate > mod && candidate % mod == 0
+                             ? (nn_real)1
+                             : (nn_real)0;
         }
     }
 }
+
+#if defined(PRIME_GAP_NO_MAIN)
+static void fill_candidate_features(nn_real *inputs, uint32_t p, double log_scale)
+{
+    fill_candidate_features_masked(inputs, p, log_scale, &FEATURE_MASK_FULL);
+}
+#endif
 
 static void rank_actions(const nn_real *scores, size_t *ranked)
 {
@@ -646,13 +699,175 @@ static size_t sample_action(const nn_real *probabilities, uint32_t *rng)
     return ACTION_COUNT - 1;
 }
 
+static double safe_probability(double probability)
+{
+    return probability < 1e-12 ? 1e-12 : probability;
+}
+
+static size_t eval_sample_index(const GapDataset *dataset, size_t sample, size_t samples)
+{
+    return samples != dataset->count ? (sample * dataset->count) / samples : sample;
+}
+
+static size_t prime_bucket_index(const GapDataset *dataset, uint32_t p)
+{
+    if (dataset->count <= 1 || dataset->prime[dataset->count - 1] <= dataset->prime[0]) {
+        return 0;
+    }
+
+    uint64_t numerator = (uint64_t)(p - dataset->prime[0]) * PRIME_BUCKET_COUNT;
+    uint64_t denominator = (uint64_t)(dataset->prime[dataset->count - 1] - dataset->prime[0]) + 1u;
+    size_t bucket = (size_t)(numerator / denominator);
+    return bucket < PRIME_BUCKET_COUNT ? bucket : PRIME_BUCKET_COUNT - 1;
+}
+
+static void accumulate_eval_sample(EvalMetrics *metrics,
+                                   const Sieve *sieve,
+                                   const GapDataset *dataset,
+                                   uint32_t p,
+                                   uint32_t gap,
+                                   const size_t *ranked,
+                                   const nn_real *probabilities,
+                                   int include_verifier)
+{
+    size_t target = gap_to_action(gap);
+    size_t rank = true_rank(ranked, target);
+    int top1_correct = rank == 0;
+    double true_probability = probabilities == NULL ? 0.0 : (double)probabilities[target];
+    double top1_confidence = probabilities == NULL ? 0.0 : (double)probabilities[ranked[0]];
+    size_t calibration_bin =
+        top1_confidence >= 1.0 ? CALIBRATION_BINS - 1
+                               : (size_t)(top1_confidence * (double)CALIBRATION_BINS);
+    size_t bucket = prime_bucket_index(dataset, p);
+    VerifierWork direct = direct_scan_work(gap);
+
+    if (calibration_bin >= CALIBRATION_BINS) {
+        calibration_bin = CALIBRATION_BINS - 1;
+    }
+
+    metrics->top1 += top1_correct ? 1u : 0u;
+    metrics->top5 += rank < 5 ? 1u : 0u;
+    metrics->top10 += rank < 10 ? 1u : 0u;
+    metrics->top1_prime += !action_is_overflow(ranked[0]) &&
+                                    is_prime_sieve(sieve, p + (uint32_t)action_gap(ranked[0]))
+                                ? 1u
+                                : 0u;
+    metrics->nll += -log(safe_probability(true_probability));
+    metrics->true_action_probability += true_probability;
+    metrics->mean_true_rank += (double)rank + 1.0;
+    metrics->mean_reciprocal_rank += 1.0 / ((double)rank + 1.0);
+    metrics->top1_confidence += top1_confidence;
+    metrics->mean_abs_gap_error += gap_error_for_action(ranked[0], gap);
+    metrics->direct_scan_exact_tests += (double)direct.exact_tests;
+    metrics->proposal_steps_top10 += (double)proposal_steps_with_topk(ranked, 10, target);
+
+    if (top1_correct) {
+        metrics->correct_top1_confidence += top1_confidence;
+        ++metrics->correct_top1_confidence_count;
+    } else {
+        metrics->incorrect_top1_confidence += top1_confidence;
+        ++metrics->incorrect_top1_confidence_count;
+    }
+
+    if (top1_confidence >= 0.50) {
+        ++metrics->high_confidence;
+        metrics->high_confidence_correct += top1_correct ? 1u : 0u;
+    }
+
+    ++metrics->calibration_count[calibration_bin];
+    metrics->calibration_confidence[calibration_bin] += top1_confidence;
+    metrics->calibration_correct[calibration_bin] += top1_correct ? 1.0 : 0.0;
+
+    ++metrics->bucket_samples[bucket];
+    metrics->bucket_top1[bucket] += top1_correct ? 1u : 0u;
+    metrics->bucket_top5[bucket] += rank < 5 ? 1u : 0u;
+    metrics->bucket_top10[bucket] += rank < 10 ? 1u : 0u;
+    metrics->bucket_nll[bucket] += -log(safe_probability(true_probability));
+    metrics->bucket_true_rank[bucket] += (double)rank + 1.0;
+
+    if (include_verifier) {
+        VerifierWork wheel = wheel_scan_work(sieve, p, gap);
+        VerifierWork assisted = assisted_wheel_work(sieve, p, gap, ranked, 10);
+        BlockWork block = block_scan_work(sieve, p, gap);
+        BlockWork assisted_block = assisted_block_work(sieve, p, gap, ranked, 10);
+
+        ++metrics->verifier_samples;
+        metrics->wheel_scan_mod_tests += (double)wheel.mod_tests;
+        metrics->wheel_scan_exact_tests += (double)wheel.exact_tests;
+        metrics->assisted_wheel_mod_tests_top10 += (double)assisted.mod_tests;
+        metrics->assisted_wheel_exact_tests_top10 += (double)assisted.exact_tests;
+        metrics->block_scan_cost += block_work_cost(block);
+        metrics->assisted_block_cost_top10 += block_work_cost(assisted_block);
+    }
+}
+
+static void finalize_eval_metrics(EvalMetrics *metrics)
+{
+    double samples = metrics->samples == 0 ? 1.0 : (double)metrics->samples;
+
+    metrics->nll /= samples;
+    metrics->true_action_probability /= samples;
+    metrics->mean_true_rank /= samples;
+    metrics->mean_reciprocal_rank /= samples;
+    metrics->top1_confidence /= samples;
+    metrics->mean_abs_gap_error /= samples;
+    metrics->direct_scan_exact_tests /= samples;
+    metrics->proposal_steps_top10 /= samples;
+
+    if (metrics->correct_top1_confidence_count != 0) {
+        metrics->correct_top1_confidence /=
+            (double)metrics->correct_top1_confidence_count;
+    }
+    if (metrics->incorrect_top1_confidence_count != 0) {
+        metrics->incorrect_top1_confidence /=
+            (double)metrics->incorrect_top1_confidence_count;
+    }
+
+    for (size_t bin = 0; bin < CALIBRATION_BINS; ++bin) {
+        if (metrics->calibration_count[bin] == 0) {
+            continue;
+        }
+
+        double bin_count = (double)metrics->calibration_count[bin];
+        double confidence = metrics->calibration_confidence[bin] / bin_count;
+        double accuracy = metrics->calibration_correct[bin] / bin_count;
+        metrics->expected_calibration_error +=
+            (bin_count / samples) * fabs(confidence - accuracy);
+        metrics->calibration_confidence[bin] = confidence;
+        metrics->calibration_correct[bin] = accuracy;
+    }
+
+    for (size_t bucket = 0; bucket < PRIME_BUCKET_COUNT; ++bucket) {
+        if (metrics->bucket_samples[bucket] == 0) {
+            continue;
+        }
+
+        double bucket_samples = (double)metrics->bucket_samples[bucket];
+        metrics->bucket_nll[bucket] /= bucket_samples;
+        metrics->bucket_true_rank[bucket] /= bucket_samples;
+    }
+
+    if (metrics->verifier_samples != 0) {
+        double verifier_samples = (double)metrics->verifier_samples;
+        metrics->wheel_scan_mod_tests /= verifier_samples;
+        metrics->wheel_scan_exact_tests /= verifier_samples;
+        metrics->assisted_wheel_mod_tests_top10 /= verifier_samples;
+        metrics->assisted_wheel_exact_tests_top10 /= verifier_samples;
+        metrics->block_scan_cost /= verifier_samples;
+        metrics->assisted_block_cost_top10 /= verifier_samples;
+    }
+}
+
 static EvalMetrics evaluate_model(NeuralNet *net,
                                   const Sieve *sieve,
                                   const GapDataset *dataset,
                                   size_t max_states,
                                   double log_scale,
+                                  const FeatureMask *mask,
+                                  int include_verifier,
                                   nn_real *candidate_inputs,
-                                  nn_real *scores)
+                                  nn_real *scores,
+                                  nn_real *probabilities)
 {
     EvalMetrics metrics;
     memset(&metrics, 0, sizeof(metrics));
@@ -664,62 +879,35 @@ static EvalMetrics evaluate_model(NeuralNet *net,
 
     size_t ranked[ACTION_COUNT];
     for (size_t sample = 0; sample < samples; ++sample) {
-        size_t index = max_states != 0 && max_states < dataset->count
-                           ? (sample * dataset->count) / max_states
-                           : sample;
+        size_t index = eval_sample_index(dataset, sample, samples);
         uint32_t p = dataset->prime[index];
         uint32_t gap = dataset->gap[index];
-        size_t target = gap_to_action(gap);
 
-        fill_candidate_features(candidate_inputs, p, log_scale);
+        fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
         nn_forward_batch(net, candidate_inputs, scores, ACTION_COUNT);
+        nn_softmax(scores, probabilities, ACTION_COUNT);
         rank_actions(scores, ranked);
-
-        size_t rank = true_rank(ranked, target);
-        VerifierWork direct = direct_scan_work(gap);
-        VerifierWork wheel = wheel_scan_work(sieve, p, gap);
-        VerifierWork assisted = assisted_wheel_work(sieve, p, gap, ranked, 10);
-        BlockWork block = block_scan_work(sieve, p, gap);
-        BlockWork assisted_block = assisted_block_work(sieve, p, gap, ranked, 10);
-
-        metrics.top1 += rank == 0 ? 1u : 0u;
-        metrics.top5 += rank < 5 ? 1u : 0u;
-        metrics.top10 += rank < 10 ? 1u : 0u;
-        metrics.top1_prime += !action_is_overflow(ranked[0]) &&
-                                       is_prime_sieve(sieve, p + (uint32_t)action_gap(ranked[0]))
-                                   ? 1u
-                                   : 0u;
-        metrics.mean_abs_gap_error += gap_error_for_action(ranked[0], gap);
-        metrics.direct_scan_exact_tests += (double)direct.exact_tests;
-        metrics.wheel_scan_mod_tests += (double)wheel.mod_tests;
-        metrics.wheel_scan_exact_tests += (double)wheel.exact_tests;
-        metrics.proposal_steps_top10 += (double)proposal_steps_with_topk(ranked, 10, target);
-        metrics.assisted_wheel_mod_tests_top10 += (double)assisted.mod_tests;
-        metrics.assisted_wheel_exact_tests_top10 += (double)assisted.exact_tests;
-        metrics.block_scan_cost += block_work_cost(block);
-        metrics.assisted_block_cost_top10 += block_work_cost(assisted_block);
+        accumulate_eval_sample(&metrics,
+                               sieve,
+                               dataset,
+                               p,
+                               gap,
+                               ranked,
+                               probabilities,
+                               include_verifier);
     }
 
     metrics.samples = samples;
-    if (samples != 0) {
-        metrics.mean_abs_gap_error /= (double)samples;
-        metrics.direct_scan_exact_tests /= (double)samples;
-        metrics.wheel_scan_mod_tests /= (double)samples;
-        metrics.wheel_scan_exact_tests /= (double)samples;
-        metrics.proposal_steps_top10 /= (double)samples;
-        metrics.assisted_wheel_mod_tests_top10 /= (double)samples;
-        metrics.assisted_wheel_exact_tests_top10 /= (double)samples;
-        metrics.block_scan_cost /= (double)samples;
-        metrics.assisted_block_cost_top10 /= (double)samples;
-    }
-
+    finalize_eval_metrics(&metrics);
     return metrics;
 }
 
-static EvalMetrics evaluate_static_ranking(const Sieve *sieve,
-                                           const GapDataset *dataset,
-                                           const size_t *ranked,
-                                           size_t max_states)
+static EvalMetrics evaluate_static_policy(const Sieve *sieve,
+                                          const GapDataset *dataset,
+                                          const size_t *ranked,
+                                          const nn_real *probabilities,
+                                          size_t max_states,
+                                          int include_verifier)
 {
     EvalMetrics metrics;
     memset(&metrics, 0, sizeof(metrics));
@@ -730,56 +918,32 @@ static EvalMetrics evaluate_static_ranking(const Sieve *sieve,
     }
 
     for (size_t sample = 0; sample < samples; ++sample) {
-        size_t index = max_states != 0 && max_states < dataset->count
-                           ? (sample * dataset->count) / max_states
-                           : sample;
-        uint32_t p = dataset->prime[index];
-        uint32_t gap = dataset->gap[index];
-        size_t target = gap_to_action(gap);
-        size_t rank = true_rank(ranked, target);
-        VerifierWork direct = direct_scan_work(gap);
-        VerifierWork wheel = wheel_scan_work(sieve, p, gap);
-        VerifierWork assisted = assisted_wheel_work(sieve, p, gap, ranked, 10);
-        BlockWork block = block_scan_work(sieve, p, gap);
-        BlockWork assisted_block = assisted_block_work(sieve, p, gap, ranked, 10);
-
-        metrics.top1 += rank == 0 ? 1u : 0u;
-        metrics.top5 += rank < 5 ? 1u : 0u;
-        metrics.top10 += rank < 10 ? 1u : 0u;
-        metrics.top1_prime += !action_is_overflow(ranked[0]) &&
-                                       is_prime_sieve(sieve, p + (uint32_t)action_gap(ranked[0]))
-                                   ? 1u
-                                   : 0u;
-        metrics.mean_abs_gap_error += gap_error_for_action(ranked[0], gap);
-        metrics.direct_scan_exact_tests += (double)direct.exact_tests;
-        metrics.wheel_scan_mod_tests += (double)wheel.mod_tests;
-        metrics.wheel_scan_exact_tests += (double)wheel.exact_tests;
-        metrics.proposal_steps_top10 += (double)proposal_steps_with_topk(ranked, 10, target);
-        metrics.assisted_wheel_mod_tests_top10 += (double)assisted.mod_tests;
-        metrics.assisted_wheel_exact_tests_top10 += (double)assisted.exact_tests;
-        metrics.block_scan_cost += block_work_cost(block);
-        metrics.assisted_block_cost_top10 += block_work_cost(assisted_block);
+        size_t index = eval_sample_index(dataset, sample, samples);
+        accumulate_eval_sample(&metrics,
+                               sieve,
+                               dataset,
+                               dataset->prime[index],
+                               dataset->gap[index],
+                               ranked,
+                               probabilities,
+                               include_verifier);
     }
 
     metrics.samples = samples;
-    if (samples != 0) {
-        metrics.mean_abs_gap_error /= (double)samples;
-        metrics.direct_scan_exact_tests /= (double)samples;
-        metrics.wheel_scan_mod_tests /= (double)samples;
-        metrics.wheel_scan_exact_tests /= (double)samples;
-        metrics.proposal_steps_top10 /= (double)samples;
-        metrics.assisted_wheel_mod_tests_top10 /= (double)samples;
-        metrics.assisted_wheel_exact_tests_top10 /= (double)samples;
-        metrics.block_scan_cost /= (double)samples;
-        metrics.assisted_block_cost_top10 /= (double)samples;
-    }
-
+    finalize_eval_metrics(&metrics);
     return metrics;
 }
 
 static void print_metrics(const char *label, EvalMetrics metrics)
 {
     double samples = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
+    double high_confidence_coverage =
+        100.0 * (double)metrics.high_confidence / samples;
+    double high_confidence_accuracy =
+        metrics.high_confidence == 0
+            ? 0.0
+            : 100.0 * (double)metrics.high_confidence_correct /
+                  (double)metrics.high_confidence;
     double proposal_saved = metrics.direct_scan_exact_tests - metrics.proposal_steps_top10;
     double proposal_saved_pct = metrics.direct_scan_exact_tests > 0.0
                                     ? 100.0 * proposal_saved / metrics.direct_scan_exact_tests
@@ -800,59 +964,105 @@ static void print_metrics(const char *label, EvalMetrics metrics)
                                  ? 100.0 * block_delta / metrics.block_scan_cost
                                  : 0.0;
 
-    printf("%s samples=%zu top1=%.2f%% top5=%.2f%% top10=%.2f%% top1_prime=%.2f%% "
-           "mae_gap=%.2f proposal_steps baseline=%.2f model_top10=%.2f saved=%.2f (%.1f%%) "
-           "wheel exact %.2f->%.2f saved=%.2f (%.1f%%) wheel_mods=%.2f "
-           "assisted_wheel exact=%.2f delta=%.2f (%.1f%%) mods=%.2f "
-           "block cost=%.2f assisted_block=%.2f delta=%.2f (%.1f%%)\n",
-           label,
+    printf("\n[%s]\n", label);
+    printf("  capability\n");
+    printf("    samples=%zu top1=%.2f%% top5=%.2f%% top10=%.2f%% top1_prime=%.2f%%\n",
            metrics.samples,
            100.0 * (double)metrics.top1 / samples,
            100.0 * (double)metrics.top5 / samples,
            100.0 * (double)metrics.top10 / samples,
-           100.0 * (double)metrics.top1_prime / samples,
-           metrics.mean_abs_gap_error,
+           100.0 * (double)metrics.top1_prime / samples);
+    printf("    nll=%.4f p_true=%.4f mean_rank=%.2f mrr=%.4f mae_gap=%.2f\n",
+           metrics.nll,
+           metrics.true_action_probability,
+           metrics.mean_true_rank,
+           metrics.mean_reciprocal_rank,
+           metrics.mean_abs_gap_error);
+    printf("    proposal_steps baseline=%.2f model_top10=%.2f saved=%.2f (%.1f%%)\n",
            metrics.direct_scan_exact_tests,
            metrics.proposal_steps_top10,
            proposal_saved,
-           proposal_saved_pct,
+           proposal_saved_pct);
+
+    printf("  calibration\n");
+    printf("    top1_conf=%.4f correct_conf=%.4f incorrect_conf=%.4f ece=%.4f\n",
+           metrics.top1_confidence,
+           metrics.correct_top1_confidence,
+           metrics.incorrect_top1_confidence,
+           metrics.expected_calibration_error);
+    printf("    conf>=0.50 coverage=%.2f%% accuracy=%.2f%%\n",
+           high_confidence_coverage,
+           high_confidence_accuracy);
+
+    printf("  prime buckets\n");
+    for (size_t bucket = 0; bucket < PRIME_BUCKET_COUNT; ++bucket) {
+        double bucket_samples =
+            metrics.bucket_samples[bucket] == 0 ? 1.0 : (double)metrics.bucket_samples[bucket];
+        printf("    q%zu samples=%zu top1=%.2f%% top5=%.2f%% top10=%.2f%% "
+               "nll=%.4f mean_rank=%.2f\n",
+               bucket + 1,
+               metrics.bucket_samples[bucket],
+               100.0 * (double)metrics.bucket_top1[bucket] / bucket_samples,
+               100.0 * (double)metrics.bucket_top5[bucket] / bucket_samples,
+               100.0 * (double)metrics.bucket_top10[bucket] / bucket_samples,
+               metrics.bucket_nll[bucket],
+               metrics.bucket_true_rank[bucket]);
+    }
+
+    if (metrics.verifier_samples == 0) {
+        printf("  verifier diagnostics\n");
+        printf("    skipped for this capability-only run\n");
+        return;
+    }
+
+    printf("  verifier diagnostics\n");
+    printf("    wheel exact %.2f -> %.2f saved=%.2f (%.1f%%) wheel_mods=%.2f\n",
            metrics.direct_scan_exact_tests,
            metrics.wheel_scan_exact_tests,
            wheel_exact_saved,
            wheel_exact_saved_pct,
-           metrics.wheel_scan_mod_tests,
+           metrics.wheel_scan_mod_tests);
+    printf("    assisted_wheel exact=%.2f delta=%.2f (%.1f%%) mods=%.2f\n",
            metrics.assisted_wheel_exact_tests_top10,
            assisted_exact_saved,
            assisted_exact_saved_pct,
-           metrics.assisted_wheel_mod_tests_top10,
+           metrics.assisted_wheel_mod_tests_top10);
+    printf("    block cost=%.2f assisted_block=%.2f delta=%.2f (%.1f%%)\n",
            metrics.block_scan_cost,
            metrics.assisted_block_cost_top10,
            block_delta,
            block_delta_pct);
 }
 
-static void build_frequency_ranking(const GapDataset *dataset, size_t *ranked)
+static void build_frequency_policy(const GapDataset *dataset,
+                                   size_t *ranked,
+                                   nn_real *probabilities)
 {
     size_t counts[ACTION_COUNT] = {0};
     nn_real scores[ACTION_COUNT];
+    double denominator = (double)dataset->count + (double)ACTION_COUNT;
 
     for (size_t i = 0; i < dataset->count; ++i) {
         ++counts[gap_to_action(dataset->gap[i])];
     }
 
     for (size_t i = 0; i < ACTION_COUNT; ++i) {
-        scores[i] = (nn_real)counts[i];
+        double probability = ((double)counts[i] + 1.0) / denominator;
+        probabilities[i] = (nn_real)probability;
+        scores[i] = probabilities[i];
     }
 
     rank_actions(scores, ranked);
 }
 
 static int train_supervised(NeuralNet *net,
+                            const char *label,
                             const GapDataset *dataset,
                             size_t max_states,
                             size_t epochs,
                             nn_real learning_rate,
                             double log_scale,
+                            const FeatureMask *mask,
                             nn_real *candidate_inputs,
                             size_t *order,
                             uint32_t *rng)
@@ -869,7 +1079,7 @@ static int train_supervised(NeuralNet *net,
 
         for (size_t step = 0; step < train_steps; ++step) {
             size_t index = order[step];
-            fill_candidate_features(candidate_inputs, dataset->prime[index], log_scale);
+            fill_candidate_features_masked(candidate_inputs, dataset->prime[index], log_scale, mask);
             nn_real step_loss = nn_train_softmax_scorer(net,
                                                         candidate_inputs,
                                                         ACTION_COUNT,
@@ -882,7 +1092,8 @@ static int train_supervised(NeuralNet *net,
         }
 
         double elapsed = now_seconds() - started;
-        printf("supervised epoch %zu loss=%.4f updates=%zu %.0f states/s\n",
+        printf("%s epoch %zu loss=%.4f updates=%zu %.0f states/s\n",
+               label,
                epoch + 1,
                loss / (double)train_steps,
                train_steps,
@@ -893,11 +1104,13 @@ static int train_supervised(NeuralNet *net,
 }
 
 static int train_strict_verifier_rl(NeuralNet *net,
+                                    const char *label,
                                     const GapDataset *dataset,
                                     size_t max_states,
                                     size_t epochs,
                                     nn_real learning_rate,
                                     double log_scale,
+                                    const FeatureMask *mask,
                                     nn_real *candidate_inputs,
                                     nn_real *scores,
                                     nn_real *probabilities,
@@ -920,7 +1133,7 @@ static int train_strict_verifier_rl(NeuralNet *net,
             size_t index = order[step];
             size_t target = gap_to_action(dataset->gap[index]);
 
-            fill_candidate_features(candidate_inputs, dataset->prime[index], log_scale);
+            fill_candidate_features_masked(candidate_inputs, dataset->prime[index], log_scale, mask);
             nn_forward_batch(net, candidate_inputs, scores, ACTION_COUNT);
             nn_softmax(scores, probabilities, ACTION_COUNT);
 
@@ -943,7 +1156,8 @@ static int train_strict_verifier_rl(NeuralNet *net,
         }
 
         double elapsed = now_seconds() - started;
-        printf("strict-rl epoch %zu sampled_exact=%.2f%% baseline=%.3f objective=%.4f updates=%zu %.0f states/s\n",
+        printf("%s epoch %zu sampled_exact=%.2f%% baseline=%.3f objective=%.4f updates=%zu %.0f states/s\n",
+               label,
                epoch + 1,
                100.0 * (double)exact_hits / (double)train_steps,
                baseline,
@@ -953,6 +1167,59 @@ static int train_strict_verifier_rl(NeuralNet *net,
     }
 
     return 1;
+}
+
+static int run_supervised_ablation(const char *label,
+                                   const FeatureMask *mask,
+                                   const NNConfig *config,
+                                   const Sieve *sieve,
+                                   const GapDataset *train,
+                                   const GapDataset *test,
+                                   size_t max_train_states,
+                                   size_t max_test_states,
+                                   size_t supervised_epochs,
+                                   double log_scale,
+                                   nn_real *candidate_inputs,
+                                   nn_real *scores,
+                                   nn_real *probabilities,
+                                   size_t *order,
+                                   uint32_t *rng)
+{
+    NeuralNet *net = nn_create_config(config);
+    int ok;
+
+    if (net == NULL) {
+        return 0;
+    }
+
+    printf("\ntraining %s (%s features)\n", label, mask->name);
+    ok = train_supervised(net,
+                          label,
+                          train,
+                          max_train_states,
+                          supervised_epochs,
+                          (nn_real)0.005,
+                          log_scale,
+                          mask,
+                          candidate_inputs,
+                          order,
+                          rng);
+    if (ok) {
+        print_metrics(label,
+                      evaluate_model(net,
+                                     sieve,
+                                     test,
+                                     max_test_states,
+                                     log_scale,
+                                     mask,
+                                     0,
+                                     candidate_inputs,
+                                     scores,
+                                     probabilities));
+    }
+
+    nn_free(net);
+    return ok;
 }
 
 #ifndef PRIME_GAP_NO_MAIN
@@ -1056,9 +1323,17 @@ int main(int argc, char **argv)
 
     double log_scale = log((double)test_limit + (double)G_MAX);
     size_t frequency_ranked[ACTION_COUNT];
-    build_frequency_ranking(&train, frequency_ranked);
+    nn_real frequency_probabilities[ACTION_COUNT];
+
+    printf("\n=== Baselines ===\n");
+    build_frequency_policy(&train, frequency_ranked, frequency_probabilities);
     print_metrics("baseline empirical-gap",
-                  evaluate_static_ranking(&sieve, &test, frequency_ranked, max_test_states));
+                  evaluate_static_policy(&sieve,
+                                         &test,
+                                         frequency_ranked,
+                                         frequency_probabilities,
+                                         max_test_states,
+                                         1));
 
     print_metrics("model before",
                   evaluate_model(net,
@@ -1066,15 +1341,80 @@ int main(int argc, char **argv)
                                  &test,
                                  max_test_states,
                                  log_scale,
+                                 &FEATURE_MASK_FULL,
+                                 1,
                                  candidate_inputs,
-                                 scores));
+                                 scores,
+                                 probabilities));
 
+    printf("\n=== Feature Ablations ===\n");
+    printf("Supervised-only runs; verifier diagnostics skipped to keep these capability-focused.\n");
+    ok = run_supervised_ablation("ablation log-only",
+                                 &FEATURE_MASK_LOG_ONLY,
+                                 &config,
+                                 &sieve,
+                                 &train,
+                                 &test,
+                                 max_train_states,
+                                 max_test_states,
+                                 supervised_epochs,
+                                 log_scale,
+                                 candidate_inputs,
+                                 scores,
+                                 probabilities,
+                                 order,
+                                 &rng);
+    if (!ok) {
+        goto cleanup;
+    }
+
+    ok = run_supervised_ablation("ablation gap-only",
+                                 &FEATURE_MASK_GAP_ONLY,
+                                 &config,
+                                 &sieve,
+                                 &train,
+                                 &test,
+                                 max_train_states,
+                                 max_test_states,
+                                 supervised_epochs,
+                                 log_scale,
+                                 candidate_inputs,
+                                 scores,
+                                 probabilities,
+                                 order,
+                                 &rng);
+    if (!ok) {
+        goto cleanup;
+    }
+
+    ok = run_supervised_ablation("ablation residue-only",
+                                 &FEATURE_MASK_RESIDUE_ONLY,
+                                 &config,
+                                 &sieve,
+                                 &train,
+                                 &test,
+                                 max_train_states,
+                                 max_test_states,
+                                 supervised_epochs,
+                                 log_scale,
+                                 candidate_inputs,
+                                 scores,
+                                 probabilities,
+                                 order,
+                                 &rng);
+    if (!ok) {
+        goto cleanup;
+    }
+
+    printf("\n=== Full Model Training ===\n");
     ok = train_supervised(net,
+                          "model supervised",
                           &train,
                           max_train_states,
                           supervised_epochs,
                           (nn_real)0.005,
                           log_scale,
+                          &FEATURE_MASK_FULL,
                           candidate_inputs,
                           order,
                           &rng);
@@ -1088,32 +1428,45 @@ int main(int argc, char **argv)
                                  &test,
                                  max_test_states,
                                  log_scale,
+                                 &FEATURE_MASK_FULL,
+                                 1,
                                  candidate_inputs,
-                                 scores));
+                                 scores,
+                                 probabilities));
 
-    ok = train_strict_verifier_rl(net,
-                                  &train,
-                                  max_train_states,
-                                  rl_epochs,
-                                  (nn_real)0.001,
-                                  log_scale,
-                                  candidate_inputs,
-                                  scores,
-                                  probabilities,
-                                  order,
-                                  &rng);
-    if (!ok) {
-        goto cleanup;
+    printf("\n=== Strict Verifier RL ===\n");
+    if (rl_epochs == 0) {
+        printf("skipped because rl_epochs=0\n");
+    } else {
+        ok = train_strict_verifier_rl(net,
+                                      "model strict-rl",
+                                      &train,
+                                      max_train_states,
+                                      rl_epochs,
+                                      (nn_real)0.001,
+                                      log_scale,
+                                      &FEATURE_MASK_FULL,
+                                      candidate_inputs,
+                                      scores,
+                                      probabilities,
+                                      order,
+                                      &rng);
+        if (!ok) {
+            goto cleanup;
+        }
+
+        print_metrics("model strict-rl",
+                      evaluate_model(net,
+                                     &sieve,
+                                     &test,
+                                     max_test_states,
+                                     log_scale,
+                                     &FEATURE_MASK_FULL,
+                                     1,
+                                     candidate_inputs,
+                                     scores,
+                                     probabilities));
     }
-
-    print_metrics("model strict-rl",
-                  evaluate_model(net,
-                                 &sieve,
-                                 &test,
-                                 max_test_states,
-                                 log_scale,
-                                 candidate_inputs,
-                                 scores));
 
 cleanup:
     free(order);

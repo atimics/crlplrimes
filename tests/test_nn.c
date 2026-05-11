@@ -479,15 +479,51 @@ static int test_softmax_scorer_cached_matches_regular(void)
 static int test_prime_gap_features_are_divisibility_flags(void)
 {
     nn_real inputs[ACTION_COUNT * FEATURE_COUNT];
+    nn_real masked[ACTION_COUNT * FEATURE_COUNT];
     fill_candidate_features(inputs, 11, log(1000.0));
+    fill_candidate_features_masked(masked, 11, log(1000.0), &FEATURE_MASK_GAP_ONLY);
 
     const nn_real *gap2 = &inputs[0 * FEATURE_COUNT];
     const nn_real *gap4 = &inputs[1 * FEATURE_COUNT];
     const nn_real *overflow = &inputs[OVERFLOW_ACTION * FEATURE_COUNT];
+    const nn_real *masked_gap4 = &masked[1 * FEATURE_COUNT];
+    const nn_real *masked_overflow = &masked[OVERFLOW_ACTION * FEATURE_COUNT];
 
     return gap4[2] == (nn_real)0 && gap4[3] == (nn_real)1 &&
            gap4[4] == (nn_real)1 && gap4[5] == (nn_real)0 &&
-           gap2[7] == (nn_real)0 && overflow[2] == (nn_real)1;
+           gap2[7] == (nn_real)0 && overflow[2] == (nn_real)1 &&
+           masked_gap4[0] == (nn_real)0 && masked_gap4[1] > (nn_real)0 &&
+           masked_gap4[3] == (nn_real)0 && masked_overflow[2] == (nn_real)1;
+}
+
+static int test_prime_gap_frequency_policy_is_smoothed(void)
+{
+    GapDataset dataset;
+    size_t ranked[ACTION_COUNT];
+    nn_real probabilities[ACTION_COUNT];
+    double sum = 0.0;
+    int ok;
+
+    memset(&dataset, 0, sizeof(dataset));
+    ok = append_gap(&dataset, 11, 2) && append_gap(&dataset, 13, 4) &&
+         append_gap(&dataset, 17, 4);
+    if (!ok) {
+        free_gap_dataset(&dataset);
+        return 0;
+    }
+
+    build_frequency_policy(&dataset, ranked, probabilities);
+    for (size_t i = 0; i < ACTION_COUNT; ++i) {
+        sum += (double)probabilities[i];
+    }
+
+    ok = ranked[0] == gap_to_action(4) &&
+         probabilities[gap_to_action(4)] > probabilities[gap_to_action(2)] &&
+         probabilities[OVERFLOW_ACTION] > (nn_real)0 &&
+         fabs(sum - 1.0) < 1e-5;
+
+    free_gap_dataset(&dataset);
+    return ok;
 }
 
 static int test_prime_gap_wheel_verifier_accounting(void)
@@ -578,6 +614,8 @@ int main(void)
           "softmax scorer cached update matches regular update");
     check(test_prime_gap_features_are_divisibility_flags(),
           "prime-gap features are divisibility flags");
+    check(test_prime_gap_frequency_policy_is_smoothed(),
+          "prime-gap frequency policy is smoothed");
     check(test_prime_gap_wheel_verifier_accounting(),
           "prime-gap wheel verifier accounting");
     check(test_prime_gap_dataset_tracks_overflow_actions(),

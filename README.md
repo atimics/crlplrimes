@@ -82,8 +82,10 @@ The success metrics are capability metrics first:
 ```text
 top-1/top-5/top-10 gap-action accuracy
 rank of the true gap
-cross-entropy / policy confidence
-generalization across larger prime ranges
+negative log likelihood / probability assigned to the true gap
+mean reciprocal rank
+calibration error and high-confidence accuracy
+generalization by prime-size bucket
 supervised warm start vs verifier-guided RL
 ```
 
@@ -101,7 +103,25 @@ score = f(input)
 policy = softmax(scores across candidate gaps 2..256 plus an overflow action)
 ```
 
-The example first trains with supervised softmax cross-entropy over all candidate actions, then runs a strict verifier-guided policy-gradient pass where reward is `1` only when the sampled action matches the exact next gap or the overflow class. It reports top-1/top-5/top-10 accuracy, top-1 candidate primality, mean absolute gap error, exact-action coverage, proposal rank steps, direct scan work, wheel-filtered scan work, model-assisted wheel work, segmented block-verifier work, and model-assisted block-verifier work.
+The example first evaluates an empirical gap-frequency baseline, then runs supervised feature ablations:
+
+```text
+log-only
+gap-only
+candidate residue-only
+full feature set
+```
+
+The full model trains with supervised softmax cross-entropy over all candidate actions, then runs a strict verifier-guided policy-gradient pass where reward is `1` only when the sampled action matches the exact next gap or the overflow class.
+
+The CLI output is split into human-readable sections:
+
+```text
+capability: top-k accuracy, NLL, true-action probability, mean rank, MRR, gap error
+calibration: top-1 confidence, correct/incorrect confidence, ECE, high-confidence accuracy
+prime buckets: capability metrics over four increasing held-out prime ranges
+verifier diagnostics: exact classical work needed to verify or correct proposals
+```
 
 `proposal_steps` measures how quickly the true action appears in the model's proposal order. `wheel exact` measures how many exact sieve primality probes remain after small-prime divisibility filters eliminate obvious composites. `assisted_wheel` tries the model's top-10 proposals before falling back to wheel scan. `block cost` estimates segmented interval-proof work by marking composites with base primes up to `sqrt(p + g)`, and `assisted_block` tries model proposals before falling back to the block scan. These verifier metrics are reported separately because an exact next-prime verifier still has to rule out earlier candidates.
 
