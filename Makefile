@@ -24,8 +24,9 @@ XOR_EXAMPLE := $(BUILD_DIR)/xor
 PRIME_GAP_EXAMPLE := $(BUILD_DIR)/prime_gap
 BENCHMARK := $(BUILD_DIR)/benchmark
 TEST_RUNNER := $(BUILD_DIR)/test_nn
+PRIME_GAP_CLI_TEST := tests/test_prime_gap_cli.sh
 
-.PHONY: all run prime-gap prime-gap-profile prime-gap-sweep benchmark test clean
+.PHONY: all run prime-gap prime-gap-profile prime-gap-sweep benchmark test test-cli clean
 
 all: $(XOR_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(BENCHMARK)
 
@@ -70,8 +71,12 @@ prime-gap-sweep: $(PRIME_GAP_EXAMPLE)
 benchmark: $(BENCHMARK)
 	./$(BENCHMARK)
 
-test: $(TEST_RUNNER)
+test: $(TEST_RUNNER) $(PRIME_GAP_EXAMPLE)
 	./$(TEST_RUNNER)
+	sh $(PRIME_GAP_CLI_TEST) ./$(PRIME_GAP_EXAMPLE)
+
+test-cli: $(PRIME_GAP_EXAMPLE)
+	sh $(PRIME_GAP_CLI_TEST) ./$(PRIME_GAP_EXAMPLE)
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -196,7 +196,7 @@ Optional arguments:
 make test
 ```
 
-The tests compare scalar and batched forward results, verify `batch_size=1` training against sample-wise training, finite-difference check batched gradients through the tiled kernels, and check the softmax cross-entropy and shared softmax-scorer gradients.
+The tests compare scalar and batched forward results, verify `batch_size=1` training against sample-wise training, finite-difference check batched gradients through the tiled kernels, and check the softmax cross-entropy and shared softmax-scorer gradients. They also run prime-gap CLI regression checks for argument bounds, sieve-limit overflow rejection, and wide-sweep cap handling.
 
 ## API
 
