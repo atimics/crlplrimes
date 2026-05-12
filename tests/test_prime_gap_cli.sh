@@ -65,9 +65,28 @@ expect_output_contains()
     pass "$name"
 }
 
+expect_output_omits()
+{
+    name=$1
+    unexpected=$2
+    shift 2
+    output=$(tmp_output)
+
+    if ! "$prime_gap_bin" "$@" >"$output" 2>&1; then
+        fail "$name failed unexpectedly" "$output"
+    fi
+    if grep -Fq "$unexpected" "$output"; then
+        fail "$name included unexpected output: $unexpected" "$output"
+    fi
+
+    rm -f "$output"
+    pass "$name"
+}
+
 expect_usage_failure "prime-gap CLI rejects interval sieve-limit overflow" 16 4294967000
 expect_usage_failure "prime-gap CLI rejects non-increasing train/test range" 1000 1000
 expect_usage_failure "prime-gap CLI rejects tiny train range" 15 3000
+expect_usage_failure "prime-gap CLI rejects invalid verifier diagnostics mode" 1000 3000 0 0 10 10 2
 
 expect_output_contains \
     "prime-gap CLI caps unlimited wide sweep" \
@@ -78,3 +97,23 @@ expect_output_contains \
     "prime-gap CLI preserves below-cap wide sweep limits" \
     "Wide-window runs are capped at train_states=123 test_states=45 epochs=0" \
     1000 3000 0 0 123 45
+
+expect_output_contains \
+    "prime-gap CLI defaults verifier diagnostics off" \
+    "verifier_diagnostics=off" \
+    1000 3000 0 0 20 20
+
+expect_output_omits \
+    "prime-gap CLI omits verifier detail by default" \
+    "wheel exact" \
+    1000 3000 0 0 20 20
+
+expect_output_contains \
+    "prime-gap CLI enables verifier diagnostics explicitly" \
+    "verifier_diagnostics=on" \
+    1000 3000 0 0 20 20 1
+
+expect_output_contains \
+    "prime-gap CLI prints verifier detail when enabled" \
+    "wheel exact" \
+    1000 3000 0 0 20 20 1

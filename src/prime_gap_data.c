@@ -24,7 +24,7 @@ static const char *const PROFILE_PHASE_NAMES[PRIME_GAP_PROFILE_PHASE_COUNT] = {
     "features",
     "forward",
     "train_update",
-    "metrics_verifier",
+    "metrics",
 };
 
 double now_seconds(void)

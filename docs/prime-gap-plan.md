@@ -161,6 +161,11 @@ generation, feature construction, explicit inference, scorer updates, and metric
 aggregation. This gives the next optimization pass a concrete target instead of guessing from the
 shape of the code.
 
+Exact verifier diagnostics are now an explicit CLI mode. The default run reports capability and
+calibration metrics without the expensive wheel/block verifier accounting; passing
+`verifier_diagnostics=1` as the final CLI argument, or using `make prime-gap-profile-verifier`,
+restores the exact diagnostic path.
+
 ## Next Work
 
 1. Improve calibration.

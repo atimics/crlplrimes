@@ -89,7 +89,7 @@ generalization by prime-size bucket
 supervised warm start vs verifier-guided RL
 ```
 
-Verifier work metrics are diagnostic, not the headline. They tell us how much classical computation the exact oracle is doing and prevent us from pretending that a learned proposal has replaced mathematical verification.
+Verifier work metrics are diagnostic, not the headline. They tell us how much classical computation the exact oracle is doing and prevent us from pretending that a learned proposal has replaced mathematical verification. Expensive verifier diagnostics are off by default; pass `1` as the final CLI argument when you want exact verifier-work accounting.
 
 ```sh
 make prime-gap
@@ -167,13 +167,19 @@ targets        verifier-generated labels and interval-frequency label scans
 features       candidate feature block construction
 forward        explicit model inference passes during evaluation and RL sampling
 train_update   scorer update calls, including their internal forward/backward work
-metrics_verifier ranking, softmax, calibration, and verifier diagnostic aggregation
+metrics        ranking, softmax, calibration, and verifier diagnostic aggregation when enabled
 ```
 
 Run a fixed-size profiling configuration with:
 
 ```sh
 make prime-gap-profile
+```
+
+Run the same profile shape with exact verifier diagnostics enabled:
+
+```sh
+make prime-gap-profile-verifier
 ```
 
 Current interpretation: the network learns a strong gap-ranking prior, but much of the easy top-k lift comes from small-prime divisibility structure. The wheel-frequency and linear-scorer baselines are intentionally strong checks on that. The interval-prime task shows the same pattern: the MLP improves probability quality, but top-rank behavior is still largely explained by the wheel prior. The raw-residue interval variant removes the direct composite flags while keeping compact modular information; on the default run the raw-residue MLP recovers most of the wheel behavior. In the wider sweep, the MLP keeps stronger MAP, total prime probability, and wheel-surviving top choices than the raw linear model, though top-1 prime accuracy narrows at larger windows. Exact next-prime verification remains the classical algorithm's job. That is expected and useful: the experiment is about learned proposal capability under perfect verification, not replacing the verifier.
@@ -187,7 +193,7 @@ make prime-gap-sweep
 Optional arguments:
 
 ```sh
-./build/float/prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] [max_train_states] [max_test_states]
+./build/float/prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] [max_train_states] [max_test_states] [verifier_diagnostics=0|1]
 ```
 
 ## Run Tests

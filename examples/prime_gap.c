@@ -13,6 +13,7 @@ int main(int argc, char **argv)
     size_t rl_epochs = parse_size_arg(argc, argv, 4, DEFAULT_RL_EPOCHS);
     size_t max_train_states = parse_size_arg(argc, argv, 5, DEFAULT_MAX_TRAIN_STATES);
     size_t max_test_states = parse_size_arg(argc, argv, 6, DEFAULT_MAX_TEST_STATES);
+    size_t verifier_diagnostics_arg = parse_size_arg(argc, argv, 7, DEFAULT_VERIFIER_DIAGNOSTICS);
     PrimeGapProfile profile;
     double total_started = now_seconds();
     Sieve sieve = {0, 0, 0, 0};
@@ -40,9 +41,10 @@ int main(int argc, char **argv)
 
     if (test_limit_arg <= train_limit_arg || train_limit_arg < 16 ||
         test_limit_arg > (size_t)UINT32_MAX - (size_t)INTERVAL_MAX_GAP ||
-        train_limit_arg > (size_t)UINT32_MAX) {
+        train_limit_arg > (size_t)UINT32_MAX ||
+        verifier_diagnostics_arg > 1) {
         fputs("usage: prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] "
-              "[max_train_states] [max_test_states]\n",
+              "[max_train_states] [max_test_states] [verifier_diagnostics=0|1]\n",
               stderr);
         return EXIT_FAILURE;
     }
@@ -50,13 +52,16 @@ int main(int argc, char **argv)
     uint32_t train_limit = (uint32_t)train_limit_arg;
     uint32_t test_limit = (uint32_t)test_limit_arg;
     uint32_t sieve_limit = test_limit + (uint32_t)INTERVAL_MAX_GAP;
+    int include_verifier_diagnostics = verifier_diagnostics_arg != 0;
 
-    printf("prime-gap scorer train_limit=%u test_limit=%u g_max=%d actions=%d features=%d\n",
+    printf("prime-gap scorer train_limit=%u test_limit=%u g_max=%d actions=%d features=%d "
+           "verifier_diagnostics=%s\n",
            train_limit,
            test_limit,
            G_MAX,
            ACTION_COUNT,
-           FEATURE_COUNT);
+           FEATURE_COUNT,
+           include_verifier_diagnostics ? "on" : "off");
 
     double started = now_seconds();
     if (!build_sieve(sieve_limit, &sieve)) {
@@ -164,7 +169,7 @@ int main(int argc, char **argv)
                                          frequency_ranked,
                                          frequency_probabilities,
                                          max_test_states,
-                                         1));
+                                         include_verifier_diagnostics));
     print_metrics("baseline wheel-frequency",
                   evaluate_wheel_frequency_policy(&sieve,
                                                   &test,
@@ -183,7 +188,7 @@ int main(int argc, char **argv)
                                                       &sieve,
                                                       &test,
                                                       max_test_states,
-                                                      1,
+                                                      include_verifier_diagnostics,
                                                       probabilities));
 
     print_metrics("model before",
@@ -195,7 +200,7 @@ int main(int argc, char **argv)
                                  &FEATURE_MASK_FULL,
                                  1.0,
                                  0,
-                                 1,
+                                 include_verifier_diagnostics,
                                  candidate_inputs,
                                  scores,
                                  probabilities));
@@ -304,7 +309,7 @@ int main(int argc, char **argv)
                                         &FEATURE_MASK_FULL,
                                         1.0,
                                         0,
-                                        1,
+                                        include_verifier_diagnostics,
                                         candidate_inputs,
                                         scores,
                                         probabilities);
@@ -774,7 +779,7 @@ int main(int argc, char **argv)
                                            &FEATURE_MASK_FULL,
                                            1.0,
                                            0,
-                                           1,
+                                           include_verifier_diagnostics,
                                            candidate_inputs,
                                            scores,
                                            probabilities);
