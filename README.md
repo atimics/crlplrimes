@@ -67,6 +67,47 @@ The current batch path uses internal 4-by-4 tiles for forward propagation, hidde
 
 Gradient buffers are allocated lazily the first time mini-batch training runs, so inference-only use and sample-wise training avoid that extra model memory.
 
+## Verifier-Grounded Proposal Learning
+
+The long-term shape of this project is a small C substrate for proposal-under-verification systems:
+
+```text
+state/action rows
+    |
+    v
+nn_score_actions / nn_score_action_rows
+    |
+    v
+ranked proposals
+    |
+    v
+verifier outcome
+    |
+    v
+trace JSONL
+    |
+    v
+replay training
+    |
+    v
+child checkpoint
+```
+
+The neural net ranks legal candidate actions. It does not certify truth, prove correctness, or own
+authoritative state transitions. A symbolic verifier or task-specific oracle resolves the outcome,
+and those scorer/verifier interactions become replayable training traces.
+
+The generic action-scorer API is the runtime surface for this pattern. It scores row-major candidate
+feature blocks with `nn_score_action_rows`, or caller-owned `NNActionCandidate` arrays with
+`nn_score_actions`. The old `nn_train_softmax_scorer` API remains available; `nn_train_action_scorer`
+is the proposal-oriented name for the same single-target softmax training path.
+
+Run the minimal generic action-scoring example with:
+
+```sh
+make action-scorer
+```
+
 ## Prime-Gap Capability Experiment
 
 This repository also includes a verifier-guided learning experiment over prime gaps. The goal is not to build a faster prime solver. The deterministic sieve/verifier is deliberately the oracle: it generates labels, supplies exact rewards, and gives us a known classical baseline so we can measure exactly how inefficient or capable the neural policy is.
@@ -251,16 +292,30 @@ NeuralNet *scorer = nn_create_config(&config);
 ```
 
 With a linear output layer, `nn_forward` returns logits; call `nn_softmax` when probabilities are needed.
+For action-ranking workloads, prefer the explicit scorer helpers:
+
+```c
+nn_real scores[3];
+nn_real probabilities[3];
+
+nn_score_action_rows(scorer, candidate_inputs, 3, scores, probabilities);
+```
+
+`nn_score_actions` fills `NNActionCandidate.score` and `NNActionCandidate.probability` for
+candidate structs with caller-owned feature pointers. `nn_rank_actions` produces deterministic
+score-descending rankings with action-id tie breaks.
 
 For a shared scalar scorer over candidate actions, train one state at a time with softmax cross-entropy across the candidate rows:
 
 ```c
-nn_real loss = nn_train_softmax_scorer(scorer,
-                                       candidate_inputs,
-                                       candidate_count,
-                                       true_candidate_index,
-                                       0.005f);
+nn_real loss = nn_train_action_scorer(scorer,
+                                      candidate_inputs,
+                                      candidate_count,
+                                      true_candidate_index,
+                                      0.005f);
 ```
+
+`nn_train_softmax_scorer` is still available as the compatibility name.
 
 Use entropy-regularized scorer training when you want to penalize overconfident distributions:
 

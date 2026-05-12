@@ -537,6 +537,109 @@ nn_real nn_softmax_cross_entropy(const nn_real *scores, const nn_real *targets, 
     return loss;
 }
 
+int nn_score_action_rows(NeuralNet *net,
+                         const nn_real *candidate_inputs,
+                         size_t candidate_count,
+                         nn_real *scores,
+                         nn_real *probabilities)
+{
+    if (net == NULL || candidate_inputs == NULL || candidate_count == 0 || scores == NULL ||
+        nn_output_size(net) != 1) {
+        return 0;
+    }
+
+    nn_forward_batch(net, candidate_inputs, scores, candidate_count);
+    if (probabilities != NULL) {
+        nn_softmax(scores, probabilities, candidate_count);
+    }
+    return 1;
+}
+
+int nn_score_actions(NeuralNet *net,
+                     NNActionCandidate *candidates,
+                     size_t candidate_count)
+{
+    if (net == NULL || candidates == NULL || candidate_count == 0 || nn_output_size(net) != 1) {
+        return 0;
+    }
+
+    if (candidate_count > SIZE_MAX / 2) {
+        return 0;
+    }
+
+    nn_real *scratch = checked_calloc(candidate_count * 2, sizeof(*scratch));
+    if (scratch == NULL) {
+        return 0;
+    }
+
+    nn_real *scores = scratch;
+    nn_real *probabilities = scratch + candidate_count;
+    for (size_t i = 0; i < candidate_count; ++i) {
+        if (candidates[i].features == NULL) {
+            free(scratch);
+            return 0;
+        }
+
+        nn_forward(net, candidates[i].features, &scores[i]);
+    }
+
+    nn_softmax(scores, probabilities, candidate_count);
+    for (size_t i = 0; i < candidate_count; ++i) {
+        candidates[i].score = scores[i];
+        candidates[i].probability = probabilities[i];
+    }
+
+    free(scratch);
+    return 1;
+}
+
+static int action_candidate_is_better(const NNActionCandidate *candidates,
+                                      size_t lhs,
+                                      size_t rhs)
+{
+    if (candidates[lhs].score > candidates[rhs].score) {
+        return 1;
+    }
+    if (candidates[lhs].score < candidates[rhs].score) {
+        return 0;
+    }
+    if (candidates[lhs].action_id < candidates[rhs].action_id) {
+        return 1;
+    }
+    if (candidates[lhs].action_id > candidates[rhs].action_id) {
+        return 0;
+    }
+    return lhs < rhs;
+}
+
+int nn_rank_actions(const NNActionCandidate *candidates,
+                    size_t candidate_count,
+                    size_t *ranked_indices)
+{
+    if (candidates == NULL || candidate_count == 0 || ranked_indices == NULL) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < candidate_count; ++i) {
+        ranked_indices[i] = i;
+    }
+
+    for (size_t i = 0; i < candidate_count; ++i) {
+        size_t best = i;
+        for (size_t j = i + 1; j < candidate_count; ++j) {
+            if (action_candidate_is_better(candidates, ranked_indices[j], ranked_indices[best])) {
+                best = j;
+            }
+        }
+
+        size_t tmp = ranked_indices[i];
+        ranked_indices[i] = ranked_indices[best];
+        ranked_indices[best] = tmp;
+    }
+
+    return 1;
+}
+
 static nn_real softmax_cross_entropy_index(const nn_real *scores, size_t count, size_t target_index)
 {
     if (scores == NULL || count == 0 || target_index >= count) {
@@ -1534,6 +1637,19 @@ nn_real nn_train_softmax_scorer(NeuralNet *net,
 {
     return nn_train_softmax_scorer_weighted(
         net, candidate_inputs, candidate_count, target_index, (nn_real)1, learning_rate);
+}
+
+nn_real nn_train_action_scorer(NeuralNet *net,
+                               const nn_real *candidate_inputs,
+                               size_t candidate_count,
+                               size_t target_index,
+                               nn_real learning_rate)
+{
+    return nn_train_softmax_scorer(net,
+                                   candidate_inputs,
+                                   candidate_count,
+                                   target_index,
+                                   learning_rate);
 }
 
 nn_real nn_train_softmax_scorer_entropy(NeuralNet *net,

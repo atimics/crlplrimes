@@ -21,14 +21,15 @@ PRIME_GAP_OBJS := \
 	$(BUILD_DIR)/prime_gap_eval.o \
 	$(BUILD_DIR)/prime_gap_train.o
 XOR_EXAMPLE := $(BUILD_DIR)/xor
+ACTION_SCORER_EXAMPLE := $(BUILD_DIR)/action_scorer
 PRIME_GAP_EXAMPLE := $(BUILD_DIR)/prime_gap
 BENCHMARK := $(BUILD_DIR)/benchmark
 TEST_RUNNER := $(BUILD_DIR)/test_nn
 PRIME_GAP_CLI_TEST := tests/test_prime_gap_cli.sh
 
-.PHONY: all run prime-gap prime-gap-profile prime-gap-profile-verifier prime-gap-sweep benchmark test test-cli clean
+.PHONY: all run action-scorer prime-gap prime-gap-profile prime-gap-profile-verifier prime-gap-sweep benchmark test test-cli clean
 
-all: $(XOR_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(BENCHMARK)
+all: $(XOR_EXAMPLE) $(ACTION_SCORER_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(BENCHMARK)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -45,6 +46,9 @@ $(BUILD_DIR)/prime_gap_%.o: src/prime_gap_%.c include/prime_gap.h include/nn.h |
 $(XOR_EXAMPLE): examples/xor.c $(NN_OBJ) include/nn.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/xor.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
+$(ACTION_SCORER_EXAMPLE): examples/action_scorer.c $(NN_OBJ) include/nn.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/action_scorer.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+
 $(PRIME_GAP_EXAMPLE): examples/prime_gap.c $(PRIME_GAP_OBJS) $(NN_OBJ) include/prime_gap.h include/nn.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_gap.c $(PRIME_GAP_OBJS) $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
@@ -56,6 +60,9 @@ $(TEST_RUNNER): tests/test_nn.c $(PRIME_GAP_OBJS) $(NN_TEST_OBJ) include/prime_g
 
 run: $(XOR_EXAMPLE)
 	./$(XOR_EXAMPLE)
+
+action-scorer: $(ACTION_SCORER_EXAMPLE)
+	./$(ACTION_SCORER_EXAMPLE)
 
 prime-gap: $(PRIME_GAP_EXAMPLE)
 	./$(PRIME_GAP_EXAMPLE)

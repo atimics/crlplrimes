@@ -14,6 +14,8 @@
 #define NN_REAL_IS_FLOAT 0
 #endif
 
+#include <stdint.h>
+
 typedef NN_REAL nn_real;
 typedef struct NeuralNet NeuralNet;
 
@@ -38,6 +40,19 @@ typedef struct {
     NNLoss loss;
 } NNConfig;
 
+typedef struct {
+    uint32_t action_id;
+    const nn_real *features;
+    nn_real score;
+    nn_real probability;
+} NNActionCandidate;
+
+typedef struct {
+    size_t candidate_count;
+    size_t feature_count;
+    NNActionCandidate *candidates;
+} NNActionSet;
+
 NeuralNet *nn_create(const size_t *layer_sizes, size_t layer_count, unsigned int seed);
 NeuralNet *nn_create_config(const NNConfig *config);
 void nn_free(NeuralNet *net);
@@ -54,6 +69,17 @@ void nn_forward_batch(NeuralNet *net,
                       size_t sample_count);
 void nn_softmax(const nn_real *scores, nn_real *probabilities, size_t count);
 nn_real nn_softmax_cross_entropy(const nn_real *scores, const nn_real *targets, size_t count);
+int nn_score_actions(NeuralNet *net,
+                     NNActionCandidate *candidates,
+                     size_t candidate_count);
+int nn_score_action_rows(NeuralNet *net,
+                         const nn_real *candidate_inputs,
+                         size_t candidate_count,
+                         nn_real *scores,
+                         nn_real *probabilities);
+int nn_rank_actions(const NNActionCandidate *candidates,
+                    size_t candidate_count,
+                    size_t *ranked_indices);
 nn_real nn_train_sample(NeuralNet *net,
                         const nn_real *input,
                         const nn_real *target,
@@ -83,6 +109,11 @@ nn_real nn_train_softmax_scorer(NeuralNet *net,
                                 size_t candidate_count,
                                 size_t target_index,
                                 nn_real learning_rate);
+nn_real nn_train_action_scorer(NeuralNet *net,
+                               const nn_real *candidate_inputs,
+                               size_t candidate_count,
+                               size_t target_index,
+                               nn_real learning_rate);
 nn_real nn_train_softmax_scorer_entropy(NeuralNet *net,
                                         const nn_real *candidate_inputs,
                                         size_t candidate_count,

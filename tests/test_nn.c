@@ -651,6 +651,103 @@ static int test_softmax_scorer_cached_matches_regular(void)
     return ok;
 }
 
+static int test_action_scorer_rows_probabilities_sum_to_one(void)
+{
+    const size_t layers[] = {2, 3, 1};
+    const size_t candidate_count = 3;
+    const nn_real candidate_inputs[] = {
+        0.0, 0.0,
+        1.0, 0.0,
+        0.0, 1.0,
+    };
+    nn_real scores[3];
+    nn_real probabilities[3];
+    nn_real batch_scores[3];
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = 3;
+    config.seed = 24601;
+    config.hidden_activation = NN_ACTIVATION_RELU;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+
+    NeuralNet *net = nn_create_config(&config);
+    if (net == NULL) {
+        return 0;
+    }
+
+    int ok = nn_score_action_rows(net,
+                                  candidate_inputs,
+                                  candidate_count,
+                                  scores,
+                                  probabilities);
+    nn_forward_batch(net, candidate_inputs, batch_scores, candidate_count);
+
+    nn_real sum = 0;
+    for (size_t i = 0; i < candidate_count; ++i) {
+        sum += probabilities[i];
+        ok = ok && nearly_equal(scores[i], batch_scores[i], (nn_real)1e-6, (nn_real)1e-6);
+    }
+    ok = ok && nearly_equal(sum, (nn_real)1, (nn_real)1e-6, (nn_real)1e-6);
+
+    nn_free(net);
+    return ok;
+}
+
+static int test_action_scorer_struct_api_scores_candidates(void)
+{
+    const size_t layers[] = {2, 3, 1};
+    const nn_real features[] = {
+        0.0, 0.0,
+        1.0, 0.0,
+        0.0, 1.0,
+    };
+    NNActionCandidate candidates[] = {
+        {10, &features[0], 0, 0},
+        {20, &features[2], 0, 0},
+        {30, &features[4], 0, 0},
+    };
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = 3;
+    config.seed = 13579;
+    config.hidden_activation = NN_ACTIVATION_TANH;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+
+    NeuralNet *net = nn_create_config(&config);
+    if (net == NULL) {
+        return 0;
+    }
+
+    int ok = nn_score_actions(net, candidates, 3);
+    nn_real sum = candidates[0].probability + candidates[1].probability + candidates[2].probability;
+    ok = ok && nearly_equal(sum, (nn_real)1, (nn_real)1e-6, (nn_real)1e-6);
+    ok = ok && candidates[0].probability > (nn_real)0 &&
+         candidates[1].probability > (nn_real)0 &&
+         candidates[2].probability > (nn_real)0;
+
+    nn_free(net);
+    return ok;
+}
+
+static int test_action_scorer_ranking_is_deterministic_under_ties(void)
+{
+    NNActionCandidate candidates[] = {
+        {30, NULL, (nn_real)1, 0},
+        {10, NULL, (nn_real)1, 0},
+        {20, NULL, (nn_real)2, 0},
+        {10, NULL, (nn_real)1, 0},
+    };
+    size_t ranked[4];
+
+    return nn_rank_actions(candidates, 4, ranked) &&
+           ranked[0] == 2 &&
+           ranked[1] == 1 &&
+           ranked[2] == 3 &&
+           ranked[3] == 0;
+}
+
 static int test_prime_gap_features_are_divisibility_flags(void)
 {
     nn_real inputs[ACTION_COUNT * FEATURE_COUNT];
@@ -1057,6 +1154,12 @@ int main(void)
           "softmax cross-entropy requires linear output");
     check(test_softmax_scorer_cached_matches_regular(),
           "softmax scorer cached update matches regular update");
+    check(test_action_scorer_rows_probabilities_sum_to_one(),
+          "action scorer rows produce normalized probabilities");
+    check(test_action_scorer_struct_api_scores_candidates(),
+          "action scorer struct API scores candidates");
+    check(test_action_scorer_ranking_is_deterministic_under_ties(),
+          "action scorer ranking is deterministic under ties");
     check(test_prime_gap_features_are_divisibility_flags(),
           "prime-gap features are divisibility flags");
     check(test_prime_gap_raw_residue_features_are_not_divisibility_flags(),

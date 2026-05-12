@@ -203,6 +203,7 @@ EvalMetrics evaluate_model(NeuralNet *net,
     }
 
     size_t ranked[ACTION_COUNT];
+    size_t completed = 0;
     for (size_t sample = 0; sample < samples; ++sample) {
         size_t index = eval_sample_index(dataset, sample, samples);
         uint32_t p = dataset->prime[index];
@@ -210,7 +211,10 @@ EvalMetrics evaluate_model(NeuralNet *net,
 
         fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
         double profiled = prime_gap_profile_start();
-        nn_forward_batch(net, candidate_inputs, scores, ACTION_COUNT);
+        if (!nn_score_action_rows(net, candidate_inputs, ACTION_COUNT, scores, NULL)) {
+            prime_gap_profile_stop(PRIME_GAP_PROFILE_FORWARD, profiled);
+            break;
+        }
         prime_gap_profile_stop(PRIME_GAP_PROFILE_FORWARD, profiled);
 
         profiled = prime_gap_profile_start();
@@ -229,10 +233,11 @@ EvalMetrics evaluate_model(NeuralNet *net,
                                ranked,
                                probabilities,
                                include_verifier);
+        ++completed;
         prime_gap_profile_stop(PRIME_GAP_PROFILE_METRICS, profiled);
     }
 
-    metrics.samples = samples;
+    metrics.samples = completed;
     metrics.temperature = temperature <= 0.0 ? 1.0 : temperature;
     finalize_eval_metrics(&metrics);
     return metrics;
@@ -493,7 +498,10 @@ IntervalMetrics evaluate_interval_model(NeuralNet *net,
         fill_interval_candidate_features(
             candidate_inputs, p, candidate_count, gap_scale, log_scale, mask);
         double profiled = prime_gap_profile_start();
-        nn_forward_batch(net, candidate_inputs, scores, candidate_count);
+        if (!nn_score_action_rows(net, candidate_inputs, candidate_count, scores, NULL)) {
+            prime_gap_profile_stop(PRIME_GAP_PROFILE_FORWARD, profiled);
+            break;
+        }
         prime_gap_profile_stop(PRIME_GAP_PROFILE_FORWARD, profiled);
 
         profiled = prime_gap_profile_start();
@@ -549,7 +557,10 @@ IntervalMetrics evaluate_interval_model_cached(NeuralNet *net,
                                          log_scale,
                                          mask);
         double profiled = prime_gap_profile_start();
-        nn_forward_batch(net, candidate_inputs, scores, cache->candidate_count);
+        if (!nn_score_action_rows(net, candidate_inputs, cache->candidate_count, scores, NULL)) {
+            prime_gap_profile_stop(PRIME_GAP_PROFILE_FORWARD, profiled);
+            break;
+        }
         prime_gap_profile_stop(PRIME_GAP_PROFILE_FORWARD, profiled);
 
         profiled = prime_gap_profile_start();

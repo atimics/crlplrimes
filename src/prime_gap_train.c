@@ -57,11 +57,11 @@ int train_supervised(NeuralNet *net,
                                                                       target_index,
                                                                       entropy_weight,
                                                                       learning_rate)
-                                    : nn_train_softmax_scorer(net,
-                                                              candidate_inputs,
-                                                              candidate_count,
-                                                              target_index,
-                                                              learning_rate);
+                                    : nn_train_action_scorer(net,
+                                                             candidate_inputs,
+                                                             candidate_count,
+                                                             target_index,
+                                                             learning_rate);
             prime_gap_profile_stop(PRIME_GAP_PROFILE_TRAIN_UPDATE, profiled);
             if (isnan((double)step_loss)) {
                 return 0;
@@ -188,7 +188,10 @@ int train_strict_verifier_rl(NeuralNet *net,
 
             fill_candidate_features_masked(candidate_inputs, dataset->prime[index], log_scale, mask);
             double profiled = prime_gap_profile_start();
-            nn_forward_batch(net, candidate_inputs, scores, ACTION_COUNT);
+            if (!nn_score_action_rows(net, candidate_inputs, ACTION_COUNT, scores, NULL)) {
+                prime_gap_profile_stop(PRIME_GAP_PROFILE_FORWARD, profiled);
+                return 0;
+            }
             prime_gap_profile_stop(PRIME_GAP_PROFILE_FORWARD, profiled);
 
             profiled = prime_gap_profile_start();
