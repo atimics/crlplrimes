@@ -31,6 +31,11 @@ typedef enum {
     NN_LOSS_SOFTMAX_CROSS_ENTROPY = 1,
 } NNLoss;
 
+typedef enum {
+    NN_CHECKPOINT_SCALAR_FLOAT32 = 1,
+    NN_CHECKPOINT_SCALAR_FLOAT64 = 2,
+} NNCheckpointScalarType;
+
 typedef struct {
     const size_t *layer_sizes;
     size_t layer_count;
@@ -52,6 +57,16 @@ typedef struct {
     size_t feature_count;
     NNActionCandidate *candidates;
 } NNActionSet;
+
+typedef struct {
+    uint32_t feature_encoder_version;
+    uint32_t normalization_version;
+    uint8_t normalization_hash[32];
+    uint8_t parent_model_hash[32];
+    uint8_t training_trace_root[32];
+    uint8_t training_view_root[32];
+    uint8_t benchmark_report_hash[32];
+} NNCheckpointMeta;
 
 NeuralNet *nn_create(const size_t *layer_sizes, size_t layer_count, unsigned int seed);
 NeuralNet *nn_create_config(const NNConfig *config);
@@ -80,6 +95,11 @@ int nn_score_action_rows(NeuralNet *net,
 int nn_rank_actions(const NNActionCandidate *candidates,
                     size_t candidate_count,
                     size_t *ranked_indices);
+int nn_save_checkpoint(const NeuralNet *net,
+                       const char *path,
+                       const NNCheckpointMeta *meta);
+NeuralNet *nn_load_checkpoint(const char *path, NNCheckpointMeta *out_meta);
+int nn_hash_checkpoint_file(const char *path, uint8_t out_hash[32]);
 nn_real nn_train_sample(NeuralNet *net,
                         const nn_real *input,
                         const nn_real *target,

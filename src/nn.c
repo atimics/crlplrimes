@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -141,6 +142,22 @@ static int loss_is_valid(NNLoss loss)
     return loss == NN_LOSS_MSE || loss == NN_LOSS_SOFTMAX_CROSS_ENTROPY;
 }
 
+enum {
+    NN_CHECKPOINT_VERSION = 1,
+    NN_CHECKPOINT_MAX_LAYERS = 1024,
+};
+
+static const uint8_t NN_CHECKPOINT_MAGIC[8] = {'C', 'R', 'L', 'P', 'N', 'N', 'C', 'K'};
+
+static NNCheckpointScalarType checkpoint_scalar_type(void)
+{
+#if NN_REAL_IS_FLOAT
+    return NN_CHECKPOINT_SCALAR_FLOAT32;
+#else
+    return NN_CHECKPOINT_SCALAR_FLOAT64;
+#endif
+}
+
 static int config_is_valid(const NNConfig *config)
 {
     if (config == NULL || !sizes_are_valid(config->layer_sizes, config->layer_count) ||
@@ -155,6 +172,135 @@ static int config_is_valid(const NNConfig *config)
     }
 
     return 1;
+}
+
+static int write_exact(FILE *file, const void *data, size_t size)
+{
+    return size == 0 || fwrite(data, 1, size, file) == size;
+}
+
+static int read_exact(FILE *file, void *data, size_t size)
+{
+    return size == 0 || fread(data, 1, size, file) == size;
+}
+
+static int write_u32_le(FILE *file, uint32_t value)
+{
+    uint8_t bytes[4];
+    bytes[0] = (uint8_t)(value & 0xffu);
+    bytes[1] = (uint8_t)((value >> 8) & 0xffu);
+    bytes[2] = (uint8_t)((value >> 16) & 0xffu);
+    bytes[3] = (uint8_t)((value >> 24) & 0xffu);
+    return write_exact(file, bytes, sizeof(bytes));
+}
+
+static int read_u32_le(FILE *file, uint32_t *out)
+{
+    uint8_t bytes[4];
+    if (!read_exact(file, bytes, sizeof(bytes))) {
+        return 0;
+    }
+
+    *out = (uint32_t)bytes[0] |
+           ((uint32_t)bytes[1] << 8) |
+           ((uint32_t)bytes[2] << 16) |
+           ((uint32_t)bytes[3] << 24);
+    return 1;
+}
+
+static int write_u64_le(FILE *file, uint64_t value)
+{
+    uint8_t bytes[8];
+    for (size_t i = 0; i < sizeof(bytes); ++i) {
+        bytes[i] = (uint8_t)((value >> (8u * i)) & 0xffu);
+    }
+    return write_exact(file, bytes, sizeof(bytes));
+}
+
+static int read_u64_le(FILE *file, uint64_t *out)
+{
+    uint8_t bytes[8];
+    if (!read_exact(file, bytes, sizeof(bytes))) {
+        return 0;
+    }
+
+    uint64_t value = 0;
+    for (size_t i = 0; i < sizeof(bytes); ++i) {
+        value |= (uint64_t)bytes[i] << (8u * i);
+    }
+    *out = value;
+    return 1;
+}
+
+static int write_real_le(FILE *file, nn_real value)
+{
+#if NN_REAL_IS_FLOAT
+    float stored = (float)value;
+    uint32_t bits;
+    memcpy(&bits, &stored, sizeof(bits));
+    return write_u32_le(file, bits);
+#else
+    double stored = (double)value;
+    uint64_t bits;
+    memcpy(&bits, &stored, sizeof(bits));
+    return write_u64_le(file, bits);
+#endif
+}
+
+static int read_real_le(FILE *file, nn_real *out)
+{
+#if NN_REAL_IS_FLOAT
+    uint32_t bits;
+    float stored;
+    if (!read_u32_le(file, &bits)) {
+        return 0;
+    }
+    memcpy(&stored, &bits, sizeof(stored));
+    *out = (nn_real)stored;
+    return 1;
+#else
+    uint64_t bits;
+    double stored;
+    if (!read_u64_le(file, &bits)) {
+        return 0;
+    }
+    memcpy(&stored, &bits, sizeof(stored));
+    *out = (nn_real)stored;
+    return 1;
+#endif
+}
+
+static int write_checkpoint_meta(FILE *file, const NNCheckpointMeta *meta)
+{
+    NNCheckpointMeta empty;
+    if (meta == NULL) {
+        memset(&empty, 0, sizeof(empty));
+        meta = &empty;
+    }
+
+    return write_u32_le(file, meta->feature_encoder_version) &&
+           write_u32_le(file, meta->normalization_version) &&
+           write_exact(file, meta->normalization_hash, sizeof(meta->normalization_hash)) &&
+           write_exact(file, meta->parent_model_hash, sizeof(meta->parent_model_hash)) &&
+           write_exact(file, meta->training_trace_root, sizeof(meta->training_trace_root)) &&
+           write_exact(file, meta->training_view_root, sizeof(meta->training_view_root)) &&
+           write_exact(file, meta->benchmark_report_hash, sizeof(meta->benchmark_report_hash));
+}
+
+static int read_checkpoint_meta(FILE *file, NNCheckpointMeta *meta)
+{
+    NNCheckpointMeta local;
+    if (meta == NULL) {
+        meta = &local;
+    }
+
+    return read_u32_le(file, &meta->feature_encoder_version) &&
+           read_u32_le(file, &meta->normalization_version) &&
+           read_exact(file, meta->normalization_hash, sizeof(meta->normalization_hash)) &&
+           read_exact(file, meta->parent_model_hash, sizeof(meta->parent_model_hash)) &&
+           read_exact(file, meta->training_trace_root, sizeof(meta->training_trace_root)) &&
+           read_exact(file, meta->training_view_root, sizeof(meta->training_view_root)) &&
+           read_exact(file, meta->benchmark_report_hash, sizeof(meta->benchmark_report_hash));
 }
 
 static nn_real dot_product(const nn_real *a, const nn_real *b, size_t count)
@@ -1334,6 +1480,346 @@ size_t nn_forward_flop_count(const NeuralNet *net)
     }
 
     return total;
+}
+
+int nn_save_checkpoint(const NeuralNet *net, const char *path, const NNCheckpointMeta *meta)
+{
+    if (net == NULL || path == NULL) {
+        return 0;
+    }
+
+    size_t parameter_count = nn_parameter_count(net);
+    if (parameter_count == 0) {
+        return 0;
+    }
+
+    FILE *file = fopen(path, "wb");
+    if (file == NULL) {
+        return 0;
+    }
+
+    int ok = write_exact(file, NN_CHECKPOINT_MAGIC, sizeof(NN_CHECKPOINT_MAGIC)) &&
+             write_u32_le(file, NN_CHECKPOINT_VERSION) &&
+             write_u32_le(file, (uint32_t)checkpoint_scalar_type()) &&
+             write_u32_le(file, (uint32_t)sizeof(nn_real)) &&
+             write_u64_le(file, (uint64_t)net->layer_count) &&
+             write_u32_le(file, (uint32_t)net->hidden_activation) &&
+             write_u32_le(file, (uint32_t)net->output_activation) &&
+             write_u32_le(file, (uint32_t)net->loss) &&
+             write_u64_le(file, (uint64_t)parameter_count) &&
+             write_checkpoint_meta(file, meta);
+
+    for (size_t layer = 0; ok && layer < net->layer_count; ++layer) {
+        ok = write_u64_le(file, (uint64_t)net->sizes[layer]);
+    }
+
+    for (size_t layer = 1; ok && layer < net->layer_count; ++layer) {
+        size_t previous = net->sizes[layer - 1];
+        size_t current = net->sizes[layer];
+        size_t weight_count = previous * current;
+
+        for (size_t i = 0; ok && i < weight_count; ++i) {
+            ok = write_real_le(file, net->weights[layer][i]);
+        }
+        for (size_t i = 0; ok && i < current; ++i) {
+            ok = write_real_le(file, net->biases[layer][i]);
+        }
+    }
+
+    if (fclose(file) != 0) {
+        ok = 0;
+    }
+    return ok;
+}
+
+NeuralNet *nn_load_checkpoint(const char *path, NNCheckpointMeta *out_meta)
+{
+    if (path == NULL) {
+        return NULL;
+    }
+
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) {
+        return NULL;
+    }
+
+    uint8_t magic[sizeof(NN_CHECKPOINT_MAGIC)];
+    uint32_t version = 0;
+    uint32_t scalar_type = 0;
+    uint32_t scalar_size = 0;
+    uint64_t layer_count64 = 0;
+    uint32_t hidden_activation = 0;
+    uint32_t output_activation = 0;
+    uint32_t loss = 0;
+    uint64_t parameter_count = 0;
+    size_t *sizes = NULL;
+    NeuralNet *net = NULL;
+
+    int ok = read_exact(file, magic, sizeof(magic)) &&
+             memcmp(magic, NN_CHECKPOINT_MAGIC, sizeof(NN_CHECKPOINT_MAGIC)) == 0 &&
+             read_u32_le(file, &version) &&
+             version == NN_CHECKPOINT_VERSION &&
+             read_u32_le(file, &scalar_type) &&
+             scalar_type == (uint32_t)checkpoint_scalar_type() &&
+             read_u32_le(file, &scalar_size) &&
+             scalar_size == sizeof(nn_real) &&
+             read_u64_le(file, &layer_count64) &&
+             layer_count64 >= 2 &&
+             layer_count64 <= NN_CHECKPOINT_MAX_LAYERS &&
+             layer_count64 <= (uint64_t)SIZE_MAX &&
+             read_u32_le(file, &hidden_activation) &&
+             read_u32_le(file, &output_activation) &&
+             read_u32_le(file, &loss) &&
+             read_u64_le(file, &parameter_count) &&
+             parameter_count != 0 &&
+             read_checkpoint_meta(file, out_meta);
+
+    size_t layer_count = ok ? (size_t)layer_count64 : 0;
+    if (ok) {
+        sizes = checked_calloc(layer_count, sizeof(*sizes));
+        ok = sizes != NULL;
+    }
+
+    for (size_t layer = 0; ok && layer < layer_count; ++layer) {
+        uint64_t size64 = 0;
+        ok = read_u64_le(file, &size64) &&
+             size64 != 0 &&
+             size64 <= (uint64_t)SIZE_MAX;
+        if (ok) {
+            sizes[layer] = (size_t)size64;
+        }
+    }
+
+    if (ok) {
+        NNConfig config;
+        config.layer_sizes = sizes;
+        config.layer_count = layer_count;
+        config.seed = 1;
+        config.hidden_activation = (NNActivation)hidden_activation;
+        config.output_activation = (NNActivation)output_activation;
+        config.loss = (NNLoss)loss;
+        net = nn_create_config(&config);
+        ok = net != NULL && (uint64_t)nn_parameter_count(net) == parameter_count;
+    }
+
+    for (size_t layer = 1; ok && layer < layer_count; ++layer) {
+        size_t previous = net->sizes[layer - 1];
+        size_t current = net->sizes[layer];
+        size_t weight_count = previous * current;
+
+        for (size_t i = 0; ok && i < weight_count; ++i) {
+            ok = read_real_le(file, &net->weights[layer][i]);
+        }
+        for (size_t i = 0; ok && i < current; ++i) {
+            ok = read_real_le(file, &net->biases[layer][i]);
+        }
+    }
+
+    int trailing = ok ? fgetc(file) : EOF;
+    ok = ok && trailing == EOF;
+    fclose(file);
+    free(sizes);
+
+    if (!ok) {
+        nn_free(net);
+        return NULL;
+    }
+
+    return net;
+}
+
+typedef struct {
+    uint32_t state[8];
+    uint8_t buffer[64];
+    uint64_t total_size;
+    size_t buffer_size;
+} Sha256;
+
+static uint32_t sha256_rotr(uint32_t value, uint32_t shift)
+{
+    return (value >> shift) | (value << (32u - shift));
+}
+
+static uint32_t sha256_load_be32(const uint8_t *bytes)
+{
+    return ((uint32_t)bytes[0] << 24) |
+           ((uint32_t)bytes[1] << 16) |
+           ((uint32_t)bytes[2] << 8) |
+           (uint32_t)bytes[3];
+}
+
+static void sha256_store_be32(uint8_t *bytes, uint32_t value)
+{
+    bytes[0] = (uint8_t)(value >> 24);
+    bytes[1] = (uint8_t)(value >> 16);
+    bytes[2] = (uint8_t)(value >> 8);
+    bytes[3] = (uint8_t)value;
+}
+
+static void sha256_init(Sha256 *ctx)
+{
+    static const uint32_t initial_state[8] = {
+        UINT32_C(0x6a09e667), UINT32_C(0xbb67ae85), UINT32_C(0x3c6ef372),
+        UINT32_C(0xa54ff53a), UINT32_C(0x510e527f), UINT32_C(0x9b05688c),
+        UINT32_C(0x1f83d9ab), UINT32_C(0x5be0cd19),
+    };
+
+    memcpy(ctx->state, initial_state, sizeof(initial_state));
+    ctx->total_size = 0;
+    ctx->buffer_size = 0;
+}
+
+static void sha256_transform(Sha256 *ctx, const uint8_t block[64])
+{
+    static const uint32_t k[64] = {
+        UINT32_C(0x428a2f98), UINT32_C(0x71374491), UINT32_C(0xb5c0fbcf),
+        UINT32_C(0xe9b5dba5), UINT32_C(0x3956c25b), UINT32_C(0x59f111f1),
+        UINT32_C(0x923f82a4), UINT32_C(0xab1c5ed5), UINT32_C(0xd807aa98),
+        UINT32_C(0x12835b01), UINT32_C(0x243185be), UINT32_C(0x550c7dc3),
+        UINT32_C(0x72be5d74), UINT32_C(0x80deb1fe), UINT32_C(0x9bdc06a7),
+        UINT32_C(0xc19bf174), UINT32_C(0xe49b69c1), UINT32_C(0xefbe4786),
+        UINT32_C(0x0fc19dc6), UINT32_C(0x240ca1cc), UINT32_C(0x2de92c6f),
+        UINT32_C(0x4a7484aa), UINT32_C(0x5cb0a9dc), UINT32_C(0x76f988da),
+        UINT32_C(0x983e5152), UINT32_C(0xa831c66d), UINT32_C(0xb00327c8),
+        UINT32_C(0xbf597fc7), UINT32_C(0xc6e00bf3), UINT32_C(0xd5a79147),
+        UINT32_C(0x06ca6351), UINT32_C(0x14292967), UINT32_C(0x27b70a85),
+        UINT32_C(0x2e1b2138), UINT32_C(0x4d2c6dfc), UINT32_C(0x53380d13),
+        UINT32_C(0x650a7354), UINT32_C(0x766a0abb), UINT32_C(0x81c2c92e),
+        UINT32_C(0x92722c85), UINT32_C(0xa2bfe8a1), UINT32_C(0xa81a664b),
+        UINT32_C(0xc24b8b70), UINT32_C(0xc76c51a3), UINT32_C(0xd192e819),
+        UINT32_C(0xd6990624), UINT32_C(0xf40e3585), UINT32_C(0x106aa070),
+        UINT32_C(0x19a4c116), UINT32_C(0x1e376c08), UINT32_C(0x2748774c),
+        UINT32_C(0x34b0bcb5), UINT32_C(0x391c0cb3), UINT32_C(0x4ed8aa4a),
+        UINT32_C(0x5b9cca4f), UINT32_C(0x682e6ff3), UINT32_C(0x748f82ee),
+        UINT32_C(0x78a5636f), UINT32_C(0x84c87814), UINT32_C(0x8cc70208),
+        UINT32_C(0x90befffa), UINT32_C(0xa4506ceb), UINT32_C(0xbef9a3f7),
+        UINT32_C(0xc67178f2),
+    };
+    uint32_t w[64];
+
+    for (size_t i = 0; i < 16; ++i) {
+        w[i] = sha256_load_be32(&block[i * 4]);
+    }
+    for (size_t i = 16; i < 64; ++i) {
+        uint32_t s0 = sha256_rotr(w[i - 15], 7) ^ sha256_rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
+        uint32_t s1 = sha256_rotr(w[i - 2], 17) ^ sha256_rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+
+    uint32_t a = ctx->state[0];
+    uint32_t b = ctx->state[1];
+    uint32_t c = ctx->state[2];
+    uint32_t d = ctx->state[3];
+    uint32_t e = ctx->state[4];
+    uint32_t f = ctx->state[5];
+    uint32_t g = ctx->state[6];
+    uint32_t h = ctx->state[7];
+
+    for (size_t i = 0; i < 64; ++i) {
+        uint32_t s1 = sha256_rotr(e, 6) ^ sha256_rotr(e, 11) ^ sha256_rotr(e, 25);
+        uint32_t ch = (e & f) ^ ((~e) & g);
+        uint32_t temp1 = h + s1 + ch + k[i] + w[i];
+        uint32_t s0 = sha256_rotr(a, 2) ^ sha256_rotr(a, 13) ^ sha256_rotr(a, 22);
+        uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+        uint32_t temp2 = s0 + maj;
+
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2;
+    }
+
+    ctx->state[0] += a;
+    ctx->state[1] += b;
+    ctx->state[2] += c;
+    ctx->state[3] += d;
+    ctx->state[4] += e;
+    ctx->state[5] += f;
+    ctx->state[6] += g;
+    ctx->state[7] += h;
+}
+
+static void sha256_update(Sha256 *ctx, const uint8_t *data, size_t size)
+{
+    ctx->total_size += (uint64_t)size;
+
+    while (size > 0) {
+        size_t remaining = sizeof(ctx->buffer) - ctx->buffer_size;
+        size_t chunk = size < remaining ? size : remaining;
+        memcpy(&ctx->buffer[ctx->buffer_size], data, chunk);
+        ctx->buffer_size += chunk;
+        data += chunk;
+        size -= chunk;
+
+        if (ctx->buffer_size == sizeof(ctx->buffer)) {
+            sha256_transform(ctx, ctx->buffer);
+            ctx->buffer_size = 0;
+        }
+    }
+}
+
+static void sha256_final(Sha256 *ctx, uint8_t out_hash[32])
+{
+    uint64_t bit_size = ctx->total_size * 8u;
+    ctx->buffer[ctx->buffer_size++] = 0x80u;
+
+    if (ctx->buffer_size > 56) {
+        memset(&ctx->buffer[ctx->buffer_size], 0, sizeof(ctx->buffer) - ctx->buffer_size);
+        sha256_transform(ctx, ctx->buffer);
+        ctx->buffer_size = 0;
+    }
+
+    memset(&ctx->buffer[ctx->buffer_size], 0, 56 - ctx->buffer_size);
+    for (size_t i = 0; i < 8; ++i) {
+        ctx->buffer[56 + i] = (uint8_t)(bit_size >> (56u - 8u * i));
+    }
+    sha256_transform(ctx, ctx->buffer);
+
+    for (size_t i = 0; i < 8; ++i) {
+        sha256_store_be32(&out_hash[i * 4], ctx->state[i]);
+    }
+}
+
+int nn_hash_checkpoint_file(const char *path, uint8_t out_hash[32])
+{
+    if (path == NULL || out_hash == NULL) {
+        return 0;
+    }
+
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) {
+        return 0;
+    }
+
+    Sha256 ctx;
+    uint8_t buffer[4096];
+    sha256_init(&ctx);
+
+    int ok = 1;
+    for (;;) {
+        size_t got = fread(buffer, 1, sizeof(buffer), file);
+        if (got != 0) {
+            sha256_update(&ctx, buffer, got);
+        }
+        if (got < sizeof(buffer)) {
+            if (ferror(file)) {
+                ok = 0;
+            }
+            break;
+        }
+    }
+
+    fclose(file);
+    if (!ok) {
+        return 0;
+    }
+
+    sha256_final(&ctx, out_hash);
+    return 1;
 }
 
 #ifdef NN_ENABLE_TEST_API

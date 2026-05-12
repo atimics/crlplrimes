@@ -43,7 +43,7 @@ memory that can train successor checkpoints.
    - Frozen checkpoint fixture with native and browser/WASM score/rank comparison.
    - Symbolic server/verifier remains authoritative.
 
-## Current Slice
+## Implemented Slices
 
 The first implementation slice promotes action scoring to a public runtime API:
 
@@ -61,3 +61,16 @@ int nn_score_actions(NeuralNet *net,
 
 `nn_train_action_scorer` is the proposal-oriented alias for the existing shared softmax scorer
 training path.
+
+The second slice adds canonical model checkpoints:
+
+```c
+int nn_save_checkpoint(const NeuralNet *net, const char *path, const NNCheckpointMeta *meta);
+NeuralNet *nn_load_checkpoint(const char *path, NNCheckpointMeta *out_meta);
+int nn_hash_checkpoint_file(const char *path, uint8_t out_hash[32]);
+```
+
+The initial checkpoint format is binary, deterministic, and dependency-free. It includes model
+architecture, scalar type, activations, loss, parameters, and fixed metadata placeholders for parent
+model identity, trace roots, view roots, normalization, feature encoder version, and benchmark
+report identity. The hash function computes SHA-256 over the saved checkpoint bytes.

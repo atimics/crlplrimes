@@ -748,6 +748,166 @@ static int test_action_scorer_ranking_is_deterministic_under_ties(void)
            ranked[3] == 0;
 }
 
+static NNCheckpointMeta checkpoint_meta_fixture(void)
+{
+    NNCheckpointMeta meta;
+    memset(&meta, 0, sizeof(meta));
+    meta.feature_encoder_version = 7;
+    meta.normalization_version = 3;
+    for (size_t i = 0; i < 32; ++i) {
+        meta.normalization_hash[i] = (uint8_t)(0x10u + i);
+        meta.parent_model_hash[i] = (uint8_t)(0x30u + i);
+        meta.training_trace_root[i] = (uint8_t)(0x50u + i);
+        meta.training_view_root[i] = (uint8_t)(0x70u + i);
+        meta.benchmark_report_hash[i] = (uint8_t)(0x90u + i);
+    }
+    return meta;
+}
+
+static int hashes_equal(const uint8_t a[32], const uint8_t b[32])
+{
+    return memcmp(a, b, 32) == 0;
+}
+
+static int test_checkpoint_round_trip_preserves_inference(void)
+{
+    const char *path = "/tmp/crlp-checkpoint-roundtrip.nnckpt";
+    const size_t layers[] = {3, 4, 2};
+    const nn_real input[] = {0.25, 0.50, 0.75};
+    nn_real before[2];
+    nn_real after[2];
+    NNCheckpointMeta meta = checkpoint_meta_fixture();
+    NNCheckpointMeta loaded_meta;
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = 3;
+    config.seed = 4242;
+    config.hidden_activation = NN_ACTIVATION_TANH;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+
+    remove(path);
+    NeuralNet *net = nn_create_config(&config);
+    if (net == NULL) {
+        return 0;
+    }
+    nn_forward(net, input, before);
+
+    int ok = nn_save_checkpoint(net, path, &meta);
+    NeuralNet *loaded = nn_load_checkpoint(path, &loaded_meta);
+    ok = ok && loaded != NULL &&
+         memcmp(&meta, &loaded_meta, sizeof(meta)) == 0 &&
+         nn_input_size(loaded) == nn_input_size(net) &&
+         nn_output_size(loaded) == nn_output_size(net) &&
+         nn_parameter_count(loaded) == nn_parameter_count(net);
+    if (loaded != NULL) {
+        nn_forward(loaded, input, after);
+        ok = ok &&
+             nearly_equal(before[0], after[0], (nn_real)1e-6, (nn_real)1e-6) &&
+             nearly_equal(before[1], after[1], (nn_real)1e-6, (nn_real)1e-6);
+    }
+
+    nn_free(loaded);
+    nn_free(net);
+    remove(path);
+    return ok;
+}
+
+static int test_checkpoint_deterministic_bytes(void)
+{
+    const char *path_a = "/tmp/crlp-checkpoint-deterministic-a.nnckpt";
+    const char *path_b = "/tmp/crlp-checkpoint-deterministic-b.nnckpt";
+    const size_t layers[] = {2, 3, 1};
+    uint8_t hash_a[32];
+    uint8_t hash_b[32];
+    NNCheckpointMeta meta = checkpoint_meta_fixture();
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = 3;
+    config.seed = 8080;
+    config.hidden_activation = NN_ACTIVATION_RELU;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+
+    remove(path_a);
+    remove(path_b);
+    NeuralNet *net = nn_create_config(&config);
+    if (net == NULL) {
+        return 0;
+    }
+
+    int ok = nn_save_checkpoint(net, path_a, &meta) &&
+             nn_save_checkpoint(net, path_b, &meta) &&
+             nn_hash_checkpoint_file(path_a, hash_a) &&
+             nn_hash_checkpoint_file(path_b, hash_b) &&
+             hashes_equal(hash_a, hash_b);
+
+    nn_free(net);
+    remove(path_a);
+    remove(path_b);
+    return ok;
+}
+
+static int test_checkpoint_hash_changes_with_weight(void)
+{
+    const char *path_a = "/tmp/crlp-checkpoint-hash-a.nnckpt";
+    const char *path_b = "/tmp/crlp-checkpoint-hash-b.nnckpt";
+    const size_t layers[] = {2, 3, 1};
+    uint8_t hash_a[32];
+    uint8_t hash_b[32];
+    NNCheckpointMeta meta = checkpoint_meta_fixture();
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = 3;
+    config.seed = 9090;
+    config.hidden_activation = NN_ACTIVATION_RELU;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+
+    remove(path_a);
+    remove(path_b);
+    NeuralNet *net = nn_create_config(&config);
+    if (net == NULL) {
+        return 0;
+    }
+
+    nn_real original = nn_test_get_parameter(net, 0);
+    int ok = nn_save_checkpoint(net, path_a, &meta) &&
+             nn_test_set_parameter(net, 0, original + (nn_real)0.125) &&
+             nn_save_checkpoint(net, path_b, &meta) &&
+             nn_hash_checkpoint_file(path_a, hash_a) &&
+             nn_hash_checkpoint_file(path_b, hash_b) &&
+             !hashes_equal(hash_a, hash_b);
+
+    nn_free(net);
+    remove(path_a);
+    remove(path_b);
+    return ok;
+}
+
+static int test_checkpoint_hash_matches_sha256_vector(void)
+{
+    const char *path = "/tmp/crlp-checkpoint-sha256-vector.txt";
+    const uint8_t expected[32] = {
+        0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
+        0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
+        0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
+        0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad,
+    };
+    uint8_t actual[32];
+
+    remove(path);
+    FILE *file = fopen(path, "wb");
+    if (file == NULL) {
+        return 0;
+    }
+    int ok = fwrite("abc", 1, 3, file) == 3;
+    ok = fclose(file) == 0 && ok;
+    ok = ok && nn_hash_checkpoint_file(path, actual) && hashes_equal(actual, expected);
+    remove(path);
+    return ok;
+}
+
 static int test_prime_gap_features_are_divisibility_flags(void)
 {
     nn_real inputs[ACTION_COUNT * FEATURE_COUNT];
@@ -1160,6 +1320,14 @@ int main(void)
           "action scorer struct API scores candidates");
     check(test_action_scorer_ranking_is_deterministic_under_ties(),
           "action scorer ranking is deterministic under ties");
+    check(test_checkpoint_round_trip_preserves_inference(),
+          "checkpoint round trip preserves inference");
+    check(test_checkpoint_deterministic_bytes(),
+          "checkpoint writes deterministic bytes");
+    check(test_checkpoint_hash_changes_with_weight(),
+          "checkpoint hash changes when weights change");
+    check(test_checkpoint_hash_matches_sha256_vector(),
+          "checkpoint hash matches SHA-256 test vector");
     check(test_prime_gap_features_are_divisibility_flags(),
           "prime-gap features are divisibility flags");
     check(test_prime_gap_raw_residue_features_are_not_divisibility_flags(),

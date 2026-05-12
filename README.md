@@ -108,6 +108,38 @@ Run the minimal generic action-scoring example with:
 make action-scorer
 ```
 
+## Checkpoints
+
+Frozen models can be saved as deterministic binary checkpoints:
+
+```c
+NNCheckpointMeta meta = {0};
+meta.feature_encoder_version = 1;
+
+nn_save_checkpoint(net, "runs/model.nnckpt", &meta);
+NeuralNet *loaded = nn_load_checkpoint("runs/model.nnckpt", &meta);
+```
+
+The checkpoint format is dependency-free and versioned. It stores:
+
+```text
+magic/version
+scalar type and scalar width
+layer sizes
+hidden/output activations
+loss
+model parameters
+normalization metadata placeholder
+parent model hash placeholder
+training trace/view root placeholders
+feature encoder version
+benchmark report hash placeholder
+```
+
+Use `nn_hash_checkpoint_file` to compute a SHA-256 identity for a saved checkpoint. Checkpoint
+identity is the link between future trace logs, parent models, replay-trained child models, and
+eventual Signal model artifacts.
+
 ## Prime-Gap Capability Experiment
 
 This repository also includes a verifier-guided learning experiment over prime gaps. The goal is not to build a faster prime solver. The deterministic sieve/verifier is deliberately the oracle: it generates labels, supplies exact rewards, and gives us a known classical baseline so we can measure exactly how inefficient or capable the neural policy is.
@@ -254,7 +286,7 @@ Optional arguments:
 make test
 ```
 
-The tests compare scalar and batched forward results, verify `batch_size=1` training against sample-wise training, finite-difference check batched gradients through the tiled kernels, and check the softmax cross-entropy and shared softmax-scorer gradients. They also run prime-gap CLI regression checks for argument bounds, sieve-limit overflow rejection, wide-sweep cap handling, and structured CSV output.
+The tests compare scalar and batched forward results, verify `batch_size=1` training against sample-wise training, finite-difference check batched gradients through the tiled kernels, and check the softmax cross-entropy and shared softmax-scorer gradients. They also cover generic action scoring, checkpoint round trips, deterministic checkpoint bytes, and checkpoint hash sensitivity. Prime-gap CLI regression checks cover argument bounds, sieve-limit overflow rejection, wide-sweep cap handling, and structured CSV output.
 
 ## API
 
