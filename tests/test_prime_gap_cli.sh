@@ -111,11 +111,47 @@ expect_summary_csv()
     pass "$name"
 }
 
+expect_trace_jsonl()
+{
+    name=$1
+    shift
+    output=$(tmp_output)
+    trace=$(tmp_output)
+    checkpoint="${trace}.nnckpt"
+    rm -f "$trace" "$checkpoint"
+
+    if ! "$prime_gap_bin" "$@" --trace "$trace" >"$output" 2>&1; then
+        fail "$name failed unexpectedly" "$output"
+    fi
+    if [ ! -s "$trace" ]; then
+        fail "$name did not write trace JSONL" "$output"
+    fi
+    if [ ! -s "$checkpoint" ]; then
+        fail "$name did not write companion checkpoint" "$output"
+    fi
+    if ! grep -Fq '"schema":"crlp.trace.v1"' "$trace"; then
+        fail "$name missing trace schema" "$trace"
+    fi
+    if ! grep -Fq '"task":"prime_gap"' "$trace"; then
+        fail "$name missing prime-gap task name" "$trace"
+    fi
+    if ! grep -Fq '"verifier_cost":{"p":' "$trace"; then
+        fail "$name missing verifier cost payload" "$trace"
+    fi
+    if ! grep -Fq "model_checkpoint=$checkpoint" "$output"; then
+        fail "$name did not print companion checkpoint path" "$output"
+    fi
+
+    rm -f "$output" "$trace" "$checkpoint"
+    pass "$name"
+}
+
 expect_usage_failure "prime-gap CLI rejects interval sieve-limit overflow" 16 4294967000
 expect_usage_failure "prime-gap CLI rejects non-increasing train/test range" 1000 1000
 expect_usage_failure "prime-gap CLI rejects tiny train range" 15 3000
 expect_usage_failure "prime-gap CLI rejects invalid verifier diagnostics mode" 1000 3000 0 0 10 10 2
-expect_usage_failure "prime-gap CLI rejects too many arguments" 1000 3000 0 0 10 10 0 a b
+expect_usage_failure "prime-gap CLI rejects too many arguments" 1000 3000 0 0 10 10 0 a b c
+expect_usage_failure "prime-gap CLI rejects missing trace path" 1000 3000 0 0 10 10 0 --trace
 
 expect_output_contains \
     "prime-gap CLI caps unlimited wide sweep" \
@@ -149,4 +185,8 @@ expect_output_contains \
 
 expect_summary_csv \
     "prime-gap CLI writes structured summary CSV" \
+    1000 3000 0 0 20 20 0
+
+expect_trace_jsonl \
+    "prime-gap CLI writes trace JSONL" \
     1000 3000 0 0 20 20 0

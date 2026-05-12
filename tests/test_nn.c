@@ -908,6 +908,59 @@ static int test_checkpoint_hash_matches_sha256_vector(void)
     return ok;
 }
 
+static int test_trace_jsonl_writer_outputs_valid_shape(void)
+{
+    const char *path = "/tmp/crlp-trace-writer.jsonl";
+    const uint32_t action_ids[] = {10, 20};
+    const nn_real scores[] = {(nn_real)1.5, (nn_real)-0.25};
+    const nn_real probabilities[] = {(nn_real)0.85, (nn_real)0.15};
+    char contents[2048];
+    NNTraceRecord record;
+    record.task_name = "task\"with\nescape";
+    record.model_hash_hex = "abc123";
+    record.state_hash = UINT64_C(0x1234);
+    record.feature_encoder_version = 5;
+    record.candidate_count = 2;
+    record.action_ids = action_ids;
+    record.scores = scores;
+    record.probabilities = probabilities;
+    record.selected_index = 0;
+    record.target_index = 1;
+    record.loss = (nn_real)0.42;
+    record.verifier_result = "corrected";
+    record.verifier_cost_json = "{\"checks\":3}";
+    record.seed = 99;
+
+    remove(path);
+    FILE *file = fopen(path, "wb");
+    if (file == NULL) {
+        return 0;
+    }
+    int ok = nn_trace_write_jsonl(file, &record);
+    ok = fclose(file) == 0 && ok;
+
+    file = fopen(path, "rb");
+    if (file == NULL) {
+        remove(path);
+        return 0;
+    }
+    size_t got = fread(contents, 1, sizeof(contents) - 1, file);
+    contents[got] = '\0';
+    ok = fclose(file) == 0 && ok;
+
+    ok = ok &&
+         strstr(contents, "\"schema\":\"crlp.trace.v1\"") != NULL &&
+         strstr(contents, "\"task\":\"task\\\"with\\nescape\"") != NULL &&
+         strstr(contents, "\"state_hash\":\"0000000000001234\"") != NULL &&
+         strstr(contents, "\"model_hash\":\"abc123\"") != NULL &&
+         strstr(contents, "\"action_ids\":[10,20]") != NULL &&
+         strstr(contents, "\"verifier_cost\":{\"checks\":3}") != NULL &&
+         contents[got > 0 ? got - 1 : 0] == '\n';
+
+    remove(path);
+    return ok;
+}
+
 static int test_prime_gap_features_are_divisibility_flags(void)
 {
     nn_real inputs[ACTION_COUNT * FEATURE_COUNT];
@@ -1328,6 +1381,8 @@ int main(void)
           "checkpoint hash changes when weights change");
     check(test_checkpoint_hash_matches_sha256_vector(),
           "checkpoint hash matches SHA-256 test vector");
+    check(test_trace_jsonl_writer_outputs_valid_shape(),
+          "trace JSONL writer emits valid record shape");
     check(test_prime_gap_features_are_divisibility_flags(),
           "prime-gap features are divisibility flags");
     check(test_prime_gap_raw_residue_features_are_not_divisibility_flags(),

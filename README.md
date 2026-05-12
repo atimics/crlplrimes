@@ -140,6 +140,28 @@ Use `nn_hash_checkpoint_file` to compute a SHA-256 identity for a saved checkpoi
 identity is the link between future trace logs, parent models, replay-trained child models, and
 eventual Signal model artifacts.
 
+## Trace JSONL
+
+Scorer/verifier interactions can be emitted as JSONL trace records with `nn_trace_write_jsonl`.
+Each row records the task, state hash, model hash, feature encoder version, action ids, scores,
+probabilities, selected action, target action, loss, verifier result, verifier-cost payload, and
+seed.
+
+Prime-gap trace mode writes a trace plus a companion checkpoint whose SHA-256 appears in every row:
+
+```sh
+make prime-gap-trace
+```
+
+or directly:
+
+```sh
+./build/float/prime_gap 1000000 3000000 1 0 10000 10000 0 --trace runs/prime-gap-trace.jsonl
+```
+
+This is the first durable training-evidence path: the model proposes, the sieve/verifier resolves,
+and the trace records enough context for replay tooling to train a successor model later.
+
 ## Prime-Gap Capability Experiment
 
 This repository also includes a verifier-guided learning experiment over prime gaps. The goal is not to build a faster prime solver. The deterministic sieve/verifier is deliberately the oracle: it generates labels, supplies exact rewards, and gives us a known classical baseline so we can measure exactly how inefficient or capable the neural policy is.
@@ -277,7 +299,7 @@ make prime-gap-sweep
 Optional arguments:
 
 ```sh
-./build/float/prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] [max_train_states] [max_test_states] [verifier_diagnostics=0|1] [summary_csv_path]
+./build/float/prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] [max_train_states] [max_test_states] [verifier_diagnostics=0|1] [summary_csv_path] [--trace trace_jsonl_path]
 ```
 
 ## Run Tests
@@ -286,7 +308,7 @@ Optional arguments:
 make test
 ```
 
-The tests compare scalar and batched forward results, verify `batch_size=1` training against sample-wise training, finite-difference check batched gradients through the tiled kernels, and check the softmax cross-entropy and shared softmax-scorer gradients. They also cover generic action scoring, checkpoint round trips, deterministic checkpoint bytes, and checkpoint hash sensitivity. Prime-gap CLI regression checks cover argument bounds, sieve-limit overflow rejection, wide-sweep cap handling, and structured CSV output.
+The tests compare scalar and batched forward results, verify `batch_size=1` training against sample-wise training, finite-difference check batched gradients through the tiled kernels, and check the softmax cross-entropy and shared softmax-scorer gradients. They also cover generic action scoring, checkpoint round trips, deterministic checkpoint bytes, checkpoint hash sensitivity, and trace JSONL writing. Prime-gap CLI regression checks cover argument bounds, sieve-limit overflow rejection, wide-sweep cap handling, structured CSV output, and trace emission.
 
 ## API
 

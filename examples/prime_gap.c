@@ -4,6 +4,11 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+enum {
+    PRIME_GAP_FEATURE_ENCODER_VERSION = 1,
+};
 
 typedef struct {
     FILE *file;
@@ -16,9 +21,42 @@ typedef struct {
     int verifier_diagnostics;
 } SummaryWriter;
 
+typedef struct {
+    const char *summary_csv_path;
+    const char *trace_jsonl_path;
+} OutputPaths;
+
 static double ratio(size_t numerator, size_t denominator)
 {
     return denominator == 0 ? 0.0 : (double)numerator / (double)denominator;
+}
+
+static int parse_output_paths(int argc, char **argv, OutputPaths *paths)
+{
+    paths->summary_csv_path = NULL;
+    paths->trace_jsonl_path = NULL;
+
+    for (int i = 8; i < argc; ++i) {
+        if (strcmp(argv[i], "--summary") == 0) {
+            if (++i >= argc || paths->summary_csv_path != NULL) {
+                return 0;
+            }
+            paths->summary_csv_path = argv[i];
+        } else if (strcmp(argv[i], "--trace") == 0) {
+            if (++i >= argc || paths->trace_jsonl_path != NULL) {
+                return 0;
+            }
+            paths->trace_jsonl_path = argv[i];
+        } else if (paths->summary_csv_path == NULL) {
+            paths->summary_csv_path = argv[i];
+        } else if (paths->trace_jsonl_path == NULL) {
+            paths->trace_jsonl_path = argv[i];
+        } else {
+            return 0;
+        }
+    }
+
+    return 1;
 }
 
 static void csv_text(FILE *file, const char *text)
@@ -235,6 +273,154 @@ static void summary_write_interval(SummaryWriter *writer,
     fputc('\n', file);
 }
 
+static uint64_t hash_prime_gap_state(uint32_t p)
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+    const char prefix[] = "prime_gap";
+
+    for (size_t i = 0; i + 1 < sizeof(prefix); ++i) {
+        hash ^= (uint8_t)prefix[i];
+        hash *= UINT64_C(1099511628211);
+    }
+    for (size_t i = 0; i < sizeof(p); ++i) {
+        hash ^= (uint8_t)((p >> (8u * i)) & 0xffu);
+        hash *= UINT64_C(1099511628211);
+    }
+
+    return hash;
+}
+
+static void hex_encode(const uint8_t bytes[32], char out_hex[65])
+{
+    static const char alphabet[] = "0123456789abcdef";
+    for (size_t i = 0; i < 32; ++i) {
+        out_hex[i * 2] = alphabet[bytes[i] >> 4];
+        out_hex[i * 2 + 1] = alphabet[bytes[i] & 0x0f];
+    }
+    out_hex[64] = '\0';
+}
+
+static char *companion_checkpoint_path(const char *trace_path)
+{
+    const char suffix[] = ".nnckpt";
+    size_t trace_len = strlen(trace_path);
+    size_t suffix_len = sizeof(suffix);
+    if (trace_len > SIZE_MAX - suffix_len) {
+        return NULL;
+    }
+
+    char *path = malloc(trace_len + suffix_len);
+    if (path == NULL) {
+        return NULL;
+    }
+
+    memcpy(path, trace_path, trace_len);
+    memcpy(path + trace_len, suffix, suffix_len);
+    return path;
+}
+
+static void fill_prime_gap_action_ids(uint32_t action_ids[ACTION_COUNT])
+{
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        action_ids[action] =
+            action_is_overflow(action) ? UINT32_MAX : (uint32_t)action_gap(action);
+    }
+}
+
+static int emit_prime_gap_traces(FILE *file,
+                                 NeuralNet *net,
+                                 const Sieve *sieve,
+                                 const GapDataset *dataset,
+                                 size_t max_states,
+                                 double log_scale,
+                                 const char *model_hash_hex,
+                                 uint64_t seed,
+                                 nn_real *candidate_inputs,
+                                 nn_real *scores,
+                                 nn_real *probabilities)
+{
+    uint32_t action_ids[ACTION_COUNT];
+    size_t ranked[ACTION_COUNT];
+    fill_prime_gap_action_ids(action_ids);
+
+    size_t samples = dataset->count;
+    if (max_states != 0 && max_states < samples) {
+        samples = max_states;
+    }
+
+    for (size_t sample = 0; sample < samples; ++sample) {
+        size_t index = eval_sample_index(dataset, sample, samples);
+        uint32_t p = dataset->prime[index];
+        uint32_t gap = dataset->gap[index];
+        size_t target = gap_to_action(gap);
+
+        fill_candidate_features_masked(candidate_inputs, p, log_scale, &FEATURE_MASK_FULL);
+        if (!nn_score_action_rows(net, candidate_inputs, ACTION_COUNT, scores, probabilities)) {
+            return 0;
+        }
+        rank_actions(scores, ranked);
+
+        VerifierWork direct = direct_scan_work(gap);
+        VerifierWork wheel = wheel_scan_work(sieve, p, gap);
+        VerifierWork assisted = assisted_wheel_work(sieve, p, gap, ranked, 10);
+        BlockWork block = block_scan_work(sieve, p, gap);
+        BlockWork assisted_block = assisted_block_work(sieve, p, gap, ranked, 10);
+        char verifier_cost[512];
+        int cost_len = snprintf(verifier_cost,
+                                sizeof(verifier_cost),
+                                "{\"p\":%u,\"true_gap\":%u,\"proposal_steps\":%zu,"
+                                "\"direct_exact\":%zu,\"wheel_exact\":%zu,"
+                                "\"wheel_mod\":%zu,\"assisted_wheel_exact\":%zu,"
+                                "\"assisted_wheel_mod\":%zu,\"block_cost\":%.17g,"
+                                "\"assisted_block_cost\":%.17g}",
+                                p,
+                                gap,
+                                proposal_steps_with_topk(ranked, 10, target),
+                                direct.exact_tests,
+                                wheel.exact_tests,
+                                wheel.mod_tests,
+                                assisted.exact_tests,
+                                assisted.mod_tests,
+                                block_work_cost(block),
+                                block_work_cost(assisted_block));
+        if (cost_len < 0 || (size_t)cost_len >= sizeof(verifier_cost)) {
+            return 0;
+        }
+
+        const char *verifier_result = "corrected";
+        if (ranked[0] == target) {
+            verifier_result = "accepted";
+        } else if (target == OVERFLOW_ACTION) {
+            verifier_result = "overflow";
+        } else if (action_is_overflow(ranked[0]) ||
+                   !is_prime_sieve(sieve, p + (uint32_t)action_gap(ranked[0]))) {
+            verifier_result = "rejected";
+        }
+
+        NNTraceRecord record;
+        record.task_name = "prime_gap";
+        record.model_hash_hex = model_hash_hex;
+        record.state_hash = hash_prime_gap_state(p);
+        record.feature_encoder_version = PRIME_GAP_FEATURE_ENCODER_VERSION;
+        record.candidate_count = ACTION_COUNT;
+        record.action_ids = action_ids;
+        record.scores = scores;
+        record.probabilities = probabilities;
+        record.selected_index = ranked[0];
+        record.target_index = target;
+        record.loss = (nn_real)(-log(safe_probability((double)probabilities[target])));
+        record.verifier_result = verifier_result;
+        record.verifier_cost_json = verifier_cost;
+        record.seed = seed;
+
+        if (!nn_trace_write_jsonl(file, &record)) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     size_t train_limit_arg = parse_size_arg(argc, argv, 1, DEFAULT_TRAIN_LIMIT);
@@ -244,7 +430,7 @@ int main(int argc, char **argv)
     size_t max_train_states = parse_size_arg(argc, argv, 5, DEFAULT_MAX_TRAIN_STATES);
     size_t max_test_states = parse_size_arg(argc, argv, 6, DEFAULT_MAX_TEST_STATES);
     size_t verifier_diagnostics_arg = parse_size_arg(argc, argv, 7, DEFAULT_VERIFIER_DIAGNOSTICS);
-    const char *summary_csv_path = argc > 8 ? argv[8] : NULL;
+    OutputPaths output_paths;
     PrimeGapProfile profile;
     SummaryWriter summary = {0};
     double total_started = now_seconds();
@@ -271,14 +457,14 @@ int main(int argc, char **argv)
     prime_gap_profile_reset(&profile);
     prime_gap_profile_set(&profile);
 
-    if (argc > 9 ||
+    if (!parse_output_paths(argc, argv, &output_paths) ||
         test_limit_arg <= train_limit_arg || train_limit_arg < 16 ||
         test_limit_arg > (size_t)UINT32_MAX - (size_t)INTERVAL_MAX_GAP ||
         train_limit_arg > (size_t)UINT32_MAX ||
         verifier_diagnostics_arg > 1) {
         fputs("usage: prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] "
               "[max_train_states] [max_test_states] [verifier_diagnostics=0|1] "
-              "[summary_csv_path]\n",
+              "[summary_csv_path] [--trace trace_jsonl_path]\n",
               stderr);
         return EXIT_FAILURE;
     }
@@ -289,14 +475,19 @@ int main(int argc, char **argv)
     int include_verifier_diagnostics = verifier_diagnostics_arg != 0;
 
     printf("prime-gap scorer train_limit=%u test_limit=%u g_max=%d actions=%d features=%d "
-           "verifier_diagnostics=%s summary_csv=%s\n",
+           "verifier_diagnostics=%s summary_csv=%s trace_jsonl=%s\n",
            train_limit,
            test_limit,
            G_MAX,
            ACTION_COUNT,
            FEATURE_COUNT,
            include_verifier_diagnostics ? "on" : "off",
-           summary_csv_path == NULL || summary_csv_path[0] == '\0' ? "off" : summary_csv_path);
+           output_paths.summary_csv_path == NULL || output_paths.summary_csv_path[0] == '\0'
+               ? "off"
+               : output_paths.summary_csv_path,
+           output_paths.trace_jsonl_path == NULL || output_paths.trace_jsonl_path[0] == '\0'
+               ? "off"
+               : output_paths.trace_jsonl_path);
 
     double started = now_seconds();
     if (!build_sieve(sieve_limit, &sieve)) {
@@ -393,7 +584,7 @@ int main(int argc, char **argv)
     }
 
     if (!summary_open(&summary,
-                      summary_csv_path,
+                      output_paths.summary_csv_path,
                       train_limit,
                       test_limit,
                       supervised_epochs,
@@ -584,6 +775,63 @@ int main(int argc, char **argv)
                                         probabilities);
     print_metrics("model supervised", supervised_metrics);
     summary_write_eval(&summary, "full-model-training", "model supervised", supervised_metrics);
+
+    if (output_paths.trace_jsonl_path != NULL && output_paths.trace_jsonl_path[0] != '\0') {
+        char *checkpoint_path = companion_checkpoint_path(output_paths.trace_jsonl_path);
+        char model_hash_hex[65];
+        uint8_t model_hash[32];
+        NNCheckpointMeta checkpoint_meta;
+        memset(&checkpoint_meta, 0, sizeof(checkpoint_meta));
+        checkpoint_meta.feature_encoder_version = PRIME_GAP_FEATURE_ENCODER_VERSION;
+
+        if (checkpoint_path == NULL ||
+            !nn_save_checkpoint(net, checkpoint_path, &checkpoint_meta) ||
+            !nn_hash_checkpoint_file(checkpoint_path, model_hash)) {
+            fputs("failed to save/hash trace companion checkpoint\n", stderr);
+            free(checkpoint_path);
+            ok = 0;
+            goto cleanup;
+        }
+        hex_encode(model_hash, model_hash_hex);
+
+        FILE *trace_file = fopen(output_paths.trace_jsonl_path, "w");
+        if (trace_file == NULL) {
+            fprintf(stderr, "failed to open trace JSONL: %s\n", output_paths.trace_jsonl_path);
+            free(checkpoint_path);
+            ok = 0;
+            goto cleanup;
+        }
+
+        if (!emit_prime_gap_traces(trace_file,
+                                   net,
+                                   &sieve,
+                                   &test,
+                                   max_test_states,
+                                   log_scale,
+                                   model_hash_hex,
+                                   rng,
+                                   candidate_inputs,
+                                   scores,
+                                   probabilities)) {
+            fputs("failed to emit prime-gap trace JSONL\n", stderr);
+            fclose(trace_file);
+            free(checkpoint_path);
+            ok = 0;
+            goto cleanup;
+        }
+        if (fclose(trace_file) != 0) {
+            fputs("failed to close trace JSONL\n", stderr);
+            free(checkpoint_path);
+            ok = 0;
+            goto cleanup;
+        }
+
+        printf("trace jsonl=%s model_checkpoint=%s model_hash=%s\n",
+               output_paths.trace_jsonl_path,
+               checkpoint_path,
+               model_hash_hex);
+        free(checkpoint_path);
+    }
 
     supervised_temperature = tune_temperature(net,
                                               &sieve,

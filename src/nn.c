@@ -1822,6 +1822,145 @@ int nn_hash_checkpoint_file(const char *path, uint8_t out_hash[32])
     return 1;
 }
 
+static int json_write_string(FILE *file, const char *text)
+{
+    if (fputc('"', file) == EOF) {
+        return 0;
+    }
+
+    if (text != NULL) {
+        for (const unsigned char *cursor = (const unsigned char *)text; *cursor != '\0'; ++cursor) {
+            switch (*cursor) {
+            case '"':
+                if (fputs("\\\"", file) == EOF) {
+                    return 0;
+                }
+                break;
+            case '\\':
+                if (fputs("\\\\", file) == EOF) {
+                    return 0;
+                }
+                break;
+            case '\b':
+                if (fputs("\\b", file) == EOF) {
+                    return 0;
+                }
+                break;
+            case '\f':
+                if (fputs("\\f", file) == EOF) {
+                    return 0;
+                }
+                break;
+            case '\n':
+                if (fputs("\\n", file) == EOF) {
+                    return 0;
+                }
+                break;
+            case '\r':
+                if (fputs("\\r", file) == EOF) {
+                    return 0;
+                }
+                break;
+            case '\t':
+                if (fputs("\\t", file) == EOF) {
+                    return 0;
+                }
+                break;
+            default:
+                if (*cursor < 0x20u) {
+                    if (fprintf(file, "\\u%04x", (unsigned int)*cursor) < 0) {
+                        return 0;
+                    }
+                } else if (fputc(*cursor, file) == EOF) {
+                    return 0;
+                }
+                break;
+            }
+        }
+    }
+
+    return fputc('"', file) != EOF;
+}
+
+static int json_write_u32_array(FILE *file, const uint32_t *values, size_t count)
+{
+    if (fputc('[', file) == EOF) {
+        return 0;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if (i != 0 && fputc(',', file) == EOF) {
+            return 0;
+        }
+        if (fprintf(file, "%u", values[i]) < 0) {
+            return 0;
+        }
+    }
+    return fputc(']', file) != EOF;
+}
+
+static int json_write_real_array(FILE *file, const nn_real *values, size_t count)
+{
+    if (fputc('[', file) == EOF) {
+        return 0;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if (i != 0 && fputc(',', file) == EOF) {
+            return 0;
+        }
+        if (fprintf(file, "%.17g", (double)values[i]) < 0) {
+            return 0;
+        }
+    }
+    return fputc(']', file) != EOF;
+}
+
+int nn_trace_write_jsonl(FILE *file, const NNTraceRecord *record)
+{
+    if (file == NULL || record == NULL || record->task_name == NULL ||
+        record->model_hash_hex == NULL || record->candidate_count == 0 ||
+        record->action_ids == NULL || record->scores == NULL ||
+        record->probabilities == NULL || record->selected_index >= record->candidate_count ||
+        record->target_index >= record->candidate_count) {
+        return 0;
+    }
+
+    const char *verifier_result =
+        record->verifier_result == NULL ? "unknown" : record->verifier_result;
+    const char *verifier_cost_json =
+        record->verifier_cost_json == NULL ? "{}" : record->verifier_cost_json;
+
+    if (fputs("{\"schema\":\"crlp.trace.v1\",\"task\":", file) == EOF ||
+        !json_write_string(file, record->task_name) ||
+        fputs(",\"state_hash\":", file) == EOF ||
+        fprintf(file, "\"%016llx\"", (unsigned long long)record->state_hash) < 0 ||
+        fputs(",\"model_hash\":", file) == EOF ||
+        !json_write_string(file, record->model_hash_hex) ||
+        fprintf(file,
+                ",\"feature_encoder_version\":%u,\"candidate_count\":%zu,"
+                "\"action_ids\":",
+                record->feature_encoder_version,
+                record->candidate_count) < 0 ||
+        !json_write_u32_array(file, record->action_ids, record->candidate_count) ||
+        fputs(",\"scores\":", file) == EOF ||
+        !json_write_real_array(file, record->scores, record->candidate_count) ||
+        fputs(",\"probabilities\":", file) == EOF ||
+        !json_write_real_array(file, record->probabilities, record->candidate_count) ||
+        fprintf(file,
+                ",\"selected_index\":%zu,\"target_index\":%zu,\"loss\":%.17g,"
+                "\"verifier_result\":",
+                record->selected_index,
+                record->target_index,
+                (double)record->loss) < 0 ||
+        !json_write_string(file, verifier_result) ||
+        fputs(",\"verifier_cost\":", file) == EOF ||
+        fputs(verifier_cost_json, file) == EOF ||
+        fprintf(file, ",\"seed\":%llu}\n", (unsigned long long)record->seed) < 0) {
+        return 0;
+    }
+
+    return 1;
+}
+
 #ifdef NN_ENABLE_TEST_API
 static nn_real *parameter_pointer(NeuralNet *net, size_t index)
 {

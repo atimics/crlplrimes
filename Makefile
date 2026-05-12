@@ -27,7 +27,7 @@ BENCHMARK := $(BUILD_DIR)/benchmark
 TEST_RUNNER := $(BUILD_DIR)/test_nn
 PRIME_GAP_CLI_TEST := tests/test_prime_gap_cli.sh
 
-.PHONY: all run action-scorer prime-gap prime-gap-profile prime-gap-profile-verifier prime-gap-sweep benchmark test test-cli clean
+.PHONY: all run action-scorer prime-gap prime-gap-trace prime-gap-profile prime-gap-profile-verifier prime-gap-sweep benchmark test test-cli clean
 
 all: $(XOR_EXAMPLE) $(ACTION_SCORER_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(BENCHMARK)
 
@@ -66,6 +66,10 @@ action-scorer: $(ACTION_SCORER_EXAMPLE)
 
 prime-gap: $(PRIME_GAP_EXAMPLE)
 	./$(PRIME_GAP_EXAMPLE)
+
+prime-gap-trace: $(PRIME_GAP_EXAMPLE)
+	mkdir -p runs
+	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 1 0 10000 10000 0 --trace runs/prime-gap-trace.jsonl
 
 prime-gap-profile: $(PRIME_GAP_EXAMPLE)
 	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 1 0 10000 10000

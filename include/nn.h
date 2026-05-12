@@ -14,6 +14,7 @@
 #define NN_REAL_IS_FLOAT 0
 #endif
 
+#include <stdio.h>
 #include <stdint.h>
 
 typedef NN_REAL nn_real;
@@ -68,6 +69,23 @@ typedef struct {
     uint8_t benchmark_report_hash[32];
 } NNCheckpointMeta;
 
+typedef struct {
+    const char *task_name;
+    const char *model_hash_hex;
+    uint64_t state_hash;
+    uint32_t feature_encoder_version;
+    size_t candidate_count;
+    const uint32_t *action_ids;
+    const nn_real *scores;
+    const nn_real *probabilities;
+    size_t selected_index;
+    size_t target_index;
+    nn_real loss;
+    const char *verifier_result;
+    const char *verifier_cost_json;
+    uint64_t seed;
+} NNTraceRecord;
+
 NeuralNet *nn_create(const size_t *layer_sizes, size_t layer_count, unsigned int seed);
 NeuralNet *nn_create_config(const NNConfig *config);
 void nn_free(NeuralNet *net);
@@ -100,6 +118,7 @@ int nn_save_checkpoint(const NeuralNet *net,
                        const NNCheckpointMeta *meta);
 NeuralNet *nn_load_checkpoint(const char *path, NNCheckpointMeta *out_meta);
 int nn_hash_checkpoint_file(const char *path, uint8_t out_hash[32]);
+int nn_trace_write_jsonl(FILE *file, const NNTraceRecord *record);
 nn_real nn_train_sample(NeuralNet *net,
                         const nn_real *input,
                         const nn_real *target,

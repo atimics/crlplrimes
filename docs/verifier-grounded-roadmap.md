@@ -74,3 +74,15 @@ The initial checkpoint format is binary, deterministic, and dependency-free. It 
 architecture, scalar type, activations, loss, parameters, and fixed metadata placeholders for parent
 model identity, trace roots, view roots, normalization, feature encoder version, and benchmark
 report identity. The hash function computes SHA-256 over the saved checkpoint bytes.
+
+The third slice adds trace JSONL emission:
+
+```c
+int nn_trace_write_jsonl(FILE *file, const NNTraceRecord *record);
+```
+
+Prime-gap can now run with `--trace path.jsonl`. The CLI writes one trace row per evaluated held-out
+prime state after supervised training, plus a companion `path.jsonl.nnckpt` checkpoint. Each trace
+row carries the companion checkpoint SHA-256 as `model_hash`, candidate action ids, scores,
+probabilities, the selected top proposal, the verified target action, per-row loss, verifier result,
+and prime-specific verifier-cost details.
