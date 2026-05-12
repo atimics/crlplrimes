@@ -484,6 +484,7 @@ int run_supervised_ablation(const char *label,
                             nn_real *scores,
                             nn_real *probabilities,
                             size_t *order,
-                            uint32_t *rng);
+                            uint32_t *rng,
+                            EvalMetrics *metrics_out);
 
 #endif

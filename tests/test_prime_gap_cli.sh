@@ -83,10 +83,39 @@ expect_output_omits()
     pass "$name"
 }
 
+expect_summary_csv()
+{
+    name=$1
+    shift
+    output=$(tmp_output)
+    summary=$(tmp_output)
+    rm -f "$summary"
+
+    if ! "$prime_gap_bin" "$@" "$summary" >"$output" 2>&1; then
+        fail "$name failed unexpectedly" "$output"
+    fi
+    if [ ! -s "$summary" ]; then
+        fail "$name did not write summary CSV" "$output"
+    fi
+    if ! head -n 1 "$summary" | grep -Fq "kind,section,label"; then
+        fail "$name missing CSV header" "$summary"
+    fi
+    if ! grep -Fq '"eval","baselines","baseline empirical-gap"' "$summary"; then
+        fail "$name missing eval summary row" "$summary"
+    fi
+    if ! grep -Fq '"interval","interval-prime-ranking","baseline interval-frequency"' "$summary"; then
+        fail "$name missing interval summary row" "$summary"
+    fi
+
+    rm -f "$output" "$summary"
+    pass "$name"
+}
+
 expect_usage_failure "prime-gap CLI rejects interval sieve-limit overflow" 16 4294967000
 expect_usage_failure "prime-gap CLI rejects non-increasing train/test range" 1000 1000
 expect_usage_failure "prime-gap CLI rejects tiny train range" 15 3000
 expect_usage_failure "prime-gap CLI rejects invalid verifier diagnostics mode" 1000 3000 0 0 10 10 2
+expect_usage_failure "prime-gap CLI rejects too many arguments" 1000 3000 0 0 10 10 0 a b
 
 expect_output_contains \
     "prime-gap CLI caps unlimited wide sweep" \
@@ -117,3 +146,7 @@ expect_output_contains \
     "prime-gap CLI prints verifier detail when enabled" \
     "wheel exact" \
     1000 3000 0 0 20 20 1
+
+expect_summary_csv \
+    "prime-gap CLI writes structured summary CSV" \
+    1000 3000 0 0 20 20 0

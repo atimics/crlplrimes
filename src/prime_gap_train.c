@@ -243,7 +243,8 @@ int run_supervised_ablation(const char *label,
                                    nn_real *scores,
                                    nn_real *probabilities,
                                    size_t *order,
-                                   uint32_t *rng)
+                                   uint32_t *rng,
+                                   EvalMetrics *metrics_out)
 {
     NeuralNet *net = nn_create_config(config);
     int ok;
@@ -267,19 +268,22 @@ int run_supervised_ablation(const char *label,
                           order,
                           rng);
     if (ok) {
-        print_metrics(label,
-                      evaluate_model(net,
-                                     sieve,
-                                     test,
-                                     max_test_states,
-                                     log_scale,
-                                     mask,
-                                     1.0,
-                                     0,
-                                     0,
-                                     candidate_inputs,
-                                     scores,
-                                     probabilities));
+        EvalMetrics metrics = evaluate_model(net,
+                                             sieve,
+                                             test,
+                                             max_test_states,
+                                             log_scale,
+                                             mask,
+                                             1.0,
+                                             0,
+                                             0,
+                                             candidate_inputs,
+                                             scores,
+                                             probabilities);
+        if (metrics_out != NULL) {
+            *metrics_out = metrics;
+        }
+        print_metrics(label, metrics);
     }
 
     nn_free(net);

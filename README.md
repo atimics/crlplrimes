@@ -170,6 +170,17 @@ train_update   scorer update calls, including their internal forward/backward wo
 metrics        ranking, softmax, calibration, and verifier diagnostic aggregation when enabled
 ```
 
+For sweep analysis, pass a CSV path as the final optional argument. The console report stays
+human-readable, and the CSV records one row per baseline/model metric block with run config,
+section, label, window size, candidate count, capability metrics, calibration metrics, interval
+metrics, and verifier-work diagnostics. Accuracy and coverage fields are emitted as fractions
+(`0.0..1.0`), not percentages.
+
+```sh
+mkdir -p runs
+./build/float/prime_gap 1000000 3000000 2 1 30000 30000 0 runs/prime-gap.csv
+```
+
 Run a fixed-size profiling configuration with:
 
 ```sh
@@ -193,7 +204,7 @@ make prime-gap-sweep
 Optional arguments:
 
 ```sh
-./build/float/prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] [max_train_states] [max_test_states] [verifier_diagnostics=0|1]
+./build/float/prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] [max_train_states] [max_test_states] [verifier_diagnostics=0|1] [summary_csv_path]
 ```
 
 ## Run Tests
@@ -202,7 +213,7 @@ Optional arguments:
 make test
 ```
 
-The tests compare scalar and batched forward results, verify `batch_size=1` training against sample-wise training, finite-difference check batched gradients through the tiled kernels, and check the softmax cross-entropy and shared softmax-scorer gradients. They also run prime-gap CLI regression checks for argument bounds, sieve-limit overflow rejection, and wide-sweep cap handling.
+The tests compare scalar and batched forward results, verify `batch_size=1` training against sample-wise training, finite-difference check batched gradients through the tiled kernels, and check the softmax cross-entropy and shared softmax-scorer gradients. They also run prime-gap CLI regression checks for argument bounds, sieve-limit overflow rejection, wide-sweep cap handling, and structured CSV output.
 
 ## API
 

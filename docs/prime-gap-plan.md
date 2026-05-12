@@ -163,8 +163,14 @@ shape of the code.
 
 Exact verifier diagnostics are now an explicit CLI mode. The default run reports capability and
 calibration metrics without the expensive wheel/block verifier accounting; passing
-`verifier_diagnostics=1` as the final CLI argument, or using `make prime-gap-profile-verifier`,
+`verifier_diagnostics=1`, or using `make prime-gap-profile-verifier`,
 restores the exact diagnostic path.
+
+Structured run output is available by passing a CSV path after `verifier_diagnostics`. The CSV keeps
+one row per baseline/model/section result, including run configuration, window size, candidate
+count, capability metrics, calibration metrics, interval-prime metrics, and verifier-work
+diagnostics. This makes cross-run sweeps analyzable without scraping the human-readable console
+report.
 
 ## Next Work
 
