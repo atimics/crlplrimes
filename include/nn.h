@@ -89,6 +89,11 @@ nn_real nn_train_softmax_scorer_weighted(NeuralNet *net,
                                          size_t selected_index,
                                          nn_real weight,
                                          nn_real learning_rate);
+/*
+ * Reuses activations from the immediately preceding successful nn_forward_batch
+ * call on the same network and candidate_count. Returns NAN if that cache is no
+ * longer valid because another forward/training call intervened.
+ */
 nn_real nn_train_softmax_scorer_cached(NeuralNet *net,
                                        size_t candidate_count,
                                        size_t selected_index,

@@ -145,6 +145,12 @@ Optional arguments:
 make test
 ```
 
+Run sanitizer coverage with:
+
+```sh
+make sanitize
+```
+
 The tests compare scalar and batched forward results, verify `batch_size=1` training against sample-wise training, finite-difference check batched gradients through the tiled kernels, and check the softmax cross-entropy and shared softmax-scorer gradients.
 
 ## API

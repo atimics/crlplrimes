@@ -441,13 +441,23 @@ static int test_softmax_scorer_cached_matches_regular(void)
 
     NeuralNet *regular_net = nn_create_config(&config);
     NeuralNet *cached_net = nn_create_config(&config);
+    NeuralNet *invalidated_net = nn_create_config(&config);
     int ok = 1;
 
-    if (regular_net == NULL || cached_net == NULL) {
+    if (regular_net == NULL || cached_net == NULL || invalidated_net == NULL) {
         nn_free(regular_net);
         nn_free(cached_net);
+        nn_free(invalidated_net);
         return 0;
     }
+
+    nn_forward_batch(invalidated_net, candidate_inputs, scores, candidate_count);
+    nn_forward(invalidated_net, candidate_inputs, scores);
+    ok = ok && isnan((double)nn_train_softmax_scorer_cached(invalidated_net,
+                                                            candidate_count,
+                                                            selected_index,
+                                                            weight,
+                                                            learning_rate));
 
     nn_train_softmax_scorer_weighted(regular_net,
                                      candidate_inputs,
@@ -461,6 +471,11 @@ static int test_softmax_scorer_cached_matches_regular(void)
                                    selected_index,
                                    weight,
                                    learning_rate);
+    ok = ok && isnan((double)nn_train_softmax_scorer_cached(cached_net,
+                                                            candidate_count,
+                                                            selected_index,
+                                                            weight,
+                                                            learning_rate));
 
     for (size_t i = 0; i < nn_parameter_count(regular_net); ++i) {
         nn_real a = nn_test_get_parameter(regular_net, i);
@@ -473,7 +488,16 @@ static int test_softmax_scorer_cached_matches_regular(void)
 
     nn_free(regular_net);
     nn_free(cached_net);
+    nn_free(invalidated_net);
     return ok;
+}
+
+static int test_prime_gap_rejects_negative_size_args(void)
+{
+    char *argv[] = {"prime_gap", "-1"};
+    size_t value = 123;
+
+    return !parse_size_arg(2, argv, 1, DEFAULT_TRAIN_LIMIT, &value) && value == 123;
 }
 
 static int test_prime_gap_features_are_divisibility_flags(void)
@@ -612,6 +636,8 @@ int main(void)
           "softmax cross-entropy requires linear output");
     check(test_softmax_scorer_cached_matches_regular(),
           "softmax scorer cached update matches regular update");
+    check(test_prime_gap_rejects_negative_size_args(),
+          "prime-gap parser rejects negative size args");
     check(test_prime_gap_features_are_divisibility_flags(),
           "prime-gap features are divisibility flags");
     check(test_prime_gap_frequency_policy_is_smoothed(),
