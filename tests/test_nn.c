@@ -961,6 +961,58 @@ static int test_trace_jsonl_writer_outputs_valid_shape(void)
     return ok;
 }
 
+static int test_trace_jsonl_writer_rejects_invalid_payloads(void)
+{
+    const uint32_t action_ids[] = {10, 20};
+    nn_real scores[] = {(nn_real)1.5, (nn_real)-0.25};
+    nn_real probabilities[] = {(nn_real)0.85, (nn_real)0.15};
+    NNTraceRecord record;
+    record.task_name = "task";
+    record.model_hash_hex = "abc123";
+    record.state_hash = UINT64_C(0x1234);
+    record.feature_encoder_version = 5;
+    record.candidate_count = 2;
+    record.action_ids = action_ids;
+    record.scores = scores;
+    record.probabilities = probabilities;
+    record.selected_index = 0;
+    record.target_index = 1;
+    record.loss = (nn_real)0.42;
+    record.verifier_result = "corrected";
+    record.verifier_cost_json = "{\"checks\":3}";
+    record.seed = 99;
+
+    FILE *file = tmpfile();
+    if (file == NULL) {
+        return 0;
+    }
+
+    int ok = 1;
+    scores[1] = (nn_real)INFINITY;
+    ok = ok && !nn_trace_write_jsonl(file, &record);
+    scores[1] = (nn_real)-0.25;
+
+    probabilities[0] = (nn_real)NAN;
+    ok = ok && !nn_trace_write_jsonl(file, &record);
+    probabilities[0] = (nn_real)0.85;
+
+    record.loss = (nn_real)INFINITY;
+    ok = ok && !nn_trace_write_jsonl(file, &record);
+    record.loss = (nn_real)0.42;
+
+    record.verifier_cost_json = "[]";
+    ok = ok && !nn_trace_write_jsonl(file, &record);
+    record.verifier_cost_json = "{\"checks\":3}";
+
+    record.verifier_cost_json = "{\n\"checks\":3}";
+    ok = ok && !nn_trace_write_jsonl(file, &record);
+    record.verifier_cost_json = "{\"checks\":3}";
+
+    ok = ok && nn_trace_write_jsonl(file, &record);
+    ok = fclose(file) == 0 && ok;
+    return ok;
+}
+
 static int test_prime_gap_features_are_divisibility_flags(void)
 {
     nn_real inputs[ACTION_COUNT * FEATURE_COUNT];
@@ -1383,6 +1435,8 @@ int main(void)
           "checkpoint hash matches SHA-256 test vector");
     check(test_trace_jsonl_writer_outputs_valid_shape(),
           "trace JSONL writer emits valid record shape");
+    check(test_trace_jsonl_writer_rejects_invalid_payloads(),
+          "trace JSONL writer rejects invalid payloads");
     check(test_prime_gap_features_are_divisibility_flags(),
           "prime-gap features are divisibility flags");
     check(test_prime_gap_raw_residue_features_are_not_divisibility_flags(),

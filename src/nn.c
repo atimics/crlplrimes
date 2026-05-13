@@ -1914,6 +1914,76 @@ static int json_write_real_array(FILE *file, const nn_real *values, size_t count
     return fputc(']', file) != EOF;
 }
 
+static int real_array_is_finite(const nn_real *values, size_t count)
+{
+    for (size_t i = 0; i < count; ++i) {
+        if (!isfinite((double)values[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int json_is_space(unsigned char c)
+{
+    return c == ' ';
+}
+
+static int json_object_text_is_well_formed_enough(const char *text)
+{
+    const unsigned char *cursor = (const unsigned char *)text;
+    const unsigned char *last_non_space = NULL;
+    int depth = 0;
+    int in_string = 0;
+    int escaped = 0;
+
+    if (text == NULL) {
+        return 0;
+    }
+
+    while (json_is_space(*cursor)) {
+        ++cursor;
+    }
+    if (*cursor != '{') {
+        return 0;
+    }
+
+    for (; *cursor != '\0'; ++cursor) {
+        unsigned char c = *cursor;
+        if (c < 0x20u) {
+            return 0;
+        }
+        if (!json_is_space(c)) {
+            last_non_space = cursor;
+        }
+
+        if (in_string) {
+            if (escaped) {
+                escaped = 0;
+            } else if (c == '\\') {
+                escaped = 1;
+            } else if (c == '"') {
+                in_string = 0;
+            }
+            continue;
+        }
+
+        if (c == '"') {
+            in_string = 1;
+        } else if (c == '{' || c == '[') {
+            ++depth;
+        } else if (c == '}' || c == ']') {
+            --depth;
+            if (depth < 0) {
+                return 0;
+            }
+        }
+    }
+
+    return !in_string && !escaped && depth == 0 && last_non_space != NULL &&
+           *last_non_space == '}';
+}
+
 int nn_trace_write_jsonl(FILE *file, const NNTraceRecord *record)
 {
     if (file == NULL || record == NULL || record->task_name == NULL ||
@@ -1928,6 +1998,13 @@ int nn_trace_write_jsonl(FILE *file, const NNTraceRecord *record)
         record->verifier_result == NULL ? "unknown" : record->verifier_result;
     const char *verifier_cost_json =
         record->verifier_cost_json == NULL ? "{}" : record->verifier_cost_json;
+
+    if (!isfinite((double)record->loss) ||
+        !real_array_is_finite(record->scores, record->candidate_count) ||
+        !real_array_is_finite(record->probabilities, record->candidate_count) ||
+        !json_object_text_is_well_formed_enough(verifier_cost_json)) {
+        return 0;
+    }
 
     if (fputs("{\"schema\":\"crlp.trace.v1\",\"task\":", file) == EOF ||
         !json_write_string(file, record->task_name) ||

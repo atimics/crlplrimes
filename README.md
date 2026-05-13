@@ -147,6 +147,10 @@ Each row records the task, state hash, model hash, feature encoder version, acti
 probabilities, selected action, target action, loss, verifier result, verifier-cost payload, and
 seed.
 
+Trace rows reject non-finite scores, probabilities, and losses, because `NaN` and infinity are not
+valid JSON numbers. `verifier_cost_json` is a task-specific extension point; callers must pass
+`NULL` or a valid single-line top-level JSON object literal.
+
 Prime-gap trace mode writes a trace plus a companion checkpoint whose SHA-256 appears in every row:
 
 ```sh
@@ -299,8 +303,11 @@ make prime-gap-sweep
 Optional arguments:
 
 ```sh
-./build/float/prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] [max_train_states] [max_test_states] [verifier_diagnostics=0|1] [summary_csv_path] [--trace trace_jsonl_path]
+./build/float/prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] [max_train_states] [max_test_states] [verifier_diagnostics=0|1] [summary_csv_path] [--summary summary_csv_path] [--trace trace_jsonl_path]
 ```
+
+`--summary` and `--trace` may appear before or after the numeric arguments. Nonnumeric positional
+values in the numeric slots are rejected instead of silently falling back to defaults.
 
 ## Run Tests
 

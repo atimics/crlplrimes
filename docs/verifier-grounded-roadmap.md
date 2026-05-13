@@ -85,4 +85,5 @@ Prime-gap can now run with `--trace path.jsonl`. The CLI writes one trace row pe
 prime state after supervised training, plus a companion `path.jsonl.nnckpt` checkpoint. Each trace
 row carries the companion checkpoint SHA-256 as `model_hash`, candidate action ids, scores,
 probabilities, the selected top proposal, the verified target action, per-row loss, verifier result,
-and prime-specific verifier-cost details.
+and prime-specific verifier-cost details. Trace writing rejects non-finite numeric payloads, and the
+task-specific verifier-cost extension must be a single-line top-level JSON object.

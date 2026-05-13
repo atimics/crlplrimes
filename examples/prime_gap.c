@@ -1,6 +1,7 @@
 #include "prime_gap.h"
 
 #include <math.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,31 +27,91 @@ typedef struct {
     const char *trace_jsonl_path;
 } OutputPaths;
 
+typedef struct {
+    size_t train_limit_arg;
+    size_t test_limit_arg;
+    size_t supervised_epochs;
+    size_t rl_epochs;
+    size_t max_train_states;
+    size_t max_test_states;
+    size_t verifier_diagnostics_arg;
+    OutputPaths output_paths;
+} PrimeGapCliArgs;
+
 static double ratio(size_t numerator, size_t denominator)
 {
     return denominator == 0 ? 0.0 : (double)numerator / (double)denominator;
 }
 
-static int parse_output_paths(int argc, char **argv, OutputPaths *paths)
+static int parse_size_token(const char *text, size_t *out_value)
 {
-    paths->summary_csv_path = NULL;
-    paths->trace_jsonl_path = NULL;
+    if (text == NULL || text[0] == '\0') {
+        return 0;
+    }
 
-    for (int i = 8; i < argc; ++i) {
+    char *end = NULL;
+    errno = 0;
+    unsigned long long value = strtoull(text, &end, 10);
+    if (errno == ERANGE || end == text || *end != '\0' ||
+        value > (unsigned long long)SIZE_MAX) {
+        return 0;
+    }
+
+    *out_value = (size_t)value;
+    return 1;
+}
+
+static void prime_gap_cli_defaults(PrimeGapCliArgs *args)
+{
+    args->train_limit_arg = DEFAULT_TRAIN_LIMIT;
+    args->test_limit_arg = DEFAULT_TEST_LIMIT;
+    args->supervised_epochs = DEFAULT_SUPERVISED_EPOCHS;
+    args->rl_epochs = DEFAULT_RL_EPOCHS;
+    args->max_train_states = DEFAULT_MAX_TRAIN_STATES;
+    args->max_test_states = DEFAULT_MAX_TEST_STATES;
+    args->verifier_diagnostics_arg = DEFAULT_VERIFIER_DIAGNOSTICS;
+    args->output_paths.summary_csv_path = NULL;
+    args->output_paths.trace_jsonl_path = NULL;
+}
+
+static int parse_prime_gap_cli(int argc, char **argv, PrimeGapCliArgs *args)
+{
+    size_t *positionals[] = {
+        &args->train_limit_arg,
+        &args->test_limit_arg,
+        &args->supervised_epochs,
+        &args->rl_epochs,
+        &args->max_train_states,
+        &args->max_test_states,
+        &args->verifier_diagnostics_arg,
+    };
+    size_t positional_count = 0;
+
+    prime_gap_cli_defaults(args);
+
+    for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--summary") == 0) {
-            if (++i >= argc || paths->summary_csv_path != NULL) {
+            if (++i >= argc || args->output_paths.summary_csv_path != NULL) {
                 return 0;
             }
-            paths->summary_csv_path = argv[i];
+            args->output_paths.summary_csv_path = argv[i];
         } else if (strcmp(argv[i], "--trace") == 0) {
-            if (++i >= argc || paths->trace_jsonl_path != NULL) {
+            if (++i >= argc || args->output_paths.trace_jsonl_path != NULL) {
                 return 0;
             }
-            paths->trace_jsonl_path = argv[i];
-        } else if (paths->summary_csv_path == NULL) {
-            paths->summary_csv_path = argv[i];
-        } else if (paths->trace_jsonl_path == NULL) {
-            paths->trace_jsonl_path = argv[i];
+            args->output_paths.trace_jsonl_path = argv[i];
+        } else if (strncmp(argv[i], "--", 2) == 0) {
+            return 0;
+        } else if (positional_count < sizeof(positionals) / sizeof(positionals[0])) {
+            size_t value = 0;
+            if (!parse_size_token(argv[i], &value)) {
+                return 0;
+            }
+            *positionals[positional_count++] = value;
+        } else if (args->output_paths.summary_csv_path == NULL) {
+            args->output_paths.summary_csv_path = argv[i];
+        } else if (args->output_paths.trace_jsonl_path == NULL) {
+            args->output_paths.trace_jsonl_path = argv[i];
         } else {
             return 0;
         }
@@ -423,14 +484,7 @@ static int emit_prime_gap_traces(FILE *file,
 
 int main(int argc, char **argv)
 {
-    size_t train_limit_arg = parse_size_arg(argc, argv, 1, DEFAULT_TRAIN_LIMIT);
-    size_t test_limit_arg = parse_size_arg(argc, argv, 2, DEFAULT_TEST_LIMIT);
-    size_t supervised_epochs = parse_size_arg(argc, argv, 3, DEFAULT_SUPERVISED_EPOCHS);
-    size_t rl_epochs = parse_size_arg(argc, argv, 4, DEFAULT_RL_EPOCHS);
-    size_t max_train_states = parse_size_arg(argc, argv, 5, DEFAULT_MAX_TRAIN_STATES);
-    size_t max_test_states = parse_size_arg(argc, argv, 6, DEFAULT_MAX_TEST_STATES);
-    size_t verifier_diagnostics_arg = parse_size_arg(argc, argv, 7, DEFAULT_VERIFIER_DIAGNOSTICS);
-    OutputPaths output_paths;
+    PrimeGapCliArgs cli_args;
     PrimeGapProfile profile;
     SummaryWriter summary = {0};
     double total_started = now_seconds();
@@ -457,22 +511,27 @@ int main(int argc, char **argv)
     prime_gap_profile_reset(&profile);
     prime_gap_profile_set(&profile);
 
-    if (!parse_output_paths(argc, argv, &output_paths) ||
-        test_limit_arg <= train_limit_arg || train_limit_arg < 16 ||
-        test_limit_arg > (size_t)UINT32_MAX - (size_t)INTERVAL_MAX_GAP ||
-        train_limit_arg > (size_t)UINT32_MAX ||
-        verifier_diagnostics_arg > 1) {
+    if (!parse_prime_gap_cli(argc, argv, &cli_args) ||
+        cli_args.test_limit_arg <= cli_args.train_limit_arg || cli_args.train_limit_arg < 16 ||
+        cli_args.test_limit_arg > (size_t)UINT32_MAX - (size_t)INTERVAL_MAX_GAP ||
+        cli_args.train_limit_arg > (size_t)UINT32_MAX ||
+        cli_args.verifier_diagnostics_arg > 1) {
         fputs("usage: prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] "
               "[max_train_states] [max_test_states] [verifier_diagnostics=0|1] "
-              "[summary_csv_path] [--trace trace_jsonl_path]\n",
+              "[summary_csv_path] [--summary summary_csv_path] [--trace trace_jsonl_path]\n",
               stderr);
         return EXIT_FAILURE;
     }
 
-    uint32_t train_limit = (uint32_t)train_limit_arg;
-    uint32_t test_limit = (uint32_t)test_limit_arg;
+    uint32_t train_limit = (uint32_t)cli_args.train_limit_arg;
+    uint32_t test_limit = (uint32_t)cli_args.test_limit_arg;
     uint32_t sieve_limit = test_limit + (uint32_t)INTERVAL_MAX_GAP;
-    int include_verifier_diagnostics = verifier_diagnostics_arg != 0;
+    size_t supervised_epochs = cli_args.supervised_epochs;
+    size_t rl_epochs = cli_args.rl_epochs;
+    size_t max_train_states = cli_args.max_train_states;
+    size_t max_test_states = cli_args.max_test_states;
+    OutputPaths output_paths = cli_args.output_paths;
+    int include_verifier_diagnostics = cli_args.verifier_diagnostics_arg != 0;
 
     printf("prime-gap scorer train_limit=%u test_limit=%u g_max=%d actions=%d features=%d "
            "verifier_diagnostics=%s summary_csv=%s trace_jsonl=%s\n",

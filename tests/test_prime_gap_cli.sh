@@ -146,10 +146,38 @@ expect_trace_jsonl()
     pass "$name"
 }
 
+expect_trace_jsonl_before_positionals()
+{
+    name=$1
+    shift
+    output=$(tmp_output)
+    trace=$(tmp_output)
+    checkpoint="${trace}.nnckpt"
+    rm -f "$trace" "$checkpoint"
+
+    if ! "$prime_gap_bin" --trace "$trace" "$@" >"$output" 2>&1; then
+        fail "$name failed unexpectedly" "$output"
+    fi
+    if [ ! -s "$trace" ]; then
+        fail "$name did not write trace JSONL" "$output"
+    fi
+    if [ ! -s "$checkpoint" ]; then
+        fail "$name did not write companion checkpoint" "$output"
+    fi
+    if ! grep -Fq "trace_jsonl=$trace" "$output"; then
+        fail "$name did not parse trace flag before positionals" "$output"
+    fi
+
+    rm -f "$output" "$trace" "$checkpoint"
+    pass "$name"
+}
+
 expect_usage_failure "prime-gap CLI rejects interval sieve-limit overflow" 16 4294967000
 expect_usage_failure "prime-gap CLI rejects non-increasing train/test range" 1000 1000
 expect_usage_failure "prime-gap CLI rejects tiny train range" 15 3000
+expect_usage_failure "prime-gap CLI rejects nonnumeric numeric argument" 1000 nope
 expect_usage_failure "prime-gap CLI rejects invalid verifier diagnostics mode" 1000 3000 0 0 10 10 2
+expect_usage_failure "prime-gap CLI rejects unknown flag" 1000 3000 --bogus
 expect_usage_failure "prime-gap CLI rejects too many arguments" 1000 3000 0 0 10 10 0 a b c
 expect_usage_failure "prime-gap CLI rejects missing trace path" 1000 3000 0 0 10 10 0 --trace
 
@@ -189,4 +217,8 @@ expect_summary_csv \
 
 expect_trace_jsonl \
     "prime-gap CLI writes trace JSONL" \
+    1000 3000 0 0 20 20 0
+
+expect_trace_jsonl_before_positionals \
+    "prime-gap CLI accepts trace flag before numeric args" \
     1000 3000 0 0 20 20 0

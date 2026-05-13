@@ -118,6 +118,8 @@ int nn_save_checkpoint(const NeuralNet *net,
                        const NNCheckpointMeta *meta);
 NeuralNet *nn_load_checkpoint(const char *path, NNCheckpointMeta *out_meta);
 int nn_hash_checkpoint_file(const char *path, uint8_t out_hash[32]);
+/* verifier_cost_json must be NULL or a valid single-line top-level JSON object literal.
+   Trace rows reject non-finite scores, probabilities, and loss values. */
 int nn_trace_write_jsonl(FILE *file, const NNTraceRecord *record);
 nn_real nn_train_sample(NeuralNet *net,
                         const nn_real *input,
