@@ -14,12 +14,16 @@ LDLIBS ?= -lm
 BUILD_DIR := build/$(REAL)
 NN_OBJ := $(BUILD_DIR)/nn.o
 NN_TEST_OBJ := $(BUILD_DIR)/nn_test.o
+NN_SANITIZE_OBJ := $(BUILD_DIR)/nn_sanitize.o
 XOR_EXAMPLE := $(BUILD_DIR)/xor
 PRIME_GAP_EXAMPLE := $(BUILD_DIR)/prime_gap
 BENCHMARK := $(BUILD_DIR)/benchmark
 TEST_RUNNER := $(BUILD_DIR)/test_nn
+SANITIZE_TEST_RUNNER := $(BUILD_DIR)/test_nn_sanitize
+SANITIZE_CFLAGS ?= -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
+SANITIZE_LDFLAGS ?= -fsanitize=address,undefined
 
-.PHONY: all run prime-gap prime-gap-sweep benchmark test clean
+.PHONY: all run prime-gap prime-gap-sweep benchmark test sanitize clean
 
 all: $(XOR_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(BENCHMARK)
 
@@ -32,6 +36,9 @@ $(NN_OBJ): src/nn.c include/nn.h | $(BUILD_DIR)
 $(NN_TEST_OBJ): src/nn.c include/nn.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn.c -o $@
 
+$(NN_SANITIZE_OBJ): src/nn.c include/nn.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn.c -o $@
+
 $(XOR_EXAMPLE): examples/xor.c $(NN_OBJ) include/nn.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/xor.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
@@ -41,8 +48,11 @@ $(PRIME_GAP_EXAMPLE): examples/prime_gap.c $(NN_OBJ) include/nn.h | $(BUILD_DIR)
 $(BENCHMARK): benchmarks/benchmark.c $(NN_OBJ) include/nn.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) benchmarks/benchmark.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(TEST_RUNNER): tests/test_nn.c $(NN_TEST_OBJ) include/nn.h | $(BUILD_DIR)
+$(TEST_RUNNER): tests/test_nn.c examples/prime_gap.c $(NN_TEST_OBJ) include/nn.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) tests/test_nn.c $(NN_TEST_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(SANITIZE_TEST_RUNNER): tests/test_nn.c examples/prime_gap.c $(NN_SANITIZE_OBJ) include/nn.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) tests/test_nn.c $(NN_SANITIZE_OBJ) $(LDFLAGS) $(SANITIZE_LDFLAGS) $(LDLIBS) -o $@
 
 run: $(XOR_EXAMPLE)
 	./$(XOR_EXAMPLE)
@@ -60,6 +70,9 @@ benchmark: $(BENCHMARK)
 
 test: $(TEST_RUNNER)
 	./$(TEST_RUNNER)
+
+sanitize: $(SANITIZE_TEST_RUNNER)
+	./$(SANITIZE_TEST_RUNNER)
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -36,6 +36,8 @@ struct NeuralNet {
     nn_real **batch_activations;
     nn_real **batch_deltas;
     size_t batch_capacity;
+    size_t batch_cache_sample_count;
+    int batch_cache_valid;
     uint32_t rng_state;
 };
 
@@ -155,6 +157,22 @@ static int config_is_valid(const NNConfig *config)
     }
 
     return 1;
+}
+
+static void invalidate_batch_cache(NeuralNet *net)
+{
+    if (net == NULL) {
+        return;
+    }
+
+    net->batch_cache_valid = 0;
+    net->batch_cache_sample_count = 0;
+}
+
+static void mark_batch_cache_valid(NeuralNet *net, size_t sample_count)
+{
+    net->batch_cache_valid = 1;
+    net->batch_cache_sample_count = sample_count;
 }
 
 static nn_real dot_product(const nn_real *a, const nn_real *b, size_t count)
@@ -347,6 +365,7 @@ static void free_batch_workspace(NeuralNet *net)
     net->batch_activations = NULL;
     net->batch_deltas = NULL;
     net->batch_capacity = 0;
+    invalidate_batch_cache(net);
 }
 
 static int ensure_batch_workspace(NeuralNet *net, size_t batch_size)
@@ -631,6 +650,8 @@ static void apply_sample_update(NeuralNet *net, nn_real learning_rate)
             }
         }
     }
+
+    invalidate_batch_cache(net);
 }
 
 static void dense_backprop_deltas_batch(const nn_real *restrict next_deltas,
@@ -1004,6 +1025,8 @@ static void apply_gradients(NeuralNet *net, nn_real scale)
             weights[i] -= scale * grad_weights[i];
         }
     }
+
+    invalidate_batch_cache(net);
 }
 
 static nn_real train_indexed_batch(NeuralNet *net,
@@ -1016,6 +1039,8 @@ static nn_real train_indexed_batch(NeuralNet *net,
                                    size_t target_width,
                                    nn_real learning_rate)
 {
+    invalidate_batch_cache(net);
+
     if (!ensure_batch_workspace(net, batch_size)) {
         return (nn_real)NAN;
     }
@@ -1284,7 +1309,13 @@ int nn_test_has_gradient_buffers(const NeuralNet *net)
 
 void nn_forward(NeuralNet *net, const nn_real *input, nn_real *output)
 {
-    if (net == NULL || input == NULL) {
+    if (net == NULL) {
+        return;
+    }
+
+    invalidate_batch_cache(net);
+
+    if (input == NULL) {
         return;
     }
 
@@ -1311,7 +1342,12 @@ void nn_forward_batch(NeuralNet *net,
                       nn_real *outputs,
                       size_t sample_count)
 {
-    if (net == NULL || inputs == NULL || outputs == NULL || sample_count == 0) {
+    if (net == NULL) {
+        return;
+    }
+
+    if (inputs == NULL || outputs == NULL || sample_count == 0) {
+        invalidate_batch_cache(net);
         return;
     }
 
@@ -1324,9 +1360,11 @@ void nn_forward_batch(NeuralNet *net,
         memcpy(outputs,
                net->batch_activations[net->layer_count - 1],
                sample_count * output_width * sizeof(*outputs));
+        mark_batch_cache_valid(net, sample_count);
         return;
     }
 
+    invalidate_batch_cache(net);
     for (size_t sample = 0; sample < sample_count; ++sample) {
         nn_forward(net, &inputs[sample * input_width], &outputs[sample * output_width]);
     }
@@ -1425,6 +1463,7 @@ nn_real nn_train_softmax_scorer_cached(NeuralNet *net,
     if (net == NULL || candidate_count == 0 || selected_index >= candidate_count ||
         learning_rate <= (nn_real)0 || nn_output_size(net) != 1 ||
         net->output_activation != NN_ACTIVATION_LINEAR ||
+        !net->batch_cache_valid || net->batch_cache_sample_count != candidate_count ||
         net->batch_capacity < candidate_count || net->batch_activations == NULL ||
         net->batch_deltas == NULL) {
         return (nn_real)NAN;
@@ -1446,6 +1485,8 @@ nn_real nn_train_softmax_scorer_weighted(NeuralNet *net,
         nn_output_size(net) != 1 || net->output_activation != NN_ACTIVATION_LINEAR) {
         return (nn_real)NAN;
     }
+
+    invalidate_batch_cache(net);
 
     if (weight == (nn_real)0) {
         return (nn_real)0;

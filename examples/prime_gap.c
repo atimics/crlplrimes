@@ -1,5 +1,6 @@
 #include "nn.h"
 
+#include <errno.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -97,15 +98,28 @@ static size_t rng_bounded(uint32_t *state, size_t bound)
     return bound == 0 ? 0 : (size_t)(rng_next(state) % (uint32_t)bound);
 }
 
-static size_t parse_size_arg(int argc, char **argv, int index, size_t fallback)
+static int parse_size_arg(int argc, char **argv, int index, size_t fallback, size_t *value_out)
 {
     if (index >= argc) {
-        return fallback;
+        *value_out = fallback;
+        return 1;
     }
 
+    const char *text = argv[index];
+    if (text[0] == '\0' || text[0] == '-' || text[0] == '+') {
+        return 0;
+    }
+
+    errno = 0;
     char *end = NULL;
-    unsigned long value = strtoul(argv[index], &end, 10);
-    return end != argv[index] && *end == '\0' ? (size_t)value : fallback;
+    unsigned long long value = strtoull(text, &end, 10);
+    if (end == text || *end != '\0' || errno == ERANGE ||
+        value > (unsigned long long)SIZE_MAX) {
+        return 0;
+    }
+
+    *value_out = (size_t)value;
+    return 1;
 }
 
 static void free_sieve(Sieve *sieve)
@@ -596,6 +610,69 @@ static BlockWork block_scan_work(const Sieve *sieve, uint32_t p, uint32_t true_g
     return work;
 }
 
+static uint32_t extend_segmented_first_prime_gap(const Sieve *sieve,
+                                                 uint32_t p,
+                                                 uint32_t from_gap,
+                                                 uint32_t to_gap,
+                                                 uint8_t *composite,
+                                                 BlockWork *work)
+{
+    uint32_t old_candidate_count = from_gap / 2u;
+    uint32_t candidate_count = to_gap / 2u;
+    uint64_t start_number = (uint64_t)p + (uint64_t)from_gap + 2u;
+    uint64_t end_number = (uint64_t)p + (uint64_t)to_gap;
+
+    memset(work, 0, sizeof(*work));
+    if (to_gap <= from_gap) {
+        return 0;
+    }
+
+    work->candidates = candidate_count - old_candidate_count;
+
+    for (size_t i = 0; i < sieve->prime_count; ++i) {
+        uint32_t prime = sieve->primes[i];
+        uint64_t prime_squared = (uint64_t)prime * (uint64_t)prime;
+        if (prime == 2) {
+            continue;
+        }
+        if (prime_squared > end_number) {
+            break;
+        }
+
+        ++work->base_primes;
+
+        uint64_t first = ((uint64_t)start_number + prime - 1u) / prime * prime;
+        if (first < prime_squared) {
+            first = prime_squared;
+        }
+        if ((first & 1u) == 0) {
+            first += prime;
+        }
+
+        for (uint64_t value = first; value <= end_number; value += (uint64_t)2u * prime) {
+            uint32_t gap = (uint32_t)(value - (uint64_t)p);
+            if (gap < 2 || (gap & 1u) != 0) {
+                continue;
+            }
+
+            uint32_t index = gap / 2u - 1u;
+            if (index >= old_candidate_count && index < candidate_count && !composite[index]) {
+                composite[index] = 1;
+                ++work->marks;
+            }
+        }
+    }
+
+    for (uint32_t index = old_candidate_count; index < candidate_count; ++index) {
+        ++work->survivor_checks;
+        if (!composite[index]) {
+            return (index + 1u) * 2u;
+        }
+    }
+
+    return 0;
+}
+
 static BlockWork assisted_block_work(const Sieve *sieve,
                                      uint32_t p,
                                      uint32_t true_gap,
@@ -603,9 +680,35 @@ static BlockWork assisted_block_work(const Sieve *sieve,
                                      size_t top_k)
 {
     BlockWork total = {0, 0, 0, 0};
+    uint32_t max_gap = true_gap;
+    uint32_t verified_gap = 0;
+    uint32_t candidate_count;
+    uint8_t local_composite[EXACT_ACTION_COUNT];
+    uint8_t *composite = local_composite;
 
     if (top_k > ACTION_COUNT) {
         top_k = ACTION_COUNT;
+    }
+
+    for (size_t i = 0; i < top_k; ++i) {
+        size_t proposed = ranked[i];
+        if (!action_is_overflow(proposed) && action_gap(proposed) > max_gap) {
+            max_gap = (uint32_t)action_gap(proposed);
+        }
+    }
+
+    candidate_count = max_gap / 2u;
+    if (candidate_count == 0) {
+        return total;
+    }
+
+    if (candidate_count <= EXACT_ACTION_COUNT) {
+        memset(local_composite, 0, candidate_count * sizeof(*local_composite));
+    } else {
+        composite = calloc(candidate_count, sizeof(*composite));
+        if (composite == NULL) {
+            return block_scan_work(sieve, p, true_gap);
+        }
     }
 
     for (size_t i = 0; i < top_k; ++i) {
@@ -614,20 +717,36 @@ static BlockWork assisted_block_work(const Sieve *sieve,
         uint32_t found_gap;
 
         if (action_is_overflow(proposed)) {
-            add_block_work(&total, block_scan_work(sieve, p, true_gap));
-            return total;
+            break;
+        }
+
+        uint32_t proposed_gap = (uint32_t)action_gap(proposed);
+        if (proposed_gap <= verified_gap) {
+            continue;
         }
 
         found_gap =
-            segmented_first_prime_gap(sieve, p, (uint32_t)action_gap(proposed), &part);
+            extend_segmented_first_prime_gap(sieve, p, verified_gap, proposed_gap, composite, &part);
         add_block_work(&total, part);
+        verified_gap = proposed_gap;
 
         if (found_gap != 0) {
+            if (composite != local_composite) {
+                free(composite);
+            }
             return total;
         }
     }
 
-    add_block_work(&total, block_scan_work(sieve, p, true_gap));
+    if (true_gap > verified_gap) {
+        BlockWork part;
+        extend_segmented_first_prime_gap(sieve, p, verified_gap, true_gap, composite, &part);
+        add_block_work(&total, part);
+    }
+
+    if (composite != local_composite) {
+        free(composite);
+    }
     return total;
 }
 
@@ -958,19 +1077,25 @@ static int train_strict_verifier_rl(NeuralNet *net,
 #ifndef PRIME_GAP_NO_MAIN
 int main(int argc, char **argv)
 {
-    size_t train_limit_arg = parse_size_arg(argc, argv, 1, DEFAULT_TRAIN_LIMIT);
-    size_t test_limit_arg = parse_size_arg(argc, argv, 2, DEFAULT_TEST_LIMIT);
-    size_t supervised_epochs = parse_size_arg(argc, argv, 3, DEFAULT_SUPERVISED_EPOCHS);
-    size_t rl_epochs = parse_size_arg(argc, argv, 4, DEFAULT_RL_EPOCHS);
-    size_t max_train_states = parse_size_arg(argc, argv, 5, DEFAULT_MAX_TRAIN_STATES);
-    size_t max_test_states = parse_size_arg(argc, argv, 6, DEFAULT_MAX_TEST_STATES);
+    size_t train_limit_arg = DEFAULT_TRAIN_LIMIT;
+    size_t test_limit_arg = DEFAULT_TEST_LIMIT;
+    size_t supervised_epochs = DEFAULT_SUPERVISED_EPOCHS;
+    size_t rl_epochs = DEFAULT_RL_EPOCHS;
+    size_t max_train_states = DEFAULT_MAX_TRAIN_STATES;
+    size_t max_test_states = DEFAULT_MAX_TEST_STATES;
     Sieve sieve;
     GapDataset train;
     GapDataset test;
     uint32_t rng = 20240511u;
     int ok = 1;
+    int args_ok = parse_size_arg(argc, argv, 1, DEFAULT_TRAIN_LIMIT, &train_limit_arg) &&
+                  parse_size_arg(argc, argv, 2, DEFAULT_TEST_LIMIT, &test_limit_arg) &&
+                  parse_size_arg(argc, argv, 3, DEFAULT_SUPERVISED_EPOCHS, &supervised_epochs) &&
+                  parse_size_arg(argc, argv, 4, DEFAULT_RL_EPOCHS, &rl_epochs) &&
+                  parse_size_arg(argc, argv, 5, DEFAULT_MAX_TRAIN_STATES, &max_train_states) &&
+                  parse_size_arg(argc, argv, 6, DEFAULT_MAX_TEST_STATES, &max_test_states);
 
-    if (test_limit_arg <= train_limit_arg || train_limit_arg < 16 ||
+    if (!args_ok || test_limit_arg <= train_limit_arg || train_limit_arg < 16 ||
         test_limit_arg > (size_t)UINT32_MAX - (size_t)G_MAX ||
         train_limit_arg > (size_t)UINT32_MAX) {
         fputs("usage: prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] "
