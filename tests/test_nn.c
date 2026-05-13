@@ -500,6 +500,15 @@ static int test_prime_gap_rejects_negative_size_args(void)
     return !parse_size_arg(2, argv, 1, DEFAULT_TRAIN_LIMIT, &value) && value == 123;
 }
 
+static int test_prime_gap_rank_bucket_boundaries(void)
+{
+    return rank_bucket_index(0) == 0 && rank_bucket_index(1) == 1 &&
+           rank_bucket_index(4) == 1 && rank_bucket_index(5) == 2 &&
+           rank_bucket_index(9) == 2 && rank_bucket_index(10) == 3 &&
+           rank_bucket_index(31) == 3 && rank_bucket_index(32) == 4 &&
+           rank_bucket_index(ACTION_COUNT) == 4;
+}
+
 static int test_prime_gap_features_are_divisibility_flags(void)
 {
     nn_real inputs[ACTION_COUNT * FEATURE_COUNT];
@@ -602,6 +611,8 @@ int main(void)
           "softmax scorer cached update matches regular update");
     check(test_prime_gap_rejects_negative_size_args(),
           "prime-gap parser rejects negative size args");
+    check(test_prime_gap_rank_bucket_boundaries(),
+          "prime-gap rank histogram bucket boundaries");
     check(test_prime_gap_features_are_divisibility_flags(),
           "prime-gap features are divisibility flags");
     check(test_prime_gap_wheel_verifier_accounting(),

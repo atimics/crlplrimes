@@ -21,6 +21,8 @@ enum {
     DEFAULT_RL_EPOCHS = 1,
     DEFAULT_MAX_TRAIN_STATES = 30000,
     DEFAULT_MAX_TEST_STATES = 30000,
+    CALIBRATION_BIN_COUNT = 10,
+    RANK_BUCKET_COUNT = 5,
 };
 
 static const uint32_t FEATURE_MODS[FEATURE_MOD_COUNT] = {3, 5, 7, 11, 13, 17, 19, 23, 29, 31};
@@ -69,6 +71,11 @@ typedef struct {
     double assisted_wheel_exact_tests_top10;
     double block_scan_cost;
     double assisted_block_cost_top10;
+    size_t rank_buckets[RANK_BUCKET_COUNT];
+    int has_policy_metrics;
+    double cross_entropy;
+    double true_action_probability;
+    double calibration_ece;
 } EvalMetrics;
 
 static double now_seconds(void)
@@ -357,6 +364,23 @@ static size_t true_rank(const size_t *ranked, size_t true_action)
     }
 
     return ACTION_COUNT;
+}
+
+static size_t rank_bucket_index(size_t rank)
+{
+    if (rank == 0) {
+        return 0;
+    }
+    if (rank < 5) {
+        return 1;
+    }
+    if (rank < 10) {
+        return 2;
+    }
+    if (rank < 32) {
+        return 3;
+    }
+    return 4;
 }
 
 static size_t proposal_steps_with_topk(const size_t *ranked, size_t top_k, size_t true_action)
@@ -774,7 +798,11 @@ static EvalMetrics evaluate_model(NeuralNet *net,
                                   nn_real *scores)
 {
     EvalMetrics metrics;
+    double calibration_confidence_sum[CALIBRATION_BIN_COUNT] = {0};
+    double calibration_accuracy_sum[CALIBRATION_BIN_COUNT] = {0};
+    size_t calibration_counts[CALIBRATION_BIN_COUNT] = {0};
     memset(&metrics, 0, sizeof(metrics));
+    metrics.has_policy_metrics = 1;
 
     size_t samples = dataset->count;
     if (max_states != 0 && max_states < samples) {
@@ -782,6 +810,7 @@ static EvalMetrics evaluate_model(NeuralNet *net,
     }
 
     size_t ranked[ACTION_COUNT];
+    nn_real probabilities[ACTION_COUNT];
     for (size_t sample = 0; sample < samples; ++sample) {
         size_t index = max_states != 0 && max_states < dataset->count
                            ? (sample * dataset->count) / max_states
@@ -793,8 +822,12 @@ static EvalMetrics evaluate_model(NeuralNet *net,
         fill_candidate_features(candidate_inputs, p, log_scale);
         nn_forward_batch(net, candidate_inputs, scores, ACTION_COUNT);
         rank_actions(scores, ranked);
+        nn_softmax(scores, probabilities, ACTION_COUNT);
 
         size_t rank = true_rank(ranked, target);
+        double target_probability = (double)probabilities[target];
+        double confidence = (double)probabilities[ranked[0]];
+        size_t calibration_bin;
         VerifierWork direct = direct_scan_work(gap);
         VerifierWork wheel = wheel_scan_work(sieve, p, gap);
         VerifierWork assisted = assisted_wheel_work(sieve, p, gap, ranked, 10);
@@ -804,6 +837,22 @@ static EvalMetrics evaluate_model(NeuralNet *net,
         metrics.top1 += rank == 0 ? 1u : 0u;
         metrics.top5 += rank < 5 ? 1u : 0u;
         metrics.top10 += rank < 10 ? 1u : 0u;
+        ++metrics.rank_buckets[rank_bucket_index(rank)];
+        if (target_probability < 1e-12) {
+            target_probability = 1e-12;
+        }
+        metrics.cross_entropy -= log(target_probability);
+        metrics.true_action_probability += target_probability;
+        if (confidence < 0.0) {
+            confidence = 0.0;
+        } else if (confidence > 1.0) {
+            confidence = 1.0;
+        }
+        calibration_bin = confidence >= 1.0 ? CALIBRATION_BIN_COUNT - 1
+                                            : (size_t)(confidence * CALIBRATION_BIN_COUNT);
+        ++calibration_counts[calibration_bin];
+        calibration_confidence_sum[calibration_bin] += confidence;
+        calibration_accuracy_sum[calibration_bin] += rank == 0 ? 1.0 : 0.0;
         metrics.top1_prime += !action_is_overflow(ranked[0]) &&
                                        is_prime_sieve(sieve, p + (uint32_t)action_gap(ranked[0]))
                                    ? 1u
@@ -830,6 +879,20 @@ static EvalMetrics evaluate_model(NeuralNet *net,
         metrics.assisted_wheel_exact_tests_top10 /= (double)samples;
         metrics.block_scan_cost /= (double)samples;
         metrics.assisted_block_cost_top10 /= (double)samples;
+        metrics.cross_entropy /= (double)samples;
+        metrics.true_action_probability /= (double)samples;
+
+        for (size_t bin = 0; bin < CALIBRATION_BIN_COUNT; ++bin) {
+            if (calibration_counts[bin] == 0) {
+                continue;
+            }
+
+            double bin_count = (double)calibration_counts[bin];
+            double average_confidence = calibration_confidence_sum[bin] / bin_count;
+            double average_accuracy = calibration_accuracy_sum[bin] / bin_count;
+            metrics.calibration_ece +=
+                (bin_count / (double)samples) * fabs(average_confidence - average_accuracy);
+        }
     }
 
     return metrics;
@@ -865,6 +928,7 @@ static EvalMetrics evaluate_static_ranking(const Sieve *sieve,
         metrics.top1 += rank == 0 ? 1u : 0u;
         metrics.top5 += rank < 5 ? 1u : 0u;
         metrics.top10 += rank < 10 ? 1u : 0u;
+        ++metrics.rank_buckets[rank_bucket_index(rank)];
         metrics.top1_prime += !action_is_overflow(ranked[0]) &&
                                        is_prime_sieve(sieve, p + (uint32_t)action_gap(ranked[0]))
                                    ? 1u
@@ -948,6 +1012,23 @@ static void print_metrics(const char *label, EvalMetrics metrics)
            metrics.assisted_block_cost_top10,
            block_delta,
            block_delta_pct);
+
+    printf("%s rank_hist top1=%.2f%% top2_5=%.2f%% top6_10=%.2f%% "
+           "top11_32=%.2f%% top33_plus=%.2f%%\n",
+           label,
+           100.0 * (double)metrics.rank_buckets[0] / samples,
+           100.0 * (double)metrics.rank_buckets[1] / samples,
+           100.0 * (double)metrics.rank_buckets[2] / samples,
+           100.0 * (double)metrics.rank_buckets[3] / samples,
+           100.0 * (double)metrics.rank_buckets[4] / samples);
+
+    if (metrics.has_policy_metrics) {
+        printf("%s policy cross_entropy=%.4f true_prob=%.4f ece=%.4f\n",
+               label,
+               metrics.cross_entropy,
+               metrics.true_action_probability,
+               metrics.calibration_ece);
+    }
 }
 
 static void build_frequency_ranking(const GapDataset *dataset, size_t *ranked)

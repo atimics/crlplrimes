@@ -85,35 +85,29 @@ Model-assisted exact verification currently does not beat wheel or block verific
 
 ## Next Work
 
-1. Add calibration and loss reporting.
-   - held-out cross-entropy
-   - average true-action probability
-   - rank histogram
-   - expected calibration error
-
-2. Add stronger non-neural baselines.
+1. Add stronger non-neural baselines.
    - empirical gap frequency
    - frequency conditioned on divisibility flags
    - hand-coded wheel ranking
    - linear/logistic scorer
 
-3. Add ablations.
+2. Add ablations.
    - no `log(p)`
    - no `normalized_gap`
    - only gap frequency
    - only divisibility flags
    - different small-prime feature sets
 
-4. Add RL-only experiments.
+3. Add RL-only experiments.
    - no supervised warm start
    - strict reward only
    - entropy bonus
    - baseline/advantage variants
 
-5. Add capability-oriented task variants.
+4. Add capability-oriented task variants.
    - find any prime after `p`
    - rank prime candidates in a fixed interval
    - rank wheel-surviving candidates only
    - predict overflow probability for larger gaps
 
-The most promising next implementation is calibration plus ablations. That will tell us whether the neural policy is learning beyond empirical gap frequency and small-prime divisibility.
+Calibration and loss reporting are now in the experiment output. The most promising next implementation is stronger baselines plus ablations. That will tell us whether the neural policy is learning beyond empirical gap frequency and small-prime divisibility.
