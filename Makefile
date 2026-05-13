@@ -23,7 +23,7 @@ SANITIZE_TEST_RUNNER := $(BUILD_DIR)/test_nn_sanitize
 SANITIZE_CFLAGS ?= -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
 SANITIZE_LDFLAGS ?= -fsanitize=address,undefined
 
-.PHONY: all run prime-gap prime-gap-sweep benchmark test sanitize clean
+.PHONY: all run prime-gap prime-gap-sweep prime-gap-regularization-sweep benchmark test sanitize clean
 
 all: $(XOR_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(BENCHMARK)
 
@@ -64,6 +64,12 @@ prime-gap-sweep: $(PRIME_GAP_EXAMPLE)
 	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 2 1 30000 30000
 	./$(PRIME_GAP_EXAMPLE) 3000000 10000000 1 0 30000 30000
 	./$(PRIME_GAP_EXAMPLE) 10000000 30000000 1 0 30000 30000
+
+prime-gap-regularization-sweep: $(PRIME_GAP_EXAMPLE)
+	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 2 1 15000 15000 0.00 0.00
+	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 2 1 15000 15000 0.40 0.04
+	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 2 1 15000 15000 0.80 0.08
+	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 2 1 15000 15000 1.20 0.12
 
 benchmark: $(BENCHMARK)
 	./$(BENCHMARK)

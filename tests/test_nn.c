@@ -627,6 +627,20 @@ static int test_prime_gap_rejects_negative_size_args(void)
     return !parse_size_arg(2, argv, 1, DEFAULT_TRAIN_LIMIT, &value) && value == 123;
 }
 
+static int test_prime_gap_rejects_invalid_regularization_args(void)
+{
+    char *negative_weight[] = {
+        "prime_gap", "1000", "2000", "1", "1", "100", "100", "-0.1", "0.1",
+    };
+    char *bad_weight[] = {
+        "prime_gap", "1000", "2000", "1", "1", "100", "100", "abc", "0.1",
+    };
+    PrimeGapRunConfig config;
+
+    return parse_run_config(9, negative_weight, &config) && !run_config_is_valid(&config) &&
+           !parse_run_config(9, bad_weight, &config);
+}
+
 static int test_prime_gap_features_are_divisibility_flags(void)
 {
     nn_real inputs[ACTION_COUNT * FEATURE_COUNT];
@@ -792,6 +806,8 @@ int main(void)
           "policy-regularized cached update matches policy update");
     check(test_prime_gap_rejects_negative_size_args(),
           "prime-gap parser rejects negative size args");
+    check(test_prime_gap_rejects_invalid_regularization_args(),
+          "prime-gap parser rejects invalid regularization args");
     check(test_prime_gap_features_are_divisibility_flags(),
           "prime-gap features are divisibility flags");
     check(test_prime_gap_frequency_policy_is_smoothed(),

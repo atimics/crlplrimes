@@ -105,6 +105,9 @@ reduces unscaled NLL from 2.3612 to 1.5878, and reduces unscaled ECE from 0.3100
 Temperature scaling still helps, but the selected temperature falls back to 1.20 instead of 2.50,
 which confirms that the regularizer prevents most of the post-RL logit inflation.
 
+Regularization weights are now CLI arguments, and `make prime-gap-regularization-sweep` runs a
+small default-range grid so the calibration/ranking tradeoff can be checked without editing code.
+
 The deterministic verifier remains the correctness mechanism.
 
 Model-assisted exact verification currently does not beat wheel or block verification, because wrong proposals create extra proof obligations. This is expected for exact next-prime verification.
@@ -112,8 +115,8 @@ Model-assisted exact verification currently does not beat wheel or block verific
 ## Next Work
 
 1. Improve calibration.
-   - sweep KL/entropy weights across held-out ranges
-   - expose regularization weights as CLI arguments
+   - expand the KL/entropy sweep across larger held-out ranges
+   - add validation-selected regularization weights instead of fixed defaults
 
 2. Add stronger non-neural baselines.
    - frequency conditioned on divisibility flags

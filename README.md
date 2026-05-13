@@ -134,10 +134,16 @@ Run a larger split sweep with:
 make prime-gap-sweep
 ```
 
+Sweep regularization weights on the default range with:
+
+```sh
+make prime-gap-regularization-sweep
+```
+
 Optional arguments:
 
 ```sh
-./build/float/prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] [max_train_states] [max_test_states]
+./build/float/prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] [max_train_states] [max_test_states] [regularized_reference_weight] [regularized_entropy_weight]
 ```
 
 ## Run Tests

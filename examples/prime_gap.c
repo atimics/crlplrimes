@@ -25,8 +25,8 @@ enum {
     PRIME_BUCKET_COUNT = 4,
 };
 
-static const double REGULARIZED_RL_REFERENCE_WEIGHT = 1.20;
-static const double REGULARIZED_RL_ENTROPY_WEIGHT = 0.12;
+static const double DEFAULT_REGULARIZED_RL_REFERENCE_WEIGHT = 1.20;
+static const double DEFAULT_REGULARIZED_RL_ENTROPY_WEIGHT = 0.12;
 static const uint32_t FEATURE_MODS[FEATURE_MOD_COUNT] = {3, 5, 7, 11, 13, 17, 19, 23, 29, 31};
 
 typedef struct {
@@ -110,6 +110,17 @@ typedef struct {
     double assisted_block_cost_top10;
 } EvalMetrics;
 
+typedef struct {
+    size_t train_limit_arg;
+    size_t test_limit_arg;
+    size_t supervised_epochs;
+    size_t rl_epochs;
+    size_t max_train_states;
+    size_t max_test_states;
+    double regularized_reference_weight;
+    double regularized_entropy_weight;
+} PrimeGapRunConfig;
+
 static double now_seconds(void)
 {
 #if defined(CLOCK_MONOTONIC)
@@ -159,6 +170,82 @@ static int parse_size_arg(int argc, char **argv, int index, size_t fallback, siz
 
     *value_out = (size_t)value;
     return 1;
+}
+
+static int parse_double_arg(int argc, char **argv, int index, double fallback, double *value_out)
+{
+    if (index >= argc) {
+        *value_out = fallback;
+        return 1;
+    }
+
+    const char *text = argv[index];
+    if (text[0] == '\0') {
+        return 0;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    double value = strtod(text, &end);
+    if (end == text || *end != '\0' || errno == ERANGE || !isfinite(value)) {
+        return 0;
+    }
+
+    *value_out = value;
+    return 1;
+}
+
+static PrimeGapRunConfig default_run_config(void)
+{
+    PrimeGapRunConfig config;
+    config.train_limit_arg = DEFAULT_TRAIN_LIMIT;
+    config.test_limit_arg = DEFAULT_TEST_LIMIT;
+    config.supervised_epochs = DEFAULT_SUPERVISED_EPOCHS;
+    config.rl_epochs = DEFAULT_RL_EPOCHS;
+    config.max_train_states = DEFAULT_MAX_TRAIN_STATES;
+    config.max_test_states = DEFAULT_MAX_TEST_STATES;
+    config.regularized_reference_weight = DEFAULT_REGULARIZED_RL_REFERENCE_WEIGHT;
+    config.regularized_entropy_weight = DEFAULT_REGULARIZED_RL_ENTROPY_WEIGHT;
+    return config;
+}
+
+static int parse_run_config(int argc, char **argv, PrimeGapRunConfig *config)
+{
+    *config = default_run_config();
+    return parse_size_arg(argc, argv, 1, DEFAULT_TRAIN_LIMIT, &config->train_limit_arg) &&
+           parse_size_arg(argc, argv, 2, DEFAULT_TEST_LIMIT, &config->test_limit_arg) &&
+           parse_size_arg(argc, argv, 3, DEFAULT_SUPERVISED_EPOCHS, &config->supervised_epochs) &&
+           parse_size_arg(argc, argv, 4, DEFAULT_RL_EPOCHS, &config->rl_epochs) &&
+           parse_size_arg(argc, argv, 5, DEFAULT_MAX_TRAIN_STATES, &config->max_train_states) &&
+           parse_size_arg(argc, argv, 6, DEFAULT_MAX_TEST_STATES, &config->max_test_states) &&
+           parse_double_arg(argc,
+                            argv,
+                            7,
+                            DEFAULT_REGULARIZED_RL_REFERENCE_WEIGHT,
+                            &config->regularized_reference_weight) &&
+           parse_double_arg(argc,
+                            argv,
+                            8,
+                            DEFAULT_REGULARIZED_RL_ENTROPY_WEIGHT,
+                            &config->regularized_entropy_weight);
+}
+
+static int run_config_is_valid(const PrimeGapRunConfig *config)
+{
+    return config->test_limit_arg > config->train_limit_arg &&
+           config->train_limit_arg >= 16 &&
+           config->test_limit_arg <= (size_t)UINT32_MAX - (size_t)G_MAX &&
+           config->train_limit_arg <= (size_t)UINT32_MAX &&
+           config->regularized_reference_weight >= 0.0 &&
+           config->regularized_entropy_weight >= 0.0;
+}
+
+static void print_usage(FILE *stream)
+{
+    fputs("usage: prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] "
+          "[max_train_states] [max_test_states] [regularized_reference_weight] "
+          "[regularized_entropy_weight]\n",
+          stream);
 }
 
 static uint32_t validation_start_limit(uint32_t train_limit)
@@ -1635,39 +1722,24 @@ static int run_supervised_ablation(const char *label,
 #ifndef PRIME_GAP_NO_MAIN
 int main(int argc, char **argv)
 {
-    size_t train_limit_arg = DEFAULT_TRAIN_LIMIT;
-    size_t test_limit_arg = DEFAULT_TEST_LIMIT;
-    size_t supervised_epochs = DEFAULT_SUPERVISED_EPOCHS;
-    size_t rl_epochs = DEFAULT_RL_EPOCHS;
-    size_t max_train_states = DEFAULT_MAX_TRAIN_STATES;
-    size_t max_test_states = DEFAULT_MAX_TEST_STATES;
+    PrimeGapRunConfig run_config;
     Sieve sieve;
     GapDataset train;
     GapDataset validation;
     GapDataset test;
     uint32_t rng = 20240511u;
     int ok = 1;
-    int args_ok = parse_size_arg(argc, argv, 1, DEFAULT_TRAIN_LIMIT, &train_limit_arg) &&
-                  parse_size_arg(argc, argv, 2, DEFAULT_TEST_LIMIT, &test_limit_arg) &&
-                  parse_size_arg(argc, argv, 3, DEFAULT_SUPERVISED_EPOCHS, &supervised_epochs) &&
-                  parse_size_arg(argc, argv, 4, DEFAULT_RL_EPOCHS, &rl_epochs) &&
-                  parse_size_arg(argc, argv, 5, DEFAULT_MAX_TRAIN_STATES, &max_train_states) &&
-                  parse_size_arg(argc, argv, 6, DEFAULT_MAX_TEST_STATES, &max_test_states);
 
-    if (!args_ok || test_limit_arg <= train_limit_arg || train_limit_arg < 16 ||
-        test_limit_arg > (size_t)UINT32_MAX - (size_t)G_MAX ||
-        train_limit_arg > (size_t)UINT32_MAX) {
-        fputs("usage: prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] "
-              "[max_train_states] [max_test_states]\n",
-              stderr);
+    if (!parse_run_config(argc, argv, &run_config) || !run_config_is_valid(&run_config)) {
+        print_usage(stderr);
         return EXIT_FAILURE;
     }
 
-    uint32_t train_limit = (uint32_t)train_limit_arg;
-    uint32_t test_limit = (uint32_t)test_limit_arg;
+    uint32_t train_limit = (uint32_t)run_config.train_limit_arg;
+    uint32_t test_limit = (uint32_t)run_config.test_limit_arg;
     uint32_t sieve_limit = test_limit + (uint32_t)G_MAX;
     uint32_t validation_start = validation_start_limit(train_limit);
-    size_t max_validation_states = max_test_states;
+    size_t max_validation_states = run_config.max_test_states;
 
     printf("prime-gap scorer train_limit=%u validation_start=%u test_limit=%u "
            "g_max=%d actions=%d features=%d\n",
@@ -1677,6 +1749,9 @@ int main(int argc, char **argv)
            G_MAX,
            ACTION_COUNT,
            FEATURE_COUNT);
+    printf("regularized_rl reference_weight=%.3f entropy_weight=%.3f\n",
+           run_config.regularized_reference_weight,
+           run_config.regularized_entropy_weight);
 
     double started = now_seconds();
     if (!build_sieve(sieve_limit, &sieve)) {
@@ -1764,14 +1839,14 @@ int main(int argc, char **argv)
                                          &test,
                                          frequency_ranked,
                                          frequency_probabilities,
-                                         max_test_states,
+                                         run_config.max_test_states,
                                          1));
 
     print_metrics("model before",
                   evaluate_model(net,
                                  &sieve,
                                  &test,
-                                 max_test_states,
+                                 run_config.max_test_states,
                                  log_scale,
                                  &FEATURE_MASK_FULL,
                                  1,
@@ -1788,9 +1863,9 @@ int main(int argc, char **argv)
                                  &sieve,
                                  &train,
                                  &test,
-                                 max_train_states,
-                                 max_test_states,
-                                 supervised_epochs,
+                                 run_config.max_train_states,
+                                 run_config.max_test_states,
+                                 run_config.supervised_epochs,
                                  log_scale,
                                  candidate_inputs,
                                  scores,
@@ -1807,9 +1882,9 @@ int main(int argc, char **argv)
                                  &sieve,
                                  &train,
                                  &test,
-                                 max_train_states,
-                                 max_test_states,
-                                 supervised_epochs,
+                                 run_config.max_train_states,
+                                 run_config.max_test_states,
+                                 run_config.supervised_epochs,
                                  log_scale,
                                  candidate_inputs,
                                  scores,
@@ -1826,9 +1901,9 @@ int main(int argc, char **argv)
                                  &sieve,
                                  &train,
                                  &test,
-                                 max_train_states,
-                                 max_test_states,
-                                 supervised_epochs,
+                                 run_config.max_train_states,
+                                 run_config.max_test_states,
+                                 run_config.supervised_epochs,
                                  log_scale,
                                  candidate_inputs,
                                  scores,
@@ -1843,8 +1918,8 @@ int main(int argc, char **argv)
     ok = train_supervised(net,
                           "model supervised",
                           &train,
-                          max_train_states,
-                          supervised_epochs,
+                          run_config.max_train_states,
+                          run_config.supervised_epochs,
                           (nn_real)0.005,
                           log_scale,
                           &FEATURE_MASK_FULL,
@@ -1872,7 +1947,7 @@ int main(int argc, char **argv)
     EvalMetrics supervised_metrics = evaluate_model(net,
                                                     &sieve,
                                                     &test,
-                                                    max_test_states,
+                                                    run_config.max_test_states,
                                                     log_scale,
                                                     &FEATURE_MASK_FULL,
                                                     1,
@@ -1883,7 +1958,7 @@ int main(int argc, char **argv)
     EvalMetrics supervised_temp_metrics = evaluate_model(net,
                                                          &sieve,
                                                          &test,
-                                                         max_test_states,
+                                                         run_config.max_test_states,
                                                          log_scale,
                                                          &FEATURE_MASK_FULL,
                                                          0,
@@ -1903,7 +1978,7 @@ int main(int argc, char **argv)
     EvalMetrics regularized_metrics;
     EvalMetrics regularized_temp_metrics;
 
-    if (rl_epochs == 0) {
+    if (run_config.rl_epochs == 0) {
         printf("skipped because rl_epochs=0\n");
     } else {
         strict_net = nn_clone(net);
@@ -1921,8 +1996,8 @@ int main(int argc, char **argv)
         ok = train_strict_verifier_rl(strict_net,
                                       "model strict-rl",
                                       &train,
-                                      max_train_states,
-                                      rl_epochs,
+                                      run_config.max_train_states,
+                                      run_config.rl_epochs,
                                       (nn_real)0.001,
                                       log_scale,
                                       &FEATURE_MASK_FULL,
@@ -1952,7 +2027,7 @@ int main(int argc, char **argv)
         strict_metrics = evaluate_model(strict_net,
                                         &sieve,
                                         &test,
-                                        max_test_states,
+                                        run_config.max_test_states,
                                         log_scale,
                                         &FEATURE_MASK_FULL,
                                         1,
@@ -1963,7 +2038,7 @@ int main(int argc, char **argv)
         strict_temp_metrics = evaluate_model(strict_net,
                                              &sieve,
                                              &test,
-                                             max_test_states,
+                                             run_config.max_test_states,
                                              log_scale,
                                              &FEATURE_MASK_FULL,
                                              0,
@@ -1976,18 +2051,18 @@ int main(int argc, char **argv)
 
         printf("\n=== Regularized Verifier RL ===\n");
         printf("reference_weight=%.3f entropy_weight=%.3f\n",
-               REGULARIZED_RL_REFERENCE_WEIGHT,
-               REGULARIZED_RL_ENTROPY_WEIGHT);
+               run_config.regularized_reference_weight,
+               run_config.regularized_entropy_weight);
         fill_order(order, train.count);
         ok = train_regularized_verifier_rl(regularized_net,
                                            net,
                                            "model regularized-rl",
                                            &train,
-                                           max_train_states,
-                                           rl_epochs,
+                                           run_config.max_train_states,
+                                           run_config.rl_epochs,
                                            (nn_real)0.001,
-                                           (nn_real)REGULARIZED_RL_REFERENCE_WEIGHT,
-                                           (nn_real)REGULARIZED_RL_ENTROPY_WEIGHT,
+                                           (nn_real)run_config.regularized_reference_weight,
+                                           (nn_real)run_config.regularized_entropy_weight,
                                            log_scale,
                                            &FEATURE_MASK_FULL,
                                            candidate_inputs,
@@ -2018,7 +2093,7 @@ int main(int argc, char **argv)
         regularized_metrics = evaluate_model(regularized_net,
                                              &sieve,
                                              &test,
-                                             max_test_states,
+                                             run_config.max_test_states,
                                              log_scale,
                                              &FEATURE_MASK_FULL,
                                              1,
@@ -2029,7 +2104,7 @@ int main(int argc, char **argv)
         regularized_temp_metrics = evaluate_model(regularized_net,
                                                   &sieve,
                                                   &test,
-                                                  max_test_states,
+                                                  run_config.max_test_states,
                                                   log_scale,
                                                   &FEATURE_MASK_FULL,
                                                   0,
