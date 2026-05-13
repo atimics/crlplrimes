@@ -550,6 +550,26 @@ static int test_prime_gap_frequency_policy_is_smoothed(void)
     return ok;
 }
 
+static int test_prime_gap_temperature_softmax_flattens_confidence(void)
+{
+    const nn_real scores[] = {(nn_real)0, (nn_real)1, (nn_real)3};
+    nn_real probabilities_cold[3];
+    nn_real probabilities_hot[3];
+
+    softmax_temperature(scores, probabilities_cold, 3, 1.0);
+    softmax_temperature(scores, probabilities_hot, 3, 4.0);
+
+    double cold_sum = (double)probabilities_cold[0] + (double)probabilities_cold[1] +
+                      (double)probabilities_cold[2];
+    double hot_sum = (double)probabilities_hot[0] + (double)probabilities_hot[1] +
+                     (double)probabilities_hot[2];
+
+    return probabilities_cold[2] > probabilities_cold[1] &&
+           probabilities_hot[2] > probabilities_hot[1] &&
+           probabilities_hot[2] < probabilities_cold[2] &&
+           fabs(cold_sum - 1.0) < 1e-5 && fabs(hot_sum - 1.0) < 1e-5;
+}
+
 static int test_prime_gap_wheel_verifier_accounting(void)
 {
     Sieve sieve;
@@ -642,6 +662,8 @@ int main(void)
           "prime-gap features are divisibility flags");
     check(test_prime_gap_frequency_policy_is_smoothed(),
           "prime-gap frequency policy is smoothed");
+    check(test_prime_gap_temperature_softmax_flattens_confidence(),
+          "prime-gap temperature softmax flattens confidence");
     check(test_prime_gap_wheel_verifier_accounting(),
           "prime-gap wheel verifier accounting");
     check(test_prime_gap_dataset_tracks_overflow_actions(),

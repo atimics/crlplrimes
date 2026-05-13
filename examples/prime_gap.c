@@ -818,6 +818,48 @@ static size_t sample_action(const nn_real *probabilities, uint32_t *rng)
     return ACTION_COUNT - 1;
 }
 
+static void softmax_temperature(const nn_real *scores,
+                                nn_real *probabilities,
+                                size_t count,
+                                double temperature)
+{
+    if (temperature <= 0.0) {
+        temperature = 1.0;
+    }
+
+    if (scores == NULL || probabilities == NULL || count == 0) {
+        return;
+    }
+
+    double max_score = (double)scores[0] / temperature;
+    for (size_t i = 1; i < count; ++i) {
+        double scaled = (double)scores[i] / temperature;
+        if (scaled > max_score) {
+            max_score = scaled;
+        }
+    }
+
+    double denominator = 0.0;
+    for (size_t i = 0; i < count; ++i) {
+        double scaled = (double)scores[i] / temperature;
+        double probability = exp(scaled - max_score);
+        probabilities[i] = (nn_real)probability;
+        denominator += probability;
+    }
+
+    if (denominator <= 0.0) {
+        nn_real uniform = (nn_real)(1.0 / (double)count);
+        for (size_t i = 0; i < count; ++i) {
+            probabilities[i] = uniform;
+        }
+        return;
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+        probabilities[i] = (nn_real)((double)probabilities[i] / denominator);
+    }
+}
+
 static double safe_probability(double probability)
 {
     return probability < 1e-12 ? 1e-12 : probability;
@@ -984,6 +1026,7 @@ static EvalMetrics evaluate_model(NeuralNet *net,
                                   double log_scale,
                                   const FeatureMask *mask,
                                   int include_verifier,
+                                  double temperature,
                                   nn_real *candidate_inputs,
                                   nn_real *scores,
                                   nn_real *probabilities)
@@ -1004,7 +1047,7 @@ static EvalMetrics evaluate_model(NeuralNet *net,
 
         fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
         nn_forward_batch(net, candidate_inputs, scores, ACTION_COUNT);
-        nn_softmax(scores, probabilities, ACTION_COUNT);
+        softmax_temperature(scores, probabilities, ACTION_COUNT, temperature);
         rank_actions(scores, ranked);
         accumulate_eval_sample(&metrics,
                                sieve,
@@ -1019,6 +1062,82 @@ static EvalMetrics evaluate_model(NeuralNet *net,
     metrics.samples = samples;
     finalize_eval_metrics(&metrics);
     return metrics;
+}
+
+static double temperature_nll(NeuralNet *net,
+                              const GapDataset *dataset,
+                              size_t max_states,
+                              double log_scale,
+                              const FeatureMask *mask,
+                              double temperature,
+                              nn_real *candidate_inputs,
+                              nn_real *scores,
+                              nn_real *probabilities)
+{
+    size_t samples = dataset->count;
+    double nll = 0.0;
+
+    if (max_states != 0 && max_states < samples) {
+        samples = max_states;
+    }
+
+    if (samples == 0) {
+        return INFINITY;
+    }
+
+    for (size_t sample = 0; sample < samples; ++sample) {
+        size_t index = eval_sample_index(dataset, sample, samples);
+        size_t target = gap_to_action(dataset->gap[index]);
+
+        fill_candidate_features_masked(candidate_inputs,
+                                       dataset->prime[index],
+                                       log_scale,
+                                       mask);
+        nn_forward_batch(net, candidate_inputs, scores, ACTION_COUNT);
+        softmax_temperature(scores, probabilities, ACTION_COUNT, temperature);
+        nll += -log(safe_probability((double)probabilities[target]));
+    }
+
+    return nll / (double)samples;
+}
+
+static double fit_temperature(NeuralNet *net,
+                              const GapDataset *dataset,
+                              size_t max_states,
+                              double log_scale,
+                              const FeatureMask *mask,
+                              nn_real *candidate_inputs,
+                              nn_real *scores,
+                              nn_real *probabilities,
+                              double *best_nll)
+{
+    static const double candidates[] = {
+        0.25, 0.35, 0.50, 0.70, 0.85, 1.00, 1.20, 1.50,
+        2.00, 2.50, 3.00, 4.00, 6.00, 8.00, 12.00,
+    };
+    double best_temperature = 1.0;
+    double lowest_nll = INFINITY;
+
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); ++i) {
+        double candidate_nll = temperature_nll(net,
+                                               dataset,
+                                               max_states,
+                                               log_scale,
+                                               mask,
+                                               candidates[i],
+                                               candidate_inputs,
+                                               scores,
+                                               probabilities);
+        if (candidate_nll < lowest_nll) {
+            lowest_nll = candidate_nll;
+            best_temperature = candidates[i];
+        }
+    }
+
+    if (best_nll != NULL) {
+        *best_nll = lowest_nll;
+    }
+    return best_temperature;
 }
 
 static EvalMetrics evaluate_static_policy(const Sieve *sieve,
@@ -1332,6 +1451,7 @@ static int run_supervised_ablation(const char *label,
                                      log_scale,
                                      mask,
                                      0,
+                                     1.0,
                                      candidate_inputs,
                                      scores,
                                      probabilities));
@@ -1468,6 +1588,7 @@ int main(int argc, char **argv)
                                  log_scale,
                                  &FEATURE_MASK_FULL,
                                  1,
+                                 1.0,
                                  candidate_inputs,
                                  scores,
                                  probabilities));
@@ -1547,6 +1668,20 @@ int main(int argc, char **argv)
         goto cleanup;
     }
 
+    double supervised_temperature_nll = 0.0;
+    double supervised_temperature = fit_temperature(net,
+                                                    &train,
+                                                    max_train_states,
+                                                    log_scale,
+                                                    &FEATURE_MASK_FULL,
+                                                    candidate_inputs,
+                                                    scores,
+                                                    probabilities,
+                                                    &supervised_temperature_nll);
+    printf("model supervised temperature=%.2f train_nll=%.4f\n",
+           supervised_temperature,
+           supervised_temperature_nll);
+
     print_metrics("model supervised",
                   evaluate_model(net,
                                  &sieve,
@@ -1555,6 +1690,19 @@ int main(int argc, char **argv)
                                  log_scale,
                                  &FEATURE_MASK_FULL,
                                  1,
+                                 1.0,
+                                 candidate_inputs,
+                                 scores,
+                                 probabilities));
+    print_metrics("model supervised temp-scaled",
+                  evaluate_model(net,
+                                 &sieve,
+                                 &test,
+                                 max_test_states,
+                                 log_scale,
+                                 &FEATURE_MASK_FULL,
+                                 0,
+                                 supervised_temperature,
                                  candidate_inputs,
                                  scores,
                                  probabilities));
@@ -1580,6 +1728,20 @@ int main(int argc, char **argv)
             goto cleanup;
         }
 
+        double rl_temperature_nll = 0.0;
+        double rl_temperature = fit_temperature(net,
+                                                &train,
+                                                max_train_states,
+                                                log_scale,
+                                                &FEATURE_MASK_FULL,
+                                                candidate_inputs,
+                                                scores,
+                                                probabilities,
+                                                &rl_temperature_nll);
+        printf("model strict-rl temperature=%.2f train_nll=%.4f\n",
+               rl_temperature,
+               rl_temperature_nll);
+
         print_metrics("model strict-rl",
                       evaluate_model(net,
                                      &sieve,
@@ -1588,6 +1750,19 @@ int main(int argc, char **argv)
                                      log_scale,
                                      &FEATURE_MASK_FULL,
                                      1,
+                                     1.0,
+                                     candidate_inputs,
+                                     scores,
+                                     probabilities));
+        print_metrics("model strict-rl temp-scaled",
+                      evaluate_model(net,
+                                     &sieve,
+                                     &test,
+                                     max_test_states,
+                                     log_scale,
+                                     &FEATURE_MASK_FULL,
+                                     0,
+                                     rl_temperature,
                                      candidate_inputs,
                                      scores,
                                      probabilities));
