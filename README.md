@@ -112,7 +112,7 @@ candidate residue-only
 full feature set
 ```
 
-The full model trains with supervised softmax cross-entropy over all candidate actions, then runs a strict verifier-guided policy-gradient pass where reward is `1` only when the sampled action matches the exact next gap or the overflow class.
+The full model trains with supervised softmax cross-entropy over all candidate actions, fits a post-hoc scalar softmax temperature on the train split, then runs a strict verifier-guided policy-gradient pass where reward is `1` only when the sampled action matches the exact next gap or the overflow class. Temperature-scaled evaluation keeps rankings unchanged and reports whether probability calibration improves by rescaling logits.
 
 The CLI output is split into human-readable sections:
 

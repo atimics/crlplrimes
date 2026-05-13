@@ -94,6 +94,10 @@ features alone can rank well because they expose a learned soft sieve, but their
 are poorly calibrated. The full feature set improves held-out negative log likelihood and true-action
 probability while preserving the strong top-k ranking behavior.
 
+Post-hoc temperature scaling confirms that strict verifier RL mostly creates a logit-scale problem.
+Supervised models already select a temperature near 1.0, while post-RL models select a softer
+temperature and recover most of the lost calibration without changing proposal ranks.
+
 The deterministic verifier remains the correctness mechanism.
 
 Model-assisted exact verification currently does not beat wheel or block verification, because wrong proposals create extra proof obligations. This is expected for exact next-prime verification.
@@ -101,9 +105,8 @@ Model-assisted exact verification currently does not beat wheel or block verific
 ## Next Work
 
 1. Improve calibration.
-   - temperature scaling
    - entropy regularization
-   - compare post-RL calibration against supervised-only calibration
+   - train with a KL penalty toward the supervised policy
 
 2. Add stronger non-neural baselines.
    - frequency conditioned on divisibility flags
