@@ -94,9 +94,16 @@ features alone can rank well because they expose a learned soft sieve, but their
 are poorly calibrated. The full feature set improves held-out negative log likelihood and true-action
 probability while preserving the strong top-k ranking behavior.
 
-Post-hoc temperature scaling confirms that strict verifier RL mostly creates a logit-scale problem.
-Supervised models already select a temperature near 1.0, while post-RL models select a softer
-temperature and recover most of the lost calibration without changing proposal ranks.
+Post-hoc temperature scaling now uses a held-out validation slice from the high end of the training
+range instead of refitting on the training rows. Strict verifier RL still mostly creates a logit-scale
+problem: on the default split it keeps top-1 at 45.12%, but pushes ECE to 0.3100 and selects a soft
+temperature of 2.50.
+
+KL/entropy-regularized RL is the cleaner training-side fix. With both strict and regularized RL
+starting from the same cloned supervised checkpoint, the regularized branch keeps top-10 at 99.75%,
+reduces unscaled NLL from 2.3612 to 1.5878, and reduces unscaled ECE from 0.3100 to 0.0821.
+Temperature scaling still helps, but the selected temperature falls back to 1.20 instead of 2.50,
+which confirms that the regularizer prevents most of the post-RL logit inflation.
 
 The deterministic verifier remains the correctness mechanism.
 
@@ -105,8 +112,8 @@ Model-assisted exact verification currently does not beat wheel or block verific
 ## Next Work
 
 1. Improve calibration.
-   - entropy regularization
-   - train with a KL penalty toward the supervised policy
+   - sweep KL/entropy weights across held-out ranges
+   - expose regularization weights as CLI arguments
 
 2. Add stronger non-neural baselines.
    - frequency conditioned on divisibility flags

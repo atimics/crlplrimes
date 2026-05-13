@@ -165,6 +165,47 @@ static int test_forward_batch_matches_scalar(void)
     return ok;
 }
 
+static int test_clone_matches_and_detaches(void)
+{
+    const size_t layers[] = {3, 4, 2};
+    NeuralNet *net = nn_create(layers, 3, 2026);
+    NeuralNet *clone = NULL;
+    nn_real input[] = {(nn_real)0.1, (nn_real)0.5, (nn_real)0.9};
+    nn_real target[] = {(nn_real)0.25, (nn_real)0.75};
+    nn_real original_before[2];
+    nn_real clone_before[2];
+    nn_real original_after[2];
+    nn_real clone_after[2];
+    int ok = 1;
+
+    if (net == NULL) {
+        return 0;
+    }
+
+    clone = nn_clone(net);
+    if (clone == NULL) {
+        nn_free(net);
+        return 0;
+    }
+
+    nn_forward(net, input, original_before);
+    nn_forward(clone, input, clone_before);
+    ok = ok && nearly_equal(original_before[0], clone_before[0], (nn_real)1e-6, (nn_real)1e-6) &&
+         nearly_equal(original_before[1], clone_before[1], (nn_real)1e-6, (nn_real)1e-6);
+
+    nn_train_sample(clone, input, target, (nn_real)0.1);
+    nn_forward(net, input, original_after);
+    nn_forward(clone, input, clone_after);
+    ok = ok && nearly_equal(original_before[0], original_after[0], (nn_real)1e-6, (nn_real)1e-6) &&
+         nearly_equal(original_before[1], original_after[1], (nn_real)1e-6, (nn_real)1e-6);
+    ok = ok && (!nearly_equal(original_after[0], clone_after[0], (nn_real)1e-8, (nn_real)1e-8) ||
+                !nearly_equal(original_after[1], clone_after[1], (nn_real)1e-8, (nn_real)1e-8));
+
+    nn_free(clone);
+    nn_free(net);
+    return ok;
+}
+
 static int test_gradient_buffers_are_lazy(void)
 {
     const size_t layers[] = {5, 6, 3};
@@ -492,6 +533,92 @@ static int test_softmax_scorer_cached_matches_regular(void)
     return ok;
 }
 
+static int test_policy_regularized_cached_matches_policy_update(void)
+{
+    const size_t layers[] = {4, 5, 1};
+    const size_t candidate_count = 4;
+    const size_t selected_index = 1;
+    const nn_real learning_rate = (nn_real)1e-3;
+    const nn_real weight = (nn_real)-0.35;
+    const nn_real candidate_inputs[] = {
+        0.10, 0.20, 0.30, 0.40,
+        0.30, 0.10, 0.70, 0.20,
+        0.80, 0.20, 0.10, 0.60,
+        0.25, 0.50, 0.25, 0.75,
+    };
+    const nn_real reference[] = {(nn_real)0.40, (nn_real)0.30, (nn_real)0.20, (nn_real)0.10};
+    nn_real scores[4];
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = 3;
+    config.seed = 9753;
+    config.hidden_activation = NN_ACTIVATION_RELU;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+
+    NeuralNet *regular_net = nn_create_config(&config);
+    NeuralNet *policy_net = nn_create_config(&config);
+    NeuralNet *regularized_net = nn_create_config(&config);
+    int ok = 1;
+
+    if (regular_net == NULL || policy_net == NULL || regularized_net == NULL) {
+        nn_free(regular_net);
+        nn_free(policy_net);
+        nn_free(regularized_net);
+        return 0;
+    }
+
+    nn_train_softmax_scorer_weighted(regular_net,
+                                     candidate_inputs,
+                                     candidate_count,
+                                     selected_index,
+                                     weight,
+                                     learning_rate);
+    nn_forward_batch(policy_net, candidate_inputs, scores, candidate_count);
+    nn_train_softmax_scorer_policy_regularized_cached(policy_net,
+                                                      candidate_count,
+                                                      selected_index,
+                                                      weight,
+                                                      NULL,
+                                                      (nn_real)0,
+                                                      (nn_real)0,
+                                                      learning_rate);
+
+    for (size_t i = 0; i < nn_parameter_count(regular_net); ++i) {
+        nn_real a = nn_test_get_parameter(regular_net, i);
+        nn_real b = nn_test_get_parameter(policy_net, i);
+        if (!nearly_equal(a, b, (nn_real)1e-6, (nn_real)1e-5)) {
+            ok = 0;
+            break;
+        }
+    }
+
+    nn_forward_batch(regularized_net, candidate_inputs, scores, candidate_count);
+    nn_real loss = nn_train_softmax_scorer_policy_regularized_cached(regularized_net,
+                                                                     candidate_count,
+                                                                     selected_index,
+                                                                     weight,
+                                                                     reference,
+                                                                     (nn_real)0.05,
+                                                                     (nn_real)0.01,
+                                                                     learning_rate);
+    ok = ok && !isnan((double)loss);
+    ok = ok && isnan((double)nn_train_softmax_scorer_policy_regularized_cached(
+                         regularized_net,
+                         candidate_count,
+                         selected_index,
+                         weight,
+                         reference,
+                         (nn_real)0.05,
+                         (nn_real)0.01,
+                         learning_rate));
+
+    nn_free(regular_net);
+    nn_free(policy_net);
+    nn_free(regularized_net);
+    return ok;
+}
+
 static int test_prime_gap_rejects_negative_size_args(void)
 {
     char *argv[] = {"prime_gap", "-1"};
@@ -616,6 +743,7 @@ static int test_prime_gap_dataset_tracks_overflow_actions(void)
 {
     Sieve sieve;
     GapDataset train;
+    GapDataset validation;
     GapDataset test;
     int ok = 1;
 
@@ -623,19 +751,22 @@ static int test_prime_gap_dataset_tracks_overflow_actions(void)
         return 0;
     }
 
-    if (!build_gap_datasets(&sieve, 50, 200, &train, &test)) {
+    if (!build_gap_datasets(&sieve, 50, 200, &train, &validation, &test)) {
         free_sieve(&sieve);
         return 0;
     }
 
     ok = ok && train.total_seen == train.count;
+    ok = ok && validation.total_seen == validation.count;
     ok = ok && test.total_seen == test.count;
     ok = ok && train.overflow_count <= train.count;
+    ok = ok && validation.overflow_count <= validation.count;
     ok = ok && test.overflow_count <= test.count;
     ok = ok && gap_to_action(G_MAX + 2) == OVERFLOW_ACTION;
-    ok = ok && train.count > 0 && test.count > 0;
+    ok = ok && train.count > 0 && validation.count > 0 && test.count > 0;
 
     free_gap_dataset(&train);
+    free_gap_dataset(&validation);
     free_gap_dataset(&test);
     free_sieve(&sieve);
     return ok;
@@ -644,6 +775,7 @@ static int test_prime_gap_dataset_tracks_overflow_actions(void)
 int main(void)
 {
     check(test_forward_batch_matches_scalar(), "batched forward matches scalar");
+    check(test_clone_matches_and_detaches(), "clone matches and detaches");
     check(test_gradient_buffers_are_lazy(), "gradient buffers are lazy");
     check(test_batch_size_one_matches_sample_training(), "batch size 1 matches sample training");
     check(test_batched_gradient_matches_finite_difference(),
@@ -656,6 +788,8 @@ int main(void)
           "softmax cross-entropy requires linear output");
     check(test_softmax_scorer_cached_matches_regular(),
           "softmax scorer cached update matches regular update");
+    check(test_policy_regularized_cached_matches_policy_update(),
+          "policy-regularized cached update matches policy update");
     check(test_prime_gap_rejects_negative_size_args(),
           "prime-gap parser rejects negative size args");
     check(test_prime_gap_features_are_divisibility_flags(),

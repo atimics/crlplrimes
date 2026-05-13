@@ -112,7 +112,7 @@ candidate residue-only
 full feature set
 ```
 
-The full model trains with supervised softmax cross-entropy over all candidate actions, fits a post-hoc scalar softmax temperature on the train split, then runs a strict verifier-guided policy-gradient pass where reward is `1` only when the sampled action matches the exact next gap or the overflow class. Temperature-scaled evaluation keeps rankings unchanged and reports whether probability calibration improves by rescaling logits.
+The full model trains with supervised softmax cross-entropy over all candidate actions, fits a post-hoc scalar softmax temperature on a held-out validation slice, then compares two verifier-guided policy-gradient branches cloned from the same supervised checkpoint. The strict branch rewards only exact sampled actions. The regularized branch adds a KL-style penalty toward the supervised policy plus an entropy term, reducing the logit-scale blow-up that strict RL causes. Temperature-scaled evaluation keeps rankings unchanged and reports whether probability calibration improves by rescaling logits.
 
 The CLI output is split into human-readable sections:
 
@@ -121,6 +121,7 @@ capability: top-k accuracy, NLL, true-action probability, mean rank, MRR, gap er
 calibration: top-1 confidence, correct/incorrect confidence, ECE, high-confidence accuracy
 prime buckets: capability metrics over four increasing held-out prime ranges
 verifier diagnostics: exact classical work needed to verify or correct proposals
+policy comparison: supervised, strict RL, regularized RL, and temperature-scaled rows
 ```
 
 `proposal_steps` measures how quickly the true action appears in the model's proposal order. `wheel exact` measures how many exact sieve primality probes remain after small-prime divisibility filters eliminate obvious composites. `assisted_wheel` tries the model's top-10 proposals before falling back to wheel scan. `block cost` estimates segmented interval-proof work by marking composites with base primes up to `sqrt(p + g)`, and `assisted_block` tries model proposals before falling back to the block scan. These verifier metrics are reported separately because an exact next-prime verifier still has to rule out earlier candidates.
@@ -186,6 +187,7 @@ NNConfig config = {
     .loss = NN_LOSS_MSE,
 };
 NeuralNet *scorer = nn_create_config(&config);
+NeuralNet *copy = nn_clone(scorer);
 ```
 
 With a linear output layer, `nn_forward` returns logits; call `nn_softmax` when probabilities are needed.
@@ -198,6 +200,22 @@ nn_real loss = nn_train_softmax_scorer(scorer,
                                        candidate_count,
                                        true_candidate_index,
                                        0.005f);
+```
+
+Verifier-guided or policy-gradient experiments can reuse a cached candidate
+forward pass and add KL/entropy regularization against a reference policy:
+
+```c
+nn_forward_batch(scorer, candidate_inputs, scores, candidate_count);
+nn_real objective = nn_train_softmax_scorer_policy_regularized_cached(
+    scorer,
+    candidate_count,
+    sampled_index,
+    advantage,
+    reference_probabilities,
+    1.20f,
+    0.12f,
+    0.001f);
 ```
 
 Training a dataset uses contiguous row-major buffers:
