@@ -277,8 +277,7 @@ int nn_prime_gap_main(int argc, char **argv)
         memset(&symbolic_metrics, 0, sizeof(symbolic_metrics));
         symbolic_metrics.accepted_rules = learned_symbolic_rules.count;
     } else {
-        if (!discover_symbolic_wheel(&sieve,
-                                     &train,
+        if (!discover_symbolic_wheel(&train,
                                      &validation,
                                      &learned_symbolic_rules,
                                      &symbolic_metrics)) {

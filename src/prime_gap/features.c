@@ -17,7 +17,7 @@ void fill_candidate_features_masked(nn_real *inputs,
                                     const FeatureMask *mask)
 {
     if (mask == NULL) {
-        mask = &FEATURE_MASK_FULL;
+        mask = &FEATURE_MASK_MINIMAL;
     }
 
     double log_p = log((double)p) / log_scale;
@@ -115,7 +115,7 @@ void apply_feature_wheel_filter(uint32_t p,
 
 void fill_candidate_features(nn_real *inputs, uint32_t p, double log_scale)
 {
-    fill_candidate_features_masked(inputs, p, log_scale, &FEATURE_MASK_FULL);
+    fill_candidate_features_masked(inputs, p, log_scale, &FEATURE_MASK_MINIMAL);
 }
 
 void rank_actions(const nn_real *scores, size_t *ranked)

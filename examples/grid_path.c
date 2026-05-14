@@ -11,7 +11,10 @@ enum {
     GP_GRID = 7,
     GP_CELLS = GP_GRID * GP_GRID,
     GP_ACTION_COUNT = 4,
-    GP_FEATURE_COUNT = 12,
+    GP_FEATURE_ENCODER_VERSION = 2,
+    GP_MAP_FEATURE_OFFSET = 10,
+    GP_ACTION_FEATURE_OFFSET = GP_MAP_FEATURE_OFFSET + GP_CELLS,
+    GP_FEATURE_COUNT = GP_ACTION_FEATURE_OFFSET + GP_ACTION_COUNT,
     GP_TRAIN_SAMPLES = 4000,
     GP_TEST_SAMPLES = 1000,
     GP_TRAIN_SEED_START = 7000,
@@ -265,60 +268,65 @@ static size_t fill_grid_candidates(const GridState *state,
 {
     int dist[GP_CELLS];
     bfs_distances_from_goal(state, dist);
-    int start_dist = dist[cell_index(state->sx, state->sy)];
     int best_dist = GP_INF;
-    size_t count = 0;
+    int manhattan_before = abs(state->gx - state->sx) + abs(state->gy - state->sy);
 
     *target_index = GP_ACTION_COUNT;
     for (size_t action = 0; action < GP_ACTION_COUNT; ++action) {
         int nx = state->sx + ACTION_DX[action];
         int ny = state->sy + ACTION_DY[action];
-        if (!in_bounds(nx, ny) || state->blocked[cell_index(nx, ny)]) {
-            continue;
+        int out_of_bounds = !in_bounds(nx, ny);
+        int blocked_next = 0;
+        int next_dist = GP_INF;
+        int feature_x = state->sx;
+        int feature_y = state->sy;
+
+        if (!out_of_bounds) {
+            int next_cell = cell_index(nx, ny);
+            blocked_next = state->blocked[next_cell] ? 1 : 0;
+            feature_x = nx;
+            feature_y = ny;
+            if (!blocked_next) {
+                next_dist = dist[next_cell];
+            }
         }
 
-        int next_dist = dist[cell_index(nx, ny)];
-        if (next_dist >= GP_INF) {
-            continue;
-        }
-
-        nn_real *row = &candidate_inputs[count * GP_FEATURE_COUNT];
-        int manhattan_before = abs(state->gx - state->sx) + abs(state->gy - state->sy);
-        int manhattan_after = abs(state->gx - nx) + abs(state->gy - ny);
+        int manhattan_after = abs(state->gx - feature_x) + abs(state->gy - feature_y);
+        nn_real *row = &candidate_inputs[action * GP_FEATURE_COUNT];
+        memset(row, 0, GP_FEATURE_COUNT * sizeof(*row));
 
         row[0] = (nn_real)((double)state->sx / (double)(GP_GRID - 1));
         row[1] = (nn_real)((double)state->sy / (double)(GP_GRID - 1));
         row[2] = (nn_real)((double)state->gx / (double)(GP_GRID - 1));
         row[3] = (nn_real)((double)state->gy / (double)(GP_GRID - 1));
-        row[4] = (nn_real)((double)(state->gx - nx) / (double)(GP_GRID - 1));
-        row[5] = (nn_real)((double)(state->gy - ny) / (double)(GP_GRID - 1));
+        row[4] = (nn_real)((double)(state->gx - feature_x) / (double)(GP_GRID - 1));
+        row[5] = (nn_real)((double)(state->gy - feature_y) / (double)(GP_GRID - 1));
         row[6] = (nn_real)((double)manhattan_after / (double)(2 * (GP_GRID - 1)));
         row[7] = (nn_real)((double)(manhattan_before - manhattan_after) / 2.0);
+        row[8] = out_of_bounds ? (nn_real)1 : (nn_real)0;
+        row[9] = blocked_next ? (nn_real)1 : (nn_real)0;
+        for (size_t cell = 0; cell < GP_CELLS; ++cell) {
+            row[GP_MAP_FEATURE_OFFSET + cell] = state->blocked[cell] ? (nn_real)1 : (nn_real)0;
+        }
         for (size_t i = 0; i < GP_ACTION_COUNT; ++i) {
-            row[8 + i] = action == i ? (nn_real)1 : (nn_real)0;
+            row[GP_ACTION_FEATURE_OFFSET + i] = action == i ? (nn_real)1 : (nn_real)0;
         }
 
-        action_ids[count] = grid_action_id_for_action(action);
-        if (next_dist < best_dist ||
-            (next_dist == best_dist && *target_index == GP_ACTION_COUNT)) {
+        action_ids[action] = grid_action_id_for_action(action);
+        if (next_dist < GP_INF &&
+            (next_dist < best_dist ||
+             (next_dist == best_dist && *target_index == GP_ACTION_COUNT))) {
             best_dist = next_dist;
-            *target_index = count;
+            *target_index = action;
         }
-        if (next_dist == start_dist - 1) {
-            best_dist = next_dist;
-            if (*target_index == GP_ACTION_COUNT || count < *target_index) {
-                *target_index = count;
-            }
-        }
-        ++count;
     }
 
-    return count;
+    return GP_ACTION_COUNT;
 }
 
 static NeuralNet *create_grid_model(unsigned int seed)
 {
-    static const size_t layers[] = {GP_FEATURE_COUNT, 24, 12, 1};
+    static const size_t layers[] = {GP_FEATURE_COUNT, 48, 24, 1};
     NNConfig config;
     config.layer_sizes = layers;
     config.layer_count = sizeof(layers) / sizeof(layers[0]);
@@ -338,7 +346,7 @@ static int save_grid_checkpoint(NeuralNet *net,
     NNCheckpointMeta meta;
     memset(&meta, 0, sizeof(meta));
     meta.checkpoint_version = 1;
-    meta.feature_encoder_version = 1;
+    meta.feature_encoder_version = GP_FEATURE_ENCODER_VERSION;
     snprintf(meta.parent_model_hash,
              sizeof(meta.parent_model_hash),
              "%s",
@@ -629,7 +637,7 @@ static int emit_grid_trace(NeuralNet *net,
         record.task_name = "grid_path";
         record.model_hash_hex = model_hash == NULL ? "unknown" : model_hash;
         record.state_hash = grid_state_hash(seed);
-        record.feature_encoder_version = 1;
+        record.feature_encoder_version = GP_FEATURE_ENCODER_VERSION;
         record.candidate_count = candidate_count;
         record.action_ids = action_ids;
         record.scores = scores;
@@ -730,7 +738,9 @@ static int load_grid_trace(const char *path, GridTrace *trace)
             }
             seen_actions[action] = 1;
         }
-        if (!ok || record.target_index >= record.candidate_count) {
+        if (!ok || record.candidate_count != GP_ACTION_COUNT ||
+            record.feature_encoder_version != GP_FEATURE_ENCODER_VERSION ||
+            record.target_index >= record.candidate_count) {
             ok = 0;
             break;
         }
@@ -858,6 +868,15 @@ static int compare_grid_models(int argc, char **argv)
         char hash[65] = "unknown";
         if (net == NULL) {
             fprintf(stderr, "failed to load model: %s\n", argv[i]);
+            ok = 0;
+            continue;
+        }
+        if (nn_input_size(net) != GP_FEATURE_COUNT ||
+            meta.feature_encoder_version != GP_FEATURE_ENCODER_VERSION) {
+            fprintf(stderr,
+                    "unsupported grid_path checkpoint feature encoder: %s\n",
+                    argv[i]);
+            nn_free(net);
             ok = 0;
             continue;
         }

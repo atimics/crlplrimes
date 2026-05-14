@@ -49,7 +49,6 @@ static int load_replay_trace(const char *path, ReplayTrace *trace)
     memset(trace, 0, sizeof(*trace));
     strcpy(trace->parent_hash, "unknown");
     strcpy(trace->rule_hash, "unknown");
-    strcpy(trace->feature_set, "full");
 
     FILE *fp = fopen(path, "r");
     if (fp == NULL) {
@@ -99,17 +98,19 @@ static int load_replay_trace(const char *path, ReplayTrace *trace)
             }
         }
         char parsed_feature_set[32];
-        if (nn_trace_json_get_string(line,
-                                     "feature_set",
-                                     parsed_feature_set,
-                                     sizeof(parsed_feature_set)) &&
-            parsed_feature_set[0] != '\0') {
-            if (trace->count == 0 && strcmp(trace->feature_set, "full") == 0) {
-                strcpy(trace->feature_set, parsed_feature_set);
-            } else if (strcmp(trace->feature_set, parsed_feature_set) != 0) {
-                ok = 0;
-                break;
-            }
+        if (!nn_trace_json_get_string(line,
+                                      "feature_set",
+                                      parsed_feature_set,
+                                      sizeof(parsed_feature_set)) ||
+            parsed_feature_set[0] == '\0') {
+            ok = 0;
+            break;
+        }
+        if (trace->feature_set[0] == '\0') {
+            strcpy(trace->feature_set, parsed_feature_set);
+        } else if (strcmp(trace->feature_set, parsed_feature_set) != 0) {
+            ok = 0;
+            break;
         }
         uint8_t seen_actions[ACTION_COUNT] = {0};
         for (size_t row = 0; row < record.candidate_count; ++row) {
@@ -136,7 +137,7 @@ static int load_replay_trace(const char *path, ReplayTrace *trace)
     if (fclose(fp) != 0) {
         ok = 0;
     }
-    if (!ok || trace->count == 0) {
+    if (!ok || trace->count == 0 || trace->feature_set[0] == '\0') {
         free_replay_trace(trace);
         return 0;
     }

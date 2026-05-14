@@ -1044,7 +1044,7 @@ int emit_prime_gap_trace(NeuralNet *net,
                  block_work_cost(assisted_block),
                  log_scale,
                  rule_hash == NULL ? "unknown" : rule_hash,
-                 mask == NULL ? FEATURE_MASK_FULL.name : mask->name);
+                 mask == NULL ? FEATURE_MASK_MINIMAL.name : mask->name);
 
         NNTraceRecord record;
         memset(&record, 0, sizeof(record));

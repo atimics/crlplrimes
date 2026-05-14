@@ -16,11 +16,11 @@ Canonical benchmark: `sample_count=30000` held-out states with `train_limit=1,00
 
 | Model / mode | Top-1 | Top-10 | NLL | ECE | Mean rank | Model ms/sample |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Minimal scorer, no gate | 9.13% | 78.01% | 2.9994 | 0.1076 | 7.1951 | 0.0364 |
-| Minimal scorer + hand-wheel gate | 45.12% | 99.77% | 1.5902 | 0.0834 | 2.2015 | 0.0376 |
+| Minimal scorer, no gate | 9.13% | 78.01% | 2.9994 | 0.1076 | 7.1951 | 0.0373 |
+| Minimal scorer + hand-wheel gate | 45.12% | 99.77% | 1.5902 | 0.0834 | 2.2015 | 0.0387 |
 | **Minimal scorer + learned-wheel gate** | **67.19%** | **100.00%** | **1.0457** | 0.1335 | **1.4928** | **0.0061** |
 
-The same network does the scoring in all three rows; only the gate changes. The scorer input is the clean minimal feature set `[log(p), normalized_gap, overflow_flag]`; precomputed residue divisibility flags are disabled by default. The fixed hand-wheel (small-prime divisibility filter) supplies the small-prime modular structure that the minimal scorer cannot recover from `p` and `g` alone. The learned-wheel gate — produced by a structural-only neural proposer trained against the rule-grammar verifier — adds another **22.1 percentage points** of top-1 on top of the hand-wheel. The old 45.12% raw-scorer headline is now treated as a leakage ablation: it came from handing the scorer precomputed small-prime divisibility flags.
+The same network does the scoring in all three rows; only the gate changes. The scorer input is the clean minimal feature set `[log(p), normalized_gap, overflow_flag]`; precomputed residue divisibility flags are disabled by default. The fixed hand-wheel (small-prime divisibility filter) supplies the small-prime modular structure that the minimal scorer cannot recover from `p` and `g` alone. The learned-wheel gate is produced by a structural-only proposer over rules of the form `reject candidate n when n > m and n % m == r`; each accepted rule has the algebraic certificate `gcd(m, r) > 1`. It adds another **22.1 percentage points** of top-1 on top of the hand-wheel. The old 45.12% raw-scorer headline is now treated as a leakage ablation: it came from handing the scorer precomputed small-prime divisibility flags.
 
 The improvement is not a calibration trick and not a scoring trick. It is structural: the gate prunes the candidate set to one the scorer can rank well, and the cheap mod-arithmetic of the gate replaces the dominant cost of forwarding the scorer over impossible candidates.
 
@@ -48,8 +48,8 @@ The model proposes. The verifier decides. The trace remembers.
 
 Concretely, the pipeline at run time is:
 
-1. A symbolic task defines state, legal candidate actions, an exact verifier for the next state, and a certificate verifier for filter rules.
-2. A neural rule proposer ranks candidate rules in a fixed grammar; only rules with deterministic certificates are accepted (e.g. `(a + b) % m` shares a non-trivial factor with `m`, so `p + g` is necessarily composite). Accepted rules cannot reject the true action.
+1. A symbolic task defines state, candidate actions, an exact verifier for the next state, and a certificate verifier for filter rules.
+2. A neural rule proposer ranks candidate rules in a fixed grammar; only rules with deterministic certificates are accepted (e.g. `gcd(m, r) > 1` for candidate-divisibility rules, or `(a + b) % m` sharing a non-trivial factor with `m` for conditional gap rules). Accepted rules cannot reject the true action.
 3. At inference, accepted rules deterministically prune the candidate set.
 4. A shared neural scorer assigns one logit to each surviving candidate; softmax produces proposal probabilities; deterministic ranking breaks score ties by original candidate order.
 5. The exact verifier supplies the correct action, reward, and cost. The model is not the oracle.
@@ -69,7 +69,7 @@ Same scorer, three gates, same benchmark:
 | Hand-wheel (small-prime divisibility) | 45.12% | 99.77% | 1.5902 |
 | **Learned wheel** (certificate-checked rules) | **67.19%** | **100.00%** | **1.0457** |
 
-The hand-wheel gate nearly saturates top-10 because almost every true next-prime gap survives small-prime filtering. The learned-wheel gate adds ~22pp of top-1 on top of the hand-wheel because the rule-search verifier accepts conditional rules of the form "if `p % m == a` then reject gap `b`," capturing structure a fixed wheel does not. The clean raw-to-learned delta is **9.13 -> 67.19** top-1; the former raw 45.12% figure is retained only as a full-sieve-feature leakage ablation.
+The hand-wheel gate nearly saturates top-10 because almost every true next-prime gap survives small-prime filtering. The learned-wheel gate adds ~22pp of top-1 on top of the hand-wheel because the structural proposer discovers more certified divisibility rules than the fixed small-prime feature wheel. The clean raw-to-learned delta is **9.13 -> 67.19** top-1; the former raw 45.12% figure is retained only as a full-sieve-feature leakage ablation.
 
 ### Finding 2 — A certificate-gated proposer discovers sound symbolic gates
 
@@ -87,7 +87,7 @@ expanded exact:  2.20   ← average exact-verifier work after accepted rules
 saved:          69.40%
 ```
 
-The proposer is small (`crlp.rule_trace.v1` schema, scoring rule candidates with the same shared-scorer abstraction as gap actions). Its input feature set is structural-only: condition kind, moduli, residues, zero-residue indicators, gcd ratios, and derived candidate residue. It does not receive `train_rejects`, validation support, utility, or false-rejection counters as features; those counts are labels and verifier diagnostics. The discipline of the result is in the verifier, not the model: a rule is accepted only if a deterministic algebraic check certifies soundness across the support set, so zero false rejections is a property of the certificate, not of training.
+The proposer is small (`crlp.rule_trace.v1` schema, scoring rule candidates with the same shared-scorer abstraction as gap actions). Its input feature set is structural-only: condition kind, moduli, residues, zero-residue indicators, gcd ratios, and derived candidate residue. It does not receive `train_rejects`, validation support, utility, or false-rejection counters as features; those counts are labels and verifier diagnostics. The discipline of the result is in the verifier, not the model: a rule is accepted only if a deterministic algebraic check certifies soundness, so zero false rejections is a property of the certificate, not of training.
 
 **What this evidence does and does not show.** It shows that *a certificate-gated structural proposer* over this grammar produces a sound, useful rule set without being handed empirical support. It does **not** yet show that the *neural* proposer is essential. The numbers above are consistent with the proposer learning enough structural regularity to rank useful rules, and they are also consistent with the verifier carrying the result on top of a near-random proposer. The defensible claim today is "certificate-gated structural rule discovery is sound and recovers most of the wheel"; the stronger "the learned proposer is essential" claim is open until the random-proposer-at-fixed-budget baseline runs. See Limitations.
 
@@ -164,13 +164,18 @@ The interpretation is now sharper. Among raw-action-space scorers without residu
 | Trained parent | 93.50% | 0.1580 | 0.0363 | 1.0432 | 1.065 |
 | Trace-replay successor | 94.80% | 0.1188 | 0.0166 | 1.0704 | 1.052 |
 
-`grid_path` is a shortest-path task with an exact BFS verifier owning correctness. Candidate actions are legal moves; the neural model ranks them. The task validates that the proposal/verifier/trace protocol carries over from a totally-ordered scalar action space (`prime_gap`) to a small categorical one.
+`grid_path` is a shortest-path task with an exact BFS verifier owning correctness. Candidate actions are all four moves, including out-of-bounds and blocked moves. The neural model sees start/goal coordinates, the obstacle map, local invalid-move indicators, and an action one-hot; BFS supplies labels and verification cost, not a pruned candidate set.
+
+| Model | Accuracy | NLL | ECE | Decision utility | Steps | Nodes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Trained parent | 89.40% | 0.3684 | 0.0416 | 0.8675 | 1.118 | 21.45 |
+| Trace-replay successor | 90.10% | 0.3480 | 0.0353 | 0.8762 | 1.114 | 21.29 |
 
 ## Limitations and Next Work
 
 - **Random-proposer baseline at fixed verifier-call budget.** Finding 2 currently shows that *a certificate-gated structural proposer* recovers 69.40% of verifier work without support-count feature leakage; it does not yet distinguish "the neural proposer found the rules" from "the certificate gate filtered a large enumeration." Running random and exhaustive rule proposers at the same budget is the missing experiment that elevates Finding 2 from "sound" to "the learned proposer is essential." This is two days of work and on the immediate roadmap.
 - **Cross-task verifier-RL comparison.** Finding 3 (strict-vs-regularized RL on the prime-gap task) needs a matching run on `grid_path` and `delayed_claim` before it can be stated as a general property of sparse-exact-reward policy gradient. The pipeline supports it; the comparison is not in the canonical results yet.
-- **Hybrid baseline for a second domain.** Finding 1 is currently demonstrated on prime gaps only. `grid_path` admits a natural symbolic gate (legality + admissible-heuristic pruning); running it would extend the hybrid-wins claim past a single domain.
+- **Explicit grid_path gate baseline.** Finding 1 is currently demonstrated on prime gaps only. A separate `grid_path` symbolic-gate experiment could report legality or admissible-heuristic pruning as a verifier-assisted gate, but the raw `grid_path` task now keeps all four moves in the candidate set.
 - **Statistical rigor.** The default `make prime-gap-experiments` config currently runs 1 seed; the harness supports more (`PRIME_GAP_EXPERIMENT_SEEDS=...`). The minimal-vs-leakage, strict-vs-regularized, and hand-wheel-vs-learned-wheel deltas should be reported with confidence intervals across >=5 seeds.
 - **Reliability diagrams.** The comparison schema stores `reliability_bins`; the README currently reports only ECE. Calibration claims would be stronger with a small reliability plot.
 - **Learned-wheel calibration.** The learned-wheel gate improves ranking sharply, but its ECE is worse than the raw minimal and hand-wheel rows in the default run. That calibration tradeoff deserves a focused reliability-diagram pass.
@@ -527,9 +532,9 @@ make delayed-claim-eval
 
 ## Grid-Path Task
 
-`grid_path` is a second exact-verifier task. A deterministic generator creates a small obstructed grid, start, and goal. Candidate actions are legal moves. The neural model ranks moves, but an exact BFS verifier owns correctness by identifying the shortest-path successor.
+`grid_path` is a second exact-verifier task. A deterministic generator creates a small obstructed grid, start, and goal. Candidate actions are all four moves. The neural model ranks moves from observable map and move features, while an exact BFS verifier owns correctness by identifying the shortest-path successor.
 
-The task reports accuracy, NLL, calibration error, decision utility, proposal steps, fixed-order baseline steps, exact verifier nodes, and baseline verifier nodes. Trace replay stores stable move action IDs, then maps them back into regenerated legal-move rows before training a successor model.
+The task reports accuracy, NLL, calibration error, decision utility, proposal steps, fixed-order baseline steps, exact verifier nodes, and baseline verifier nodes. Trace replay stores stable move action IDs, then maps them back into the regenerated four-row candidate set before training a successor model.
 
 ```sh
 make grid-path

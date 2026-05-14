@@ -41,20 +41,6 @@ static void init_symbolic_rules(SymbolicRejectRule *rules, const size_t *offsets
     }
 }
 
-static void mark_domain_invalid_symbolic_residues(const Sieve *sieve,
-                                                  uint8_t *invalid,
-                                                  const size_t *offsets)
-{
-    for (size_t prime_index = 0; prime_index < sieve->prime_count; ++prime_index) {
-        uint32_t prime = sieve->primes[prime_index];
-        for (uint32_t modulus = SYMBOLIC_RULE_MOD_MIN;
-             modulus <= (uint32_t)NN_SYMBOLIC_RULE_MAX_MOD && modulus < prime;
-             ++modulus) {
-            invalid[offsets[modulus] + (prime % modulus)] = 1;
-        }
-    }
-}
-
 static void accumulate_symbolic_rule_rejects(SymbolicRejectRule *rules,
                                              const size_t *offsets,
                                              const GapDataset *dataset,
@@ -88,6 +74,11 @@ uint32_t gcd_u32(uint32_t a, uint32_t b)
         b = tmp;
     }
     return a;
+}
+
+static int symbolic_rule_has_structural_certificate(const SymbolicRejectRule *rule)
+{
+    return gcd_u32(rule->modulus, rule->residue) > 1u;
 }
 
 static void fill_symbolic_rule_features(const SymbolicRejectRule *rule,
@@ -408,8 +399,7 @@ int load_symbolic_rules_with_hash(const char *path,
     return 1;
 }
 
-int discover_symbolic_wheel(const Sieve *sieve,
-                            const GapDataset *train,
+int discover_symbolic_wheel(const GapDataset *train,
                             const GapDataset *validation,
                             SymbolicRuleSet *accepted,
                             SymbolicWheelMetrics *metrics)
@@ -417,24 +407,21 @@ int discover_symbolic_wheel(const Sieve *sieve,
     size_t offsets[(uint32_t)NN_SYMBOLIC_RULE_MAX_MOD + 2u];
     size_t count = symbolic_rule_count();
     SymbolicRejectRule *rules = calloc(count, sizeof(*rules));
-    uint8_t *invalid = calloc(count, sizeof(*invalid));
 
     memset(accepted, 0, sizeof(*accepted));
     memset(metrics, 0, sizeof(*metrics));
     metrics->proposed_rules = count;
 
-    if (rules == NULL || invalid == NULL) {
+    if (rules == NULL) {
         free(rules);
-        free(invalid);
         return 0;
     }
 
     fill_symbolic_rule_offsets(offsets);
     init_symbolic_rules(rules, offsets);
-    mark_domain_invalid_symbolic_residues(sieve, invalid, offsets);
 
     for (size_t i = 0; i < count; ++i) {
-        rules[i].domain_valid = invalid[i] ? 0 : 1;
+        rules[i].domain_valid = symbolic_rule_has_structural_certificate(&rules[i]);
         metrics->domain_valid_rules += rules[i].domain_valid ? 1u : 0u;
     }
 
@@ -443,7 +430,6 @@ int discover_symbolic_wheel(const Sieve *sieve,
     if (!score_symbolic_rules_with_model(rules, count, &metrics->proposer_loss)) {
         free_symbolic_rule_set(accepted);
         free(rules);
-        free(invalid);
         return 0;
     }
     qsort(rules, count, sizeof(*rules), compare_symbolic_rules);
@@ -452,7 +438,6 @@ int discover_symbolic_wheel(const Sieve *sieve,
     accepted->items = calloc(accepted->capacity, sizeof(*accepted->items));
     if (accepted->items == NULL) {
         free(rules);
-        free(invalid);
         return 0;
     }
 
@@ -481,7 +466,6 @@ int discover_symbolic_wheel(const Sieve *sieve,
         metrics->validation_rejects += accepted->items[i].validation_rejects;
     }
     free(rules);
-    free(invalid);
     return 1;
 }
 

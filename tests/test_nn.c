@@ -1176,20 +1176,25 @@ static int test_prime_gap_feature_set_defaults_to_minimal(void)
 static int test_prime_gap_features_are_divisibility_flags(void)
 {
     nn_real inputs[ACTION_COUNT * FEATURE_COUNT];
+    nn_real full[ACTION_COUNT * FEATURE_COUNT];
     nn_real masked[ACTION_COUNT * FEATURE_COUNT];
     nn_real minimal[ACTION_COUNT * FEATURE_COUNT];
     fill_candidate_features(inputs, 11, log(1000.0));
+    fill_candidate_features_masked(full, 11, log(1000.0), &FEATURE_MASK_FULL);
     fill_candidate_features_masked(masked, 11, log(1000.0), &FEATURE_MASK_GAP_ONLY);
     fill_candidate_features_masked(minimal, 11, log(1000.0), &FEATURE_MASK_MINIMAL);
 
-    const nn_real *gap2 = &inputs[0 * FEATURE_COUNT];
-    const nn_real *gap4 = &inputs[1 * FEATURE_COUNT];
-    const nn_real *overflow = &inputs[OVERFLOW_ACTION * FEATURE_COUNT];
+    const nn_real *default_gap4 = &inputs[1 * FEATURE_COUNT];
+    const nn_real *gap2 = &full[0 * FEATURE_COUNT];
+    const nn_real *gap4 = &full[1 * FEATURE_COUNT];
+    const nn_real *overflow = &full[OVERFLOW_ACTION * FEATURE_COUNT];
     const nn_real *masked_gap4 = &masked[1 * FEATURE_COUNT];
     const nn_real *masked_overflow = &masked[OVERFLOW_ACTION * FEATURE_COUNT];
     const nn_real *minimal_gap4 = &minimal[1 * FEATURE_COUNT];
 
-    return gap4[2] == (nn_real)0 && gap4[3] == (nn_real)1 &&
+    return default_gap4[0] > (nn_real)0 && default_gap4[1] > (nn_real)0 &&
+           default_gap4[3] == (nn_real)0 &&
+           gap4[2] == (nn_real)0 && gap4[3] == (nn_real)1 &&
            gap4[4] == (nn_real)1 && gap4[5] == (nn_real)0 &&
            gap2[7] == (nn_real)0 && overflow[2] == (nn_real)1 &&
            masked_gap4[0] == (nn_real)0 && masked_gap4[1] > (nn_real)0 &&
@@ -1406,7 +1411,7 @@ static int test_prime_gap_symbolic_rule_discovery_is_verified(void)
         return 0;
     }
 
-    ok = ok && discover_symbolic_wheel(&sieve, &train, &validation, &rules, &metrics);
+    ok = ok && discover_symbolic_wheel(&train, &validation, &rules, &metrics);
     if (ok) {
         metrics = evaluate_symbolic_wheel(&sieve, &rules, &test, 0, metrics);
         ok = ok && rules.count > 0;
@@ -1510,6 +1515,52 @@ static int test_prime_gap_replay_uses_trace_action_ids(void)
     return ok;
 }
 
+static int test_prime_gap_replay_requires_feature_set(void)
+{
+#if NN_REAL_IS_FLOAT
+    const char *trace_path = "build/test_prime_replay_missing_feature_set_float.jsonl";
+#else
+    const char *trace_path = "build/test_prime_replay_missing_feature_set_double.jsonl";
+#endif
+    FILE *fp = fopen(trace_path, "w");
+    if (fp == NULL) {
+        return 0;
+    }
+
+    fprintf(fp,
+            "{\"schema\":\"crlp.trace.v1\",\"trace_version\":1,"
+            "\"action_id_contract\":\"stable_unique_action_ids\",\"task\":\"prime_gap\","
+            "\"state_hash\":\"0000000000000001\",\"model_hash\":\"fixture\","
+            "\"feature_encoder_version\":1,\"candidate_count\":%d,\"action_ids\":[",
+            ACTION_COUNT);
+    for (size_t i = 0; i < ACTION_COUNT; ++i) {
+        fprintf(fp, "%s%zu", i == 0 ? "" : ",", i);
+    }
+    fputs("],\"scores\":[", fp);
+    for (size_t i = 0; i < ACTION_COUNT; ++i) {
+        fputs(i == 0 ? "0" : ",0", fp);
+    }
+    fputs("],\"probabilities\":[", fp);
+    for (size_t i = 0; i < ACTION_COUNT; ++i) {
+        fputs(i == 0 ? "1" : ",0", fp);
+    }
+    fprintf(fp,
+            "],\"selected_index\":0,\"target_index\":0,\"loss\":0,"
+            "\"verifier_result\":\"correct\",\"verifier_cost\":{},\"seed\":42,"
+            "\"p\":101,\"log_scale\":%.17g}\n",
+            log(1000.0));
+    if (fclose(fp) != 0) {
+        return 0;
+    }
+
+    ReplayTrace trace;
+    int loaded = load_replay_trace(trace_path, &trace);
+    if (loaded) {
+        free_replay_trace(&trace);
+    }
+    return !loaded;
+}
+
 static int test_prime_gap_dataset_tracks_overflow_actions(void)
 {
     Sieve sieve;
@@ -1596,6 +1647,8 @@ int main(void)
           "prime-gap symbolic rule discovery is verified");
     check(test_prime_gap_replay_uses_trace_action_ids(),
           "prime-gap replay uses trace action ids");
+    check(test_prime_gap_replay_requires_feature_set(),
+          "prime-gap replay requires feature set");
     check(test_prime_gap_dataset_tracks_overflow_actions(),
           "prime-gap dataset tracks overflow actions");
 

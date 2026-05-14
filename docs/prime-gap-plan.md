@@ -57,7 +57,7 @@ Same scorer, three gates, default benchmark (`sample_count=30000`):
 - Hand-wheel gate, minimal features: 45.12% top-1, 99.77% top-10, 1.5902 NLL.
 - Learned-wheel gate, minimal features: 67.19% top-1, 100% top-10, 1.0457 NLL, ~6x lower model ms/sample.
 
-The defensible deltas are now sharper: **9.13 -> 67.19** top-1 from clean raw scorer to learned-wheel hybrid, and **45.12 -> 67.19** from fixed hand-wheel to learned wheel. The former shows the symbolic gate doing the work once residue flags are removed from the scorer; the latter isolates the extra value of the learned rule set over a fixed small-prime wheel. The old 45.12% raw-scorer number is now labeled as a full-sieve-feature leakage ablation, not a headline result.
+The defensible deltas are now sharper: **9.13 -> 67.19** top-1 from clean raw scorer to learned-wheel hybrid, and **45.12 -> 67.19** from fixed hand-wheel to learned wheel. The former shows the symbolic gate doing the work once residue flags are removed from the scorer; the latter isolates the extra value of the learned candidate-divisibility rule set over a fixed small-prime wheel. The learned-wheel rules are accepted by algebraic certificate (`gcd(m, r) > 1` for `n % m == r`), not by scanning held-out primes. The old 45.12% raw-scorer number is now labeled as a full-sieve-feature leakage ablation, not a headline result.
 
 ### Certificate-gated rule discovery is sound (load-bearing for Finding 2)
 
@@ -135,7 +135,7 @@ Ordered roughly by priority for the writeup.
 3. **Reliability diagrams.** `crlp.compare.v1` already carries `reliability_bins`; render them.
 4. **Calibration sweep over larger held-out ranges.** Expand the KL/entropy grid; check whether the validation-selected weights are stable across prime-size buckets.
 5. **Stronger verifier-aware baselines.** Hand-coded wheel ranking, linear scorer with explicit wheel-survivor features, conditioned frequency over larger residue signatures.
-6. **Hybrid baseline for grid_path.** A natural symbolic gate (legality + admissible heuristic pruning) would extend Finding 1 to a second domain and reduce the single-domain risk of the headline claim.
+6. **Explicit grid_path gate baseline.** A natural symbolic gate (legality + admissible heuristic pruning) could extend Finding 1 to a second domain, but it must be reported as a verifier-assisted gate. The raw `grid_path` task keeps all four moves in the candidate set.
 7. **Expanded ablations.** Different small-prime feature sets, remove overflow action, train on wheel survivors only.
 8. **RL-only experiments.** No supervised warm start, strict-only, entropy-only, baseline/advantage variants. Useful for triangulating the calibration-collapse story.
 9. **Capability-oriented task variants.** Find any prime after `p`, rank prime candidates in a fixed interval, rank wheel-surviving candidates only, predict overflow probability for larger gaps.

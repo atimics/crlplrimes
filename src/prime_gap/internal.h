@@ -483,8 +483,7 @@ int save_symbolic_rule_checkpoint(const SymbolicRuleSet *rules,
 int load_symbolic_rules_with_hash(const char *path,
                                   SymbolicRuleSet *rules,
                                   char *hash_out);
-int discover_symbolic_wheel(const Sieve *sieve,
-                            const GapDataset *train,
+int discover_symbolic_wheel(const GapDataset *train,
                             const GapDataset *validation,
                             SymbolicRuleSet *accepted,
                             SymbolicWheelMetrics *metrics);
