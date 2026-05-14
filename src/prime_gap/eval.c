@@ -443,6 +443,56 @@ EvalMetrics evaluate_model_symbolic_masked(NeuralNet *net,
     return metrics;
 }
 
+EvalMetrics evaluate_model_feature_wheel_masked(NeuralNet *net,
+                                                const Sieve *sieve,
+                                                const GapDataset *dataset,
+                                                size_t max_states,
+                                                double log_scale,
+                                                const FeatureMask *mask,
+                                                int include_verifier,
+                                                double temperature,
+                                                nn_real *candidate_inputs,
+                                                nn_real *scores,
+                                                nn_real *probabilities)
+{
+    EvalMetrics metrics;
+    memset(&metrics, 0, sizeof(metrics));
+
+    size_t samples = dataset->count;
+    if (max_states != 0 && max_states < samples) {
+        samples = max_states;
+    }
+
+    size_t ranked[ACTION_COUNT];
+    for (size_t sample = 0; sample < samples; ++sample) {
+        size_t index = eval_sample_index(dataset, sample, samples);
+        uint32_t p = dataset->prime[index];
+        uint32_t gap = dataset->gap[index];
+
+        double scorer_started = now_seconds();
+        fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
+        if (!nn_score_action_rows(net, candidate_inputs, ACTION_COUNT, scores, NULL)) {
+            continue;
+        }
+        softmax_temperature(scores, probabilities, ACTION_COUNT, temperature);
+        apply_feature_wheel_filter(p, scores, probabilities);
+        rank_actions(scores, ranked);
+        metrics.scorer_seconds += now_seconds() - scorer_started;
+        accumulate_eval_sample(&metrics,
+                               sieve,
+                               dataset,
+                               p,
+                               gap,
+                               ranked,
+                               probabilities,
+                               include_verifier);
+    }
+
+    metrics.samples = samples;
+    finalize_eval_metrics(&metrics);
+    return metrics;
+}
+
 static double temperature_nll(NeuralNet *net,
                               const GapDataset *dataset,
                               size_t max_states,
@@ -908,7 +958,7 @@ int save_prime_checkpoint(NeuralNet *net, const char *path, char out_hash[65])
 {
     return save_prime_checkpoint_with_meta(net,
                                            path,
-                                           "prime_gap full-feature action scorer",
+                                           "prime_gap action scorer",
                                            "unknown",
                                            NULL,
                                            out_hash);
@@ -919,6 +969,7 @@ int emit_prime_gap_trace(NeuralNet *net,
                          const GapDataset *dataset,
                          size_t max_states,
                          double log_scale,
+                         const FeatureMask *mask,
                          const char *path,
                          const char *model_hash,
                          const char *rule_hash,
@@ -953,7 +1004,7 @@ int emit_prime_gap_trace(NeuralNet *net,
             ok = 0;
             break;
         }
-        fill_candidate_features_masked(candidate_inputs, p, log_scale, &FEATURE_MASK_FULL);
+        fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
         ok = nn_score_action_rows(net, candidate_inputs, ACTION_COUNT, scores, probabilities) &&
              nn_rank_action_scores(scores, ACTION_COUNT, ranked);
         if (!ok) {
@@ -983,7 +1034,7 @@ int emit_prime_gap_trace(NeuralNet *net,
                  "\"p\":%u,\"true_gap\":%u,\"proposal_steps\":%zu,"
                  "\"wheel_exact\":%zu,\"assisted_wheel\":%zu,"
                  "\"block_cost\":%.6f,\"assisted_block\":%.6f,\"log_scale\":%.17g,"
-                 "\"rule_set_hash\":\"%s\"",
+                 "\"rule_set_hash\":\"%s\",\"feature_set\":\"%s\"",
                  p,
                  gap,
                  proposal_steps,
@@ -992,7 +1043,8 @@ int emit_prime_gap_trace(NeuralNet *net,
                  block_work_cost(block),
                  block_work_cost(assisted_block),
                  log_scale,
-                 rule_hash == NULL ? "unknown" : rule_hash);
+                 rule_hash == NULL ? "unknown" : rule_hash,
+                 mask == NULL ? FEATURE_MASK_FULL.name : mask->name);
 
         NNTraceRecord record;
         memset(&record, 0, sizeof(record));

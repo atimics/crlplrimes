@@ -40,6 +40,9 @@ int nn_prime_gap_main(int argc, char **argv)
            run_config.regularized_reference_weight,
            run_config.regularized_entropy_weight,
            rng);
+    printf("feature_set=%s residue_features=%s\n",
+           run_config.feature_mask->name,
+           run_config.feature_mask->use_residue ? "on" : "off");
 
     double started = now_seconds();
     if (!build_sieve(sieve_limit, &sieve)) {
@@ -127,6 +130,7 @@ int nn_prime_gap_main(int argc, char **argv)
     fill_order(order, train.count);
 
     double log_scale = log((double)test_limit + (double)G_MAX);
+    const FeatureMask *primary_mask = run_config.feature_mask;
 
     if (run_config.load_rules_path != NULL) {
         if (!load_symbolic_rules_with_hash(run_config.load_rules_path,
@@ -169,7 +173,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                      &test,
                                      run_config.max_test_states,
                                      log_scale,
-                                     &FEATURE_MASK_FULL,
+                                     primary_mask,
                                      1,
                                      1.0,
                                      candidate_inputs,
@@ -183,7 +187,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                                          &test,
                                                          run_config.max_test_states,
                                                          log_scale,
-                                                         &FEATURE_MASK_FULL,
+                                                         primary_mask,
                                                          1,
                                                          1.0,
                                                          candidate_inputs,
@@ -196,6 +200,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                   &test,
                                   run_config.max_test_states,
                                   log_scale,
+                                  primary_mask,
                                   run_config.trace_path,
                                   model_hash,
                                   rule_hash,
@@ -308,6 +313,7 @@ int nn_prime_gap_main(int argc, char **argv)
     uint32_t linear_rng = rng;
     fill_order(order, train.count);
     ok = run_linear_scorer_baseline(&linear_config,
+                                    primary_mask,
                                     &sieve,
                                     &train,
                                     &validation,
@@ -335,7 +341,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                           &test,
                                           run_config.max_test_states,
                                           log_scale,
-                                          &FEATURE_MASK_FULL,
+                                          primary_mask,
                                           1,
                                           1.0,
                                           candidate_inputs,
@@ -402,7 +408,26 @@ int nn_prime_gap_main(int argc, char **argv)
         goto cleanup;
     }
 
-    printf("\n=== Full Model Training ===\n");
+    ok = run_supervised_ablation("ablation full-sieve-features",
+                                 &FEATURE_MASK_FULL,
+                                 &config,
+                                 &sieve,
+                                 &train,
+                                 &test,
+                                 run_config.max_train_states,
+                                 run_config.max_test_states,
+                                 run_config.supervised_epochs,
+                                 log_scale,
+                                 candidate_inputs,
+                                 scores,
+                                 probabilities,
+                                 order,
+                                 &rng);
+    if (!ok) {
+        goto cleanup;
+    }
+
+    printf("\n=== Primary Model Training ===\n");
     ok = train_supervised(net,
                           "model supervised",
                           &train,
@@ -410,7 +435,7 @@ int nn_prime_gap_main(int argc, char **argv)
                           run_config.supervised_epochs,
                           (nn_real)0.005,
                           log_scale,
-                          &FEATURE_MASK_FULL,
+                          primary_mask,
                           candidate_inputs,
                           order,
                           &rng);
@@ -423,7 +448,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                                     &validation,
                                                     max_validation_states,
                                                     log_scale,
-                                                    &FEATURE_MASK_FULL,
+                                                    primary_mask,
                                                     candidate_inputs,
                                                     scores,
                                                     probabilities,
@@ -437,7 +462,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                                     &test,
                                                     run_config.max_test_states,
                                                     log_scale,
-                                                    &FEATURE_MASK_FULL,
+                                                    primary_mask,
                                                     1,
                                                     1.0,
                                                     candidate_inputs,
@@ -448,7 +473,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                                          &test,
                                                          run_config.max_test_states,
                                                          log_scale,
-                                                         &FEATURE_MASK_FULL,
+                                                         primary_mask,
                                                          0,
                                                          supervised_temperature,
                                                          candidate_inputs,
@@ -456,6 +481,33 @@ int nn_prime_gap_main(int argc, char **argv)
                                                          probabilities);
     print_metrics("model supervised", supervised_metrics);
     print_metrics("model supervised temp-scaled", supervised_temp_metrics);
+    EvalMetrics supervised_hand_wheel_metrics =
+        evaluate_model_feature_wheel_masked(net,
+                                            &sieve,
+                                            &test,
+                                            run_config.max_test_states,
+                                            log_scale,
+                                            primary_mask,
+                                            1,
+                                            1.0,
+                                            candidate_inputs,
+                                            scores,
+                                            probabilities);
+    EvalMetrics supervised_learned_wheel_metrics =
+        evaluate_model_symbolic_masked(net,
+                                       &sieve,
+                                       &learned_symbolic_rules,
+                                       &test,
+                                       run_config.max_test_states,
+                                       log_scale,
+                                       primary_mask,
+                                       1,
+                                       1.0,
+                                       candidate_inputs,
+                                       scores,
+                                       probabilities);
+    print_metrics("model supervised hand-wheel", supervised_hand_wheel_metrics);
+    print_metrics("model supervised learned-wheel", supervised_learned_wheel_metrics);
 
     printf("\n=== Ranking Loss Ablation ===\n");
     pairwise_net = nn_create_config(&config);
@@ -472,7 +524,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                run_config.supervised_epochs,
                                (nn_real)0.002,
                                log_scale,
-                               &FEATURE_MASK_FULL,
+                               primary_mask,
                                candidate_inputs,
                                order,
                                &rng);
@@ -484,7 +536,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                       &test,
                                       run_config.max_test_states,
                                       log_scale,
-                                      &FEATURE_MASK_FULL,
+                                      primary_mask,
                                       1,
                                       1.0,
                                       candidate_inputs,
@@ -508,7 +560,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                           run_config.supervised_epochs,
                                           (nn_real)0.005,
                                           log_scale,
-                                          &FEATURE_MASK_FULL,
+                                          primary_mask,
                                           candidate_inputs,
                                           order,
                                           &rng);
@@ -522,7 +574,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                                                 &validation,
                                                                 max_validation_states,
                                                                 log_scale,
-                                                                &FEATURE_MASK_FULL,
+                                                                primary_mask,
                                                                 candidate_inputs,
                                                                 scores,
                                                                 probabilities,
@@ -537,7 +589,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                                            &test,
                                                            run_config.max_test_states,
                                                            log_scale,
-                                                           &FEATURE_MASK_FULL,
+                                                           primary_mask,
                                                            1,
                                                            1.0,
                                                            candidate_inputs,
@@ -549,7 +601,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                                                 &test,
                                                                 run_config.max_test_states,
                                                                 log_scale,
-                                                                &FEATURE_MASK_FULL,
+                                                                primary_mask,
                                                                 0,
                                                                 learned_wheel_temperature,
                                                                 candidate_inputs,
@@ -590,7 +642,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                       run_config.rl_epochs,
                                       (nn_real)0.001,
                                       log_scale,
-                                      &FEATURE_MASK_FULL,
+                                      primary_mask,
                                       candidate_inputs,
                                       scores,
                                       probabilities,
@@ -605,7 +657,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                          &validation,
                                          max_validation_states,
                                          log_scale,
-                                         &FEATURE_MASK_FULL,
+                                         primary_mask,
                                          candidate_inputs,
                                          scores,
                                          probabilities,
@@ -619,7 +671,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                         &test,
                                         run_config.max_test_states,
                                         log_scale,
-                                        &FEATURE_MASK_FULL,
+                                        primary_mask,
                                         1,
                                         1.0,
                                         candidate_inputs,
@@ -630,7 +682,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                              &test,
                                              run_config.max_test_states,
                                              log_scale,
-                                             &FEATURE_MASK_FULL,
+                                             primary_mask,
                                              0,
                                              rl_temperature,
                                              candidate_inputs,
@@ -654,7 +706,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                            (nn_real)run_config.regularized_reference_weight,
                                            (nn_real)run_config.regularized_entropy_weight,
                                            log_scale,
-                                           &FEATURE_MASK_FULL,
+                                           primary_mask,
                                            candidate_inputs,
                                            scores,
                                            probabilities,
@@ -671,7 +723,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                                   &validation,
                                                   max_validation_states,
                                                   log_scale,
-                                                  &FEATURE_MASK_FULL,
+                                                  primary_mask,
                                                   candidate_inputs,
                                                   scores,
                                                   probabilities,
@@ -685,7 +737,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                              &test,
                                              run_config.max_test_states,
                                              log_scale,
-                                             &FEATURE_MASK_FULL,
+                                             primary_mask,
                                              1,
                                              1.0,
                                              candidate_inputs,
@@ -696,7 +748,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                                   &test,
                                                   run_config.max_test_states,
                                                   log_scale,
-                                                  &FEATURE_MASK_FULL,
+                                                  primary_mask,
                                                   0,
                                                   regularized_temperature,
                                                   candidate_inputs,
@@ -718,6 +770,8 @@ int nn_prime_gap_main(int argc, char **argv)
     print_comparison_row("supervised temp-scaled",
                          supervised_temperature,
                          supervised_temp_metrics);
+    print_comparison_row("supervised hand-wheel", 1.0, supervised_hand_wheel_metrics);
+    print_comparison_row("supervised learned-wheel", 1.0, supervised_learned_wheel_metrics);
     print_comparison_row("pairwise-ranking", 1.0, pairwise_metrics);
     print_comparison_row("learned-wheel supervised", 1.0, learned_wheel_metrics);
     print_comparison_row("learned-wheel supervised temp-scaled",
@@ -732,18 +786,34 @@ int nn_prime_gap_main(int argc, char **argv)
                              regularized_temp_metrics);
     }
 
-    if (run_config.save_path != NULL &&
-        !save_prime_checkpoint(net, run_config.save_path, model_hash)) {
-        fputs("failed to save checkpoint\n", stderr);
-        ok = 0;
-        goto cleanup;
+    if (run_config.save_path != NULL) {
+        char checkpoint_notes[128];
+        snprintf(checkpoint_notes,
+                 sizeof(checkpoint_notes),
+                 "prime_gap action scorer feature_set=%s",
+                 primary_mask->name);
+        if (!save_prime_checkpoint_with_meta(net,
+                                             run_config.save_path,
+                                             checkpoint_notes,
+                                             "unknown",
+                                             NULL,
+                                             model_hash)) {
+            fputs("failed to save checkpoint\n", stderr);
+            ok = 0;
+            goto cleanup;
+        }
     }
 
     if (run_config.save_learned_model_path != NULL) {
         char learned_model_hash[65] = "unknown";
+        char learned_notes[128];
+        snprintf(learned_notes,
+                 sizeof(learned_notes),
+                 "prime_gap learned-wheel action scorer feature_set=%s",
+                 primary_mask->name);
         if (!save_prime_checkpoint_with_meta(learned_wheel_net,
                                              run_config.save_learned_model_path,
-                                             "prime_gap learned-wheel action scorer",
+                                             learned_notes,
                                              "unknown",
                                              rule_hash,
                                              learned_model_hash)) {
@@ -759,6 +829,7 @@ int nn_prime_gap_main(int argc, char **argv)
                               &test,
                               run_config.max_test_states,
                               log_scale,
+                              primary_mask,
                               run_config.trace_path,
                               model_hash,
                               rule_hash,

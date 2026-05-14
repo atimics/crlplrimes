@@ -142,6 +142,7 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                 [
                     str(row.get("model_hash", "unknown"))[:12],
                     str(row.get("evaluation_mode", "raw")),
+                    str(row.get("feature_set", "")),
                     fmt_percent(row, "top1"),
                     fmt_percent(row, "top10"),
                     fmt_number(row, "nll"),
@@ -152,7 +153,17 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                 for row in prime
                 if row.get("model_hash") != "none"
             ],
-            ["model", "mode", "top1", "top10", "nll", "ece", "steps", "model ms"],
+            [
+                "model",
+                "mode",
+                "features",
+                "top1",
+                "top10",
+                "nll",
+                "ece",
+                "steps",
+                "model ms",
+            ],
         )
         if prime
         else "_No prime-gap rows captured._"

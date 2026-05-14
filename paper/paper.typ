@@ -61,14 +61,15 @@
     When an exact verifier is available, the right architecture for action scoring is not an
     end-to-end neural policy. We study a hybrid pipeline in which a deterministic
     certificate-checked gate prunes structurally impossible candidates before a small learned
-    scorer ranks the residual. On a prime-gap benchmark, gating the same scorer with a learned
-    rule set lifts top-1 accuracy from 44.60% (fixed hand-wheel) to 68.87% (learned wheel) at
-    100% top-10, with an $approx$8$times$ reduction in model latency. The symbolic gate itself
+    scorer ranks the residual. On a prime-gap benchmark with residue-sieve features removed
+    from the scorer input, the raw scorer reaches 9.13% top-1; a fixed hand-wheel gate raises
+    this to 45.12%, and a learned rule gate reaches 68.87% at 100% top-10 with an
+    $approx$6$times$ reduction in model latency. The symbolic gate itself
     is produced by a neural proposer trained against a soundness-certificate verifier, which
     accepts 148 rules with zero false rejections out of 25,122 proposed candidates and recovers
     69.40% of wheel-equivalent verifier work. Under sparse-exact-reward policy gradient on the
-    same task, strict verifier RL inflates logit scale (ECE 0.074 $arrow.r$ 0.310) without
-    improving ranking; a KL-toward-prior + entropy regularizer keeps ECE at 0.082 at the same
+    same task, strict verifier RL inflates logit scale (ECE 0.070 $arrow.r$ 0.127) without
+    improving ranking; a KL-toward-prior + entropy regularizer keeps ECE at 0.060 at the same
     top-k. Prime gaps are used as a substrate, not the goal; we argue the protocol is
     transferable to any exact-verifier domain.
   ]
@@ -94,10 +95,10 @@ a deterministic proof.
 We make three claims, each tied to a concrete experiment in the released artifact:
 
 #set enum(numbering: "(C1)", spacing: 6pt)
-+ *Certificate-gating dominates raw scoring.* On the canonical prime-gap benchmark, the same
-  scorer reaches 44.60% top-1 under a fixed hand-wheel gate and *68.87% top-1 under a learned
-  rule gate*, both at 100% top-10. The dominating effect is the gate, not the depth of the
-  scorer.
++ *Certificate-gating dominates raw scoring.* On the canonical prime-gap benchmark, the
+  minimal-feature raw scorer reaches 9.13% top-1. The same scorer reaches 45.12% under a fixed
+  hand-wheel gate and *68.87% top-1 under a learned rule gate* at 100% top-10. The dominating
+  effect is the gate, not the depth of the scorer.
 + *A certificate-gated proposer discovers sound symbolic gates.* A neural proposer over a small
   rule grammar, paired with a soundness-certificate verifier, produces 148 sound rules with
   zero false rejections, recovering 69.40% of wheel-equivalent verifier work. The soundness
@@ -197,17 +198,18 @@ identifier, the candidate scores and probabilities, the selected and target indi
 verifier result, and verifier cost. Replay resolves `target_index` $arrow.r$ stable `action_id`
 $arrow.r$ regenerated candidate row, so reordering action ids cannot silently change replay
 semantics. Checkpoints carry SHA-256 model identity, a `parent_model_hash`, and a
-`feature_encoder_version`; comparison reports (`crlp.compare.v1`) carry both hashes plus
-machine-readable reliability bins.
+`feature_encoder_version`; comparison reports (`crlp.compare.v1`) carry both hashes, the
+evaluated `feature_set`, and machine-readable reliability bins.
 
 = Experiment Domain: Prime Gaps
 
 == Setup
 
 The state is a prime $p$; the candidate space is gaps $g in {2, 4, ..., 256}$ plus an overflow
-action; the verifier returns the true next-prime gap. Each candidate is encoded as
-$[log p, "norm_gap", "overflow_flag"]$ concatenated with divisibility flags for $p + g$ modulo
-small primes. The scorer is a shared MLP returning one scalar per candidate; softmax over
+action; the verifier returns the true next-prime gap. The default candidate encoding is the
+minimal feature set $[log p, "norm_gap", "overflow_flag"]$. A full-sieve feature set that adds
+precomputed divisibility flags for $p + g$ modulo small primes is retained only as a leakage
+ablation. The scorer is a shared MLP returning one scalar per candidate; softmax over
 candidates produces the proposal distribution.
 
 The default split is $p < 800,000$ train, $800,000 lt.eq p < 1,000,000$ validation,
@@ -231,8 +233,8 @@ held-out benchmark. Top-1 results:
   cetz.canvas({
     import cetz.draw: *
     let bars = (
-      (label: "no gate", value: 45.12, color: rgb("#a0a0a0")),
-      (label: "hand-wheel", value: 44.60, color: rgb("#5b8def")),
+      (label: "no gate", value: 9.13, color: rgb("#a0a0a0")),
+      (label: "hand-wheel", value: 45.12, color: rgb("#5b8def")),
       (label: "learned wheel", value: 68.87, color: rgb("#2ca02c")),
     )
     plot.plot(
@@ -257,9 +259,9 @@ held-out benchmark. Top-1 results:
     )
   }),
   caption: [Top-1 accuracy by gate on the canonical 30,000-sample held-out benchmark. The
-    defensible learned-gate delta is *44.60 $arrow.r$ 68.87* over the fixed hand-wheel
-    (+24.3pp). The no-gate row is shown for context; the 45.12 $arrow.r$ 68.87 framing conflates
-    the gate's contribution with the gain from having any gate at all.],
+    clean raw-to-learned delta is *9.13 $arrow.r$ 68.87*. The fixed-hand-wheel-to-learned
+    delta is *45.12 $arrow.r$ 68.87* (+23.7pp). The former 45.12% raw-scorer result is now a
+    full-sieve-feature leakage ablation, not the headline.],
 ) <fig:f1>
 
 Full metrics:
@@ -269,11 +271,11 @@ Full metrics:
     columns: (auto, auto, auto, auto, auto, auto),
     align: (left, right, right, right, right, right),
     table.header[*Gate*][*Top-1*][*Top-10*][*NLL*][*ECE*][*ms/sample*],
-    [no gate], [45.12%], [99.37%], [1.6691], [0.1180], [0.0415],
-    [hand-wheel], [44.60%], [100.00%], [1.3775], [0.0538], [---],
-    [*learned wheel*], [*68.87%*], [*100.00%*], [*1.0302*], [0.1332], [*0.0052*],
+    [no gate], [9.13%], [78.01%], [2.9994], [0.1076], [0.0354],
+    [hand-wheel], [45.12%], [99.77%], [1.5902], [0.0834], [0.0361],
+    [*learned wheel*], [*68.87%*], [*100.00%*], [*1.0056*], [0.1402], [*0.0059*],
   ),
-  caption: [Gate ablation, parent scorer, identical weights across rows.],
+  caption: [Gate ablation, minimal-feature scorer, identical weights across rows.],
 ) <tab:f1>
 
 #pblock[
@@ -283,11 +285,10 @@ Full metrics:
     Resolves whether the *content* of the learned rules matters or only their count.
   - *E1.2* \u{2014} Replicate on a second domain. `grid_path` admits a natural certificate gate
     (legality + admissible-heuristic pruning). Same scorer + three gates + same table.
-  - *E1.3* \u{2014} Investigate the *hand-wheel ECE anomaly* (0.054 vs no-gate 0.118 and
-    learned-wheel 0.133). One of two things is true: the hand-wheel induces a special
-    candidate-set structure that happens to be well-calibrated, or the learned wheel is
-    inducing miscalibration that should be addressed.
-  - *E1.4* \u{2014} Confidence intervals across $gt.eq 5$ seeds for the 44.60 $arrow.r$ 68.87
+  - *E1.3* \u{2014} Investigate the learned-wheel calibration tradeoff. The learned wheel
+    improves ranking sharply but has higher ECE than raw minimal and hand-wheel rows in the
+    default run.
+  - *E1.4* \u{2014} Confidence intervals across $gt.eq 5$ seeds for the 45.12 $arrow.r$ 68.87
     delta.
 ]
 
@@ -373,11 +374,11 @@ on exact rewards, and the same gradient regularized with KL-to-supervised-prior 
   cetz.canvas({
     import cetz.draw: *
     let policies = (
-      (label: "Supervised", ece: 0.0743, nll: 1.5778),
-      (label: "Strict RL", ece: 0.3100, nll: 2.3612),
-      (label: "Strict RL (T=2.5)", ece: 0.0707, nll: 1.5816),
-      (label: "KL/ent RL", ece: 0.0821, nll: 1.5878),
-      (label: "KL/ent RL (T=1.2)", ece: 0.0682, nll: 1.5602),
+      (label: "Supervised", ece: 0.0704, nll: 2.9170),
+      (label: "Strict RL", ece: 0.1271, nll: 3.0611),
+      (label: "Strict RL (T=1.5)", ece: 0.0613, nll: 2.9063),
+      (label: "KL/ent RL", ece: 0.0604, nll: 2.9056),
+      (label: "KL/ent RL (T=1.0)", ece: 0.0604, nll: 2.9056),
     )
     plot.plot(
       size: (10, 4.5),
@@ -406,9 +407,9 @@ on exact rewards, and the same gradient regularized with KL-to-supervised-prior 
       },
     )
   }),
-  caption: [Expected calibration error by RL variant. Strict verifier RL collapses calibration
-    (ECE 0.074 $arrow.r$ 0.310) while leaving top-1 *unchanged at 45.12%* across all variants.
-    Post-hoc temperature scaling needs $T = 2.5$ to recover; KL/entropy regularization fixes it
+  caption: [Expected calibration error by RL variant. Strict verifier RL degrades calibration
+    (ECE 0.070 $arrow.r$ 0.127) while leaving top-1 *unchanged at 9.13%* across all variants.
+    Post-hoc temperature scaling needs $T = 1.5$ to recover; KL/entropy regularization fixes it
     at training time without that crutch.],
 ) <fig:f3>
 
@@ -417,11 +418,11 @@ on exact rewards, and the same gradient regularized with KL-to-supervised-prior 
     columns: (auto, auto, auto, auto, auto, auto),
     align: (left, right, right, right, right, right),
     table.header[*Policy*][*T*][*Top-1*][*Top-10*][*NLL*][*ECE*],
-    [Supervised], [1.00], [45.12%], [99.77%], [1.5778], [0.0743],
-    [Strict verifier RL], [1.00], [45.12%], [99.46%], [2.3612], [*0.3100*],
-    [Strict RL, temp-scaled], [2.50], [45.12%], [99.46%], [1.5816], [0.0707],
-    [KL/entropy RL], [1.00], [45.12%], [99.75%], [1.5878], [0.0821],
-    [KL/entropy RL, temp-scaled], [1.20], [45.12%], [99.75%], [1.5602], [0.0682],
+    [Supervised], [1.00], [9.13%], [78.01%], [2.9170], [0.0704],
+    [Strict verifier RL], [1.00], [9.13%], [78.01%], [3.0611], [*0.1271*],
+    [Strict RL, temp-scaled], [1.50], [9.13%], [78.01%], [2.9063], [0.0613],
+    [KL/entropy RL], [1.00], [9.13%], [78.01%], [2.9056], [0.0604],
+    [KL/entropy RL, temp-scaled], [1.00], [9.13%], [78.01%], [2.9056], [0.0604],
   ),
   caption: [RL ablation, single cloned supervised checkpoint, default split.],
 ) <tab:f3>
@@ -497,7 +498,7 @@ claims auditable. Three pieces matter and would be a brief methods section in a 
   trace row's `action_id`, then maps that stable id back into the regenerated candidate row.
 - *Checkpoint identity.* SHA-256 over the exact checkpoint bytes, plus `parent_model_hash` and
   `feature_encoder_version` in metadata. Successor models declare their parent; comparison
-  reports carry both hashes.
+  reports carry both hashes and the evaluated `feature_set`.
 - *Pure C, no third-party deps.* The neural library is dense layers, sigmoid/ReLU/tanh/linear,
   MSE and softmax cross-entropy, SGD, batched 4-by-4 tiled forward/backward, cloned networks,
   action scoring, pairwise ranking loss, and cached policy-gradient updates with optional
@@ -513,9 +514,9 @@ claims auditable. Three pieces matter and would be a brief methods section in a 
 + *Cross-task verifier-RL comparison missing (Finding 3).* The pipeline supports it; the
   comparison is not in canonical results yet.
 + *Single-domain headline (Finding 1).* Hybrid-wins is demonstrated on prime gaps only.
-+ *Statistical rigor.* Default `make prime-gap-experiments` runs 2 seeds for 1 epoch; the
++ *Statistical rigor.* Default `make prime-gap-experiments` runs 1 seed; the
   harness supports more. Deltas need confidence intervals across $gt.eq 5$ seeds.
-+ *Hand-wheel ECE anomaly* is unexplained.
++ *Learned-wheel calibration tradeoff* needs a reliability-diagram pass.
 + *No literature comparison* on the calibration-collapse mechanism yet.
 #set enum(numbering: "1.")
 
@@ -542,8 +543,8 @@ goal is that every #placeholder[...] marker in the body resolves to one of these
     table.header[*ID*][*Experiment*][*Effort*][*Defends*],
     [E1.1], [Random-rule gate at matched verifier-call budget], [2d], [C1],
     [E1.2], [Replicate Finding 1 on `grid_path` with admissible-heuristic gate], [3-4d], [C1],
-    [E1.3], [Investigate hand-wheel ECE anomaly (0.054 vs 0.118 / 0.133)], [1d], [C1],
-    [E1.4], [CIs across $gt.eq 5$ seeds for 44.60 $arrow.r$ 68.87 delta], [0.5d], [C1],
+    [E1.3], [Investigate learned-wheel calibration tradeoff], [1d], [C1],
+    [E1.4], [CIs across $gt.eq 5$ seeds for 45.12 $arrow.r$ 68.87 delta], [0.5d], [C1],
     [E2.1], [Random-rule-proposer baseline at fixed budget], [2d], [C2],
     [E2.2], [Exhaustive rule enumerator at same budget (where feasible)], [1d], [C2],
     [E2.3], [Conjunctive rule grammar extension], [3-5d], [C2],

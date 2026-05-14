@@ -15,6 +15,7 @@ typedef struct {
     size_t capacity;
     char parent_hash[65];
     char rule_hash[65];
+    char feature_set[32];
 } ReplayTrace;
 
 static int append_replay_sample(ReplayTrace *trace, ReplaySample sample)
@@ -48,6 +49,7 @@ static int load_replay_trace(const char *path, ReplayTrace *trace)
     memset(trace, 0, sizeof(*trace));
     strcpy(trace->parent_hash, "unknown");
     strcpy(trace->rule_hash, "unknown");
+    strcpy(trace->feature_set, "full");
 
     FILE *fp = fopen(path, "r");
     if (fp == NULL) {
@@ -94,6 +96,19 @@ static int load_replay_trace(const char *path, ReplayTrace *trace)
                                          sizeof(parsed_rule_hash)) &&
                 parsed_rule_hash[0] != '\0') {
                 strcpy(trace->rule_hash, parsed_rule_hash);
+            }
+        }
+        char parsed_feature_set[32];
+        if (nn_trace_json_get_string(line,
+                                     "feature_set",
+                                     parsed_feature_set,
+                                     sizeof(parsed_feature_set)) &&
+            parsed_feature_set[0] != '\0') {
+            if (trace->count == 0 && strcmp(trace->feature_set, "full") == 0) {
+                strcpy(trace->feature_set, parsed_feature_set);
+            } else if (strcmp(trace->feature_set, parsed_feature_set) != 0) {
+                ok = 0;
+                break;
             }
         }
         uint8_t seen_actions[ACTION_COUNT] = {0};
@@ -199,6 +214,16 @@ int nn_prime_replay_main(int argc, char **argv)
     if (!use_rules && strcmp(trace.rule_hash, "unknown") != 0) {
         strcpy(rule_hash, trace.rule_hash);
     }
+    const FeatureMask *trace_mask = feature_mask_from_name(trace.feature_set);
+    if (trace_mask == NULL) {
+        fprintf(stderr, "unsupported replay trace feature_set: %s\n", trace.feature_set);
+        free_replay_trace(&trace);
+        free_symbolic_rule_set(&replay_rules);
+        return EXIT_FAILURE;
+    }
+    printf("replay feature_set=%s residue_features=%s\n",
+           trace_mask->name,
+           trace_mask->use_residue ? "on" : "off");
 
     const size_t layers[] = {FEATURE_COUNT, NN_PRIME_GAP_HIDDEN1, NN_PRIME_GAP_HIDDEN2, 1};
     NNConfig config;
@@ -238,7 +263,7 @@ int nn_prime_replay_main(int argc, char **argv)
                                                                     candidate_inputs,
                                                                     sample.p,
                                                                     sample.log_scale,
-                                                                    &FEATURE_MASK_FULL,
+                                                                    trace_mask,
                                                                     survivor_actions);
                 if (!prime_action_from_action_id(sample.target_action_id, &target_action)) {
                     fputs("replay trace target action_id is unknown\n", stderr);
@@ -263,7 +288,7 @@ int nn_prime_replay_main(int argc, char **argv)
                 fill_candidate_features_masked(candidate_inputs,
                                                sample.p,
                                                sample.log_scale,
-                                               &FEATURE_MASK_FULL);
+                                               trace_mask);
                 if (target_index == ACTION_COUNT) {
                     fputs("replay trace target action_id is not in current candidates\n", stderr);
                     nn_free(net);
@@ -305,9 +330,10 @@ int nn_prime_replay_main(int argc, char **argv)
              strcmp(rule_hash, "unknown") == 0 ? "jsonl" : rule_hash);
     snprintf(meta.notes,
              sizeof(meta.notes),
-             "%s",
+             "%s feature_set=%s",
              use_rules ? "prime_gap successor trained from learned-wheel trace replay"
-                       : "prime_gap successor trained from trace replay");
+                       : "prime_gap successor trained from trace replay",
+             trace_mask->name);
 
     char hash[65];
     int ok = nn_save_checkpoint(net, out_path, &meta) &&
@@ -329,6 +355,8 @@ int nn_prime_replay_main(int argc, char **argv)
 static void print_compare_usage(FILE *stream)
 {
     fputs("usage: prime_compare [--rules rules.crlprule] "
+          "[--feature-set minimal|full|log-only|gap-only|residue-only] "
+          "[--no-residue-features] [--full-features] "
           "model_a.nnckpt model_b.nnckpt [model_c.nnckpt ...]\n",
           stream);
 }
@@ -357,6 +385,7 @@ static void print_eval_reliability_bins_json(const EvalMetrics *metrics)
 static void print_report_json(const char *model_hash,
                               const NNCheckpointMeta *meta,
                               uint32_t seed,
+                              const char *feature_set,
                               const char *evaluation_mode,
                               const char *rule_hash,
                               EvalMetrics metrics)
@@ -364,7 +393,7 @@ static void print_report_json(const char *model_hash,
     double samples = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
     printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"prime_gap\","
            "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
-           "\"evaluation_mode\":\"%s\",\"rule_set_hash\":\"%s\","
+           "\"feature_set\":\"%s\",\"evaluation_mode\":\"%s\",\"rule_set_hash\":\"%s\","
            "\"feature_encoder_version\":%u,"
            "\"benchmark_seed\":%u,\"sample_count\":%zu,"
            "\"top1\":%.8f,\"top5\":%.8f,\"top10\":%.8f,"
@@ -375,6 +404,7 @@ static void print_report_json(const char *model_hash,
            "\"model_ms_per_sample\":%.8f,\"verifier_ms_per_sample\":%.8f",
            model_hash,
            meta->parent_model_hash[0] == '\0' ? "unknown" : meta->parent_model_hash,
+           feature_set == NULL ? "unknown" : feature_set,
            evaluation_mode == NULL ? "raw" : evaluation_mode,
            rule_hash == NULL ? "unknown" : rule_hash,
            meta->feature_encoder_version,
@@ -428,6 +458,7 @@ static void print_symbolic_compare_json(const char *rule_hash,
 int nn_prime_compare_main(int argc, char **argv)
 {
     const char *rules_path = NULL;
+    const FeatureMask *feature_mask = &FEATURE_MASK_MINIMAL;
     size_t model_count = 0;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--rules") == 0) {
@@ -436,6 +467,20 @@ int nn_prime_compare_main(int argc, char **argv)
                 return EXIT_FAILURE;
             }
             rules_path = argv[i];
+        } else if (strcmp(argv[i], "--feature-set") == 0) {
+            if (++i >= argc || argv[i][0] == '\0') {
+                print_compare_usage(stderr);
+                return EXIT_FAILURE;
+            }
+            feature_mask = feature_mask_from_name(argv[i]);
+            if (feature_mask == NULL) {
+                print_compare_usage(stderr);
+                return EXIT_FAILURE;
+            }
+        } else if (strcmp(argv[i], "--no-residue-features") == 0) {
+            feature_mask = &FEATURE_MASK_MINIMAL;
+        } else if (strcmp(argv[i], "--full-features") == 0) {
+            feature_mask = &FEATURE_MASK_FULL;
         } else if (argv[i][0] == '-') {
             print_compare_usage(stderr);
             return EXIT_FAILURE;
@@ -496,6 +541,9 @@ int nn_prime_compare_main(int argc, char **argv)
     }
 
     puts("jsonl report:");
+    printf("feature_set=%s residue_features=%s\n",
+           feature_mask->name,
+           feature_mask->use_residue ? "on" : "off");
     if (use_rules) {
         SymbolicWheelMetrics symbolic_metrics;
         memset(&symbolic_metrics, 0, sizeof(symbolic_metrics));
@@ -520,6 +568,14 @@ int nn_prime_compare_main(int argc, char **argv)
             ++i;
             continue;
         }
+        if (strcmp(argv[i], "--feature-set") == 0) {
+            ++i;
+            continue;
+        }
+        if (strcmp(argv[i], "--no-residue-features") == 0 ||
+            strcmp(argv[i], "--full-features") == 0) {
+            continue;
+        }
         NNCheckpointMeta meta;
         NeuralNet *net = nn_load_checkpoint(argv[i], &meta);
         char hash[65] = "unknown";
@@ -534,15 +590,42 @@ int nn_prime_compare_main(int argc, char **argv)
                                              &test,
                                              DEFAULT_MAX_TEST_STATES,
                                              log_scale,
-                                             &FEATURE_MASK_FULL,
+                                             feature_mask,
                                              1,
                                              1.0,
                                              candidate_inputs,
                                              scores,
                                              probabilities);
-        print_report_json(hash, &meta, benchmark_seed, "raw", "unknown", metrics);
+        print_report_json(hash,
+                          &meta,
+                          benchmark_seed,
+                          feature_mask->name,
+                          "raw",
+                          "unknown",
+                          metrics);
         print_comparison_row(argv[i], 1.0, metrics);
         if (use_rules) {
+            EvalMetrics hand_wheel_metrics =
+                evaluate_model_feature_wheel_masked(net,
+                                                    &sieve,
+                                                    &test,
+                                                    DEFAULT_MAX_TEST_STATES,
+                                                    log_scale,
+                                                    feature_mask,
+                                                    1,
+                                                    1.0,
+                                                    candidate_inputs,
+                                                    scores,
+                                                    probabilities);
+            print_report_json(hash,
+                              &meta,
+                              benchmark_seed,
+                              feature_mask->name,
+                              "hand_wheel_model",
+                              "hand-wheel",
+                              hand_wheel_metrics);
+            print_comparison_row("hand-wheel+model", 1.0, hand_wheel_metrics);
+
             EvalMetrics learned_metrics =
                 evaluate_model_symbolic_masked(net,
                                                &sieve,
@@ -550,7 +633,7 @@ int nn_prime_compare_main(int argc, char **argv)
                                                &test,
                                                DEFAULT_MAX_TEST_STATES,
                                                log_scale,
-                                               &FEATURE_MASK_FULL,
+                                               feature_mask,
                                                1,
                                                1.0,
                                                candidate_inputs,
@@ -559,6 +642,7 @@ int nn_prime_compare_main(int argc, char **argv)
             print_report_json(hash,
                               &meta,
                               benchmark_seed,
+                              feature_mask->name,
                               "learned_wheel_model",
                               rule_hash,
                               learned_metrics);

@@ -71,6 +71,7 @@ typedef struct {
 } FeatureMask;
 
 extern const FeatureMask FEATURE_MASK_FULL;
+extern const FeatureMask FEATURE_MASK_MINIMAL;
 extern const FeatureMask FEATURE_MASK_LOG_ONLY;
 extern const FeatureMask FEATURE_MASK_GAP_ONLY;
 extern const FeatureMask FEATURE_MASK_RESIDUE_ONLY;
@@ -283,6 +284,7 @@ typedef struct {
     const char *save_rules_path;
     const char *load_rules_path;
     const char *save_learned_model_path;
+    const FeatureMask *feature_mask;
 } PrimeGapRunConfig;
 
 double now_seconds(void);
@@ -293,6 +295,7 @@ int parse_size_arg(int argc, char **argv, int index, size_t fallback, size_t *va
 int parse_double_arg(int argc, char **argv, int index, double fallback, double *value_out);
 int parse_size_text(const char *text, size_t *value_out);
 int parse_u32_text(const char *text, uint32_t *value_out);
+const FeatureMask *feature_mask_from_name(const char *name);
 int parse_run_config(int argc, char **argv, PrimeGapRunConfig *config);
 int run_config_is_valid(const PrimeGapRunConfig *config);
 void print_usage(FILE *stream);
@@ -402,6 +405,17 @@ EvalMetrics evaluate_model_symbolic_masked(NeuralNet *net,
                                            nn_real *candidate_inputs,
                                            nn_real *scores,
                                            nn_real *probabilities);
+EvalMetrics evaluate_model_feature_wheel_masked(NeuralNet *net,
+                                                const Sieve *sieve,
+                                                const GapDataset *dataset,
+                                                size_t max_states,
+                                                double log_scale,
+                                                const FeatureMask *mask,
+                                                int include_verifier,
+                                                double temperature,
+                                                nn_real *candidate_inputs,
+                                                nn_real *scores,
+                                                nn_real *probabilities);
 double fit_temperature(NeuralNet *net,
                        const GapDataset *dataset,
                        size_t max_states,
@@ -450,6 +464,7 @@ int emit_prime_gap_trace(NeuralNet *net,
                          const GapDataset *dataset,
                          size_t max_states,
                          double log_scale,
+                         const FeatureMask *mask,
                          const char *path,
                          const char *model_hash,
                          const char *rule_hash,
@@ -568,6 +583,7 @@ int run_supervised_ablation(const char *label,
                             size_t *order,
                             uint32_t *rng);
 int run_linear_scorer_baseline(const NNConfig *config,
+                               const FeatureMask *mask,
                                const Sieve *sieve,
                                const GapDataset *train,
                                const GapDataset *validation,

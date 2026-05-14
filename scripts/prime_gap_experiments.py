@@ -53,6 +53,8 @@ EPOCH_SWEEP_LABELS = (
     "linear-scorer temp-scaled",
     "supervised",
     "supervised temp-scaled",
+    "supervised hand-wheel",
+    "supervised learned-wheel",
     "pairwise-ranking",
     "learned-wheel supervised",
     "learned-wheel supervised temp-scaled",
@@ -445,6 +447,8 @@ def write_summary(
                 "hand-wheel residue-conditioned",
                 "linear-scorer temp-scaled",
                 "supervised temp-scaled",
+                "supervised hand-wheel",
+                "supervised learned-wheel",
                 "pairwise-ranking",
                 "learned-wheel supervised temp-scaled",
             )

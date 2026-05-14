@@ -4,9 +4,9 @@ This repository is a compact C neural-network library and an exact-verifier rese
 
 The repository develops three claims:
 
-1. **Hybrid wins under exact verification.** Gating the same scorer with a deterministic certificate-checked filter takes top-1 from 44.60% (fixed hand-wheel) and 45.12% (no gate) to **68.87%** at 100% top-10, with ~8× lower model latency per sample on the canonical held-out benchmark. The gate contributes the bulk of the improvement; the scorer's role is to rank the residual after structurally impossible candidates have been pruned.
+1. **Hybrid wins under exact verification.** With residue-sieve features removed from the scorer input, the raw scorer reaches only **9.13%** top-1. Gating that same minimal-feature scorer with a fixed hand-wheel reaches **45.12%**, and gating it with the learned wheel reaches **68.87%** at 100% top-10, with ~6x lower model latency per sample on the canonical held-out benchmark. The gate contributes the bulk of the improvement; the scorer's role is to rank the residual after structurally impossible candidates have been pruned.
 2. **A certificate-gated proposer can discover sound symbolic gates.** A neural proposer over a tiny rule grammar, paired with a soundness-certificate verifier, produces **148 accepted rules out of 934 verified candidates with 0 false rejections**, recovering **69.40%** of wheel-equivalent verifier work without hand-coding the wheel. The soundness guarantee is a property of the certificate, not of training. How much of the recovery is attributable to *learning* (rather than to enumerate-then-filter) is an open question — see Limitations.
-3. **KL-regularized verifier RL prevents calibration collapse on the prime-gap task.** Strict policy-gradient RL on exact rewards inflates logit scale rather than improving ranking (ECE 0.0743 → 0.3100 with top-1 unchanged). Adding a KL term toward the supervised prior plus an entropy bonus restores calibration (ECE 0.0821) at the same top-k. Whether the same failure mode and fix transfer to `grid_path` and `delayed_claim` is planned work, not yet demonstrated.
+3. **KL-regularized verifier RL prevents calibration collapse on the prime-gap task.** Strict policy-gradient RL on exact rewards inflates logit scale rather than improving ranking (minimal-feature ECE 0.0704 -> 0.1271 with top-1 unchanged). Adding a KL term toward the supervised prior plus an entropy bonus restores calibration (ECE 0.0604) at the same top-k. Whether the same failure mode and fix transfer to `grid_path` and `delayed_claim` is planned work, not yet demonstrated.
 
 Prime gaps are used as **the experiment domain**, not the goal. They give us a compact, totally-ordered candidate space with a fast deterministic verifier, exact labels at all scales, and a known classical baseline (sieves) we cannot beat — which is precisely what makes them a clean substrate for studying learned proposal policies under perfect feedback. Two other exact-verifier tasks (`delayed_claim`, `grid_path`) are included to show the protocol generalizes.
 
@@ -16,11 +16,11 @@ Canonical benchmark: `sample_count=30000` held-out states with `train_limit=1,00
 
 | Model / mode | Top-1 | Top-10 | NLL | ECE | Mean rank | Model ms/sample |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Parent scorer, no gate | 45.12% | 99.37% | 1.6691 | 0.1180 | 2.2448 | 0.0415 |
-| Parent scorer + hand-wheel gate | 44.60% | 100.00% | 1.3775 | 0.0538 | — | — |
-| **Parent scorer + learned-wheel gate** | **68.87%** | **100.00%** | **1.0302** | 0.1332 | **1.4544** | **0.0052** |
+| Minimal scorer, no gate | 9.13% | 78.01% | 2.9994 | 0.1076 | 7.1951 | 0.0354 |
+| Minimal scorer + hand-wheel gate | 45.12% | 99.77% | 1.5902 | 0.0834 | 2.2015 | 0.0361 |
+| **Minimal scorer + learned-wheel gate** | **68.87%** | **100.00%** | **1.0056** | 0.1402 | **1.4544** | **0.0059** |
 
-The same network does the scoring in all three rows; only the gate changes. The fixed hand-wheel (small-prime divisibility filter) already lifts top-10 to 100% but barely moves top-1. The learned-wheel gate — produced by a neural proposer trained against the rule-grammar verifier — adds another **24 percentage points** of top-1 on top of the hand-wheel, which is the actual delta worth defending. ECE is roughly preserved across the no-gate and learned-wheel rows; the hand-wheel row is unusually well-calibrated and that gap deserves its own investigation.
+The same network does the scoring in all three rows; only the gate changes. The scorer input is the clean minimal feature set `[log(p), normalized_gap, overflow_flag]`; precomputed residue divisibility flags are disabled by default. The fixed hand-wheel (small-prime divisibility filter) supplies the small-prime modular structure that the minimal scorer cannot recover from `p` and `g` alone. The learned-wheel gate — produced by a neural proposer trained against the rule-grammar verifier — adds another **23.7 percentage points** of top-1 on top of the hand-wheel. The old 45.12% raw-scorer headline is now treated as a leakage ablation: it came from handing the scorer precomputed small-prime divisibility flags.
 
 The improvement is not a calibration trick and not a scoring trick. It is structural: the gate prunes the candidate set to one the scorer can rank well, and the cheap mod-arithmetic of the gate replaces the dominant cost of forwarding the scorer over impossible candidates.
 
@@ -65,11 +65,11 @@ Same scorer, three gates, same benchmark:
 
 | Gate | Top-1 | Top-10 | NLL |
 | --- | ---: | ---: | ---: |
-| None (raw candidate space) | 45.12% | 99.37% | 1.6691 |
-| Hand-wheel (small-prime divisibility) | 44.60% | 100.00% | 1.3775 |
-| **Learned wheel** (rule-search output) | **68.87%** | **100.00%** | **1.0302** |
+| None (raw candidate space) | 9.13% | 78.01% | 2.9994 |
+| Hand-wheel (small-prime divisibility) | 45.12% | 99.77% | 1.5902 |
+| **Learned wheel** (certificate-checked rules) | **68.87%** | **100.00%** | **1.0056** |
 
-The hand-wheel gate already reaches 100% top-10 because almost every true next-prime gap survives small-prime filtering. The learned-wheel gate adds ~24pp of top-1 on top of the hand-wheel because the rule-search verifier accepts conditional rules of the form "if `p % m == a` then reject gap `b`," capturing structure a fixed wheel does not. That 44.60 → 68.87 delta is the actual quantity to defend; the 45.12 → 68.87 number in the headline conflates the gate's contribution with the gain over having no gate at all.
+The hand-wheel gate nearly saturates top-10 because almost every true next-prime gap survives small-prime filtering. The learned-wheel gate adds ~24pp of top-1 on top of the hand-wheel because the rule-search verifier accepts conditional rules of the form "if `p % m == a` then reject gap `b`," capturing structure a fixed wheel does not. The clean raw-to-learned delta is **9.13 -> 68.87** top-1; the former raw 45.12% figure is retained only as a full-sieve-feature leakage ablation.
 
 ### Finding 2 — A certificate-gated proposer discovers sound symbolic gates
 
@@ -97,17 +97,17 @@ Strict verifier policy gradient on sparse exact rewards is a known-bad recipe, a
 
 | Policy | Temp | Top-1 | Top-10 | NLL | ECE | Top-1 confidence |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Supervised | 1.00 | 45.12% | 99.77% | 1.5778 | 0.0743 | 0.4882 |
-| Strict verifier RL | 1.00 | 45.12% | 99.46% | 2.3612 | 0.3100 | 0.7613 |
-| Strict verifier RL, temp-scaled | 2.50 | 45.12% | 99.46% | 1.5816 | 0.0707 | 0.4814 |
-| KL/entropy-regularized verifier RL | 1.00 | 45.12% | 99.75% | 1.5878 | 0.0821 | 0.5038 |
-| KL/entropy-regularized RL, temp-scaled | 1.20 | 45.12% | 99.75% | 1.5602 | 0.0682 | 0.4468 |
+| Supervised | 1.00 | 9.13% | 78.01% | 2.9170 | 0.0704 | 0.1617 |
+| Strict verifier RL | 1.00 | 9.13% | 78.01% | 3.0611 | 0.1271 | 0.2184 |
+| Strict verifier RL, temp-scaled | 1.50 | 9.13% | 78.01% | 2.9063 | 0.0613 | 0.1526 |
+| KL/entropy-regularized verifier RL | 1.00 | 9.13% | 78.01% | 2.9056 | 0.0604 | 0.1517 |
+| KL/entropy-regularized RL, temp-scaled | 1.00 | 9.13% | 78.01% | 2.9056 | 0.0604 | 0.1517 |
 
 Three observations:
 
 - **Ranking is preserved across all variants.** Strict RL does not improve top-1 — it is mostly logit inflation.
-- **Strict RL collapses calibration.** Unscaled ECE jumps from 0.0743 to 0.3100, and post-hoc temperature scaling needs `T=2.5` to undo it. The RL branch has effectively learned to be overconfident.
-- **KL-to-prior + entropy fixes it at training time.** Unscaled ECE drops to 0.0821; the chosen post-hoc temperature falls from 2.50 to 1.20, meaning the policy is close to calibrated without rescaling. This is the standard RLHF objective applied to exact-verifier rewards, and it works here for the same reason it works there: the reference policy supplies the bulk of the probability mass and the gradient is bounded.
+- **Strict RL degrades calibration.** Unscaled ECE rises from 0.0704 to 0.1271, and post-hoc temperature scaling needs `T=1.5` to undo it. The RL branch has effectively learned to be overconfident.
+- **KL-to-prior + entropy fixes it at training time.** Unscaled ECE drops to 0.0604; the selected temperature stays at `T=1.0`, meaning the policy is already close to calibrated without rescaling. This is the standard RLHF objective applied to exact-verifier rewards, and it works here for the same reason it works there: the reference policy supplies the bulk of the probability mass and the gradient is bounded.
 
 The finding as stated holds for prime-gap. Whether the same logit-inflation failure mode appears under verifier RL on `grid_path` and `delayed_claim`, and whether the same KL/entropy regularizer fixes it, is on the open-work list — the pipeline supports running it, but the comparison is not in the canonical results yet.
 
@@ -142,17 +142,18 @@ Detailed baselines:
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Empirical gap baseline | 1.00 | 15.46% | 78.71% | 2.8585 | 0.0196 | 0.1743 |
 | Residue-conditioned frequency | 1.00 | 40.11% | 93.04% | 2.8583 | 0.2769 | 0.1242 |
-| Linear full-feature scorer | 1.00 | 45.12% | 99.49% | 1.6236 | 0.1135 | 0.3417 |
-| Linear full-feature, temp-scaled | 0.70 | 45.12% | 99.49% | 1.5721 | 0.0660 | 0.4543 |
-| Supervised full scorer (parent) | 1.00 | 45.12% | 99.77% | 1.5778 | 0.0743 | 0.4882 |
-| Supervised, temp-scaled | 1.20 | 45.12% | 99.77% | 1.5585 | 0.0694 | 0.4323 |
-| Strict verifier RL | 1.00 | 45.12% | 99.46% | 2.3612 | 0.3100 | 0.7613 |
-| Strict verifier RL, temp-scaled | 2.50 | 45.12% | 99.46% | 1.5816 | 0.0707 | 0.4814 |
-| KL/entropy-regularized verifier RL | 1.00 | 45.12% | 99.75% | 1.5878 | 0.0821 | 0.5038 |
-| KL/entropy-regularized, temp-scaled | 1.20 | 45.12% | 99.75% | 1.5602 | 0.0682 | 0.4468 |
-| **Parent + learned-wheel rules** | **1.00** | **68.87%** | **100.00%** | **1.0302** | 0.1332 | — |
+| Linear minimal scorer | 1.00 | 9.13% | 78.01% | 2.9119 | 0.0289 | 0.1202 |
+| Linear minimal, temp-scaled | 0.85 | 9.13% | 78.01% | 2.9005 | 0.0486 | 0.1399 |
+| Supervised minimal scorer | 1.00 | 9.13% | 78.01% | 2.9170 | 0.0704 | 0.1617 |
+| Supervised minimal, temp-scaled | 1.20 | 9.13% | 78.01% | 2.8991 | 0.0459 | 0.1372 |
+| Full-sieve-feature ablation (leakage) | 1.00 | 45.12% | 99.77% | 1.5778 | 0.0743 | 0.4882 |
+| Supervised minimal + hand-wheel | 1.00 | 45.12% | 99.77% | 1.5576 | 0.0687 | 0.4347 |
+| **Supervised minimal + learned-wheel** | **1.00** | **68.87%** | **100.00%** | **1.0206** | 0.1686 | 0.5570 |
+| Learned-wheel trained on survivors | 1.00 | 68.87% | 100.00% | 1.0297 | 0.1312 | 0.6904 |
+| Strict verifier RL | 1.00 | 9.13% | 78.01% | 3.0611 | 0.1271 | 0.2184 |
+| KL/entropy-regularized verifier RL | 1.00 | 9.13% | 78.01% | 2.9056 | 0.0604 | 0.1517 |
 
-The interpretation is consistent with the headline thesis. Among raw-action-space scorers, the hidden network buys modest top-10/NLL over a linear scorer on the same features — top-1 is identical. The dominating effect is not depth of the scorer; it is the gate.
+The interpretation is now sharper. Among raw-action-space scorers without residue leakage, the hidden network and linear scorer both collapse to gap-frequency behavior. The 45.12% full-sieve row is useful only as an upper-bound ablation showing how much signal the old residue flags handed to the model. The dominating effect is not depth of the scorer; it is the verified symbolic gate.
 
 ## Other Tasks
 
@@ -170,16 +171,16 @@ The interpretation is consistent with the headline thesis. Among raw-action-spac
 - **Random-proposer baseline at fixed verifier-call budget.** Finding 2 currently shows that *a certificate-gated proposer* recovers 69.40% of verifier work; it does not yet distinguish "the neural proposer found the rules" from "the certificate gate filtered a large enumeration." Running random and exhaustive rule proposers at the same budget is the missing experiment that elevates Finding 2 from "sound" to "the learned proposer is essential." This is two days of work and on the immediate roadmap.
 - **Cross-task verifier-RL comparison.** Finding 3 (strict-vs-regularized RL on the prime-gap task) needs a matching run on `grid_path` and `delayed_claim` before it can be stated as a general property of sparse-exact-reward policy gradient. The pipeline supports it; the comparison is not in the canonical results yet.
 - **Hybrid baseline for a second domain.** Finding 1 is currently demonstrated on prime gaps only. `grid_path` admits a natural symbolic gate (legality + admissible-heuristic pruning); running it would extend the hybrid-wins claim past a single domain.
-- **Statistical rigor.** The default `make prime-gap-experiments` config currently runs 2 seeds for 1 epoch; the harness supports more (`PRIME_GAP_EXPERIMENT_SEEDS=...`). The supervised-vs-linear, strict-vs-regularized, and hand-wheel-vs-learned-wheel deltas should be reported with confidence intervals across ≥5 seeds.
+- **Statistical rigor.** The default `make prime-gap-experiments` config currently runs 1 seed; the harness supports more (`PRIME_GAP_EXPERIMENT_SEEDS=...`). The minimal-vs-leakage, strict-vs-regularized, and hand-wheel-vs-learned-wheel deltas should be reported with confidence intervals across >=5 seeds.
 - **Reliability diagrams.** The comparison schema stores `reliability_bins`; the README currently reports only ECE. Calibration claims would be stronger with a small reliability plot.
-- **Hand-wheel ECE anomaly.** The hand-wheel gate row in the headline table is notably better-calibrated (0.0538) than the no-gate (0.1180) and learned-wheel (0.1332) rows. This is currently unexplained and worth a short investigation.
+- **Learned-wheel calibration.** The learned-wheel gate improves ranking sharply, but its ECE is worse than the raw minimal and hand-wheel rows in the default run. That calibration tradeoff deserves a focused reliability-diagram pass.
 
 ## Reproducibility Substrate
 
 The hybrid architecture is the contribution; the substrate is the discipline that makes it auditable. Three pieces matter:
 
 - **Stable action IDs and trace contract.** Trace rows carry `schema: "crlp.trace.v1"`, `trace_version: 1`, and `action_id_contract: "stable_unique_action_ids"`. Replay resolves `target_index` to the trace row's `action_id`, then maps that stable id back into the regenerated candidate row. Reordering action ids cannot silently change replay semantics; the prime replay regression test exercises that.
-- **Checkpoint identity.** Checkpoints carry a `parent_model_hash`, a `training_trace_root`, and a `feature_encoder_version` in metadata; the model hash is SHA-256 over the exact checkpoint bytes. Successor models declare their parent. Comparison reports (`crlp.compare.v1`) carry both `model_hash` and `parent_hash` and a machine-readable `reliability_bins` array.
+- **Checkpoint identity.** Checkpoints carry a `parent_model_hash`, a `training_trace_root`, and a `feature_encoder_version` in metadata; the model hash is SHA-256 over the exact checkpoint bytes. Successor models declare their parent. Comparison reports (`crlp.compare.v1`) carry `model_hash`, `parent_hash`, `feature_set`, and a machine-readable `reliability_bins` array.
 - **Pure C, no third-party deps.** The neural library is dense layers, sigmoid/ReLU/tanh/linear, MSE and softmax cross-entropy, SGD, batched 4-by-4 tiled forward/backward, cloned networks, action scoring, pairwise ranking loss, cached policy-gradient updates with optional KL/entropy regularization, deterministic checkpoint save/load, SHA-256 hashing, JSONL trace writing. The core is ~3k lines; the prime-gap task is split into focused modules under `src/prime_gap/`.
 
 End-to-end quick path:
@@ -296,12 +297,12 @@ make prime-gap
 Builds a sieve-backed prime-gap dataset and trains a shared candidate scorer:
 
 ```text
-input  = [log(p), normalized_gap, overflow_flag, divisibility flags for p + gap modulo small primes]
+input  = [log(p), normalized_gap, overflow_flag]
 score  = f(input)
 policy = softmax(scores across candidate gaps 2..256 plus an overflow action)
 ```
 
-It evaluates empirical, residue-conditioned, and linear full-feature baselines, runs supervised feature ablations (log-only, gap-only, candidate-residue-only, full), fits a scalar softmax temperature on a held-out validation slice, and compares strict and KL/entropy-regularized verifier-RL branches cloned from the same supervised checkpoint.
+The default `minimal` feature set intentionally omits precomputed residue divisibility flags. Use `--feature-set full` or `--full-features` only for the leakage/upper-bound ablation where the scorer sees the small-prime sieve flags directly. The run evaluates empirical, residue-conditioned, and linear minimal baselines, runs supervised feature ablations (log-only, gap-only, residue-only, full-sieve leakage), fits a scalar softmax temperature on a held-out validation slice, and compares strict and KL/entropy-regularized verifier-RL branches cloned from the same supervised checkpoint.
 
 ```sh
 make prime-rule-search
@@ -338,7 +339,7 @@ make prime-gap-experiments PRIME_GAP_EXPERIMENT_SEEDS=20240511,20240512,20240513
 Optional arguments:
 
 ```sh
-./build/float/prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] [max_train_states] [max_test_states] [regularized_reference_weight] [regularized_entropy_weight] [rng_seed]
+./build/float/prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] [max_train_states] [max_test_states] [regularized_reference_weight] [regularized_entropy_weight] [rng_seed] [--feature-set minimal|full|log-only|gap-only|residue-only]
 ```
 
 ## Run Tests
@@ -491,14 +492,14 @@ The hash is SHA-256 over the exact checkpoint bytes, so changing weights or meta
 Trace rows are JSONL records with schema `crlp.trace.v1`:
 
 ```json
-{"schema":"crlp.trace.v1","trace_version":1,"action_id_contract":"stable_unique_action_ids","task":"prime_gap","state_hash":"0000000000000000","model_hash":"unknown","feature_encoder_version":1,"candidate_count":0,"action_ids":[],"scores":[],"probabilities":[],"selected_index":0,"target_index":0,"loss":0.0,"verifier_result":"correct","verifier_cost":{},"seed":0}
+{"schema":"crlp.trace.v1","trace_version":1,"action_id_contract":"stable_unique_action_ids","task":"prime_gap","state_hash":"0000000000000000","model_hash":"unknown","feature_encoder_version":1,"candidate_count":0,"action_ids":[],"scores":[],"probabilities":[],"selected_index":0,"target_index":0,"loss":0.0,"verifier_result":"correct","verifier_cost":{},"seed":0,"feature_set":"minimal"}
 ```
 
 Prime-gap traces add `p`, `true_gap`, `proposal_steps`, `wheel_exact`, `assisted_wheel`, `block_cost`, `assisted_block`, and `log_scale`. Rule-search traces use schema `crlp.rule_trace.v1`. Delayed-claim traces use the deterministic per-row seed for replay.
 
 Use `nn_trace_parse_jsonl` to validate rows before replay. It checks the schema string, trace version, action-id contract, required scalar fields, unique action ids, score/probability array lengths, selected/target index bounds, and probability mass. Replay code resolves `target_index` to the row's stable `action_id`, then maps that action id back into the regenerated candidate rows before training. `nn_trace_json_get_u64`, `nn_trace_json_get_real`, and `nn_trace_json_get_string` are small helpers for task-specific extra fields.
 
-Comparison reports are JSONL records with schema `crlp.compare.v1`, `report_version`, `model_hash`, `parent_hash`, `feature_encoder_version`, benchmark seed, sample count, capability metrics, calibration metrics, machine-readable `reliability_bins`, and any task-specific verifier or utility fields.
+Comparison reports are JSONL records with schema `crlp.compare.v1`, `report_version`, `model_hash`, `parent_hash`, `feature_set`, `feature_encoder_version`, benchmark seed, sample count, capability metrics, calibration metrics, machine-readable `reliability_bins`, and any task-specific verifier or utility fields.
 
 Deterministic fixtures live in `tests/fixtures/` and cover a tiny action scorer, expected scores, expected probabilities, expected ranking, and an example trace row. The tests exercise those fixtures in both `float` and `double` builds.
 

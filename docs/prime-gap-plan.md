@@ -49,15 +49,15 @@ coverage of the rules the rule-search proposer discovers.
 
 ## What We Have Learned
 
-### Hybrid wins (load-bearing for Finding 1)
+### Hybrid wins without residue-feature leakage (load-bearing for Finding 1)
 
 Same scorer, three gates, default benchmark (`sample_count=30000`):
 
-- No gate: 45.12% top-1, 99.37% top-10, 1.6691 NLL.
-- Hand-wheel gate: 44.60% top-1, 100% top-10, 1.3775 NLL.
-- Learned-wheel gate: 68.87% top-1, 100% top-10, 1.0302 NLL, ~8× lower model ms/sample.
+- No gate, minimal features: 9.13% top-1, 78.01% top-10, 2.9994 NLL.
+- Hand-wheel gate, minimal features: 45.12% top-1, 99.77% top-10, 1.5902 NLL.
+- Learned-wheel gate, minimal features: 68.87% top-1, 100% top-10, 1.0056 NLL, ~6x lower model ms/sample.
 
-The defensible delta is **44.60 → 68.87** top-1: roughly 24 percentage points of improvement attributable to replacing a fixed wheel with the learned rule set, on the same scorer. The 45.12 → 68.87 number combines that delta with the gain from having any gate at all, which inflates the apparent effect. The hidden-network advantage over a linear scorer on the raw candidate space is real but small (matched top-1, ~0.05 NLL gain, ~0.3pp top-10), so the load-bearing claim is "the gate matters," not "the scorer is deep."
+The defensible deltas are now sharper: **9.13 -> 68.87** top-1 from clean raw scorer to learned-wheel hybrid, and **45.12 -> 68.87** from fixed hand-wheel to learned wheel. The former shows the symbolic gate doing the work once residue flags are removed from the scorer; the latter isolates the extra value of the learned rule set over a fixed small-prime wheel. The old 45.12% raw-scorer number is now labeled as a full-sieve-feature leakage ablation, not a headline result.
 
 ### Certificate-gated rule discovery is sound (load-bearing for Finding 2)
 
@@ -75,11 +75,11 @@ Zero false rejections is a property of the certificate verifier, not of training
 
 ### Calibration collapse and the KL fix on prime-gap (load-bearing for Finding 3)
 
-From the same supervised checkpoint:
+From the same minimal-feature supervised checkpoint:
 
-- Supervised: ECE 0.0743, T=1.20 after rescaling.
-- Strict verifier RL: ECE 0.3100 unscaled, needs T=2.50 to recover.
-- KL/entropy-regularized RL: ECE 0.0821 unscaled, T=1.20 after rescaling.
+- Supervised: ECE 0.0704, T=1.20 after rescaling.
+- Strict verifier RL: ECE 0.1271 unscaled, needs T=1.50 to recover.
+- KL/entropy-regularized RL: ECE 0.0604 unscaled, T=1.00 after rescaling.
 
 Ranking (top-1, top-10) is essentially unchanged across all three. The RL story is therefore not "RL improves the policy" — it is "naive RL breaks calibration on this task; the standard RLHF-style regularizer prevents that." Whether the same failure mode and fix transfer to `grid_path` and `delayed_claim` is open work, not yet in the canonical results.
 
@@ -115,7 +115,8 @@ Ablations:
 
 - empirical gap-frequency baseline
 - log-only, gap-only, candidate-residue-only scorers
-- linear full-feature scorer (sharp baseline; matches hidden network on top-1)
+- linear minimal-feature scorer (matches hidden network on top-1 under clean inputs)
+- full-sieve-feature scorer (explicit leakage ablation; not a clean model)
 - pairwise-ranking ablation
 
 Verifier diagnostics (informative, not headline):
@@ -130,7 +131,7 @@ Verifier diagnostics (informative, not headline):
 Ordered roughly by priority for the writeup.
 
 1. **Random-rule-proposer baseline at fixed verifier-call budget.** Required to disentangle "neural proposer found useful rules" from "the certificate gate did all the work." Also run an exhaustive enumerator at the same budget. Two days of work.
-2. **Multi-seed deltas with confidence intervals.** Default sweep currently runs 2 seeds for 1 epoch; harness supports more (`PRIME_GAP_EXPERIMENT_SEEDS=...`). Report 95% CIs on the supervised-vs-linear, strict-vs-regularized, and raw-vs-learned-wheel deltas across ≥5 seeds.
+2. **Multi-seed deltas with confidence intervals.** Default sweep currently runs 1 seed; harness supports more (`PRIME_GAP_EXPERIMENT_SEEDS=...`). Report 95% CIs on the minimal-vs-leakage, strict-vs-regularized, and hand-wheel-vs-learned-wheel deltas across >=5 seeds.
 3. **Reliability diagrams.** `crlp.compare.v1` already carries `reliability_bins`; render them.
 4. **Calibration sweep over larger held-out ranges.** Expand the KL/entropy grid; check whether the validation-selected weights are stable across prime-size buckets.
 5. **Stronger verifier-aware baselines.** Hand-coded wheel ranking, linear scorer with explicit wheel-survivor features, conditioned frequency over larger residue signatures.

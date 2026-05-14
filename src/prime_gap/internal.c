@@ -27,6 +27,7 @@ _Static_assert(NN_SYMBOLIC_MAX_LEARNED_RULES > 0,
                "NN_SYMBOLIC_MAX_LEARNED_RULES must be positive");
 
 const FeatureMask FEATURE_MASK_FULL = {"full", 1, 1, 1, 1};
+const FeatureMask FEATURE_MASK_MINIMAL = {"minimal", 1, 1, 1, 0};
 const FeatureMask FEATURE_MASK_LOG_ONLY = {"log-only", 1, 0, 0, 0};
 const FeatureMask FEATURE_MASK_GAP_ONLY = {"gap-only", 0, 1, 1, 0};
 const FeatureMask FEATURE_MASK_RESIDUE_ONLY = {"residue-only", 0, 0, 1, 1};
@@ -151,7 +152,30 @@ static PrimeGapRunConfig default_run_config(void)
     config.save_rules_path = NULL;
     config.load_rules_path = NULL;
     config.save_learned_model_path = NULL;
+    config.feature_mask = &FEATURE_MASK_MINIMAL;
     return config;
+}
+
+const FeatureMask *feature_mask_from_name(const char *name)
+{
+    if (name == NULL || strcmp(name, "minimal") == 0 ||
+        strcmp(name, "no-residue") == 0 || strcmp(name, "clean") == 0) {
+        return &FEATURE_MASK_MINIMAL;
+    }
+    if (strcmp(name, "full") == 0 || strcmp(name, "sieve") == 0 ||
+        strcmp(name, "residue-leakage") == 0) {
+        return &FEATURE_MASK_FULL;
+    }
+    if (strcmp(name, "log-only") == 0 || strcmp(name, "log") == 0) {
+        return &FEATURE_MASK_LOG_ONLY;
+    }
+    if (strcmp(name, "gap-only") == 0 || strcmp(name, "gap") == 0) {
+        return &FEATURE_MASK_GAP_ONLY;
+    }
+    if (strcmp(name, "residue-only") == 0 || strcmp(name, "residue") == 0) {
+        return &FEATURE_MASK_RESIDUE_ONLY;
+    }
+    return NULL;
 }
 
 int parse_run_config(int argc, char **argv, PrimeGapRunConfig *config)
@@ -193,6 +217,18 @@ int parse_run_config(int argc, char **argv, PrimeGapRunConfig *config)
                 return 0;
             }
             config->save_learned_model_path = argv[i];
+        } else if (strcmp(argv[i], "--feature-set") == 0) {
+            if (++i >= argc || argv[i][0] == '\0') {
+                return 0;
+            }
+            config->feature_mask = feature_mask_from_name(argv[i]);
+            if (config->feature_mask == NULL) {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--no-residue-features") == 0) {
+            config->feature_mask = &FEATURE_MASK_MINIMAL;
+        } else if (strcmp(argv[i], "--full-features") == 0) {
+            config->feature_mask = &FEATURE_MASK_FULL;
         } else if (strcmp(argv[i], "--help") == 0) {
             return 0;
         } else if (positional_count < (int)(sizeof(positionals) / sizeof(positionals[0]))) {
@@ -252,6 +288,7 @@ int run_config_is_valid(const PrimeGapRunConfig *config)
            config->test_limit_arg <= (size_t)UINT32_MAX - (size_t)G_MAX &&
            config->train_limit_arg <= (size_t)UINT32_MAX &&
            config->rng_seed_arg <= (size_t)UINT32_MAX &&
+           config->feature_mask != NULL &&
            config->regularized_reference_weight >= 0.0 &&
            config->regularized_entropy_weight >= 0.0;
 }
@@ -262,6 +299,8 @@ void print_usage(FILE *stream)
           "[max_train_states] [max_test_states] [regularized_reference_weight] "
           "[regularized_entropy_weight] [rng_seed] "
           "[--trace path] [--save path] [--model checkpoint] "
-          "[--save-rules path] [--rules path] [--save-learned-model path]\n",
+          "[--save-rules path] [--rules path] [--save-learned-model path] "
+          "[--feature-set minimal|full|log-only|gap-only|residue-only] "
+          "[--no-residue-features] [--full-features]\n",
           stream);
 }

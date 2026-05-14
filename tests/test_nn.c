@@ -1158,24 +1158,45 @@ static int test_prime_gap_parses_rng_seed(void)
            config.rng_seed_arg == 12345;
 }
 
+static int test_prime_gap_feature_set_defaults_to_minimal(void)
+{
+    char *default_argv[] = {"prime_gap", "1000", "2000"};
+    char *full_argv[] = {"prime_gap", "1000", "2000", "--feature-set", "full"};
+    char *minimal_argv[] = {"prime_gap", "1000", "2000", "--no-residue-features"};
+    PrimeGapRunConfig config;
+
+    return parse_run_config(3, default_argv, &config) && run_config_is_valid(&config) &&
+           config.feature_mask == &FEATURE_MASK_MINIMAL &&
+           parse_run_config(5, full_argv, &config) && run_config_is_valid(&config) &&
+           config.feature_mask == &FEATURE_MASK_FULL &&
+           parse_run_config(4, minimal_argv, &config) && run_config_is_valid(&config) &&
+           config.feature_mask == &FEATURE_MASK_MINIMAL;
+}
+
 static int test_prime_gap_features_are_divisibility_flags(void)
 {
     nn_real inputs[ACTION_COUNT * FEATURE_COUNT];
     nn_real masked[ACTION_COUNT * FEATURE_COUNT];
+    nn_real minimal[ACTION_COUNT * FEATURE_COUNT];
     fill_candidate_features(inputs, 11, log(1000.0));
     fill_candidate_features_masked(masked, 11, log(1000.0), &FEATURE_MASK_GAP_ONLY);
+    fill_candidate_features_masked(minimal, 11, log(1000.0), &FEATURE_MASK_MINIMAL);
 
     const nn_real *gap2 = &inputs[0 * FEATURE_COUNT];
     const nn_real *gap4 = &inputs[1 * FEATURE_COUNT];
     const nn_real *overflow = &inputs[OVERFLOW_ACTION * FEATURE_COUNT];
     const nn_real *masked_gap4 = &masked[1 * FEATURE_COUNT];
     const nn_real *masked_overflow = &masked[OVERFLOW_ACTION * FEATURE_COUNT];
+    const nn_real *minimal_gap4 = &minimal[1 * FEATURE_COUNT];
 
     return gap4[2] == (nn_real)0 && gap4[3] == (nn_real)1 &&
            gap4[4] == (nn_real)1 && gap4[5] == (nn_real)0 &&
            gap2[7] == (nn_real)0 && overflow[2] == (nn_real)1 &&
            masked_gap4[0] == (nn_real)0 && masked_gap4[1] > (nn_real)0 &&
-           masked_gap4[3] == (nn_real)0 && masked_overflow[2] == (nn_real)1;
+           masked_gap4[3] == (nn_real)0 && masked_overflow[2] == (nn_real)1 &&
+           minimal_gap4[0] > (nn_real)0 && minimal_gap4[1] > (nn_real)0 &&
+           minimal_gap4[2] == (nn_real)0 && minimal_gap4[3] == (nn_real)0 &&
+           minimal_gap4[4] == (nn_real)0;
 }
 
 static int test_prime_gap_frequency_policy_is_smoothed(void)
@@ -1404,6 +1425,7 @@ static int test_prime_gap_replay_uses_trace_action_ids(void)
     fprintf(fp,
             "],\"selected_index\":0,\"target_index\":0,\"loss\":0,"
             "\"verifier_result\":\"correct\",\"verifier_cost\":{},\"seed\":42,"
+            "\"feature_set\":\"minimal\","
             "\"p\":101,\"log_scale\":%.17g}\n",
             log(1000.0));
     if (fclose(fp) != 0) {
@@ -1415,6 +1437,7 @@ static int test_prime_gap_replay_uses_trace_action_ids(void)
     uint32_t current_action_ids[ACTION_COUNT];
     fill_action_ids(current_action_ids);
     ok = ok && trace.count == 1 && trace.items[0].p == 101 &&
+         strcmp(trace.feature_set, "minimal") == 0 &&
          trace.items[0].target_action_id == 7 &&
          action_row_for_action_id(current_action_ids,
                                   ACTION_COUNT,
@@ -1491,6 +1514,8 @@ int main(void)
     check(test_prime_gap_rejects_invalid_regularization_args(),
           "prime-gap parser rejects invalid regularization args");
     check(test_prime_gap_parses_rng_seed(), "prime-gap parser accepts rng seed");
+    check(test_prime_gap_feature_set_defaults_to_minimal(),
+          "prime-gap feature set defaults to minimal");
     check(test_prime_gap_features_are_divisibility_flags(),
           "prime-gap features are divisibility flags");
     check(test_prime_gap_frequency_policy_is_smoothed(),
