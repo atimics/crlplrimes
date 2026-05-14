@@ -175,6 +175,7 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                 [
                     str(row.get("rule_set_hash", "unknown"))[:12],
                     str(row.get("grammar_version", "")),
+                    str(row.get("proposer_feature_set", "")),
                     str(row.get("accepted_rules", "")),
                     str(row.get("accepted_gap_rules", "")),
                     str(row.get("false_rejections", "")),
@@ -188,6 +189,7 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
             [
                 "rule hash",
                 "grammar",
+                "features",
                 "accepted",
                 "gap rules",
                 "false rejects",

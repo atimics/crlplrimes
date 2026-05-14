@@ -63,9 +63,9 @@
     certificate-checked gate prunes structurally impossible candidates before a small learned
     scorer ranks the residual. On a prime-gap benchmark with residue-sieve features removed
     from the scorer input, the raw scorer reaches 9.13% top-1; a fixed hand-wheel gate raises
-    this to 45.12%, and a learned rule gate reaches 68.87% at 100% top-10 with an
+    this to 45.12%, and a learned rule gate reaches 67.19% at 100% top-10 with an
     $approx$6$times$ reduction in model latency. The symbolic gate itself
-    is produced by a neural proposer trained against a soundness-certificate verifier, which
+    is produced by a structural-only neural proposer trained against a soundness-certificate verifier, which
     accepts 148 rules with zero false rejections out of 25,122 proposed candidates and recovers
     69.40% of wheel-equivalent verifier work. Under sparse-exact-reward policy gradient on the
     same task, strict verifier RL inflates logit scale (ECE 0.070 $arrow.r$ 0.127) without
@@ -97,12 +97,12 @@ We make three claims, each tied to a concrete experiment in the released artifac
 #set enum(numbering: "(C1)", spacing: 6pt)
 + *Certificate-gating dominates raw scoring.* On the canonical prime-gap benchmark, the
   minimal-feature raw scorer reaches 9.13% top-1. The same scorer reaches 45.12% under a fixed
-  hand-wheel gate and *68.87% top-1 under a learned rule gate* at 100% top-10. The dominating
+  hand-wheel gate and *67.19% top-1 under a learned rule gate* at 100% top-10. The dominating
   effect is the gate, not the depth of the scorer.
 + *A certificate-gated proposer discovers sound symbolic gates.* A neural proposer over a small
-  rule grammar, paired with a soundness-certificate verifier, produces 148 sound rules with
-  zero false rejections, recovering 69.40% of wheel-equivalent verifier work. The soundness
-  guarantee is a property of the certificate, not of training.
+  rule grammar sees only structural fields, paired with a soundness-certificate verifier,
+  produces 148 sound rules with zero false rejections, recovering 69.40% of wheel-equivalent
+  verifier work. The soundness guarantee is a property of the certificate, not of training.
 + *KL-regularized verifier RL prevents calibration collapse.* Strict policy gradient on sparse
   exact rewards inflates logit scale rather than improving ranking; a standard KL-to-prior +
   entropy term restores calibration at unchanged top-k.
@@ -235,7 +235,7 @@ held-out benchmark. Top-1 results:
     let bars = (
       (label: "no gate", value: 9.13, color: rgb("#a0a0a0")),
       (label: "hand-wheel", value: 45.12, color: rgb("#5b8def")),
-      (label: "learned wheel", value: 68.87, color: rgb("#2ca02c")),
+      (label: "learned wheel", value: 67.19, color: rgb("#2ca02c")),
     )
     plot.plot(
       size: (9, 4.2),
@@ -259,8 +259,8 @@ held-out benchmark. Top-1 results:
     )
   }),
   caption: [Top-1 accuracy by gate on the canonical 30,000-sample held-out benchmark. The
-    clean raw-to-learned delta is *9.13 $arrow.r$ 68.87*. The fixed-hand-wheel-to-learned
-    delta is *45.12 $arrow.r$ 68.87* (+23.7pp). The former 45.12% raw-scorer result is now a
+    clean raw-to-learned delta is *9.13 $arrow.r$ 67.19*. The fixed-hand-wheel-to-learned
+    delta is *45.12 $arrow.r$ 67.19* (+22.1pp). The former 45.12% raw-scorer result is now a
     full-sieve-feature leakage ablation, not the headline.],
 ) <fig:f1>
 
@@ -271,9 +271,9 @@ Full metrics:
     columns: (auto, auto, auto, auto, auto, auto),
     align: (left, right, right, right, right, right),
     table.header[*Gate*][*Top-1*][*Top-10*][*NLL*][*ECE*][*ms/sample*],
-    [no gate], [9.13%], [78.01%], [2.9994], [0.1076], [0.0354],
-    [hand-wheel], [45.12%], [99.77%], [1.5902], [0.0834], [0.0361],
-    [*learned wheel*], [*68.87%*], [*100.00%*], [*1.0056*], [0.1402], [*0.0059*],
+    [no gate], [9.13%], [78.01%], [2.9994], [0.1076], [0.0364],
+    [hand-wheel], [45.12%], [99.77%], [1.5902], [0.0834], [0.0376],
+    [*learned wheel*], [*67.19%*], [*100.00%*], [*1.0457*], [0.1335], [*0.0061*],
   ),
   caption: [Gate ablation, minimal-feature scorer, identical weights across rows.],
 ) <tab:f1>
@@ -288,7 +288,7 @@ Full metrics:
   - *E1.3* \u{2014} Investigate the learned-wheel calibration tradeoff. The learned wheel
     improves ranking sharply but has higher ECE than raw minimal and hand-wheel rows in the
     default run.
-  - *E1.4* \u{2014} Confidence intervals across $gt.eq 5$ seeds for the 45.12 $arrow.r$ 68.87
+  - *E1.4* \u{2014} Confidence intervals across $gt.eq 5$ seeds for the 45.12 $arrow.r$ 67.19
     delta.
 ]
 
@@ -297,6 +297,9 @@ Full metrics:
 The rule grammar is `if p % m == a then reject gap % m == b`; the certificate verifier accepts
 a rule iff $gcd(a + b, m) > 1$ (so $p + g$ is necessarily composite) and the support count
 exceeds a threshold. Zero false rejections is a structural property of the certificate.
+The proposer input is structural-only: condition kind, moduli, residues, zero-residue
+indicators, gcd ratios, and derived candidate residue. Empirical support, utility, and
+false-rejection counts are labels or diagnostics, not proposer features.
 
 #figure(
   cetz.canvas(length: 1cm, {
@@ -341,14 +344,15 @@ exceeds a threshold. Zero false rejections is a structural property of the certi
     true next-prime gap. The accepted set recovers 69.40% of wheel-equivalent verifier work.],
 ) <fig:f2>
 
-*What this evidence supports.* "A certificate-gated proposer over this grammar produces a
-sound, useful rule set." The soundness comes from the certificate; the coverage comes from the
-combination of proposer ranking and enumeration.
+*What this evidence supports.* "A certificate-gated structural proposer over this grammar
+produces a sound, useful rule set without support-count feature leakage." The soundness comes
+from the certificate; the coverage comes from the combination of structural proposer ranking
+and enumeration.
 
 *What this evidence does not yet support.* "The neural proposer, specifically, is essential."
-The numbers above are consistent with both "the proposer ranked rules well" and "a near-random
-proposer + the same verifier reaches the same rule set." Distinguishing the two requires E2.1
-below.
+The numbers above are consistent with both "the proposer learned useful structural regularities"
+and "a near-random proposer + the same verifier reaches the same rule set." Distinguishing the
+two requires E2.1 below.
 
 #pblock[
   *Required to elevate C2 from "the verifier is doing useful work" to "the learned proposer is
@@ -509,8 +513,8 @@ claims auditable. Three pieces matter and would be a brief methods section in a 
 
 #set enum(numbering: "L1.")
 + *Random-proposer baseline missing (Finding 2).* Until E2.1 lands, the load-bearing claim is
-  "certificate-gated rule discovery is sound and recovers most of the wheel," not "the learned
-  proposer is essential."
+  "certificate-gated structural rule discovery is sound and recovers most of the wheel," not
+  "the learned proposer is essential."
 + *Cross-task verifier-RL comparison missing (Finding 3).* The pipeline supports it; the
   comparison is not in canonical results yet.
 + *Single-domain headline (Finding 1).* Hybrid-wins is demonstrated on prime gaps only.
@@ -544,7 +548,7 @@ goal is that every #placeholder[...] marker in the body resolves to one of these
     [E1.1], [Random-rule gate at matched verifier-call budget], [2d], [C1],
     [E1.2], [Replicate Finding 1 on `grid_path` with admissible-heuristic gate], [3-4d], [C1],
     [E1.3], [Investigate learned-wheel calibration tradeoff], [1d], [C1],
-    [E1.4], [CIs across $gt.eq 5$ seeds for 45.12 $arrow.r$ 68.87 delta], [0.5d], [C1],
+    [E1.4], [CIs across $gt.eq 5$ seeds for 45.12 $arrow.r$ 67.19 delta], [0.5d], [C1],
     [E2.1], [Random-rule-proposer baseline at fixed budget], [2d], [C2],
     [E2.2], [Exhaustive rule enumerator at same budget (where feasible)], [1d], [C2],
     [E2.3], [Conjunctive rule grammar extension], [3-5d], [C2],

@@ -166,6 +166,17 @@ static int expanded_rule_has_deterministic_certificate(const ExpandedRule *rule)
     return gcd_u32(rule->filter_modulus, candidate_residue) > 1u;
 }
 
+static uint32_t expanded_rule_structural_candidate_residue(const ExpandedRule *rule)
+{
+    if (rule->kind == RULE_FILTER_CANDIDATE_MOD) {
+        return rule->filter_residue;
+    }
+    if (rule->state_modulus == rule->filter_modulus) {
+        return (rule->state_residue + rule->filter_residue) % rule->filter_modulus;
+    }
+    return rule->filter_residue;
+}
+
 static void print_expanded_rule_text(FILE *fp, const ExpandedRule *rule)
 {
     if (expanded_rule_is_conditional(rule)) {
@@ -375,28 +386,40 @@ static void accumulate_expanded_rule_stats(ExpandedRuleSet *rules,
 
 static void fill_expanded_rule_features(const ExpandedRule *rule,
                                         uint32_t max_modulus,
-                                        size_t max_train_rejects,
                                         nn_real *features)
 {
-    double support_scale = max_train_rejects == 0 ? 1.0 : (double)max_train_rejects;
     double max_mod = max_modulus == 0 ? 1.0 : (double)max_modulus;
-    uint32_t common = gcd_u32(rule->filter_modulus, rule->filter_residue);
+    uint32_t state_common = expanded_rule_is_conditional(rule)
+                                ? gcd_u32(rule->state_modulus, rule->state_residue)
+                                : 0u;
+    uint32_t filter_common = gcd_u32(rule->filter_modulus, rule->filter_residue);
+    uint32_t candidate_residue = expanded_rule_structural_candidate_residue(rule);
+    uint32_t candidate_common = gcd_u32(rule->filter_modulus, candidate_residue);
 
-    features[0] = expanded_rule_is_conditional(rule)
+    features[0] = expanded_rule_is_conditional(rule) ? (nn_real)1 : (nn_real)0;
+    features[1] = expanded_rule_is_conditional(rule)
                       ? (nn_real)((double)rule->state_modulus / max_mod)
                       : (nn_real)0;
-    features[1] = expanded_rule_is_conditional(rule)
+    features[2] = expanded_rule_is_conditional(rule)
                       ? (nn_real)((double)rule->state_residue /
                                   (double)rule->state_modulus)
                       : (nn_real)0;
-    features[2] = expanded_rule_is_conditional(rule) ? (nn_real)0 : (nn_real)1;
-    features[3] = rule->kind == RULE_FILTER_GAP_MOD ? (nn_real)1 : (nn_real)0;
-    features[4] = (nn_real)((double)rule->filter_modulus / max_mod);
-    features[5] = (nn_real)((double)rule->filter_residue /
+    features[3] = expanded_rule_is_conditional(rule) && rule->state_residue == 0
+                      ? (nn_real)1
+                      : (nn_real)0;
+    features[4] = expanded_rule_is_conditional(rule)
+                      ? (nn_real)((double)state_common / (double)rule->state_modulus)
+                      : (nn_real)0;
+    features[5] = rule->kind == RULE_FILTER_GAP_MOD ? (nn_real)1 : (nn_real)0;
+    features[6] = (nn_real)((double)rule->filter_modulus / max_mod);
+    features[7] = (nn_real)((double)rule->filter_residue /
                             (double)rule->filter_modulus);
-    features[6] = (nn_real)((double)common / (double)rule->filter_modulus);
-    features[7] = (nn_real)((double)rule->train_rejects / support_scale);
-    features[8] = rule->train_false_rejections == 0 ? (nn_real)0 : (nn_real)1;
+    features[8] = rule->filter_residue == 0 ? (nn_real)1 : (nn_real)0;
+    features[9] = (nn_real)((double)filter_common / (double)rule->filter_modulus);
+    features[10] = rule->state_modulus == rule->filter_modulus ? (nn_real)1 : (nn_real)0;
+    features[11] = (nn_real)((double)candidate_residue /
+                             (double)rule->filter_modulus);
+    features[12] = (nn_real)((double)candidate_common / (double)rule->filter_modulus);
 }
 
 static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
@@ -431,7 +454,6 @@ static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
         ExpandedRule *rule = &rules->items[i];
         fill_expanded_rule_features(rule,
                                     max_modulus,
-                                    max_train_rejects,
                                     &inputs[i * RULE_SEARCH_FEATURE_COUNT]);
         targets[i] = rule->train_false_rejections == 0
                          ? (nn_real)((double)rule->train_rejects / support_scale)
@@ -491,18 +513,6 @@ static int compare_expanded_rules_model(const void *left, const void *right)
     }
     if ((double)a->model_score > (double)b->model_score) {
         return -1;
-    }
-    if (a->utility < b->utility) {
-        return 1;
-    }
-    if (a->utility > b->utility) {
-        return -1;
-    }
-    if (a->train_rejects != b->train_rejects) {
-        return a->train_rejects < b->train_rejects ? 1 : -1;
-    }
-    if (a->validation_rejects != b->validation_rejects) {
-        return a->validation_rejects < b->validation_rejects ? 1 : -1;
     }
     if (a->state_modulus != b->state_modulus) {
         return a->state_modulus < b->state_modulus ? -1 : 1;
@@ -767,6 +777,7 @@ static int write_expanded_rule_trace(const char *path,
                      "\"filter_modulus\":%u,\"filter_residue\":%u,"
                      "\"conditional\":%s,\"derived_divisibility\":%s,"
                      "\"deterministic_certificate\":%s,"
+                     "\"proposer_feature_set\":\"structural\","
                      "\"train_limit\":%zu,\"test_limit\":%zu,"
                      "\"train_rejects\":%zu,\"train_false_rejections\":%zu,"
                      "\"validation_rejects\":%zu,"
@@ -828,7 +839,8 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            "\"uncertified_rules\":%zu,"
            "\"accepted_rules\":%zu,\"accepted_conditional_rules\":%zu,"
            "\"accepted_candidate_rules\":%zu,\"accepted_gap_rules\":%zu,"
-           "\"false_rejections\":%zu,\"proposer_loss\":%.8f,"
+           "\"false_rejections\":%zu,\"proposer_feature_set\":\"structural\","
+           "\"proposer_loss\":%.8f,"
            "\"direct_exact\":%.8f,\"hand_wheel_exact\":%.8f,"
            "\"expanded_exact\":%.8f,\"expanded_mod\":%.8f,"
            "\"expanded_saved_pct\":%.8f}\n",
@@ -877,7 +889,7 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            metrics->accepted_conditional_rules,
            metrics->accepted_gap_rules,
            metrics->accepted_candidate_rules);
-    printf("  neural_rule_scorer_epochs=%u final_mse=%.6f\n",
+    printf("  neural_rule_scorer_epochs=%u feature_set=structural final_mse=%.6f\n",
            (uint32_t)RULE_SEARCH_SCORER_EPOCHS,
            metrics->proposer_loss);
     printf("  verifier diagnostics samples=%zu false_rejections=%zu\n",

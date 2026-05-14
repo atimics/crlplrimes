@@ -1199,6 +1199,70 @@ static int test_prime_gap_features_are_divisibility_flags(void)
            minimal_gap4[4] == (nn_real)0;
 }
 
+static int test_rule_proposer_features_are_structural(void)
+{
+    SymbolicRejectRule symbolic_a;
+    SymbolicRejectRule symbolic_b;
+    memset(&symbolic_a, 0, sizeof(symbolic_a));
+    memset(&symbolic_b, 0, sizeof(symbolic_b));
+    symbolic_a.modulus = 15;
+    symbolic_a.residue = 5;
+    symbolic_a.train_rejects = 10;
+    symbolic_a.validation_rejects = 20;
+    symbolic_b = symbolic_a;
+    symbolic_b.train_rejects = 200;
+    symbolic_b.validation_rejects = 400;
+
+    nn_real symbolic_features_a[SYMBOLIC_RULE_FEATURE_COUNT];
+    nn_real symbolic_features_b[SYMBOLIC_RULE_FEATURE_COUNT];
+    fill_symbolic_rule_features(&symbolic_a, symbolic_features_a);
+    fill_symbolic_rule_features(&symbolic_b, symbolic_features_b);
+
+    int ok = symbolic_features_a[0] > (nn_real)0 &&
+             symbolic_features_a[1] > (nn_real)0 &&
+             symbolic_features_a[2] == (nn_real)0 &&
+             symbolic_features_a[3] > (nn_real)0;
+    for (size_t i = 0; i < SYMBOLIC_RULE_FEATURE_COUNT; ++i) {
+        ok = ok && symbolic_features_a[i] == symbolic_features_b[i];
+    }
+
+    ExpandedRule expanded_a;
+    ExpandedRule expanded_b;
+    memset(&expanded_a, 0, sizeof(expanded_a));
+    memset(&expanded_b, 0, sizeof(expanded_b));
+    expanded_a.kind = RULE_FILTER_GAP_MOD;
+    expanded_a.state_modulus = 15;
+    expanded_a.state_residue = 4;
+    expanded_a.filter_modulus = 15;
+    expanded_a.filter_residue = 11;
+    expanded_a.train_rejects = 10;
+    expanded_a.train_false_rejections = 1;
+    expanded_a.validation_rejects = 20;
+    expanded_a.validation_false_rejections = 2;
+    expanded_b = expanded_a;
+    expanded_b.train_rejects = 500;
+    expanded_b.train_false_rejections = 0;
+    expanded_b.validation_rejects = 700;
+    expanded_b.validation_false_rejections = 0;
+
+    nn_real expanded_features_a[RULE_SEARCH_FEATURE_COUNT];
+    nn_real expanded_features_b[RULE_SEARCH_FEATURE_COUNT];
+    fill_expanded_rule_features(&expanded_a, 23, expanded_features_a);
+    fill_expanded_rule_features(&expanded_b, 23, expanded_features_b);
+
+    ok = ok && expanded_features_a[0] == (nn_real)1 &&
+         expanded_features_a[4] > (nn_real)0 &&
+         expanded_features_a[5] == (nn_real)1 &&
+         expanded_features_a[10] == (nn_real)1 &&
+         expanded_features_a[11] == (nn_real)0 &&
+         expanded_features_a[12] == (nn_real)1;
+    for (size_t i = 0; i < RULE_SEARCH_FEATURE_COUNT; ++i) {
+        ok = ok && expanded_features_a[i] == expanded_features_b[i];
+    }
+
+    return ok;
+}
+
 static int test_prime_gap_frequency_policy_is_smoothed(void)
 {
     GapDataset dataset;
@@ -1518,6 +1582,8 @@ int main(void)
           "prime-gap feature set defaults to minimal");
     check(test_prime_gap_features_are_divisibility_flags(),
           "prime-gap features are divisibility flags");
+    check(test_rule_proposer_features_are_structural(),
+          "rule proposer features are structural");
     check(test_prime_gap_frequency_policy_is_smoothed(),
           "prime-gap frequency policy is smoothed");
     check(test_prime_gap_conditioned_frequency_uses_residue_flags(),

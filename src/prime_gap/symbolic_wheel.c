@@ -91,20 +91,17 @@ uint32_t gcd_u32(uint32_t a, uint32_t b)
 }
 
 static void fill_symbolic_rule_features(const SymbolicRejectRule *rule,
-                                        size_t max_train_rejects,
                                         nn_real *features)
 {
     double modulus = (double)rule->modulus;
     double residue = (double)rule->residue;
     double max_modulus = (double)NN_SYMBOLIC_RULE_MAX_MOD;
-    double support_scale = max_train_rejects == 0 ? 1.0 : (double)max_train_rejects;
     uint32_t common = gcd_u32(rule->modulus, rule->residue);
 
     features[0] = (nn_real)(modulus / max_modulus);
     features[1] = (nn_real)(residue / modulus);
     features[2] = rule->residue == 0 ? (nn_real)1 : (nn_real)0;
     features[3] = (nn_real)((double)common / modulus);
-    features[4] = (nn_real)((double)rule->train_rejects / support_scale);
 }
 
 static int score_symbolic_rules_with_model(SymbolicRejectRule *rules,
@@ -130,9 +127,7 @@ static int score_symbolic_rules_with_model(SymbolicRejectRule *rules,
 
     double support_scale = max_train_rejects == 0 ? 1.0 : (double)max_train_rejects;
     for (size_t i = 0; i < count; ++i) {
-        fill_symbolic_rule_features(&rules[i],
-                                    max_train_rejects,
-                                    &inputs[i * SYMBOLIC_RULE_FEATURE_COUNT]);
+        fill_symbolic_rule_features(&rules[i], &inputs[i * SYMBOLIC_RULE_FEATURE_COUNT]);
         targets[i] = rules[i].domain_valid
                          ? (nn_real)((double)rules[i].train_rejects / support_scale)
                          : (nn_real)0;
@@ -188,12 +183,6 @@ static int compare_symbolic_rules(const void *left, const void *right)
     }
     if ((double)a->model_score > (double)b->model_score) {
         return -1;
-    }
-    if (a->train_rejects != b->train_rejects) {
-        return a->train_rejects < b->train_rejects ? 1 : -1;
-    }
-    if (a->validation_rejects != b->validation_rejects) {
-        return a->validation_rejects < b->validation_rejects ? 1 : -1;
     }
     if (a->modulus != b->modulus) {
         return a->modulus < b->modulus ? -1 : 1;
@@ -613,7 +602,7 @@ void print_symbolic_wheel_report(const SymbolicRuleSet *rules,
     printf("  grammar: reject candidate n when n > m and n %% m == r; m=3..%u\n",
            (uint32_t)NN_SYMBOLIC_RULE_MAX_MOD);
     printf("  proposer/verifier\n");
-    printf("    neural_rule_scorer_epochs=%u final_mse=%.6f\n",
+    printf("    neural_rule_scorer_epochs=%u feature_set=structural final_mse=%.6f\n",
            (uint32_t)SYMBOLIC_RULE_SCORER_EPOCHS,
            metrics.proposer_loss);
     printf("    proposed_rules=%zu domain_valid=%zu accepted=%zu max_rules=%u\n",

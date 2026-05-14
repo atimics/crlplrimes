@@ -4,8 +4,8 @@ This repository is a compact C neural-network library and an exact-verifier rese
 
 The repository develops three claims:
 
-1. **Hybrid wins under exact verification.** With residue-sieve features removed from the scorer input, the raw scorer reaches only **9.13%** top-1. Gating that same minimal-feature scorer with a fixed hand-wheel reaches **45.12%**, and gating it with the learned wheel reaches **68.87%** at 100% top-10, with ~6x lower model latency per sample on the canonical held-out benchmark. The gate contributes the bulk of the improvement; the scorer's role is to rank the residual after structurally impossible candidates have been pruned.
-2. **A certificate-gated proposer can discover sound symbolic gates.** A neural proposer over a tiny rule grammar, paired with a soundness-certificate verifier, produces **148 accepted rules out of 934 verified candidates with 0 false rejections**, recovering **69.40%** of wheel-equivalent verifier work without hand-coding the wheel. The soundness guarantee is a property of the certificate, not of training. How much of the recovery is attributable to *learning* (rather than to enumerate-then-filter) is an open question — see Limitations.
+1. **Hybrid wins under exact verification.** With residue-sieve features removed from the scorer input, the raw scorer reaches only **9.13%** top-1. Gating that same minimal-feature scorer with a fixed hand-wheel reaches **45.12%**, and gating it with the learned wheel reaches **67.19%** at 100% top-10, with ~6x lower model latency per sample on the canonical held-out benchmark. The gate contributes the bulk of the improvement; the scorer's role is to rank the residual after structurally impossible candidates have been pruned.
+2. **A certificate-gated proposer can discover sound symbolic gates.** A structural-only neural proposer over a tiny rule grammar, paired with a soundness-certificate verifier, produces **148 accepted rules out of 934 verified candidates with 0 false rejections**, recovering **69.40%** of wheel-equivalent verifier work without hand-coding the wheel. The proposer sees rule shape only (`m`, residues, zero indicators, gcd ratios, derived candidate residue), while empirical support is only the training target. The soundness guarantee is a property of the certificate, not of training. How much of the recovery is attributable to *learning* (rather than to enumerate-then-filter) is an open question — see Limitations.
 3. **KL-regularized verifier RL prevents calibration collapse on the prime-gap task.** Strict policy-gradient RL on exact rewards inflates logit scale rather than improving ranking (minimal-feature ECE 0.0704 -> 0.1271 with top-1 unchanged). Adding a KL term toward the supervised prior plus an entropy bonus restores calibration (ECE 0.0604) at the same top-k. Whether the same failure mode and fix transfer to `grid_path` and `delayed_claim` is planned work, not yet demonstrated.
 
 Prime gaps are used as **the experiment domain**, not the goal. They give us a compact, totally-ordered candidate space with a fast deterministic verifier, exact labels at all scales, and a known classical baseline (sieves) we cannot beat — which is precisely what makes them a clean substrate for studying learned proposal policies under perfect feedback. Two other exact-verifier tasks (`delayed_claim`, `grid_path`) are included to show the protocol generalizes.
@@ -16,11 +16,11 @@ Canonical benchmark: `sample_count=30000` held-out states with `train_limit=1,00
 
 | Model / mode | Top-1 | Top-10 | NLL | ECE | Mean rank | Model ms/sample |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Minimal scorer, no gate | 9.13% | 78.01% | 2.9994 | 0.1076 | 7.1951 | 0.0354 |
-| Minimal scorer + hand-wheel gate | 45.12% | 99.77% | 1.5902 | 0.0834 | 2.2015 | 0.0361 |
-| **Minimal scorer + learned-wheel gate** | **68.87%** | **100.00%** | **1.0056** | 0.1402 | **1.4544** | **0.0059** |
+| Minimal scorer, no gate | 9.13% | 78.01% | 2.9994 | 0.1076 | 7.1951 | 0.0364 |
+| Minimal scorer + hand-wheel gate | 45.12% | 99.77% | 1.5902 | 0.0834 | 2.2015 | 0.0376 |
+| **Minimal scorer + learned-wheel gate** | **67.19%** | **100.00%** | **1.0457** | 0.1335 | **1.4928** | **0.0061** |
 
-The same network does the scoring in all three rows; only the gate changes. The scorer input is the clean minimal feature set `[log(p), normalized_gap, overflow_flag]`; precomputed residue divisibility flags are disabled by default. The fixed hand-wheel (small-prime divisibility filter) supplies the small-prime modular structure that the minimal scorer cannot recover from `p` and `g` alone. The learned-wheel gate — produced by a neural proposer trained against the rule-grammar verifier — adds another **23.7 percentage points** of top-1 on top of the hand-wheel. The old 45.12% raw-scorer headline is now treated as a leakage ablation: it came from handing the scorer precomputed small-prime divisibility flags.
+The same network does the scoring in all three rows; only the gate changes. The scorer input is the clean minimal feature set `[log(p), normalized_gap, overflow_flag]`; precomputed residue divisibility flags are disabled by default. The fixed hand-wheel (small-prime divisibility filter) supplies the small-prime modular structure that the minimal scorer cannot recover from `p` and `g` alone. The learned-wheel gate — produced by a structural-only neural proposer trained against the rule-grammar verifier — adds another **22.1 percentage points** of top-1 on top of the hand-wheel. The old 45.12% raw-scorer headline is now treated as a leakage ablation: it came from handing the scorer precomputed small-prime divisibility flags.
 
 The improvement is not a calibration trick and not a scoring trick. It is structural: the gate prunes the candidate set to one the scorer can rank well, and the cheap mod-arithmetic of the gate replaces the dominant cost of forwarding the scorer over impossible candidates.
 
@@ -67,9 +67,9 @@ Same scorer, three gates, same benchmark:
 | --- | ---: | ---: | ---: |
 | None (raw candidate space) | 9.13% | 78.01% | 2.9994 |
 | Hand-wheel (small-prime divisibility) | 45.12% | 99.77% | 1.5902 |
-| **Learned wheel** (certificate-checked rules) | **68.87%** | **100.00%** | **1.0056** |
+| **Learned wheel** (certificate-checked rules) | **67.19%** | **100.00%** | **1.0457** |
 
-The hand-wheel gate nearly saturates top-10 because almost every true next-prime gap survives small-prime filtering. The learned-wheel gate adds ~24pp of top-1 on top of the hand-wheel because the rule-search verifier accepts conditional rules of the form "if `p % m == a` then reject gap `b`," capturing structure a fixed wheel does not. The clean raw-to-learned delta is **9.13 -> 68.87** top-1; the former raw 45.12% figure is retained only as a full-sieve-feature leakage ablation.
+The hand-wheel gate nearly saturates top-10 because almost every true next-prime gap survives small-prime filtering. The learned-wheel gate adds ~22pp of top-1 on top of the hand-wheel because the rule-search verifier accepts conditional rules of the form "if `p % m == a` then reject gap `b`," capturing structure a fixed wheel does not. The clean raw-to-learned delta is **9.13 -> 67.19** top-1; the former raw 45.12% figure is retained only as a full-sieve-feature leakage ablation.
 
 ### Finding 2 — A certificate-gated proposer discovers sound symbolic gates
 
@@ -87,9 +87,9 @@ expanded exact:  2.20   ← average exact-verifier work after accepted rules
 saved:          69.40%
 ```
 
-The proposer is small (`crlp.rule_trace.v1` schema, scoring rule candidates with the same shared-scorer abstraction as gap actions). The discipline of the result is in the verifier, not the model: a rule is accepted only if a deterministic algebraic check certifies soundness across the support set, so zero false rejections is a property of the certificate, not of training.
+The proposer is small (`crlp.rule_trace.v1` schema, scoring rule candidates with the same shared-scorer abstraction as gap actions). Its input feature set is structural-only: condition kind, moduli, residues, zero-residue indicators, gcd ratios, and derived candidate residue. It does not receive `train_rejects`, validation support, utility, or false-rejection counters as features; those counts are labels and verifier diagnostics. The discipline of the result is in the verifier, not the model: a rule is accepted only if a deterministic algebraic check certifies soundness across the support set, so zero false rejections is a property of the certificate, not of training.
 
-**What this evidence does and does not show.** It shows that *a certificate-gated proposer* over this grammar produces a sound, useful rule set; it does **not** yet show that the *neural* proposer is contributing materially. The numbers above are consistent with the proposer ranking rules well, and they are also consistent with the verifier carrying the result on top of a near-random proposer. The defensible claim today is "certificate-gated rule discovery is sound and recovers most of the wheel"; the stronger "the learned proposer is essential" claim is open until the random-proposer-at-fixed-budget baseline runs. See Limitations.
+**What this evidence does and does not show.** It shows that *a certificate-gated structural proposer* over this grammar produces a sound, useful rule set without being handed empirical support. It does **not** yet show that the *neural* proposer is essential. The numbers above are consistent with the proposer learning enough structural regularity to rank useful rules, and they are also consistent with the verifier carrying the result on top of a near-random proposer. The defensible claim today is "certificate-gated structural rule discovery is sound and recovers most of the wheel"; the stronger "the learned proposer is essential" claim is open until the random-proposer-at-fixed-budget baseline runs. See Limitations.
 
 ### Finding 3 — KL-regularized verifier RL prevents calibration collapse
 
@@ -148,8 +148,8 @@ Detailed baselines:
 | Supervised minimal, temp-scaled | 1.20 | 9.13% | 78.01% | 2.8991 | 0.0459 | 0.1372 |
 | Full-sieve-feature ablation (leakage) | 1.00 | 45.12% | 99.77% | 1.5778 | 0.0743 | 0.4882 |
 | Supervised minimal + hand-wheel | 1.00 | 45.12% | 99.77% | 1.5576 | 0.0687 | 0.4347 |
-| **Supervised minimal + learned-wheel** | **1.00** | **68.87%** | **100.00%** | **1.0206** | 0.1686 | 0.5570 |
-| Learned-wheel trained on survivors | 1.00 | 68.87% | 100.00% | 1.0297 | 0.1312 | 0.6904 |
+| **Supervised minimal + learned-wheel** | **1.00** | **66.53%** | **100.00%** | **1.0701** | 0.1570 | 0.5465 |
+| Learned-wheel trained on survivors | 1.00 | 66.53% | 100.00% | 1.0759 | 0.1248 | 0.6612 |
 | Strict verifier RL | 1.00 | 9.13% | 78.01% | 3.0611 | 0.1271 | 0.2184 |
 | KL/entropy-regularized verifier RL | 1.00 | 9.13% | 78.01% | 2.9056 | 0.0604 | 0.1517 |
 
@@ -168,7 +168,7 @@ The interpretation is now sharper. Among raw-action-space scorers without residu
 
 ## Limitations and Next Work
 
-- **Random-proposer baseline at fixed verifier-call budget.** Finding 2 currently shows that *a certificate-gated proposer* recovers 69.40% of verifier work; it does not yet distinguish "the neural proposer found the rules" from "the certificate gate filtered a large enumeration." Running random and exhaustive rule proposers at the same budget is the missing experiment that elevates Finding 2 from "sound" to "the learned proposer is essential." This is two days of work and on the immediate roadmap.
+- **Random-proposer baseline at fixed verifier-call budget.** Finding 2 currently shows that *a certificate-gated structural proposer* recovers 69.40% of verifier work without support-count feature leakage; it does not yet distinguish "the neural proposer found the rules" from "the certificate gate filtered a large enumeration." Running random and exhaustive rule proposers at the same budget is the missing experiment that elevates Finding 2 from "sound" to "the learned proposer is essential." This is two days of work and on the immediate roadmap.
 - **Cross-task verifier-RL comparison.** Finding 3 (strict-vs-regularized RL on the prime-gap task) needs a matching run on `grid_path` and `delayed_claim` before it can be stated as a general property of sparse-exact-reward policy gradient. The pipeline supports it; the comparison is not in the canonical results yet.
 - **Hybrid baseline for a second domain.** Finding 1 is currently demonstrated on prime gaps only. `grid_path` admits a natural symbolic gate (legality + admissible-heuristic pruning); running it would extend the hybrid-wins claim past a single domain.
 - **Statistical rigor.** The default `make prime-gap-experiments` config currently runs 1 seed; the harness supports more (`PRIME_GAP_EXPERIMENT_SEEDS=...`). The minimal-vs-leakage, strict-vs-regularized, and hand-wheel-vs-learned-wheel deltas should be reported with confidence intervals across >=5 seeds.
@@ -302,13 +302,13 @@ score  = f(input)
 policy = softmax(scores across candidate gaps 2..256 plus an overflow action)
 ```
 
-The default `minimal` feature set intentionally omits precomputed residue divisibility flags. Use `--feature-set full` or `--full-features` only for the leakage/upper-bound ablation where the scorer sees the small-prime sieve flags directly. The run evaluates empirical, residue-conditioned, and linear minimal baselines, runs supervised feature ablations (log-only, gap-only, residue-only, full-sieve leakage), fits a scalar softmax temperature on a held-out validation slice, and compares strict and KL/entropy-regularized verifier-RL branches cloned from the same supervised checkpoint.
+The default `minimal` feature set intentionally omits precomputed residue divisibility flags. Use `--feature-set full` or `--full-features` only for the leakage/upper-bound ablation where the scorer sees the small-prime sieve flags directly. After a learned wheel has already pruned composites, those sieve flags are mostly dead on the survivor set, so they are diagnostic rather than a clean source of ranking signal. The run evaluates empirical, residue-conditioned, and linear minimal baselines, runs supervised feature ablations (log-only, gap-only, residue-only, full-sieve leakage), fits a scalar softmax temperature on a held-out validation slice, and compares strict and KL/entropy-regularized verifier-RL branches cloned from the same supervised checkpoint.
 
 ```sh
 make prime-rule-search
 ```
 
-Runs the rule-grammar experiment that produces Finding 2. The neural proposer scores rules of the form `if p % m == a then reject gap % m == b`; the verifier accepts only rules with a deterministic algebraic certificate. The JSONL trace uses schema `crlp.rule_trace.v1` and records grammar version, rule text, model score, verifier result, deterministic-certificate flag, accepted flag, support counts, and false-rejection counts.
+Runs the rule-grammar experiment that produces Finding 2. The neural proposer scores rules of the form `if p % m == a then reject gap % m == b`; its feature set is structural-only and excludes support counts, utility, and false-rejection counters. The verifier accepts only rules with a deterministic algebraic certificate. The JSONL trace uses schema `crlp.rule_trace.v1` and records grammar version, proposer feature set, rule text, model score, verifier result, deterministic-certificate flag, accepted flag, support counts, and false-rejection counts.
 
 CLI output of `make prime-gap` is split into sections:
 

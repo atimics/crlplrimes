@@ -55,9 +55,9 @@ Same scorer, three gates, default benchmark (`sample_count=30000`):
 
 - No gate, minimal features: 9.13% top-1, 78.01% top-10, 2.9994 NLL.
 - Hand-wheel gate, minimal features: 45.12% top-1, 99.77% top-10, 1.5902 NLL.
-- Learned-wheel gate, minimal features: 68.87% top-1, 100% top-10, 1.0056 NLL, ~6x lower model ms/sample.
+- Learned-wheel gate, minimal features: 67.19% top-1, 100% top-10, 1.0457 NLL, ~6x lower model ms/sample.
 
-The defensible deltas are now sharper: **9.13 -> 68.87** top-1 from clean raw scorer to learned-wheel hybrid, and **45.12 -> 68.87** from fixed hand-wheel to learned wheel. The former shows the symbolic gate doing the work once residue flags are removed from the scorer; the latter isolates the extra value of the learned rule set over a fixed small-prime wheel. The old 45.12% raw-scorer number is now labeled as a full-sieve-feature leakage ablation, not a headline result.
+The defensible deltas are now sharper: **9.13 -> 67.19** top-1 from clean raw scorer to learned-wheel hybrid, and **45.12 -> 67.19** from fixed hand-wheel to learned wheel. The former shows the symbolic gate doing the work once residue flags are removed from the scorer; the latter isolates the extra value of the learned rule set over a fixed small-prime wheel. The old 45.12% raw-scorer number is now labeled as a full-sieve-feature leakage ablation, not a headline result.
 
 ### Certificate-gated rule discovery is sound (load-bearing for Finding 2)
 
@@ -71,7 +71,7 @@ false rejections:     0
 direct exact work:  7.20  → after accepted rules: 2.20 (69.40% saved)
 ```
 
-Zero false rejections is a property of the certificate verifier, not of training, so the soundness guarantee does not depend on the scorer being well-trained. What the current evidence does *not* establish is how much of the recovery is attributable to the neural proposer versus to enumerate-then-filter — the numbers above are consistent with a random-or-uniform proposer reaching similar rule sets under the same verifier. The random-proposer-at-fixed-budget baseline is the experiment that resolves this; until then, the load-bearing claim is "certificate-gated rule discovery is sound and recovers most of the wheel," not "the learned proposer is essential."
+The proposer now receives only structural rule features: condition kind, moduli, residues, zero-residue indicators, gcd ratios, and derived candidate residue. It does not receive `train_rejects`, validation support, utility, or false-rejection counters as inputs; empirical support is the target it is asked to predict. Zero false rejections is a property of the certificate verifier, not of training, so the soundness guarantee does not depend on the scorer being well-trained. What the current evidence does *not* establish is how much of the recovery is attributable to the neural proposer versus to enumerate-then-filter — the numbers above are consistent with a random-or-uniform proposer reaching similar rule sets under the same verifier. The random-proposer-at-fixed-budget baseline is the experiment that resolves this; until then, the load-bearing claim is "certificate-gated structural rule discovery is sound and recovers most of the wheel," not "the learned proposer is essential."
 
 ### Calibration collapse and the KL fix on prime-gap (load-bearing for Finding 3)
 
@@ -130,7 +130,7 @@ Verifier diagnostics (informative, not headline):
 
 Ordered roughly by priority for the writeup.
 
-1. **Random-rule-proposer baseline at fixed verifier-call budget.** Required to disentangle "neural proposer found useful rules" from "the certificate gate did all the work." Also run an exhaustive enumerator at the same budget. Two days of work.
+1. **Random-rule-proposer baseline at fixed verifier-call budget.** Required to disentangle "neural proposer found useful structural regularities" from "the certificate gate did all the work." Also run an exhaustive enumerator at the same budget. Two days of work.
 2. **Multi-seed deltas with confidence intervals.** Default sweep currently runs 1 seed; harness supports more (`PRIME_GAP_EXPERIMENT_SEEDS=...`). Report 95% CIs on the minimal-vs-leakage, strict-vs-regularized, and hand-wheel-vs-learned-wheel deltas across >=5 seeds.
 3. **Reliability diagrams.** `crlp.compare.v1` already carries `reliability_bins`; render them.
 4. **Calibration sweep over larger held-out ranges.** Expand the KL/entropy grid; check whether the validation-selected weights are stable across prime-size buckets.
