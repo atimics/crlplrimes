@@ -1,8 +1,8 @@
-/* Candidate feature encoding, ranking helpers, and wheel verifier work accounting.
- * Included by ../nn_tasks_prime_gap.c; not compiled as a standalone translation unit.
- */
+/* Candidate feature encoding, ranking helpers, and wheel verifier work accounting. */
 
-static double gap_error_for_action(size_t action, uint32_t true_gap)
+#include "internal.h"
+
+double gap_error_for_action(size_t action, uint32_t true_gap)
 {
     if (action_is_overflow(action) && true_gap > G_MAX) {
         return 0.0;
@@ -11,10 +11,10 @@ static double gap_error_for_action(size_t action, uint32_t true_gap)
     return fabs((double)action_gap(action) - (double)true_gap);
 }
 
-static void fill_candidate_features_masked(nn_real *inputs,
-                                           uint32_t p,
-                                           double log_scale,
-                                           const FeatureMask *mask)
+void fill_candidate_features_masked(nn_real *inputs,
+                                    uint32_t p,
+                                    double log_scale,
+                                    const FeatureMask *mask)
 {
     if (mask == NULL) {
         mask = &FEATURE_MASK_FULL;
@@ -47,7 +47,7 @@ static void fill_candidate_features_masked(nn_real *inputs,
     }
 }
 
-static size_t residue_signature(uint32_t p, size_t action, size_t mod_count)
+size_t residue_signature(uint32_t p, size_t action, size_t mod_count)
 {
     if (action_is_overflow(action)) {
         return (size_t)1u << mod_count;
@@ -80,9 +80,9 @@ static int feature_wheel_rejects_action(uint32_t p, size_t action)
     return 0;
 }
 
-static void apply_feature_wheel_filter(uint32_t p,
-                                       nn_real *scores,
-                                       nn_real *probabilities)
+void apply_feature_wheel_filter(uint32_t p,
+                                nn_real *scores,
+                                nn_real *probabilities)
 {
     double survivor_probability = 0.0;
     size_t survivors = 0;
@@ -113,19 +113,17 @@ static void apply_feature_wheel_filter(uint32_t p,
     }
 }
 
-#if defined(NN_ENABLE_TEST_API)
-static void fill_candidate_features(nn_real *inputs, uint32_t p, double log_scale)
+void fill_candidate_features(nn_real *inputs, uint32_t p, double log_scale)
 {
     fill_candidate_features_masked(inputs, p, log_scale, &FEATURE_MASK_FULL);
 }
-#endif
 
-static void rank_actions(const nn_real *scores, size_t *ranked)
+void rank_actions(const nn_real *scores, size_t *ranked)
 {
     nn_rank_action_scores(scores, ACTION_COUNT, ranked);
 }
 
-static size_t true_rank(const size_t *ranked, size_t true_action)
+size_t true_rank(const size_t *ranked, size_t true_action)
 {
     for (size_t i = 0; i < ACTION_COUNT; ++i) {
         if (ranked[i] == true_action) {
@@ -136,7 +134,7 @@ static size_t true_rank(const size_t *ranked, size_t true_action)
     return ACTION_COUNT;
 }
 
-static size_t proposal_steps_with_topk(const size_t *ranked, size_t top_k, size_t true_action)
+size_t proposal_steps_with_topk(const size_t *ranked, size_t top_k, size_t true_action)
 {
     uint8_t tried[ACTION_COUNT] = {0};
     size_t steps = 0;
@@ -237,7 +235,7 @@ static int wheel_scan_to_gap_cached(const Sieve *sieve,
     return 0;
 }
 
-static VerifierWork direct_scan_work(uint32_t true_gap)
+VerifierWork direct_scan_work(uint32_t true_gap)
 {
     VerifierWork work;
     work.candidates = true_gap / 2u;
@@ -246,7 +244,7 @@ static VerifierWork direct_scan_work(uint32_t true_gap)
     return work;
 }
 
-static VerifierWork wheel_scan_work(const Sieve *sieve, uint32_t p, uint32_t true_gap)
+VerifierWork wheel_scan_work(const Sieve *sieve, uint32_t p, uint32_t true_gap)
 {
     uint8_t tested[EXACT_ACTION_COUNT] = {0};
     uint8_t prime_result[EXACT_ACTION_COUNT] = {0};
@@ -256,11 +254,11 @@ static VerifierWork wheel_scan_work(const Sieve *sieve, uint32_t p, uint32_t tru
     return work;
 }
 
-static VerifierWork assisted_wheel_work(const Sieve *sieve,
-                                        uint32_t p,
-                                        uint32_t true_gap,
-                                        const size_t *ranked,
-                                        size_t top_k)
+VerifierWork assisted_wheel_work(const Sieve *sieve,
+                                 uint32_t p,
+                                 uint32_t true_gap,
+                                 const size_t *ranked,
+                                 size_t top_k)
 {
     uint8_t tested[EXACT_ACTION_COUNT] = {0};
     uint8_t prime_result[EXACT_ACTION_COUNT] = {0};
@@ -289,4 +287,3 @@ static VerifierWork assisted_wheel_work(const Sieve *sieve,
     wheel_scan_to_gap_cached(sieve, p, true_gap, tested, prime_result, &work);
     return work;
 }
-

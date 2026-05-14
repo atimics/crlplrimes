@@ -1,9 +1,9 @@
-/* Prime sieve, dataset construction, ordering helpers, and action/gap mapping.
- * Included by ../nn_tasks_prime_gap.c; not compiled as a standalone translation unit.
- */
+/* Prime sieve, dataset construction, ordering helpers, and action/gap mapping. */
+
+#include "internal.h"
 
 
-static uint32_t validation_start_limit(uint32_t train_limit)
+uint32_t validation_start_limit(uint32_t train_limit)
 {
     uint32_t holdout = train_limit / 5u;
     if (holdout == 0 || holdout >= train_limit - 3u) {
@@ -12,14 +12,14 @@ static uint32_t validation_start_limit(uint32_t train_limit)
     return train_limit - holdout;
 }
 
-static void free_sieve(Sieve *sieve)
+void free_sieve(Sieve *sieve)
 {
     free(sieve->composite);
     free(sieve->primes);
     memset(sieve, 0, sizeof(*sieve));
 }
 
-static int build_sieve(uint32_t limit, Sieve *sieve)
+int build_sieve(uint32_t limit, Sieve *sieve)
 {
     memset(sieve, 0, sizeof(*sieve));
     sieve->limit = limit;
@@ -63,19 +63,19 @@ static int build_sieve(uint32_t limit, Sieve *sieve)
     return 1;
 }
 
-static int is_prime_sieve(const Sieve *sieve, uint32_t n)
+int is_prime_sieve(const Sieve *sieve, uint32_t n)
 {
     return n <= sieve->limit && n >= 2 && !sieve->composite[n];
 }
 
-static void free_gap_dataset(GapDataset *dataset)
+void free_gap_dataset(GapDataset *dataset)
 {
     free(dataset->prime);
     free(dataset->gap);
     memset(dataset, 0, sizeof(*dataset));
 }
 
-static int append_gap(GapDataset *dataset, uint32_t prime, uint32_t gap)
+int append_gap(GapDataset *dataset, uint32_t prime, uint32_t gap)
 {
     if (dataset->count == dataset->capacity) {
         size_t next_capacity = dataset->capacity == 0 ? 1024 : dataset->capacity * 2;
@@ -105,12 +105,12 @@ static int append_gap(GapDataset *dataset, uint32_t prime, uint32_t gap)
     return 1;
 }
 
-static int build_gap_datasets(const Sieve *sieve,
-                              uint32_t train_limit,
-                              uint32_t test_limit,
-                              GapDataset *train,
-                              GapDataset *validation,
-                              GapDataset *test)
+int build_gap_datasets(const Sieve *sieve,
+                       uint32_t train_limit,
+                       uint32_t test_limit,
+                       GapDataset *train,
+                       GapDataset *validation,
+                       GapDataset *test)
 {
     memset(train, 0, sizeof(*train));
     memset(validation, 0, sizeof(*validation));
@@ -156,7 +156,7 @@ static int build_gap_datasets(const Sieve *sieve,
     return 1;
 }
 
-static void shuffle_order(size_t *order, size_t count, uint32_t *rng)
+void shuffle_order(size_t *order, size_t count, uint32_t *rng)
 {
     for (size_t i = count; i > 1; --i) {
         size_t j = rng_bounded(rng, i);
@@ -166,14 +166,14 @@ static void shuffle_order(size_t *order, size_t count, uint32_t *rng)
     }
 }
 
-static void fill_order(size_t *order, size_t count)
+void fill_order(size_t *order, size_t count)
 {
     for (size_t i = 0; i < count; ++i) {
         order[i] = i;
     }
 }
 
-static size_t action_gap(size_t action)
+size_t action_gap(size_t action)
 {
     if (action == OVERFLOW_ACTION) {
         return G_MAX + 2;
@@ -182,7 +182,7 @@ static size_t action_gap(size_t action)
     return (action + 1) * 2;
 }
 
-static size_t gap_to_action(uint32_t gap)
+size_t gap_to_action(uint32_t gap)
 {
     if (gap > G_MAX) {
         return OVERFLOW_ACTION;
@@ -191,8 +191,7 @@ static size_t gap_to_action(uint32_t gap)
     return (size_t)(gap / 2u - 1u);
 }
 
-static int action_is_overflow(size_t action)
+int action_is_overflow(size_t action)
 {
     return action == OVERFLOW_ACTION;
 }
-

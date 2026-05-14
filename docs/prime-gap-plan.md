@@ -1,40 +1,33 @@
-# Prime-Gap Proposal Policy Plan
+# Prime-Gap Experiment Plan
 
-## Framing
+This document covers the prime-gap experiments specifically. The repository-level thesis is in `README.md` — hybrid neural-symbolic scoring under exact verification, with three findings (certificate-gating dominates raw scoring, the symbolic gate can be learned, KL-regularized RL prevents calibration collapse). Prime gaps are the load-bearing benchmark for that thesis; this plan tracks the work that runs on top of them.
 
-This is a verifier-guided learning environment, not an attempt to beat deterministic prime generation.
+## Why Primes Are the Substrate
 
-The deterministic sieve/verifier is the oracle. It gives us:
+Prime gaps give the project four properties that most exact-verifier toy domains lack:
 
-- exact labels for supervised warm start
-- exact rewards for verifier-guided updates
-- exact evaluation of every proposal
-- a known baseline for how inefficient the neural policy is
+- A fast deterministic verifier at all sizes (segmented sieves, wheel filters, block proofs).
+- A compact, totally-ordered candidate space (gaps `2..256` plus an overflow action).
+- An exhausted classical baseline — the sieve cannot be beaten by a small neural net, which sharpens the question to "what does the neural component *add* under perfect feedback?"
+- Rich algebraic structure (residue classes, divisibility, certificates) that a small rule grammar can exploit, supplying the learned symbolic gate in Finding 2.
 
-The neural network's job is to learn a proposal distribution:
+We are not trying to find primes faster. We use primes as a clean exact-verifier domain for studying learned proposal policies and learned symbolic filters under perfect mathematical feedback.
 
-```text
-policy(gap_action | current_prime)
-```
+## Implementation Layout
 
-The primary question is whether a small C neural network can learn and generalize useful structure in prime-gap vectors under perfect mathematical feedback.
+The prime-gap implementation is now a real module split under `src/prime_gap/`:
 
-## What We Have Learned
+- `data.c`: sieve construction, train/validation/test split generation, action/gap mapping.
+- `features.c`: candidate feature encoding, ranking helpers, wheel-verifier work accounting.
+- `symbolic_wheel.c`: learned symbolic-wheel discovery, persistence, and reporting.
+- `rule_search.c`: expanded rule grammar, certificate-gated selection, rule trace output.
+- `block_verifier.c`: segmented block-verifier diagnostics and assisted block scans.
+- `eval.c`: policy sampling, calibration metrics, model evaluation, traces, baselines.
+- `train.c`: supervised, pairwise-ranking, verifier-RL, and ablation training loops.
+- `run.c`: main prime-gap experiment orchestration.
+- `replay_compare.c`: trace replay and checkpoint comparison CLIs.
 
-The model learns prime-gap structure.
-
-Across the current split sweep, supervised training moves the model from useless ranking to strong proposal quality:
-
-- top-1 action accuracy roughly 39% to 45%
-- top-5 roughly 92% to 95%
-- top-10 roughly 99%
-- average rank/proposal work drops from about 7 to 8 positions to about 2 to 3
-
-That means the model is learning a real ranking prior over gap actions.
-
-The model does not reduce exact next-prime verification work under the verifier models tested so far.
-
-This is not a failure of the capability experiment. It clarifies the contract: exact next-prime verification requires proving all earlier candidates composite. Classical algorithms already do that proof as part of finding the prime.
+`src/prime_gap/internal.h` is the private contract between those modules. `src/nn_tasks_prime_gap.c` is retained as a test-only module index, while production builds compile `src/prime_gap/*.c` separately.
 
 ## Avoid This Misframing
 
@@ -47,107 +40,101 @@ We train a neural network to find primes faster than a sieve.
 Use this framing instead:
 
 ```text
-We use primes as a compact exact-verifier domain for studying learned proposal policies.
-The verifier is the oracle and reward source. The neural net is evaluated by proposal quality,
-generalization, calibration, and response to verifier-guided training.
+Primes are a compact exact-verifier domain for studying certificate-gated hybrid
+scoring. The verifier is the oracle and reward source. The neural components
+are evaluated by (a) ranking quality on the gated candidate set,
+(b) calibration under verifier-guided training, and (c) the soundness and
+coverage of the rules the rule-search proposer discovers.
 ```
+
+## What We Have Learned
+
+### Hybrid wins (load-bearing for Finding 1)
+
+Same scorer, three gates, default benchmark (`sample_count=30000`):
+
+- No gate: 45.12% top-1, 99.37% top-10, 1.6691 NLL.
+- Hand-wheel gate: 44.60% top-1, 100% top-10, 1.3775 NLL.
+- Learned-wheel gate: 68.87% top-1, 100% top-10, 1.0302 NLL, ~8× lower model ms/sample.
+
+The defensible delta is **44.60 → 68.87** top-1: roughly 24 percentage points of improvement attributable to replacing a fixed wheel with the learned rule set, on the same scorer. The 45.12 → 68.87 number combines that delta with the gain from having any gate at all, which inflates the apparent effect. The hidden-network advantage over a linear scorer on the raw candidate space is real but small (matched top-1, ~0.05 NLL gain, ~0.3pp top-10), so the load-bearing claim is "the gate matters," not "the scorer is deep."
+
+### Certificate-gated rule discovery is sound (load-bearing for Finding 2)
+
+`prime_rule_search` on the canonical run:
+
+```text
+proposed:        25,122 rules
+verified:           934   ← certificate check passed
+accepted gap:       148   ← survived support + false-rejection screens
+false rejections:     0
+direct exact work:  7.20  → after accepted rules: 2.20 (69.40% saved)
+```
+
+Zero false rejections is a property of the certificate verifier, not of training, so the soundness guarantee does not depend on the scorer being well-trained. What the current evidence does *not* establish is how much of the recovery is attributable to the neural proposer versus to enumerate-then-filter — the numbers above are consistent with a random-or-uniform proposer reaching similar rule sets under the same verifier. The random-proposer-at-fixed-budget baseline is the experiment that resolves this; until then, the load-bearing claim is "certificate-gated rule discovery is sound and recovers most of the wheel," not "the learned proposer is essential."
+
+### Calibration collapse and the KL fix on prime-gap (load-bearing for Finding 3)
+
+From the same supervised checkpoint:
+
+- Supervised: ECE 0.0743, T=1.20 after rescaling.
+- Strict verifier RL: ECE 0.3100 unscaled, needs T=2.50 to recover.
+- KL/entropy-regularized RL: ECE 0.0821 unscaled, T=1.20 after rescaling.
+
+Ranking (top-1, top-10) is essentially unchanged across all three. The RL story is therefore not "RL improves the policy" — it is "naive RL breaks calibration on this task; the standard RLHF-style regularizer prevents that." Whether the same failure mode and fix transfer to `grid_path` and `delayed_claim` is open work, not yet in the canonical results.
+
+### Verification is still classical
+
+Model-assisted exact verification does not beat wheel or block verification, because wrong proposals add proof obligations. This is expected for exact next-prime verification and clarifies the contribution: the value is in the gated-candidate-set ranking, not in replacing the verifier.
 
 ## Primary Metrics
 
-Capability metrics:
+Capability:
 
 - top-1/top-5/top-10 gap-action accuracy
-- rank of the true action
-- mean reciprocal rank
-- mean absolute gap error
-- negative log likelihood on held-out ranges
-- probability assigned to the true gap
-- calibration of policy probabilities
-- high-confidence coverage and accuracy
+- rank of the true action, MRR, mean absolute gap error
+- NLL on held-out ranges, probability assigned to the true gap
 - generalization by prime-size bucket
 - sample efficiency
 - supervised-only vs verifier-guided fine-tuning
 
-Ablation metrics:
+Calibration:
+
+- top-1 confidence, correct vs incorrect confidence
+- ECE, high-confidence coverage and accuracy
+- post-hoc temperature
+- reliability bins (stored in `crlp.compare.v1`; not yet plotted in README)
+
+Symbolic gate (rule search):
+
+- proposed / verified / accepted rule counts
+- false-rejection rate (must remain zero by construction)
+- verifier work saved versus hand-wheel and versus direct scan
+
+Ablations:
 
 - empirical gap-frequency baseline
-- log-only candidate scorer
-- gap-only candidate scorer
-- candidate residue-only scorer
-- full scorer
+- log-only, gap-only, candidate-residue-only scorers
+- linear full-feature scorer (sharp baseline; matches hidden network on top-1)
+- pairwise-ranking ablation
 
-Verifier diagnostics:
+Verifier diagnostics (informative, not headline):
 
 - direct scan exact primality probes
 - wheel-filtered exact probes
 - segmented block-verifier cost
 - model-assisted verifier cost
 
-Verifier diagnostics are useful, but they are not the headline success criterion.
+## Open Work
 
-## Current Result
+Ordered roughly by priority for the writeup.
 
-The learned policy is a strong ranker.
-
-The stronger baselines sharpen the claim. A residue-conditioned frequency table gets to 40.11%
-top-1 and 93.04% top-10 on the default held-out slice, which confirms that small-prime residue
-features carry most of the ranking signal. A linear full-feature softmax scorer is stronger still:
-after temperature scaling it reaches 45.12% top-1, 99.49% top-10, 1.5721 NLL, and 0.0660 ECE.
-The hidden full scorer still has the best top-10/NLL in the default supervised run, but the margin
-over the linear scorer is modest.
-
-The new ablation results separate ranking from calibrated probability estimation. Candidate residue
-features alone can rank well because they expose a learned soft sieve, but their probability estimates
-are poorly calibrated. The full feature set improves held-out negative log likelihood and true-action
-probability while preserving the strong top-k ranking behavior.
-
-Post-hoc temperature scaling now uses a held-out validation slice from the high end of the training
-range instead of refitting on the training rows. Strict verifier RL still mostly creates a logit-scale
-problem: on the default split it keeps top-1 at 45.12%, but pushes ECE to 0.3100 and selects a soft
-temperature of 2.50.
-
-KL/entropy-regularized RL is the cleaner training-side fix. With both strict and regularized RL
-starting from the same cloned supervised checkpoint, the regularized branch keeps top-10 at 99.75%,
-reduces unscaled NLL from 2.3612 to 1.5878, and reduces unscaled ECE from 0.3100 to 0.0821.
-Temperature scaling still helps, but the selected temperature falls back to 1.20 instead of 2.50,
-which confirms that the regularizer prevents most of the post-RL logit inflation.
-
-Regularization weights are now CLI arguments, and `make prime-gap-regularization-sweep` runs a
-small default-range grid so the calibration/ranking tradeoff can be checked without editing code.
-Runs are also seedable, and `make prime-gap-experiments` now drives supervised epoch sweeps plus
-regularization sweeps through a parser that writes CSV and Markdown summaries. Its selected
-regularization row is chosen by validation NLL across the configured seeds.
-
-The deterministic verifier remains the correctness mechanism.
-
-Model-assisted exact verification currently does not beat wheel or block verification, because wrong proposals create extra proof obligations. This is expected for exact next-prime verification.
-
-## Next Work
-
-1. Improve calibration.
-   - expand the KL/entropy sweep across larger held-out ranges
-   - compare validation-selected regularization weights across multiple seeds and held-out ranges
-
-2. Add stronger verifier-aware baselines.
-   - hand-coded wheel ranking
-   - linear scorer with explicit wheel-survivor features
-   - conditioned frequency over larger residue signatures
-
-3. Expand ablations.
-   - different small-prime feature sets
-   - remove overflow action
-   - train on wheel survivors only
-
-4. Add RL-only experiments.
-   - no supervised warm start
-   - strict reward only
-   - entropy bonus
-   - baseline/advantage variants
-
-5. Add capability-oriented task variants.
-   - find any prime after `p`
-   - rank prime candidates in a fixed interval
-   - rank wheel-surviving candidates only
-   - predict overflow probability for larger gaps
-
-The most promising next implementation is calibration improvement. The current metrics show the policy can rank candidates well, but confidence is not yet a reliable probability of correctness.
+1. **Random-rule-proposer baseline at fixed verifier-call budget.** Required to disentangle "neural proposer found useful rules" from "the certificate gate did all the work." Also run an exhaustive enumerator at the same budget. Two days of work.
+2. **Multi-seed deltas with confidence intervals.** Default sweep currently runs 2 seeds for 1 epoch; harness supports more (`PRIME_GAP_EXPERIMENT_SEEDS=...`). Report 95% CIs on the supervised-vs-linear, strict-vs-regularized, and raw-vs-learned-wheel deltas across ≥5 seeds.
+3. **Reliability diagrams.** `crlp.compare.v1` already carries `reliability_bins`; render them.
+4. **Calibration sweep over larger held-out ranges.** Expand the KL/entropy grid; check whether the validation-selected weights are stable across prime-size buckets.
+5. **Stronger verifier-aware baselines.** Hand-coded wheel ranking, linear scorer with explicit wheel-survivor features, conditioned frequency over larger residue signatures.
+6. **Hybrid baseline for grid_path.** A natural symbolic gate (legality + admissible heuristic pruning) would extend Finding 1 to a second domain and reduce the single-domain risk of the headline claim.
+7. **Expanded ablations.** Different small-prime feature sets, remove overflow action, train on wheel survivors only.
+8. **RL-only experiments.** No supervised warm start, strict-only, entropy-only, baseline/advantage variants. Useful for triangulating the calibration-collapse story.
+9. **Capability-oriented task variants.** Find any prime after `p`, rank prime candidates in a fixed interval, rank wheel-surviving candidates only, predict overflow probability for larger gaps.

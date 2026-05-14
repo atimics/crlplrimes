@@ -1,6 +1,6 @@
-/* Main prime-gap experiment CLI orchestration.
- * Included by ../nn_tasks_prime_gap.c; not compiled as a standalone translation unit.
- */
+/* Main prime-gap experiment CLI orchestration. */
+
+#include "internal.h"
 
 int nn_prime_gap_main(int argc, char **argv)
 {

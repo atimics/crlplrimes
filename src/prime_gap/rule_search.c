@@ -1,6 +1,6 @@
-/* Expanded rule grammar, verifier-gated rule selection, trace writing, and CLI entry point.
- * Included by ../nn_tasks_prime_gap.c; not compiled as a standalone translation unit.
- */
+/* Expanded rule grammar, verifier-gated rule selection, trace writing, and CLI entry point. */
+
+#include "internal.h"
 
 static RuleSearchConfig default_rule_search_config(void)
 {
@@ -994,4 +994,3 @@ int nn_prime_rule_search_main(int argc, char **argv)
     free_sieve(&sieve);
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
-

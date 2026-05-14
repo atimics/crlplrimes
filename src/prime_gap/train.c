@@ -1,18 +1,18 @@
-/* Supervised, ranking, verifier-RL, and ablation training loops.
- * Included by ../nn_tasks_prime_gap.c; not compiled as a standalone translation unit.
- */
+/* Supervised, ranking, verifier-RL, and ablation training loops. */
 
-static int train_supervised(NeuralNet *net,
-                            const char *label,
-                            const GapDataset *dataset,
-                            size_t max_states,
-                            size_t epochs,
-                            nn_real learning_rate,
-                            double log_scale,
-                            const FeatureMask *mask,
-                            nn_real *candidate_inputs,
-                            size_t *order,
-                            uint32_t *rng)
+#include "internal.h"
+
+int train_supervised(NeuralNet *net,
+                     const char *label,
+                     const GapDataset *dataset,
+                     size_t max_states,
+                     size_t epochs,
+                     nn_real learning_rate,
+                     double log_scale,
+                     const FeatureMask *mask,
+                     nn_real *candidate_inputs,
+                     size_t *order,
+                     uint32_t *rng)
 {
     size_t train_steps = dataset->count;
     if (max_states != 0 && max_states < train_steps) {
@@ -50,17 +50,17 @@ static int train_supervised(NeuralNet *net,
     return 1;
 }
 
-static int train_pairwise_ranker(NeuralNet *net,
-                                 const char *label,
-                                 const GapDataset *dataset,
-                                 size_t max_states,
-                                 size_t epochs,
-                                 nn_real learning_rate,
-                                 double log_scale,
-                                 const FeatureMask *mask,
-                                 nn_real *candidate_inputs,
-                                 size_t *order,
-                                 uint32_t *rng)
+int train_pairwise_ranker(NeuralNet *net,
+                          const char *label,
+                          const GapDataset *dataset,
+                          size_t max_states,
+                          size_t epochs,
+                          nn_real learning_rate,
+                          double log_scale,
+                          const FeatureMask *mask,
+                          nn_real *candidate_inputs,
+                          size_t *order,
+                          uint32_t *rng)
 {
     size_t train_steps = dataset->count;
     if (max_states != 0 && max_states < train_steps) {
@@ -99,18 +99,18 @@ static int train_pairwise_ranker(NeuralNet *net,
     return 1;
 }
 
-static int train_supervised_symbolic_masked(NeuralNet *net,
-                                            const char *label,
-                                            const SymbolicRuleSet *rules,
-                                            const GapDataset *dataset,
-                                            size_t max_states,
-                                            size_t epochs,
-                                            nn_real learning_rate,
-                                            double log_scale,
-                                            const FeatureMask *mask,
-                                            nn_real *candidate_inputs,
-                                            size_t *order,
-                                            uint32_t *rng)
+int train_supervised_symbolic_masked(NeuralNet *net,
+                                     const char *label,
+                                     const SymbolicRuleSet *rules,
+                                     const GapDataset *dataset,
+                                     size_t max_states,
+                                     size_t epochs,
+                                     nn_real learning_rate,
+                                     double log_scale,
+                                     const FeatureMask *mask,
+                                     nn_real *candidate_inputs,
+                                     size_t *order,
+                                     uint32_t *rng)
 {
     size_t train_steps = dataset->count;
     size_t survivor_actions[ACTION_COUNT];
@@ -171,19 +171,19 @@ static int train_supervised_symbolic_masked(NeuralNet *net,
     return 1;
 }
 
-static int train_strict_verifier_rl(NeuralNet *net,
-                                    const char *label,
-                                    const GapDataset *dataset,
-                                    size_t max_states,
-                                    size_t epochs,
-                                    nn_real learning_rate,
-                                    double log_scale,
-                                    const FeatureMask *mask,
-                                    nn_real *candidate_inputs,
-                                    nn_real *scores,
-                                    nn_real *probabilities,
-                                    size_t *order,
-                                    uint32_t *rng)
+int train_strict_verifier_rl(NeuralNet *net,
+                             const char *label,
+                             const GapDataset *dataset,
+                             size_t max_states,
+                             size_t epochs,
+                             nn_real learning_rate,
+                             double log_scale,
+                             const FeatureMask *mask,
+                             nn_real *candidate_inputs,
+                             nn_real *scores,
+                             nn_real *probabilities,
+                             size_t *order,
+                             uint32_t *rng)
 {
     size_t train_steps = dataset->count;
     double baseline = 0.0;
@@ -238,24 +238,24 @@ static int train_strict_verifier_rl(NeuralNet *net,
     return 1;
 }
 
-static int train_regularized_verifier_rl(NeuralNet *net,
-                                         NeuralNet *reference_net,
-                                         const char *label,
-                                         const GapDataset *dataset,
-                                         size_t max_states,
-                                         size_t epochs,
-                                         nn_real learning_rate,
-                                         nn_real reference_weight,
-                                         nn_real entropy_weight,
-                                         double log_scale,
-                                         const FeatureMask *mask,
-                                         nn_real *candidate_inputs,
-                                         nn_real *scores,
-                                         nn_real *probabilities,
-                                         nn_real *reference_scores,
-                                         nn_real *reference_probabilities,
-                                         size_t *order,
-                                         uint32_t *rng)
+int train_regularized_verifier_rl(NeuralNet *net,
+                                  NeuralNet *reference_net,
+                                  const char *label,
+                                  const GapDataset *dataset,
+                                  size_t max_states,
+                                  size_t epochs,
+                                  nn_real learning_rate,
+                                  nn_real reference_weight,
+                                  nn_real entropy_weight,
+                                  double log_scale,
+                                  const FeatureMask *mask,
+                                  nn_real *candidate_inputs,
+                                  nn_real *scores,
+                                  nn_real *probabilities,
+                                  nn_real *reference_scores,
+                                  nn_real *reference_probabilities,
+                                  size_t *order,
+                                  uint32_t *rng)
 {
     size_t train_steps = dataset->count;
     double baseline = 0.0;
@@ -329,21 +329,21 @@ static int train_regularized_verifier_rl(NeuralNet *net,
     return 1;
 }
 
-static int run_supervised_ablation(const char *label,
-                                   const FeatureMask *mask,
-                                   const NNConfig *config,
-                                   const Sieve *sieve,
-                                   const GapDataset *train,
-                                   const GapDataset *test,
-                                   size_t max_train_states,
-                                   size_t max_test_states,
-                                   size_t supervised_epochs,
-                                   double log_scale,
-                                   nn_real *candidate_inputs,
-                                   nn_real *scores,
-                                   nn_real *probabilities,
-                                   size_t *order,
-                                   uint32_t *rng)
+int run_supervised_ablation(const char *label,
+                            const FeatureMask *mask,
+                            const NNConfig *config,
+                            const Sieve *sieve,
+                            const GapDataset *train,
+                            const GapDataset *test,
+                            size_t max_train_states,
+                            size_t max_test_states,
+                            size_t supervised_epochs,
+                            double log_scale,
+                            nn_real *candidate_inputs,
+                            nn_real *scores,
+                            nn_real *probabilities,
+                            size_t *order,
+                            uint32_t *rng)
 {
     NeuralNet *net = nn_create_config(config);
     int ok;
@@ -383,24 +383,24 @@ static int run_supervised_ablation(const char *label,
     return ok;
 }
 
-static int run_linear_scorer_baseline(const NNConfig *config,
-                                      const Sieve *sieve,
-                                      const GapDataset *train,
-                                      const GapDataset *validation,
-                                      const GapDataset *test,
-                                      size_t max_train_states,
-                                      size_t max_validation_states,
-                                      size_t max_test_states,
-                                      size_t supervised_epochs,
-                                      double log_scale,
-                                      nn_real *candidate_inputs,
-                                      nn_real *scores,
-                                      nn_real *probabilities,
-                                      size_t *order,
-                                      uint32_t *rng,
-                                      EvalMetrics *metrics_out,
-                                      EvalMetrics *temp_metrics_out,
-                                      double *temperature_out)
+int run_linear_scorer_baseline(const NNConfig *config,
+                               const Sieve *sieve,
+                               const GapDataset *train,
+                               const GapDataset *validation,
+                               const GapDataset *test,
+                               size_t max_train_states,
+                               size_t max_validation_states,
+                               size_t max_test_states,
+                               size_t supervised_epochs,
+                               double log_scale,
+                               nn_real *candidate_inputs,
+                               nn_real *scores,
+                               nn_real *probabilities,
+                               size_t *order,
+                               uint32_t *rng,
+                               EvalMetrics *metrics_out,
+                               EvalMetrics *temp_metrics_out,
+                               double *temperature_out)
 {
     NeuralNet *net = nn_create_config(config);
     int ok;
@@ -466,4 +466,3 @@ static int run_linear_scorer_baseline(const NNConfig *config,
     nn_free(net);
     return ok;
 }
-

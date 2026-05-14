@@ -14,10 +14,11 @@ LDLIBS ?= -lm
 
 BUILD_DIR := build/$(REAL)
 NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h
-PRIME_GAP_TASK_HEADERS := include/nn_tasks_prime_gap.h
-PRIME_GAP_TASK_SOURCES := src/nn_tasks_prime_gap.c $(wildcard src/prime_gap/*.c)
+PRIME_GAP_TASK_HEADERS := include/nn_tasks_prime_gap.h src/prime_gap/internal.h
+PRIME_GAP_MODULE_SOURCES := $(wildcard src/prime_gap/*.c)
+PRIME_GAP_TASK_SOURCES := src/nn_tasks_prime_gap.c $(PRIME_GAP_MODULE_SOURCES)
+PRIME_GAP_TASK_OBJS := $(patsubst src/prime_gap/%.c,$(BUILD_DIR)/obj/prime_gap/%.o,$(PRIME_GAP_MODULE_SOURCES))
 NN_OBJ := $(BUILD_DIR)/nn.o
-PRIME_GAP_TASK_OBJ := $(BUILD_DIR)/nn_tasks_prime_gap.o
 NN_TEST_OBJ := $(BUILD_DIR)/nn_test.o
 NN_SANITIZE_OBJ := $(BUILD_DIR)/nn_sanitize.o
 XOR_EXAMPLE := $(BUILD_DIR)/xor
@@ -57,8 +58,9 @@ $(NN_TEST_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 $(NN_SANITIZE_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn.c -o $@
 
-$(PRIME_GAP_TASK_OBJ): $(PRIME_GAP_TASK_SOURCES) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_tasks_prime_gap.c -o $@
+$(BUILD_DIR)/obj/prime_gap/%.o: src/prime_gap/%.c $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+	mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(XOR_EXAMPLE): examples/xor.c $(NN_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/xor.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
@@ -66,17 +68,17 @@ $(XOR_EXAMPLE): examples/xor.c $(NN_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
 $(ACTION_SCORE_EXAMPLE): examples/action_score.c $(NN_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/action_score.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(PRIME_GAP_EXAMPLE): examples/prime_gap.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_gap.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+$(PRIME_GAP_EXAMPLE): examples/prime_gap.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_gap.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(PRIME_REPLAY): examples/prime_replay.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_replay.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+$(PRIME_REPLAY): examples/prime_replay.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_replay.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(PRIME_COMPARE): examples/prime_compare.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_compare.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+$(PRIME_COMPARE): examples/prime_compare.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_compare.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(PRIME_RULE_SEARCH): examples/prime_rule_search.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_rule_search.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+$(PRIME_RULE_SEARCH): examples/prime_rule_search.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_rule_search.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(DELAYED_CLAIM): examples/delayed_claim.c $(NN_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/delayed_claim.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@

@@ -1,6 +1,6 @@
-/* Trace replay and checkpoint comparison CLI entry points.
- * Included by ../nn_tasks_prime_gap.c; not compiled as a standalone translation unit.
- */
+/* Trace replay and checkpoint comparison CLI entry points. */
+
+#include "internal.h"
 
 
 typedef struct {

@@ -1,6 +1,6 @@
-/* Segmented block verifier diagnostics and assisted block scans.
- * Included by ../nn_tasks_prime_gap.c; not compiled as a standalone translation unit.
- */
+/* Segmented block verifier diagnostics and assisted block scans. */
+
+#include "internal.h"
 
 static void add_block_work(BlockWork *total, BlockWork part)
 {
@@ -10,7 +10,7 @@ static void add_block_work(BlockWork *total, BlockWork part)
     total->survivor_checks += part.survivor_checks;
 }
 
-static double block_work_cost(BlockWork work)
+double block_work_cost(BlockWork work)
 {
     return (double)work.base_primes + (double)work.marks + (double)work.survivor_checks;
 }
@@ -92,7 +92,7 @@ static uint32_t segmented_first_prime_gap(const Sieve *sieve,
     return found_gap;
 }
 
-static BlockWork block_scan_work(const Sieve *sieve, uint32_t p, uint32_t true_gap)
+BlockWork block_scan_work(const Sieve *sieve, uint32_t p, uint32_t true_gap)
 {
     BlockWork work;
     segmented_first_prime_gap(sieve, p, true_gap, &work);
@@ -162,11 +162,11 @@ static uint32_t extend_segmented_first_prime_gap(const Sieve *sieve,
     return 0;
 }
 
-static BlockWork assisted_block_work(const Sieve *sieve,
-                                     uint32_t p,
-                                     uint32_t true_gap,
-                                     const size_t *ranked,
-                                     size_t top_k)
+BlockWork assisted_block_work(const Sieve *sieve,
+                              uint32_t p,
+                              uint32_t true_gap,
+                              const size_t *ranked,
+                              size_t top_k)
 {
     BlockWork total = {0, 0, 0, 0};
     uint32_t max_gap = true_gap;
@@ -238,4 +238,3 @@ static BlockWork assisted_block_work(const Sieve *sieve,
     }
     return total;
 }
-

@@ -1,8 +1,8 @@
-/* Policy sampling, calibration metrics, model evaluation, traces, and frequency baselines.
- * Included by ../nn_tasks_prime_gap.c; not compiled as a standalone translation unit.
- */
+/* Policy sampling, calibration metrics, model evaluation, traces, and frequency baselines. */
 
-static size_t sample_action(const nn_real *probabilities, uint32_t *rng)
+#include "internal.h"
+
+size_t sample_action(const nn_real *probabilities, uint32_t *rng)
 {
     double draw = rng_uniform(rng);
     double cumulative = 0.0;
@@ -17,10 +17,10 @@ static size_t sample_action(const nn_real *probabilities, uint32_t *rng)
     return ACTION_COUNT - 1;
 }
 
-static void softmax_temperature(const nn_real *scores,
-                                nn_real *probabilities,
-                                size_t count,
-                                double temperature)
+void softmax_temperature(const nn_real *scores,
+                         nn_real *probabilities,
+                         size_t count,
+                         double temperature)
 {
     if (temperature <= 0.0) {
         temperature = 1.0;
@@ -64,7 +64,7 @@ static double safe_probability(double probability)
     return probability < 1e-12 ? 1e-12 : probability;
 }
 
-static double distribution_entropy(const nn_real *probabilities, size_t count)
+double distribution_entropy(const nn_real *probabilities, size_t count)
 {
     double entropy = 0.0;
     for (size_t i = 0; i < count; ++i) {
@@ -74,9 +74,9 @@ static double distribution_entropy(const nn_real *probabilities, size_t count)
     return entropy;
 }
 
-static double distribution_kl(const nn_real *reference,
-                              const nn_real *probabilities,
-                              size_t count)
+double distribution_kl(const nn_real *reference,
+                       const nn_real *probabilities,
+                       size_t count)
 {
     double kl = 0.0;
     for (size_t i = 0; i < count; ++i) {
@@ -87,7 +87,7 @@ static double distribution_kl(const nn_real *reference,
     return kl;
 }
 
-static size_t eval_sample_index(const GapDataset *dataset, size_t sample, size_t samples)
+size_t eval_sample_index(const GapDataset *dataset, size_t sample, size_t samples)
 {
     return samples != dataset->count ? (sample * dataset->count) / samples : sample;
 }
@@ -258,12 +258,12 @@ static int symbolic_rules_reject_action(const SymbolicRuleSet *rules, uint32_t p
     return 0;
 }
 
-static size_t fill_symbolic_survivor_candidates(const SymbolicRuleSet *rules,
-                                                nn_real *candidate_inputs,
-                                                uint32_t p,
-                                                double log_scale,
-                                                const FeatureMask *mask,
-                                                size_t *survivor_actions)
+size_t fill_symbolic_survivor_candidates(const SymbolicRuleSet *rules,
+                                         nn_real *candidate_inputs,
+                                         uint32_t p,
+                                         double log_scale,
+                                         const FeatureMask *mask,
+                                         size_t *survivor_actions)
 {
     size_t survivor_count = 0;
     fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
@@ -284,9 +284,9 @@ static size_t fill_symbolic_survivor_candidates(const SymbolicRuleSet *rules,
     return survivor_count;
 }
 
-static size_t survivor_index_for_action(const size_t *survivor_actions,
-                                        size_t survivor_count,
-                                        size_t action)
+size_t survivor_index_for_action(const size_t *survivor_actions,
+                                 size_t survivor_count,
+                                 size_t action)
 {
     for (size_t i = 0; i < survivor_count; ++i) {
         if (survivor_actions[i] == action) {
@@ -330,17 +330,17 @@ static void expand_symbolic_ranking(const size_t *survivor_actions,
     }
 }
 
-static EvalMetrics evaluate_model(NeuralNet *net,
-                                  const Sieve *sieve,
-                                  const GapDataset *dataset,
-                                  size_t max_states,
-                                  double log_scale,
-                                  const FeatureMask *mask,
-                                  int include_verifier,
-                                  double temperature,
-                                  nn_real *candidate_inputs,
-                                  nn_real *scores,
-                                  nn_real *probabilities)
+EvalMetrics evaluate_model(NeuralNet *net,
+                           const Sieve *sieve,
+                           const GapDataset *dataset,
+                           size_t max_states,
+                           double log_scale,
+                           const FeatureMask *mask,
+                           int include_verifier,
+                           double temperature,
+                           nn_real *candidate_inputs,
+                           nn_real *scores,
+                           nn_real *probabilities)
 {
     EvalMetrics metrics;
     memset(&metrics, 0, sizeof(metrics));
@@ -379,18 +379,18 @@ static EvalMetrics evaluate_model(NeuralNet *net,
     return metrics;
 }
 
-static EvalMetrics evaluate_model_symbolic_masked(NeuralNet *net,
-                                                  const Sieve *sieve,
-                                                  const SymbolicRuleSet *rules,
-                                                  const GapDataset *dataset,
-                                                  size_t max_states,
-                                                  double log_scale,
-                                                  const FeatureMask *mask,
-                                                  int include_verifier,
-                                                  double temperature,
-                                                  nn_real *candidate_inputs,
-                                                  nn_real *scores,
-                                                  nn_real *probabilities)
+EvalMetrics evaluate_model_symbolic_masked(NeuralNet *net,
+                                           const Sieve *sieve,
+                                           const SymbolicRuleSet *rules,
+                                           const GapDataset *dataset,
+                                           size_t max_states,
+                                           double log_scale,
+                                           const FeatureMask *mask,
+                                           int include_verifier,
+                                           double temperature,
+                                           nn_real *candidate_inputs,
+                                           nn_real *scores,
+                                           nn_real *probabilities)
 {
     EvalMetrics metrics;
     memset(&metrics, 0, sizeof(metrics));
@@ -528,15 +528,15 @@ static double temperature_nll_symbolic_masked(NeuralNet *net,
     return nll / (double)samples;
 }
 
-static double fit_temperature(NeuralNet *net,
-                              const GapDataset *dataset,
-                              size_t max_states,
-                              double log_scale,
-                              const FeatureMask *mask,
-                              nn_real *candidate_inputs,
-                              nn_real *scores,
-                              nn_real *probabilities,
-                              double *best_nll)
+double fit_temperature(NeuralNet *net,
+                       const GapDataset *dataset,
+                       size_t max_states,
+                       double log_scale,
+                       const FeatureMask *mask,
+                       nn_real *candidate_inputs,
+                       nn_real *scores,
+                       nn_real *probabilities,
+                       double *best_nll)
 {
     static const double candidates[] = {
         0.25, 0.35, 0.50, 0.70, 0.85, 1.00, 1.20, 1.50,
@@ -567,16 +567,16 @@ static double fit_temperature(NeuralNet *net,
     return best_temperature;
 }
 
-static double fit_temperature_symbolic_masked(NeuralNet *net,
-                                             const SymbolicRuleSet *rules,
-                                             const GapDataset *dataset,
-                                             size_t max_states,
-                                             double log_scale,
-                                             const FeatureMask *mask,
-                                             nn_real *candidate_inputs,
-                                             nn_real *scores,
-                                             nn_real *probabilities,
-                                             double *best_nll)
+double fit_temperature_symbolic_masked(NeuralNet *net,
+                                       const SymbolicRuleSet *rules,
+                                       const GapDataset *dataset,
+                                       size_t max_states,
+                                       double log_scale,
+                                       const FeatureMask *mask,
+                                       nn_real *candidate_inputs,
+                                       nn_real *scores,
+                                       nn_real *probabilities,
+                                       double *best_nll)
 {
     static const double candidates[] = {
         0.25, 0.35, 0.50, 0.70, 0.85, 1.00, 1.20, 1.50,
@@ -608,12 +608,12 @@ static double fit_temperature_symbolic_masked(NeuralNet *net,
     return best_temperature;
 }
 
-static EvalMetrics evaluate_frequency_policy(const Sieve *sieve,
-                                             const GapDataset *dataset,
-                                             const nn_real *base_probabilities,
-                                             size_t max_states,
-                                             int include_verifier,
-                                             int apply_wheel_filter)
+EvalMetrics evaluate_frequency_policy(const Sieve *sieve,
+                                      const GapDataset *dataset,
+                                      const nn_real *base_probabilities,
+                                      size_t max_states,
+                                      int include_verifier,
+                                      int apply_wheel_filter)
 {
     EvalMetrics metrics;
     memset(&metrics, 0, sizeof(metrics));
@@ -672,7 +672,7 @@ static void print_reliability_bins(const EvalMetrics *metrics)
     printf("\n");
 }
 
-static void print_metrics(const char *label, EvalMetrics metrics)
+void print_metrics(const char *label, EvalMetrics metrics)
 {
     double samples = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
     double scorer_ms = 1000.0 * metrics.scorer_seconds / samples;
@@ -785,7 +785,7 @@ static void print_metrics(const char *label, EvalMetrics metrics)
            block_delta_pct);
 }
 
-static void print_comparison_header(void)
+void print_comparison_header(void)
 {
     printf("\n=== Policy Comparison ===\n");
     printf("%-30s %6s %8s %8s %8s %8s %9s %9s %9s\n",
@@ -800,7 +800,7 @@ static void print_comparison_header(void)
            "hi_acc");
 }
 
-static void print_comparison_row(const char *label, double temperature, EvalMetrics metrics)
+void print_comparison_row(const char *label, double temperature, EvalMetrics metrics)
 {
     double samples = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
     double high_confidence_coverage =
@@ -836,7 +836,7 @@ static uint32_t prime_action_id_for_action(size_t action)
     return (uint32_t)action;
 }
 
-static int prime_action_from_action_id(uint32_t action_id, size_t *out_action)
+int prime_action_from_action_id(uint32_t action_id, size_t *out_action)
 {
     if (action_id >= ACTION_COUNT || out_action == NULL) {
         return 0;
@@ -846,16 +846,16 @@ static int prime_action_from_action_id(uint32_t action_id, size_t *out_action)
     return 1;
 }
 
-static void fill_action_ids(uint32_t *action_ids)
+void fill_action_ids(uint32_t *action_ids)
 {
     for (size_t action = 0; action < ACTION_COUNT; ++action) {
         action_ids[action] = prime_action_id_for_action(action);
     }
 }
 
-static size_t action_row_for_action_id(const uint32_t *action_ids,
-                                       size_t candidate_count,
-                                       uint32_t action_id)
+size_t action_row_for_action_id(const uint32_t *action_ids,
+                                size_t candidate_count,
+                                uint32_t action_id)
 {
     for (size_t row = 0; row < candidate_count; ++row) {
         if (action_ids[row] == action_id) {
@@ -874,12 +874,12 @@ static size_t action_row_for_action(const uint32_t *action_ids,
                                     prime_action_id_for_action(action));
 }
 
-static int save_prime_checkpoint_with_meta(NeuralNet *net,
-                                           const char *path,
-                                           const char *notes,
-                                           const char *parent_hash,
-                                           const char *rule_hash,
-                                           char out_hash[65])
+int save_prime_checkpoint_with_meta(NeuralNet *net,
+                                    const char *path,
+                                    const char *notes,
+                                    const char *parent_hash,
+                                    const char *rule_hash,
+                                    char out_hash[65])
 {
     NNCheckpointMeta meta;
     memset(&meta, 0, sizeof(meta));
@@ -904,7 +904,7 @@ static int save_prime_checkpoint_with_meta(NeuralNet *net,
     return 1;
 }
 
-static int save_prime_checkpoint(NeuralNet *net, const char *path, char out_hash[65])
+int save_prime_checkpoint(NeuralNet *net, const char *path, char out_hash[65])
 {
     return save_prime_checkpoint_with_meta(net,
                                            path,
@@ -914,18 +914,18 @@ static int save_prime_checkpoint(NeuralNet *net, const char *path, char out_hash
                                            out_hash);
 }
 
-static int emit_prime_gap_trace(NeuralNet *net,
-                                const Sieve *sieve,
-                                const GapDataset *dataset,
-                                size_t max_states,
-                                double log_scale,
-                                const char *path,
-                                const char *model_hash,
-                                const char *rule_hash,
-                                uint64_t seed,
-                                nn_real *candidate_inputs,
-                                nn_real *scores,
-                                nn_real *probabilities)
+int emit_prime_gap_trace(NeuralNet *net,
+                         const Sieve *sieve,
+                         const GapDataset *dataset,
+                         size_t max_states,
+                         double log_scale,
+                         const char *path,
+                         const char *model_hash,
+                         const char *rule_hash,
+                         uint64_t seed,
+                         nn_real *candidate_inputs,
+                         nn_real *scores,
+                         nn_real *probabilities)
 {
     FILE *fp = fopen(path, "w");
     if (fp == NULL) {
@@ -1027,9 +1027,9 @@ static int emit_prime_gap_trace(NeuralNet *net,
     return ok;
 }
 
-static void build_frequency_policy(const GapDataset *dataset,
-                                   size_t *ranked,
-                                   nn_real *probabilities)
+void build_frequency_policy(const GapDataset *dataset,
+                            size_t *ranked,
+                            nn_real *probabilities)
 {
     size_t counts[ACTION_COUNT] = {0};
     nn_real scores[ACTION_COUNT];
@@ -1048,7 +1048,7 @@ static void build_frequency_policy(const GapDataset *dataset,
     rank_actions(scores, ranked);
 }
 
-static void free_conditioned_frequency_policy(ConditionedFrequencyPolicy *policy)
+void free_conditioned_frequency_policy(ConditionedFrequencyPolicy *policy)
 {
     if (policy == NULL) {
         return;
@@ -1058,8 +1058,8 @@ static void free_conditioned_frequency_policy(ConditionedFrequencyPolicy *policy
     memset(policy, 0, sizeof(*policy));
 }
 
-static int build_conditioned_frequency_policy(ConditionedFrequencyPolicy *policy,
-                                              const GapDataset *dataset)
+int build_conditioned_frequency_policy(ConditionedFrequencyPolicy *policy,
+                                       const GapDataset *dataset)
 {
     memset(policy, 0, sizeof(*policy));
     policy->action_counts = calloc((size_t)CONDITION_SIGNATURE_COUNT * ACTION_COUNT,
@@ -1080,10 +1080,10 @@ static int build_conditioned_frequency_policy(ConditionedFrequencyPolicy *policy
     return 1;
 }
 
-static void conditioned_frequency_scores(const ConditionedFrequencyPolicy *policy,
-                                         uint32_t p,
-                                         nn_real *scores,
-                                         nn_real *probabilities)
+void conditioned_frequency_scores(const ConditionedFrequencyPolicy *policy,
+                                  uint32_t p,
+                                  nn_real *scores,
+                                  nn_real *probabilities)
 {
     double sum = 0.0;
 
@@ -1110,7 +1110,7 @@ static void conditioned_frequency_scores(const ConditionedFrequencyPolicy *polic
     }
 }
 
-static EvalMetrics evaluate_conditioned_frequency_policy(
+EvalMetrics evaluate_conditioned_frequency_policy(
     const ConditionedFrequencyPolicy *policy,
     const Sieve *sieve,
     const GapDataset *dataset,
@@ -1152,4 +1152,3 @@ static EvalMetrics evaluate_conditioned_frequency_policy(
     finalize_eval_metrics(&metrics);
     return metrics;
 }
-

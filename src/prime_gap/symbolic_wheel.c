@@ -1,6 +1,6 @@
-/* Legacy learned symbolic wheel discovery, persistence, and reporting.
- * Included by ../nn_tasks_prime_gap.c; not compiled as a standalone translation unit.
- */
+/* Legacy learned symbolic wheel discovery, persistence, and reporting. */
+
+#include "internal.h"
 
 static size_t symbolic_rule_count(void)
 {
@@ -80,7 +80,7 @@ static void accumulate_symbolic_rule_rejects(SymbolicRejectRule *rules,
     }
 }
 
-static uint32_t gcd_u32(uint32_t a, uint32_t b)
+uint32_t gcd_u32(uint32_t a, uint32_t b)
 {
     while (b != 0) {
         uint32_t tmp = a % b;
@@ -204,7 +204,7 @@ static int compare_symbolic_rules(const void *left, const void *right)
     return 0;
 }
 
-static int compare_symbolic_rules_canonical(const void *left, const void *right)
+int compare_symbolic_rules_canonical(const void *left, const void *right)
 {
     const SymbolicRejectRule *a = (const SymbolicRejectRule *)left;
     const SymbolicRejectRule *b = (const SymbolicRejectRule *)right;
@@ -253,16 +253,16 @@ static void symbolic_rule_remove_subsets(SymbolicRuleSet *accepted,
     accepted->count = write;
 }
 
-static void free_symbolic_rule_set(SymbolicRuleSet *rules)
+void free_symbolic_rule_set(SymbolicRuleSet *rules)
 {
     free(rules->items);
     memset(rules, 0, sizeof(*rules));
 }
 
-static int save_symbolic_rule_checkpoint(const SymbolicRuleSet *rules,
-                                         const char *path,
-                                         const SymbolicWheelMetrics *metrics,
-                                         char out_hash[65])
+int save_symbolic_rule_checkpoint(const SymbolicRuleSet *rules,
+                                  const char *path,
+                                  const SymbolicWheelMetrics *metrics,
+                                  char out_hash[65])
 {
     if (rules == NULL || path == NULL) {
         return 0;
@@ -406,9 +406,9 @@ static int load_symbolic_rule_checkpoint(const char *path, SymbolicRuleSet *rule
     return 1;
 }
 
-static int load_symbolic_rules_with_hash(const char *path,
-                                         SymbolicRuleSet *rules,
-                                         char out_hash[65])
+int load_symbolic_rules_with_hash(const char *path,
+                                  SymbolicRuleSet *rules,
+                                  char out_hash[65])
 {
     if (!load_symbolic_rule_checkpoint(path, rules)) {
         return 0;
@@ -419,11 +419,11 @@ static int load_symbolic_rules_with_hash(const char *path,
     return 1;
 }
 
-static int discover_symbolic_wheel(const Sieve *sieve,
-                                   const GapDataset *train,
-                                   const GapDataset *validation,
-                                   SymbolicRuleSet *accepted,
-                                   SymbolicWheelMetrics *metrics)
+int discover_symbolic_wheel(const Sieve *sieve,
+                            const GapDataset *train,
+                            const GapDataset *validation,
+                            SymbolicRuleSet *accepted,
+                            SymbolicWheelMetrics *metrics)
 {
     size_t offsets[(uint32_t)NN_SYMBOLIC_RULE_MAX_MOD + 2u];
     size_t count = symbolic_rule_count();
@@ -496,7 +496,7 @@ static int discover_symbolic_wheel(const Sieve *sieve,
     return 1;
 }
 
-static int symbolic_rule_rejects(const SymbolicRejectRule *rule, uint32_t candidate)
+int symbolic_rule_rejects(const SymbolicRejectRule *rule, uint32_t candidate)
 {
     return candidate > rule->modulus && candidate % rule->modulus == rule->residue;
 }
@@ -524,11 +524,11 @@ static int learned_symbolic_probe_gap(const Sieve *sieve,
     return is_prime_sieve(sieve, candidate);
 }
 
-static VerifierWork learned_symbolic_scan_work(const Sieve *sieve,
-                                               const SymbolicRuleSet *rules,
-                                               uint32_t p,
-                                               uint32_t true_gap,
-                                               int *false_rejection)
+VerifierWork learned_symbolic_scan_work(const Sieve *sieve,
+                                        const SymbolicRuleSet *rules,
+                                        uint32_t p,
+                                        uint32_t true_gap,
+                                        int *false_rejection)
 {
     VerifierWork work = {0, 0, 0};
     *false_rejection = 0;
@@ -548,11 +548,11 @@ static VerifierWork learned_symbolic_scan_work(const Sieve *sieve,
     return work;
 }
 
-static SymbolicWheelMetrics evaluate_symbolic_wheel(const Sieve *sieve,
-                                                    const SymbolicRuleSet *rules,
-                                                    const GapDataset *dataset,
-                                                    size_t max_states,
-                                                    SymbolicWheelMetrics metrics)
+SymbolicWheelMetrics evaluate_symbolic_wheel(const Sieve *sieve,
+                                             const SymbolicRuleSet *rules,
+                                             const GapDataset *dataset,
+                                             size_t max_states,
+                                             SymbolicWheelMetrics metrics)
 {
     size_t samples = dataset->count;
     if (max_states != 0 && max_states < samples) {
@@ -597,8 +597,8 @@ static void print_symbolic_rule(const SymbolicRejectRule *rule)
     printf("n %% %u == %u", rule->modulus, rule->residue);
 }
 
-static void print_symbolic_wheel_report(const SymbolicRuleSet *rules,
-                                        SymbolicWheelMetrics metrics)
+void print_symbolic_wheel_report(const SymbolicRuleSet *rules,
+                                 SymbolicWheelMetrics metrics)
 {
     double learned_saved = metrics.direct_exact_tests - metrics.learned_exact_tests;
     double hand_saved = metrics.direct_exact_tests - metrics.hand_wheel_exact_tests;
@@ -653,4 +653,3 @@ static void print_symbolic_wheel_report(const SymbolicRuleSet *rules,
            learned_saved_pct,
            metrics.learned_mod_tests);
 }
-
