@@ -15,6 +15,7 @@ LDLIBS ?= -lm
 BUILD_DIR := build/$(REAL)
 NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h
 PRIME_GAP_TASK_HEADERS := include/nn_tasks_prime_gap.h
+PRIME_GAP_TASK_SOURCES := src/nn_tasks_prime_gap.c $(wildcard src/prime_gap/*.c)
 NN_OBJ := $(BUILD_DIR)/nn.o
 PRIME_GAP_TASK_OBJ := $(BUILD_DIR)/nn_tasks_prime_gap.o
 NN_TEST_OBJ := $(BUILD_DIR)/nn_test.o
@@ -56,7 +57,7 @@ $(NN_TEST_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 $(NN_SANITIZE_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn.c -o $@
 
-$(PRIME_GAP_TASK_OBJ): src/nn_tasks_prime_gap.c $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+$(PRIME_GAP_TASK_OBJ): $(PRIME_GAP_TASK_SOURCES) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_tasks_prime_gap.c -o $@
 
 $(XOR_EXAMPLE): examples/xor.c $(NN_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
@@ -86,10 +87,10 @@ $(GRID_PATH): examples/grid_path.c $(NN_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
 $(BENCHMARK): benchmarks/benchmark.c $(NN_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) benchmarks/benchmark.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(TEST_RUNNER): tests/test_nn.c src/nn_tasks_prime_gap.c $(NN_TEST_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+$(TEST_RUNNER): tests/test_nn.c $(PRIME_GAP_TASK_SOURCES) $(NN_TEST_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) tests/test_nn.c $(NN_TEST_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(SANITIZE_TEST_RUNNER): tests/test_nn.c src/nn_tasks_prime_gap.c $(NN_SANITIZE_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+$(SANITIZE_TEST_RUNNER): tests/test_nn.c $(PRIME_GAP_TASK_SOURCES) $(NN_SANITIZE_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) tests/test_nn.c $(NN_SANITIZE_OBJ) $(LDFLAGS) $(SANITIZE_LDFLAGS) $(LDLIBS) -o $@
 
 run: $(XOR_EXAMPLE)
