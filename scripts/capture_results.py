@@ -75,9 +75,22 @@ def markdown_table(rows: list[list[str]], headers: list[str]) -> str:
 def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
     delayed = [row for row in rows if row.get("task") == "delayed_claim"]
     grid = [row for row in rows if row.get("task") == "grid_path"]
-    rule_search = [
-        row for row in rows if row.get("schema") == "crlp.rule_search.summary.v1"
-    ]
+    rule_search: list[dict[str, object]] = []
+    seen_rule_search: set[tuple[object, ...]] = set()
+    for row in rows:
+        if row.get("schema") != "crlp.rule_search.summary.v1":
+            continue
+        key = (
+            row.get("rule_set_hash"),
+            row.get("grammar_version"),
+            row.get("accepted_rules"),
+            row.get("accepted_candidate_rules"),
+            row.get("accepted_gap_rules"),
+        )
+        if key in seen_rule_search:
+            continue
+        seen_rule_search.add(key)
+        rule_search.append(row)
     prime = [
         row
         for row in rows
@@ -177,6 +190,7 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                     str(row.get("grammar_version", "")),
                     str(row.get("proposer_feature_set", "")),
                     str(row.get("accepted_rules", "")),
+                    str(row.get("accepted_candidate_rules", "")),
                     str(row.get("accepted_gap_rules", "")),
                     str(row.get("false_rejections", "")),
                     fmt_number(row, "direct_exact", 3),
@@ -191,6 +205,7 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                 "grammar",
                 "features",
                 "accepted",
+                "candidate rules",
                 "gap rules",
                 "false rejects",
                 "direct",

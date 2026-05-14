@@ -11,6 +11,7 @@ static RuleSearchConfig default_rule_search_config(void)
     config.max_train_states = DEFAULT_MAX_TRAIN_STATES;
     config.max_test_states = DEFAULT_MAX_TEST_STATES;
     config.max_rules = 256;
+    config.include_state_conditions = 1;
     config.include_candidate_filters = 1;
     config.include_gap_filters = 1;
     config.mod_count = FEATURE_MOD_COUNT < RULE_SEARCH_MAX_MODULI
@@ -76,6 +77,50 @@ static int parse_rule_search_moduli(const char *text,
     return 1;
 }
 
+static int parse_rule_search_moduli_range(const char *text,
+                                          uint32_t *moduli,
+                                          size_t *mod_count)
+{
+    if (text == NULL || text[0] == '\0') {
+        return 0;
+    }
+
+    char copy[64];
+    if (strlen(text) >= sizeof(copy)) {
+        return 0;
+    }
+    strcpy(copy, text);
+
+    char *separator = strstr(copy, "..");
+    if (separator != NULL) {
+        *separator = '\0';
+        separator += 2;
+    } else {
+        separator = strchr(copy, ':');
+        if (separator == NULL) {
+            return 0;
+        }
+        *separator++ = '\0';
+    }
+
+    uint32_t first = 0;
+    uint32_t last = 0;
+    if (!parse_u32_text(copy, &first) || !parse_u32_text(separator, &last) ||
+        first < 3 || first > last || last > (uint32_t)NN_SYMBOLIC_RULE_MAX_MOD) {
+        return 0;
+    }
+
+    size_t count = (size_t)(last - first + 1u);
+    if (count == 0 || count > RULE_SEARCH_MAX_MODULI) {
+        return 0;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        moduli[i] = first + (uint32_t)i;
+    }
+    *mod_count = count;
+    return 1;
+}
+
 static int parse_rule_search_config(int argc, char **argv, RuleSearchConfig *config)
 {
     *config = default_rule_search_config();
@@ -104,6 +149,14 @@ static int parse_rule_search_config(int argc, char **argv, RuleSearchConfig *con
             if (!parse_rule_search_moduli(argv[++i], config->moduli, &config->mod_count)) {
                 return 0;
             }
+        } else if (strcmp(argv[i], "--moduli-range") == 0 && i + 1 < argc) {
+            if (!parse_rule_search_moduli_range(argv[++i],
+                                                config->moduli,
+                                                &config->mod_count)) {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--unconditional-only") == 0) {
+            config->include_state_conditions = 0;
         } else if (strcmp(argv[i], "--gap-only") == 0) {
             config->include_candidate_filters = 0;
             config->include_gap_filters = 1;
@@ -131,8 +184,9 @@ static void print_rule_search_usage(FILE *stream)
 {
     fputs("usage: prime_rule_search [--train-limit n] [--test-limit n] "
           "[--max-train-states n] [--max-test-states n] [--max-rules n] "
-          "[--gap-only|--candidate-only] "
-          "[--moduli 3,5,7,...] [--trace path] [--save path]\n",
+          "[--gap-only|--candidate-only] [--unconditional-only] "
+          "[--moduli 3,5,7,...] [--moduli-range 3:255] "
+          "[--trace path] [--save path]\n",
           stream);
 }
 
@@ -217,7 +271,7 @@ static int build_rule_search_grammar(const RuleSearchConfig *config,
 
     size_t filter_kinds = (config->include_candidate_filters ? 1u : 0u) +
                           (config->include_gap_filters ? 1u : 0u);
-    grammar->state_count = residue_sum + 1u;
+    grammar->state_count = (config->include_state_conditions ? residue_sum : 0u) + 1u;
     grammar->filter_count = residue_sum * filter_kinds;
     grammar->state_atoms = calloc(grammar->state_count, sizeof(*grammar->state_atoms));
     grammar->filter_atoms = calloc(grammar->filter_count, sizeof(*grammar->filter_atoms));
@@ -241,11 +295,14 @@ static int build_rule_search_grammar(const RuleSearchConfig *config,
     size_t filter_index = 0;
     for (size_t mod_index = 0; mod_index < config->mod_count; ++mod_index) {
         uint32_t modulus = config->moduli[mod_index];
-        grammar->state_offsets[mod_index] = state_index;
-        for (uint32_t residue = 0; residue < modulus; ++residue) {
-            grammar->state_atoms[state_index].modulus = modulus;
-            grammar->state_atoms[state_index].residue = residue;
-            ++state_index;
+        grammar->state_offsets[mod_index] = (size_t)-1;
+        if (config->include_state_conditions) {
+            grammar->state_offsets[mod_index] = state_index;
+            for (uint32_t residue = 0; residue < modulus; ++residue) {
+                grammar->state_atoms[state_index].modulus = modulus;
+                grammar->state_atoms[state_index].residue = residue;
+                ++state_index;
+            }
         }
 
         if (config->include_candidate_filters) {
@@ -295,7 +352,7 @@ static int build_expanded_rules(const RuleSearchGrammar *grammar, ExpandedRuleSe
     return 1;
 }
 
-static void free_expanded_rule_set(ExpandedRuleSet *rules)
+void free_expanded_rule_set(ExpandedRuleSet *rules)
 {
     free(rules->items);
     memset(rules, 0, sizeof(*rules));
@@ -318,7 +375,9 @@ static void increment_matching_expanded_rules(ExpandedRule *rules,
     state_indices[0] = 0;
     for (size_t i = 0; i < config->mod_count; ++i) {
         uint32_t modulus = config->moduli[i];
-        state_indices[state_count++] = grammar->state_offsets[i] + (p % modulus);
+        if (grammar->state_offsets[i] != (size_t)-1) {
+            state_indices[state_count++] = grammar->state_offsets[i] + (p % modulus);
+        }
         if (candidate > modulus) {
             if (grammar->candidate_offsets[i] != (size_t)-1) {
                 filter_indices[filter_count++] =
@@ -532,6 +591,54 @@ static int compare_expanded_rules_model(const void *left, const void *right)
     return 0;
 }
 
+static int expanded_candidate_rule_subset_of(const ExpandedRule *candidate,
+                                             const ExpandedRule *accepted)
+{
+    return candidate->kind == RULE_FILTER_CANDIDATE_MOD &&
+           accepted->kind == RULE_FILTER_CANDIDATE_MOD &&
+           candidate->state_modulus == 1u &&
+           accepted->state_modulus == 1u &&
+           candidate->filter_modulus % accepted->filter_modulus == 0u &&
+           candidate->filter_residue % accepted->filter_modulus ==
+               accepted->filter_residue;
+}
+
+static int expanded_rule_same_key(const ExpandedRule *a, const ExpandedRule *b)
+{
+    return a->kind == b->kind &&
+           a->state_modulus == b->state_modulus &&
+           a->state_residue == b->state_residue &&
+           a->filter_modulus == b->filter_modulus &&
+           a->filter_residue == b->filter_residue;
+}
+
+static int expanded_rule_is_covered(const ExpandedRuleSet *accepted,
+                                    const ExpandedRule *candidate)
+{
+    for (size_t i = 0; i < accepted->count; ++i) {
+        if (expanded_candidate_rule_subset_of(candidate, &accepted->items[i])) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void expanded_rule_remove_subsets(ExpandedRuleSet *accepted,
+                                         const ExpandedRule *candidate)
+{
+    size_t write = 0;
+    for (size_t read = 0; read < accepted->count; ++read) {
+        if (expanded_candidate_rule_subset_of(&accepted->items[read], candidate)) {
+            continue;
+        }
+        if (write != read) {
+            accepted->items[write] = accepted->items[read];
+        }
+        ++write;
+    }
+    accepted->count = write;
+}
+
 static int select_expanded_rules(ExpandedRuleSet *rules,
                                  size_t max_rules,
                                  ExpandedRuleSet *accepted,
@@ -561,28 +668,47 @@ static int select_expanded_rules(ExpandedRuleSet *rules,
             ++metrics->uncertified_rules;
             continue;
         }
+        if (expanded_rule_is_covered(accepted, rule)) {
+            continue;
+        }
+        expanded_rule_remove_subsets(accepted, rule);
         if (accepted->count >= max_rules) {
             continue;
         }
         rule->accepted = 1;
         accepted->items[accepted->count++] = *rule;
-        ++metrics->accepted_rules;
-        if (expanded_rule_is_conditional(rule)) {
+    }
+
+    metrics->accepted_rules = accepted->count;
+    metrics->accepted_conditional_rules = 0;
+    metrics->accepted_gap_rules = 0;
+    metrics->accepted_candidate_rules = 0;
+    for (size_t i = 0; i < rules->count; ++i) {
+        rules->items[i].accepted = 0;
+    }
+    for (size_t i = 0; i < accepted->count; ++i) {
+        if (expanded_rule_is_conditional(&accepted->items[i])) {
             ++metrics->accepted_conditional_rules;
         }
-        if (rule->kind == RULE_FILTER_GAP_MOD) {
+        if (accepted->items[i].kind == RULE_FILTER_GAP_MOD) {
             ++metrics->accepted_gap_rules;
         } else {
             ++metrics->accepted_candidate_rules;
+        }
+        for (size_t candidate = 0; candidate < rules->count; ++candidate) {
+            if (expanded_rule_same_key(&rules->items[candidate], &accepted->items[i])) {
+                rules->items[candidate].accepted = 1;
+                break;
+            }
         }
     }
     return 1;
 }
 
-static int expanded_rule_rejects(const ExpandedRule *rule,
-                                 uint32_t p,
-                                 uint32_t gap,
-                                 VerifierWork *work)
+int expanded_rule_rejects(const ExpandedRule *rule,
+                          uint32_t p,
+                          uint32_t gap,
+                          VerifierWork *work)
 {
     uint32_t candidate = p + gap;
     if (expanded_rule_is_conditional(rule)) {
@@ -601,11 +727,11 @@ static int expanded_rule_rejects(const ExpandedRule *rule,
     return candidate % rule->filter_modulus == rule->filter_residue;
 }
 
-static VerifierWork expanded_rule_scan_work(const Sieve *sieve,
-                                            const ExpandedRuleSet *rules,
-                                            uint32_t p,
-                                            uint32_t true_gap,
-                                            int *false_rejection)
+VerifierWork expanded_rule_scan_work(const Sieve *sieve,
+                                      const ExpandedRuleSet *rules,
+                                      uint32_t p,
+                                      uint32_t true_gap,
+                                      int *false_rejection)
 {
     VerifierWork work = {0, 0, 0};
     *false_rejection = 0;
@@ -635,11 +761,11 @@ static VerifierWork expanded_rule_scan_work(const Sieve *sieve,
     return work;
 }
 
-static RuleSearchMetrics evaluate_expanded_rules(const Sieve *sieve,
-                                                 const ExpandedRuleSet *rules,
-                                                 const GapDataset *dataset,
-                                                 size_t max_states,
-                                                 RuleSearchMetrics metrics)
+RuleSearchMetrics evaluate_expanded_rules(const Sieve *sieve,
+                                          const ExpandedRuleSet *rules,
+                                          const GapDataset *dataset,
+                                          size_t max_states,
+                                          RuleSearchMetrics metrics)
 {
     size_t samples = dataset->count;
     if (max_states != 0 && max_states < samples) {
@@ -690,8 +816,10 @@ static int save_expanded_rule_checkpoint(const ExpandedRuleSet *rules,
     int ok = fprintf(fp, "crlp.expanded_rules.v1\n") >= 0 &&
              fprintf(fp, "grammar_version %u\n", (uint32_t)RULE_SEARCH_GRAMMAR_VERSION) >= 0 &&
              fprintf(fp,
+                     "include_state_conditions %u\n"
                      "include_candidate_filters %u\n"
                      "include_gap_filters %u\n",
+                     config->include_state_conditions ? 1u : 0u,
                      config->include_candidate_filters ? 1u : 0u,
                      config->include_gap_filters ? 1u : 0u) >= 0 &&
              fprintf(fp, "moduli") >= 0;
@@ -746,6 +874,173 @@ static int save_expanded_rule_checkpoint(const ExpandedRuleSet *rules,
     return 1;
 }
 
+static void strip_line_ending(char *line)
+{
+    size_t length = strlen(line);
+    while (length != 0 &&
+           (line[length - 1u] == '\n' || line[length - 1u] == '\r')) {
+        line[--length] = '\0';
+    }
+}
+
+int load_expanded_rules_with_hash(const char *path,
+                                  ExpandedRuleSet *rules,
+                                  RuleSearchConfig *config,
+                                  RuleSearchMetrics *metrics,
+                                  char out_hash[65])
+{
+    memset(rules, 0, sizeof(*rules));
+    if (config != NULL) {
+        *config = default_rule_search_config();
+        config->mod_count = 0;
+    }
+    if (metrics != NULL) {
+        memset(metrics, 0, sizeof(*metrics));
+    }
+    if (path == NULL) {
+        return 0;
+    }
+
+    FILE *fp = fopen(path, "r");
+    if (fp == NULL) {
+        return 0;
+    }
+
+    RuleSearchConfig parsed_config = default_rule_search_config();
+    parsed_config.mod_count = 0;
+    RuleSearchMetrics parsed_metrics;
+    memset(&parsed_metrics, 0, sizeof(parsed_metrics));
+
+    char line[4096];
+    unsigned int grammar_version = 0;
+    unsigned int include_state = 0;
+    unsigned int include_candidate = 0;
+    unsigned int include_gap = 0;
+    size_t rule_count = 0;
+    int ok = fgets(line, sizeof(line), fp) != NULL;
+    if (ok) {
+        strip_line_ending(line);
+        ok = strcmp(line, "crlp.expanded_rules.v1") == 0;
+    }
+    ok = ok && fgets(line, sizeof(line), fp) != NULL &&
+         sscanf(line, "grammar_version %u", &grammar_version) == 1 &&
+         grammar_version == (uint32_t)RULE_SEARCH_GRAMMAR_VERSION;
+    ok = ok && fgets(line, sizeof(line), fp) != NULL &&
+         sscanf(line, "include_state_conditions %u", &include_state) == 1 &&
+         include_state <= 1u;
+    ok = ok && fgets(line, sizeof(line), fp) != NULL &&
+         sscanf(line, "include_candidate_filters %u", &include_candidate) == 1 &&
+         include_candidate <= 1u;
+    ok = ok && fgets(line, sizeof(line), fp) != NULL &&
+         sscanf(line, "include_gap_filters %u", &include_gap) == 1 &&
+         include_gap <= 1u && (include_candidate != 0 || include_gap != 0);
+    if (ok) {
+        parsed_config.include_state_conditions = include_state != 0;
+        parsed_config.include_candidate_filters = include_candidate != 0;
+        parsed_config.include_gap_filters = include_gap != 0;
+    }
+    ok = ok && fgets(line, sizeof(line), fp) != NULL;
+    if (ok) {
+        strip_line_ending(line);
+        ok = strncmp(line, "moduli ", 7) == 0 &&
+             parse_rule_search_moduli(line + 7,
+                                      parsed_config.moduli,
+                                      &parsed_config.mod_count);
+    }
+    ok = ok && fgets(line, sizeof(line), fp) != NULL &&
+         sscanf(line, "rule_count %zu", &rule_count) == 1;
+    ok = ok && fgets(line, sizeof(line), fp) != NULL &&
+         sscanf(line, "proposed_rules %zu", &parsed_metrics.proposed_rules) == 1;
+    ok = ok && fgets(line, sizeof(line), fp) != NULL &&
+         sscanf(line, "verified_rules %zu", &parsed_metrics.verified_rules) == 1;
+    ok = ok && fgets(line, sizeof(line), fp) != NULL &&
+         sscanf(line, "accepted_rules %zu", &parsed_metrics.accepted_rules) == 1;
+    ok = ok && fgets(line, sizeof(line), fp) != NULL &&
+         sscanf(line, "false_rejections %zu", &parsed_metrics.false_rejections) == 1;
+    ok = ok && fgets(line, sizeof(line), fp) != NULL &&
+         sscanf(line, "direct_exact %lf", &parsed_metrics.direct_exact_tests) == 1;
+    ok = ok && fgets(line, sizeof(line), fp) != NULL &&
+         sscanf(line, "hand_wheel_exact %lf", &parsed_metrics.hand_wheel_exact_tests) == 1;
+    ok = ok && fgets(line, sizeof(line), fp) != NULL &&
+         sscanf(line, "expanded_exact %lf", &parsed_metrics.expanded_exact_tests) == 1;
+
+    if (ok) {
+        rules->items = calloc(rule_count == 0 ? 1u : rule_count, sizeof(*rules->items));
+        ok = rules->items != NULL;
+    }
+
+    for (size_t i = 0; ok && i < rule_count; ++i) {
+        unsigned int kind = 0;
+        unsigned int state_modulus = 0;
+        unsigned int state_residue = 0;
+        unsigned int filter_modulus = 0;
+        unsigned int filter_residue = 0;
+        size_t train_rejects = 0;
+        size_t validation_rejects = 0;
+        double model_score = 0.0;
+        ok = fgets(line, sizeof(line), fp) != NULL &&
+             sscanf(line,
+                    "rule %u %u %u %u %u %zu %zu %lf",
+                    &kind,
+                    &state_modulus,
+                    &state_residue,
+                    &filter_modulus,
+                    &filter_residue,
+                    &train_rejects,
+                    &validation_rejects,
+                    &model_score) == 8 &&
+             kind <= (uint32_t)RULE_FILTER_GAP_MOD &&
+             state_modulus != 0 && state_residue < state_modulus &&
+             filter_modulus >= 3 && filter_residue < filter_modulus;
+        if (!ok) {
+            break;
+        }
+
+        ExpandedRule *rule = &rules->items[i];
+        rule->kind = (RuleFilterKind)kind;
+        rule->state_modulus = (uint32_t)state_modulus;
+        rule->state_residue = (uint32_t)state_residue;
+        rule->filter_modulus = (uint32_t)filter_modulus;
+        rule->filter_residue = (uint32_t)filter_residue;
+        rule->train_rejects = train_rejects;
+        rule->validation_rejects = validation_rejects;
+        rule->model_score = (nn_real)model_score;
+        rule->accepted = 1;
+        ok = expanded_rule_has_deterministic_certificate(rule);
+        if (ok) {
+            ++rules->count;
+            if (expanded_rule_is_conditional(rule)) {
+                ++parsed_metrics.accepted_conditional_rules;
+            }
+            if (rule->kind == RULE_FILTER_GAP_MOD) {
+                ++parsed_metrics.accepted_gap_rules;
+            } else {
+                ++parsed_metrics.accepted_candidate_rules;
+            }
+        }
+    }
+
+    if (fclose(fp) != 0) {
+        ok = 0;
+    }
+    ok = ok && rules->count == rule_count &&
+         parsed_metrics.accepted_rules == rule_count;
+    if (!ok) {
+        free_expanded_rule_set(rules);
+        return 0;
+    }
+    if (config != NULL) {
+        *config = parsed_config;
+    }
+    if (metrics != NULL) {
+        *metrics = parsed_metrics;
+    }
+    if (out_hash != NULL && !nn_hash_checkpoint_hex(path, out_hash)) {
+        strcpy(out_hash, "unknown");
+    }
+    return 1;
+}
+
 static int write_expanded_rule_trace(const char *path,
                                      const ExpandedRuleSet *rules,
                                      const RuleSearchConfig *config)
@@ -778,6 +1073,7 @@ static int write_expanded_rule_trace(const char *path,
                      "\"conditional\":%s,\"derived_divisibility\":%s,"
                      "\"deterministic_certificate\":%s,"
                      "\"proposer_feature_set\":\"structural\","
+                     "\"state_conditions_enabled\":%s,"
                      "\"train_limit\":%zu,\"test_limit\":%zu,"
                      "\"train_rejects\":%zu,\"train_false_rejections\":%zu,"
                      "\"validation_rejects\":%zu,"
@@ -795,6 +1091,7 @@ static int write_expanded_rule_trace(const char *path,
                      expanded_rule_is_conditional(rule) ? "true" : "false",
                      expanded_rule_is_derived_divisibility(rule) ? "true" : "false",
                      expanded_rule_has_deterministic_certificate(rule) ? "true" : "false",
+                     config->include_state_conditions ? "true" : "false",
                      config->train_limit,
                      config->test_limit,
                      rule->train_rejects,
@@ -833,6 +1130,7 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
     printf("{\"schema\":\"crlp.rule_search.summary.v1\",\"task\":\"prime_gap\","
            "\"grammar_version\":%u,\"rule_set_hash\":\"%s\","
            "\"train_limit\":%zu,\"test_limit\":%zu,\"sample_count\":%zu,"
+           "\"include_state_conditions\":%s,"
            "\"include_candidate_filters\":%s,\"include_gap_filters\":%s,"
            "\"proposed_rules\":%zu,\"verified_rules\":%zu,"
            "\"unsafe_rules\":%zu,\"no_support_rules\":%zu,"
@@ -849,6 +1147,7 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            config->train_limit,
            config->test_limit,
            metrics->samples,
+           config->include_state_conditions ? "true" : "false",
            config->include_candidate_filters ? "true" : "false",
            config->include_gap_filters ? "true" : "false",
            metrics->proposed_rules,
@@ -874,10 +1173,11 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
         printf("%s%u", i == 0 ? "" : ",", config->moduli[i]);
     }
     printf("\n");
-    printf("  grammar: %s%s%s filters with optional p %% m conditions\n",
+    printf("  grammar: %s%s%s filters %s p %% m conditions\n",
            config->include_candidate_filters ? "candidate" : "",
            config->include_candidate_filters && config->include_gap_filters ? " + " : "",
-           config->include_gap_filters ? "gap" : "");
+           config->include_gap_filters ? "gap" : "",
+           config->include_state_conditions ? "with optional" : "without");
     printf("  proposed=%zu verified=%zu unsafe=%zu no_support=%zu uncertified=%zu accepted=%zu\n",
            metrics->proposed_rules,
            metrics->verified_rules,

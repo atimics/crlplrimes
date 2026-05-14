@@ -258,6 +258,22 @@ static int symbolic_rules_reject_action(const SymbolicRuleSet *rules, uint32_t p
     return 0;
 }
 
+static int expanded_rules_reject_action(const ExpandedRuleSet *rules, uint32_t p, size_t action)
+{
+    if (rules == NULL || action_is_overflow(action)) {
+        return 0;
+    }
+
+    uint32_t gap = (uint32_t)action_gap(action);
+    VerifierWork work = {0, 0, 0};
+    for (size_t i = 0; i < rules->count; ++i) {
+        if (expanded_rule_rejects(&rules->items[i], p, gap, &work)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 size_t fill_symbolic_survivor_candidates(const SymbolicRuleSet *rules,
                                          nn_real *candidate_inputs,
                                          uint32_t p,
@@ -270,6 +286,32 @@ size_t fill_symbolic_survivor_candidates(const SymbolicRuleSet *rules,
 
     for (size_t action = 0; action < ACTION_COUNT; ++action) {
         if (symbolic_rules_reject_action(rules, p, action)) {
+            continue;
+        }
+
+        if (survivor_count != action) {
+            memmove(&candidate_inputs[survivor_count * FEATURE_COUNT],
+                    &candidate_inputs[action * FEATURE_COUNT],
+                    FEATURE_COUNT * sizeof(*candidate_inputs));
+        }
+        survivor_actions[survivor_count++] = action;
+    }
+
+    return survivor_count;
+}
+
+size_t fill_expanded_survivor_candidates(const ExpandedRuleSet *rules,
+                                         nn_real *candidate_inputs,
+                                         uint32_t p,
+                                         double log_scale,
+                                         const FeatureMask *mask,
+                                         size_t *survivor_actions)
+{
+    size_t survivor_count = 0;
+    fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
+
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        if (expanded_rules_reject_action(rules, p, action)) {
             continue;
         }
 
@@ -410,6 +452,70 @@ EvalMetrics evaluate_model_symbolic_masked(NeuralNet *net,
         uint32_t gap = dataset->gap[index];
         double scorer_started = now_seconds();
         size_t survivor_count = fill_symbolic_survivor_candidates(rules,
+                                                                  candidate_inputs,
+                                                                  p,
+                                                                  log_scale,
+                                                                  mask,
+                                                                  survivor_actions);
+
+        if (survivor_count == 0 ||
+            !nn_score_action_rows(net, candidate_inputs, survivor_count, scores, NULL)) {
+            continue;
+        }
+        softmax_temperature(scores, compact_probabilities, survivor_count, temperature);
+        nn_rank_action_scores(scores, survivor_count, compact_ranked);
+        expand_symbolic_probabilities(survivor_actions,
+                                      survivor_count,
+                                      compact_probabilities,
+                                      probabilities);
+        expand_symbolic_ranking(survivor_actions, survivor_count, compact_ranked, ranked);
+        metrics.scorer_seconds += now_seconds() - scorer_started;
+        accumulate_eval_sample(&metrics,
+                               sieve,
+                               dataset,
+                               p,
+                               gap,
+                               ranked,
+                               probabilities,
+                               include_verifier);
+    }
+
+    metrics.samples = samples;
+    finalize_eval_metrics(&metrics);
+    return metrics;
+}
+
+EvalMetrics evaluate_model_expanded_masked(NeuralNet *net,
+                                           const Sieve *sieve,
+                                           const ExpandedRuleSet *rules,
+                                           const GapDataset *dataset,
+                                           size_t max_states,
+                                           double log_scale,
+                                           const FeatureMask *mask,
+                                           int include_verifier,
+                                           double temperature,
+                                           nn_real *candidate_inputs,
+                                           nn_real *scores,
+                                           nn_real *probabilities)
+{
+    EvalMetrics metrics;
+    memset(&metrics, 0, sizeof(metrics));
+
+    size_t samples = dataset->count;
+    if (max_states != 0 && max_states < samples) {
+        samples = max_states;
+    }
+
+    size_t survivor_actions[ACTION_COUNT];
+    size_t compact_ranked[ACTION_COUNT];
+    size_t ranked[ACTION_COUNT];
+    nn_real compact_probabilities[ACTION_COUNT];
+    for (size_t sample = 0; sample < samples; ++sample) {
+        size_t index = eval_sample_index(dataset, sample, samples);
+        uint32_t p = dataset->prime[index];
+        uint32_t gap = dataset->gap[index];
+        double scorer_started = now_seconds();
+        size_t survivor_count = fill_expanded_survivor_candidates(rules,
                                                                   candidate_inputs,
                                                                   p,
                                                                   log_scale,

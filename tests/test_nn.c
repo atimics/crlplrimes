@@ -1268,6 +1268,159 @@ static int test_rule_proposer_features_are_structural(void)
     return ok;
 }
 
+static int test_rule_search_unconditional_range_builds_structural_program(void)
+{
+    char *argv[] = {
+        "prime_rule_search",
+        "--candidate-only",
+        "--unconditional-only",
+        "--moduli-range",
+        "3:5",
+    };
+    RuleSearchConfig config;
+    RuleSearchGrammar grammar;
+    ExpandedRuleSet rules;
+    memset(&grammar, 0, sizeof(grammar));
+    memset(&rules, 0, sizeof(rules));
+
+    int ok = parse_rule_search_config(5, argv, &config);
+    ok = ok && config.include_state_conditions == 0 &&
+         config.include_candidate_filters == 1 &&
+         config.include_gap_filters == 0 && config.mod_count == 3 &&
+         config.moduli[0] == 3 && config.moduli[1] == 4 &&
+         config.moduli[2] == 5;
+
+    ok = ok && build_rule_search_grammar(&config, &grammar);
+    ok = ok && grammar.state_count == 1 && grammar.filter_count == 12 &&
+         grammar.state_atoms[0].modulus == 1 && grammar.state_atoms[0].residue == 0;
+
+    ok = ok && build_expanded_rules(&grammar, &rules);
+    ok = ok && rules.count == 12 && rules.items[0].state_modulus == 1 &&
+         rules.items[0].state_residue == 0 &&
+         rules.items[0].kind == RULE_FILTER_CANDIDATE_MOD &&
+         rules.items[0].filter_modulus == 3 &&
+         rules.items[11].filter_modulus == 5 &&
+         rules.items[11].filter_residue == 4;
+
+    free_expanded_rule_set(&rules);
+    free_rule_search_grammar(&grammar);
+    return ok;
+}
+
+static int test_expanded_rule_survivor_mask_rejects_candidate_filters(void)
+{
+    ExpandedRule rule;
+    memset(&rule, 0, sizeof(rule));
+    rule.kind = RULE_FILTER_CANDIDATE_MOD;
+    rule.state_modulus = 1;
+    rule.state_residue = 0;
+    rule.filter_modulus = 3;
+    rule.filter_residue = 0;
+    rule.accepted = 1;
+
+    ExpandedRuleSet rules;
+    rules.items = &rule;
+    rules.count = 1;
+
+    nn_real inputs[ACTION_COUNT * FEATURE_COUNT];
+    size_t survivor_actions[ACTION_COUNT];
+    size_t survivor_count = fill_expanded_survivor_candidates(&rules,
+                                                              inputs,
+                                                              11,
+                                                              log(1000.0),
+                                                              &FEATURE_MASK_MINIMAL,
+                                                              survivor_actions);
+
+    size_t gap2 = gap_to_action(2);
+    size_t gap4 = gap_to_action(4);
+    return survivor_count > 0 &&
+           survivor_index_for_action(survivor_actions, survivor_count, gap2) !=
+               survivor_count &&
+           survivor_index_for_action(survivor_actions, survivor_count, gap4) ==
+               survivor_count;
+}
+
+static int test_expanded_rule_checkpoint_roundtrip(void)
+{
+#if NN_REAL_IS_FLOAT
+    const char *rules_path = "build/test_expanded_rules_float.crlprule";
+#else
+    const char *rules_path = "build/test_expanded_rules_double.crlprule";
+#endif
+    ExpandedRule rule;
+    memset(&rule, 0, sizeof(rule));
+    rule.kind = RULE_FILTER_CANDIDATE_MOD;
+    rule.state_modulus = 1;
+    rule.state_residue = 0;
+    rule.filter_modulus = 3;
+    rule.filter_residue = 0;
+    rule.train_rejects = 12;
+    rule.validation_rejects = 7;
+    rule.model_score = (nn_real)0.25;
+    rule.accepted = 1;
+
+    ExpandedRuleSet rules;
+    rules.items = &rule;
+    rules.count = 1;
+
+    RuleSearchConfig config = default_rule_search_config();
+    config.include_state_conditions = 0;
+    config.include_candidate_filters = 1;
+    config.include_gap_filters = 0;
+    config.mod_count = 1;
+    config.moduli[0] = 3;
+
+    RuleSearchMetrics metrics;
+    memset(&metrics, 0, sizeof(metrics));
+    metrics.proposed_rules = 3;
+    metrics.verified_rules = 1;
+    metrics.accepted_rules = 1;
+    metrics.accepted_candidate_rules = 1;
+    metrics.direct_exact_tests = 2.0;
+    metrics.hand_wheel_exact_tests = 1.0;
+    metrics.expanded_exact_tests = 1.0;
+
+    ExpandedRuleSet loaded_rules;
+    RuleSearchConfig loaded_config;
+    RuleSearchMetrics loaded_metrics;
+    char saved_hash[65];
+    char loaded_hash[65];
+    memset(&loaded_rules, 0, sizeof(loaded_rules));
+    memset(&loaded_config, 0, sizeof(loaded_config));
+    memset(&loaded_metrics, 0, sizeof(loaded_metrics));
+
+    int ok = save_expanded_rule_checkpoint(&rules,
+                                           &config,
+                                           &metrics,
+                                           rules_path,
+                                           saved_hash);
+    ok = ok && load_expanded_rules_with_hash(rules_path,
+                                             &loaded_rules,
+                                             &loaded_config,
+                                             &loaded_metrics,
+                                             loaded_hash);
+    if (ok) {
+        ok = strcmp(saved_hash, loaded_hash) == 0 && strlen(saved_hash) == 64 &&
+             loaded_rules.count == 1 &&
+             loaded_rules.items[0].kind == RULE_FILTER_CANDIDATE_MOD &&
+             loaded_rules.items[0].state_modulus == 1 &&
+             loaded_rules.items[0].filter_modulus == 3 &&
+             loaded_rules.items[0].filter_residue == 0 &&
+             loaded_rules.items[0].train_rejects == 12 &&
+             loaded_config.include_state_conditions == 0 &&
+             loaded_config.include_candidate_filters == 1 &&
+             loaded_config.include_gap_filters == 0 &&
+             loaded_config.mod_count == 1 && loaded_config.moduli[0] == 3 &&
+             loaded_metrics.accepted_rules == 1 &&
+             loaded_metrics.accepted_candidate_rules == 1 &&
+             loaded_metrics.accepted_gap_rules == 0 &&
+             loaded_metrics.accepted_conditional_rules == 0;
+    }
+
+    free_expanded_rule_set(&loaded_rules);
+    return ok;
+}
+
 static int test_prime_gap_frequency_policy_is_smoothed(void)
 {
     GapDataset dataset;
@@ -1635,6 +1788,12 @@ int main(void)
           "prime-gap features are divisibility flags");
     check(test_rule_proposer_features_are_structural(),
           "rule proposer features are structural");
+    check(test_rule_search_unconditional_range_builds_structural_program(),
+          "rule search unconditional range builds structural program");
+    check(test_expanded_rule_survivor_mask_rejects_candidate_filters(),
+          "expanded rule survivor mask rejects candidate filters");
+    check(test_expanded_rule_checkpoint_roundtrip(),
+          "expanded rule checkpoint roundtrip");
     check(test_prime_gap_frequency_policy_is_smoothed(),
           "prime-gap frequency policy is smoothed");
     check(test_prime_gap_conditioned_frequency_uses_residue_flags(),

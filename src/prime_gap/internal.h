@@ -136,7 +136,7 @@ typedef struct {
 
 enum {
     RULE_SEARCH_GRAMMAR_VERSION = 2,
-    RULE_SEARCH_MAX_MODULI = 32,
+    RULE_SEARCH_MAX_MODULI = 256,
     RULE_SEARCH_FEATURE_COUNT = 13,
     RULE_SEARCH_SCORER_EPOCHS = 24,
 };
@@ -195,6 +195,7 @@ typedef struct {
     size_t max_rules;
     uint32_t moduli[RULE_SEARCH_MAX_MODULI];
     size_t mod_count;
+    int include_state_conditions;
     int include_candidate_filters;
     int include_gap_filters;
     const char *trace_path;
@@ -405,6 +406,18 @@ EvalMetrics evaluate_model_symbolic_masked(NeuralNet *net,
                                            nn_real *candidate_inputs,
                                            nn_real *scores,
                                            nn_real *probabilities);
+EvalMetrics evaluate_model_expanded_masked(NeuralNet *net,
+                                           const Sieve *sieve,
+                                           const ExpandedRuleSet *rules,
+                                           const GapDataset *dataset,
+                                           size_t max_states,
+                                           double log_scale,
+                                           const FeatureMask *mask,
+                                           int include_verifier,
+                                           double temperature,
+                                           nn_real *candidate_inputs,
+                                           nn_real *scores,
+                                           nn_real *probabilities);
 EvalMetrics evaluate_model_feature_wheel_masked(NeuralNet *net,
                                                 const Sieve *sieve,
                                                 const GapDataset *dataset,
@@ -449,6 +462,12 @@ size_t fill_symbolic_survivor_candidates(const SymbolicRuleSet *rules,
                                          double log_scale,
                                          const FeatureMask *mask,
                                          size_t *survivor_actions);
+size_t fill_expanded_survivor_candidates(const ExpandedRuleSet *rules,
+                                         nn_real *candidate_inputs,
+                                         uint32_t p,
+                                         double log_scale,
+                                         const FeatureMask *mask,
+                                         size_t *survivor_actions);
 void print_comparison_header(void);
 void print_comparison_row(const char *label, double temperature, EvalMetrics metrics);
 void print_metrics(const char *label, EvalMetrics metrics);
@@ -483,6 +502,26 @@ int save_symbolic_rule_checkpoint(const SymbolicRuleSet *rules,
 int load_symbolic_rules_with_hash(const char *path,
                                   SymbolicRuleSet *rules,
                                   char *hash_out);
+void free_expanded_rule_set(ExpandedRuleSet *rules);
+int load_expanded_rules_with_hash(const char *path,
+                                  ExpandedRuleSet *rules,
+                                  RuleSearchConfig *config,
+                                  RuleSearchMetrics *metrics,
+                                  char *hash_out);
+int expanded_rule_rejects(const ExpandedRule *rule,
+                          uint32_t p,
+                          uint32_t gap,
+                          VerifierWork *work);
+VerifierWork expanded_rule_scan_work(const Sieve *sieve,
+                                      const ExpandedRuleSet *rules,
+                                      uint32_t p,
+                                      uint32_t true_gap,
+                                      int *false_rejection);
+RuleSearchMetrics evaluate_expanded_rules(const Sieve *sieve,
+                                          const ExpandedRuleSet *rules,
+                                          const GapDataset *dataset,
+                                          size_t max_states,
+                                          RuleSearchMetrics metrics);
 int discover_symbolic_wheel(const GapDataset *train,
                             const GapDataset *validation,
                             SymbolicRuleSet *accepted,

@@ -18,6 +18,72 @@ typedef struct {
     char feature_set[32];
 } ReplayTrace;
 
+typedef enum {
+    PRIME_RULE_INPUT_NONE = 0,
+    PRIME_RULE_INPUT_SYMBOLIC = 1,
+    PRIME_RULE_INPUT_EXPANDED = 2,
+} PrimeRuleInputKind;
+
+typedef struct {
+    PrimeRuleInputKind kind;
+    SymbolicRuleSet symbolic;
+    ExpandedRuleSet expanded;
+    RuleSearchConfig expanded_config;
+    RuleSearchMetrics expanded_metrics;
+    char hash[65];
+} PrimeRuleInput;
+
+static const char *prime_rule_input_label(PrimeRuleInputKind kind)
+{
+    if (kind == PRIME_RULE_INPUT_SYMBOLIC) {
+        return "symbolic";
+    }
+    if (kind == PRIME_RULE_INPUT_EXPANDED) {
+        return "expanded";
+    }
+    return "none";
+}
+
+static void init_prime_rule_input(PrimeRuleInput *input)
+{
+    memset(input, 0, sizeof(*input));
+    input->kind = PRIME_RULE_INPUT_NONE;
+    strcpy(input->hash, "unknown");
+}
+
+static void free_prime_rule_input(PrimeRuleInput *input)
+{
+    free_symbolic_rule_set(&input->symbolic);
+    free_expanded_rule_set(&input->expanded);
+    input->kind = PRIME_RULE_INPUT_NONE;
+}
+
+static int load_prime_rule_input(const char *path, PrimeRuleInput *input)
+{
+    init_prime_rule_input(input);
+    if (path == NULL) {
+        return 0;
+    }
+
+    if (load_symbolic_rules_with_hash(path, &input->symbolic, input->hash)) {
+        input->kind = PRIME_RULE_INPUT_SYMBOLIC;
+        return 1;
+    }
+    free_symbolic_rule_set(&input->symbolic);
+
+    if (load_expanded_rules_with_hash(path,
+                                      &input->expanded,
+                                      &input->expanded_config,
+                                      &input->expanded_metrics,
+                                      input->hash)) {
+        input->kind = PRIME_RULE_INPUT_EXPANDED;
+        return 1;
+    }
+    free_expanded_rule_set(&input->expanded);
+    strcpy(input->hash, "unknown");
+    return 0;
+}
+
 static int append_replay_sample(ReplayTrace *trace, ReplaySample sample)
 {
     if (trace->count == trace->capacity) {
@@ -146,7 +212,8 @@ static int load_replay_trace(const char *path, ReplayTrace *trace)
 
 static void print_replay_usage(FILE *stream)
 {
-    fputs("usage: prime_replay trace.jsonl --out model.nnckpt [epochs] [--rules rules.crlprule]\n",
+    fputs("usage: prime_replay trace.jsonl --out model.nnckpt [epochs] "
+          "[--rules symbolic-or-expanded-rules.crlprule]\n",
           stream);
 }
 
@@ -190,36 +257,39 @@ int nn_prime_replay_main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    SymbolicRuleSet replay_rules = {0};
+    PrimeRuleInput replay_rules;
+    init_prime_rule_input(&replay_rules);
     char rule_hash[65] = "unknown";
-    int use_rules = 0;
     if (rules_path != NULL) {
-        if (!load_symbolic_rules_with_hash(rules_path, &replay_rules, rule_hash)) {
-            fprintf(stderr, "failed to load symbolic rules: %s\n", rules_path);
+        if (!load_prime_rule_input(rules_path, &replay_rules)) {
+            fprintf(stderr, "failed to load symbolic or expanded rules: %s\n", rules_path);
             print_replay_usage(stderr);
             return EXIT_FAILURE;
         }
-        use_rules = 1;
-        printf("loaded replay symbolic rules: %s hash=%s rules=%zu\n",
+        strcpy(rule_hash, replay_rules.hash);
+        printf("loaded replay %s rules: %s hash=%s rules=%zu\n",
+               prime_rule_input_label(replay_rules.kind),
                rules_path,
                rule_hash,
-               replay_rules.count);
+               replay_rules.kind == PRIME_RULE_INPUT_SYMBOLIC ? replay_rules.symbolic.count
+                                                               : replay_rules.expanded.count);
     }
 
     ReplayTrace trace;
     if (!load_replay_trace(trace_path, &trace)) {
         fprintf(stderr, "failed to load replay trace: %s\n", trace_path);
-        free_symbolic_rule_set(&replay_rules);
+        free_prime_rule_input(&replay_rules);
         return EXIT_FAILURE;
     }
-    if (!use_rules && strcmp(trace.rule_hash, "unknown") != 0) {
+    if (replay_rules.kind == PRIME_RULE_INPUT_NONE &&
+        strcmp(trace.rule_hash, "unknown") != 0) {
         strcpy(rule_hash, trace.rule_hash);
     }
     const FeatureMask *trace_mask = feature_mask_from_name(trace.feature_set);
     if (trace_mask == NULL) {
         fprintf(stderr, "unsupported replay trace feature_set: %s\n", trace.feature_set);
         free_replay_trace(&trace);
-        free_symbolic_rule_set(&replay_rules);
+        free_prime_rule_input(&replay_rules);
         return EXIT_FAILURE;
     }
     printf("replay feature_set=%s residue_features=%s\n",
@@ -243,7 +313,7 @@ int nn_prime_replay_main(int argc, char **argv)
         nn_free(net);
         free(candidate_inputs);
         free_replay_trace(&trace);
-        free_symbolic_rule_set(&replay_rules);
+        free_prime_rule_input(&replay_rules);
         return EXIT_FAILURE;
     }
 
@@ -258,31 +328,44 @@ int nn_prime_replay_main(int argc, char **argv)
             size_t target_index = action_row_for_action_id(current_action_ids,
                                                            ACTION_COUNT,
                                                            sample.target_action_id);
-            if (use_rules) {
+            if (replay_rules.kind != PRIME_RULE_INPUT_NONE) {
                 size_t target_action = ACTION_COUNT;
-                candidate_count = fill_symbolic_survivor_candidates(&replay_rules,
-                                                                    candidate_inputs,
-                                                                    sample.p,
-                                                                    sample.log_scale,
-                                                                    trace_mask,
-                                                                    survivor_actions);
                 if (!prime_action_from_action_id(sample.target_action_id, &target_action)) {
                     fputs("replay trace target action_id is unknown\n", stderr);
                     nn_free(net);
                     free(candidate_inputs);
                     free_replay_trace(&trace);
-                    free_symbolic_rule_set(&replay_rules);
+                    free_prime_rule_input(&replay_rules);
                     return EXIT_FAILURE;
+                }
+                if (replay_rules.kind == PRIME_RULE_INPUT_SYMBOLIC) {
+                    candidate_count =
+                        fill_symbolic_survivor_candidates(&replay_rules.symbolic,
+                                                          candidate_inputs,
+                                                          sample.p,
+                                                          sample.log_scale,
+                                                          trace_mask,
+                                                          survivor_actions);
+                } else {
+                    candidate_count =
+                        fill_expanded_survivor_candidates(&replay_rules.expanded,
+                                                          candidate_inputs,
+                                                          sample.p,
+                                                          sample.log_scale,
+                                                          trace_mask,
+                                                          survivor_actions);
                 }
                 target_index = survivor_index_for_action(survivor_actions,
                                                          candidate_count,
                                                          target_action);
                 if (candidate_count == 0 || target_index == candidate_count) {
-                    fputs("replay symbolic rules rejected the target action\n", stderr);
+                    fprintf(stderr,
+                            "replay %s rules rejected the target action\n",
+                            prime_rule_input_label(replay_rules.kind));
                     nn_free(net);
                     free(candidate_inputs);
                     free_replay_trace(&trace);
-                    free_symbolic_rule_set(&replay_rules);
+                    free_prime_rule_input(&replay_rules);
                     return EXIT_FAILURE;
                 }
             } else {
@@ -295,7 +378,7 @@ int nn_prime_replay_main(int argc, char **argv)
                     nn_free(net);
                     free(candidate_inputs);
                     free_replay_trace(&trace);
-                    free_symbolic_rule_set(&replay_rules);
+                    free_prime_rule_input(&replay_rules);
                     return EXIT_FAILURE;
                 }
             }
@@ -309,7 +392,7 @@ int nn_prime_replay_main(int argc, char **argv)
                 nn_free(net);
                 free(candidate_inputs);
                 free_replay_trace(&trace);
-                free_symbolic_rule_set(&replay_rules);
+                free_prime_rule_input(&replay_rules);
                 return EXIT_FAILURE;
             }
             loss += (double)step_loss;
@@ -332,7 +415,10 @@ int nn_prime_replay_main(int argc, char **argv)
     snprintf(meta.notes,
              sizeof(meta.notes),
              "%s feature_set=%s",
-             use_rules ? "prime_gap successor trained from learned-wheel trace replay"
+             replay_rules.kind == PRIME_RULE_INPUT_EXPANDED
+                 ? "prime_gap successor trained from expanded-rule trace replay"
+                 : replay_rules.kind == PRIME_RULE_INPUT_SYMBOLIC
+                       ? "prime_gap successor trained from learned-wheel trace replay"
                        : "prime_gap successor trained from trace replay",
              trace_mask->name);
 
@@ -349,13 +435,13 @@ int nn_prime_replay_main(int argc, char **argv)
     nn_free(net);
     free(candidate_inputs);
     free_replay_trace(&trace);
-    free_symbolic_rule_set(&replay_rules);
+    free_prime_rule_input(&replay_rules);
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 static void print_compare_usage(FILE *stream)
 {
-    fputs("usage: prime_compare [--rules rules.crlprule] "
+    fputs("usage: prime_compare [--rules symbolic-or-expanded-rules.crlprule] "
           "[--feature-set minimal|full|log-only|gap-only|residue-only] "
           "[--no-residue-features] [--full-features] "
           "model_a.nnckpt model_b.nnckpt [model_c.nnckpt ...]\n",
@@ -456,6 +542,34 @@ static void print_symbolic_compare_json(const char *rule_hash,
            metrics.learned_mod_tests);
 }
 
+static void print_expanded_compare_json(const char *rule_hash,
+                                        uint32_t seed,
+                                        RuleSearchMetrics metrics)
+{
+    printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"prime_gap\","
+           "\"model_hash\":\"none\",\"parent_hash\":\"unknown\","
+           "\"evaluation_mode\":\"expanded_rules\","
+           "\"rule_set_hash\":\"%s\",\"feature_encoder_version\":1,"
+           "\"benchmark_seed\":%u,\"sample_count\":%zu,"
+           "\"accepted_rules\":%zu,\"accepted_conditional_rules\":%zu,"
+           "\"accepted_gap_rules\":%zu,\"accepted_candidate_rules\":%zu,"
+           "\"false_rejections\":%zu,"
+           "\"direct_exact\":%.8f,\"hand_wheel_exact\":%.8f,"
+           "\"expanded_exact\":%.8f,\"expanded_mod\":%.8f}\n",
+           rule_hash == NULL ? "unknown" : rule_hash,
+           seed,
+           metrics.samples,
+           metrics.accepted_rules,
+           metrics.accepted_conditional_rules,
+           metrics.accepted_gap_rules,
+           metrics.accepted_candidate_rules,
+           metrics.false_rejections,
+           metrics.direct_exact_tests,
+           metrics.hand_wheel_exact_tests,
+           metrics.expanded_exact_tests,
+           metrics.expanded_mod_tests);
+}
+
 int nn_prime_compare_main(int argc, char **argv)
 {
     const char *rules_path = NULL;
@@ -501,15 +615,13 @@ int nn_prime_compare_main(int argc, char **argv)
     const uint32_t benchmark_seed = 20240511u;
     const double log_scale = log((double)test_limit + (double)G_MAX);
 
-    SymbolicRuleSet compare_rules = {0};
-    char rule_hash[65] = "unknown";
-    int use_rules = 0;
+    PrimeRuleInput compare_rules;
+    init_prime_rule_input(&compare_rules);
     if (rules_path != NULL) {
-        if (!load_symbolic_rules_with_hash(rules_path, &compare_rules, rule_hash)) {
-            fprintf(stderr, "failed to load symbolic rules: %s\n", rules_path);
+        if (!load_prime_rule_input(rules_path, &compare_rules)) {
+            fprintf(stderr, "failed to load symbolic or expanded rules: %s\n", rules_path);
             return EXIT_FAILURE;
         }
-        use_rules = 1;
     }
 
     Sieve sieve;
@@ -519,7 +631,7 @@ int nn_prime_compare_main(int argc, char **argv)
     if (!build_sieve(sieve_limit, &sieve) ||
         !build_gap_datasets(&sieve, train_limit, test_limit, &train, &validation, &test)) {
         fputs("failed to build benchmark data\n", stderr);
-        free_symbolic_rule_set(&compare_rules);
+        free_prime_rule_input(&compare_rules);
         free_sieve(&sieve);
         return EXIT_FAILURE;
     }
@@ -533,7 +645,7 @@ int nn_prime_compare_main(int argc, char **argv)
         free(candidate_inputs);
         free(scores);
         free(probabilities);
-        free_symbolic_rule_set(&compare_rules);
+        free_prime_rule_input(&compare_rules);
         free_gap_dataset(&train);
         free_gap_dataset(&validation);
         free_gap_dataset(&test);
@@ -545,23 +657,54 @@ int nn_prime_compare_main(int argc, char **argv)
     printf("feature_set=%s residue_features=%s\n",
            feature_mask->name,
            feature_mask->use_residue ? "on" : "off");
-    if (use_rules) {
+    if (compare_rules.kind == PRIME_RULE_INPUT_SYMBOLIC) {
         SymbolicWheelMetrics symbolic_metrics;
         memset(&symbolic_metrics, 0, sizeof(symbolic_metrics));
-        symbolic_metrics.accepted_rules = compare_rules.count;
+        symbolic_metrics.accepted_rules = compare_rules.symbolic.count;
         symbolic_metrics = evaluate_symbolic_wheel(&sieve,
-                                                   &compare_rules,
+                                                   &compare_rules.symbolic,
                                                    &test,
                                                    DEFAULT_MAX_TEST_STATES,
                                                    symbolic_metrics);
-        print_symbolic_compare_json(rule_hash, benchmark_seed, symbolic_metrics);
+        print_symbolic_compare_json(compare_rules.hash, benchmark_seed, symbolic_metrics);
         printf("learned wheel rules hash=%s direct_exact=%.2f hand_wheel_exact=%.2f "
                "learned_wheel_exact=%.2f false_rejections=%zu\n",
-               rule_hash,
+               compare_rules.hash,
                symbolic_metrics.direct_exact_tests,
                symbolic_metrics.hand_wheel_exact_tests,
                symbolic_metrics.learned_exact_tests,
                symbolic_metrics.test_false_rejections);
+    } else if (compare_rules.kind == PRIME_RULE_INPUT_EXPANDED) {
+        RuleSearchMetrics expanded_metrics;
+        memset(&expanded_metrics, 0, sizeof(expanded_metrics));
+        expanded_metrics.proposed_rules = compare_rules.expanded_metrics.proposed_rules;
+        expanded_metrics.verified_rules = compare_rules.expanded_metrics.verified_rules;
+        expanded_metrics.accepted_rules = compare_rules.expanded.count;
+        expanded_metrics.accepted_conditional_rules =
+            compare_rules.expanded_metrics.accepted_conditional_rules;
+        expanded_metrics.accepted_gap_rules =
+            compare_rules.expanded_metrics.accepted_gap_rules;
+        expanded_metrics.accepted_candidate_rules =
+            compare_rules.expanded_metrics.accepted_candidate_rules;
+        expanded_metrics = evaluate_expanded_rules(&sieve,
+                                                   &compare_rules.expanded,
+                                                   &test,
+                                                   DEFAULT_MAX_TEST_STATES,
+                                                   expanded_metrics);
+        print_expanded_compare_json(compare_rules.hash, benchmark_seed, expanded_metrics);
+        printf("expanded rules hash=%s direct_exact=%.2f hand_wheel_exact=%.2f "
+               "expanded_exact=%.2f expanded_mod=%.2f false_rejections=%zu "
+               "accepted=%zu conditional=%zu candidate=%zu gap=%zu\n",
+               compare_rules.hash,
+               expanded_metrics.direct_exact_tests,
+               expanded_metrics.hand_wheel_exact_tests,
+               expanded_metrics.expanded_exact_tests,
+               expanded_metrics.expanded_mod_tests,
+               expanded_metrics.false_rejections,
+               expanded_metrics.accepted_rules,
+               expanded_metrics.accepted_conditional_rules,
+               expanded_metrics.accepted_candidate_rules,
+               expanded_metrics.accepted_gap_rules);
     }
     int ok = 1;
     for (int i = 1; i < argc; ++i) {
@@ -605,7 +748,7 @@ int nn_prime_compare_main(int argc, char **argv)
                           "unknown",
                           metrics);
         print_comparison_row(argv[i], 1.0, metrics);
-        if (use_rules) {
+        if (compare_rules.kind != PRIME_RULE_INPUT_NONE) {
             EvalMetrics hand_wheel_metrics =
                 evaluate_model_feature_wheel_masked(net,
                                                     &sieve,
@@ -627,27 +770,51 @@ int nn_prime_compare_main(int argc, char **argv)
                               hand_wheel_metrics);
             print_comparison_row("hand-wheel+model", 1.0, hand_wheel_metrics);
 
-            EvalMetrics learned_metrics =
-                evaluate_model_symbolic_masked(net,
-                                               &sieve,
-                                               &compare_rules,
-                                               &test,
-                                               DEFAULT_MAX_TEST_STATES,
-                                               log_scale,
-                                               feature_mask,
-                                               1,
-                                               1.0,
-                                               candidate_inputs,
-                                               scores,
-                                               probabilities);
-            print_report_json(hash,
-                              &meta,
-                              benchmark_seed,
-                              feature_mask->name,
-                              "learned_wheel_model",
-                              rule_hash,
-                              learned_metrics);
-            print_comparison_row("learned-wheel+model", 1.0, learned_metrics);
+            if (compare_rules.kind == PRIME_RULE_INPUT_SYMBOLIC) {
+                EvalMetrics learned_metrics =
+                    evaluate_model_symbolic_masked(net,
+                                                   &sieve,
+                                                   &compare_rules.symbolic,
+                                                   &test,
+                                                   DEFAULT_MAX_TEST_STATES,
+                                                   log_scale,
+                                                   feature_mask,
+                                                   1,
+                                                   1.0,
+                                                   candidate_inputs,
+                                                   scores,
+                                                   probabilities);
+                print_report_json(hash,
+                                  &meta,
+                                  benchmark_seed,
+                                  feature_mask->name,
+                                  "learned_wheel_model",
+                                  compare_rules.hash,
+                                  learned_metrics);
+                print_comparison_row("learned-wheel+model", 1.0, learned_metrics);
+            } else {
+                EvalMetrics expanded_metrics =
+                    evaluate_model_expanded_masked(net,
+                                                   &sieve,
+                                                   &compare_rules.expanded,
+                                                   &test,
+                                                   DEFAULT_MAX_TEST_STATES,
+                                                   log_scale,
+                                                   feature_mask,
+                                                   1,
+                                                   1.0,
+                                                   candidate_inputs,
+                                                   scores,
+                                                   probabilities);
+                print_report_json(hash,
+                                  &meta,
+                                  benchmark_seed,
+                                  feature_mask->name,
+                                  "expanded_rule_model",
+                                  compare_rules.hash,
+                                  expanded_metrics);
+                print_comparison_row("expanded-rule+model", 1.0, expanded_metrics);
+            }
         }
         nn_free(net);
     }
@@ -655,7 +822,7 @@ int nn_prime_compare_main(int argc, char **argv)
     free(candidate_inputs);
     free(scores);
     free(probabilities);
-    free_symbolic_rule_set(&compare_rules);
+    free_prime_rule_input(&compare_rules);
     free_gap_dataset(&train);
     free_gap_dataset(&validation);
     free_gap_dataset(&test);

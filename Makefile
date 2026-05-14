@@ -42,7 +42,7 @@ PRIME_GAP_EXPERIMENT_MAX_TRAIN ?= 15000
 PRIME_GAP_EXPERIMENT_MAX_TEST ?= 15000
 RESULTS_DIR ?= results/latest
 
-.PHONY: all run action-score prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-trace grid-path-replay grid-path-eval results benchmark test sanitize check clean
+.PHONY: all run action-score prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-trace grid-path-replay grid-path-eval results benchmark test sanitize check clean
 
 all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(BENCHMARK)
 
@@ -108,19 +108,23 @@ prime-gap-trace: $(PRIME_GAP_EXAMPLE)
 	mkdir -p $(BUILD_DIR)/traces
 	./$(PRIME_GAP_EXAMPLE) 100000 200000 1 0 4000 1000 1.20 0.12 20240511 --save $(BUILD_DIR)/prime_v1.nnckpt --save-rules $(BUILD_DIR)/prime_rules.crlprule --save-learned-model $(BUILD_DIR)/prime_learned_v1.nnckpt --trace $(BUILD_DIR)/traces/prime_gap.jsonl
 
-prime-gap-replay: $(PRIME_REPLAY) prime-gap-trace
-	./$(PRIME_REPLAY) $(BUILD_DIR)/traces/prime_gap.jsonl --out $(BUILD_DIR)/prime_v2.nnckpt 2 --rules $(BUILD_DIR)/prime_rules.crlprule
+prime-gap-replay: $(PRIME_REPLAY) prime-gap-trace prime-rule-search
+	./$(PRIME_REPLAY) $(BUILD_DIR)/traces/prime_gap.jsonl --out $(BUILD_DIR)/prime_v2.nnckpt 2 --rules $(BUILD_DIR)/prime_rules_v2.crlprule
 
 prime-gap-eval: $(PRIME_COMPARE) prime-gap-replay
-	./$(PRIME_COMPARE) --rules $(BUILD_DIR)/prime_rules.crlprule $(BUILD_DIR)/prime_v1.nnckpt $(BUILD_DIR)/prime_learned_v1.nnckpt $(BUILD_DIR)/prime_v2.nnckpt
+	./$(PRIME_COMPARE) --rules $(BUILD_DIR)/prime_rules_v2.crlprule $(BUILD_DIR)/prime_v1.nnckpt $(BUILD_DIR)/prime_learned_v1.nnckpt $(BUILD_DIR)/prime_v2.nnckpt
 
 prime-rule-search: $(PRIME_RULE_SEARCH)
 	mkdir -p $(BUILD_DIR)/traces
-	./$(PRIME_RULE_SEARCH) --gap-only --trace $(BUILD_DIR)/traces/prime_rule_search.jsonl --save $(BUILD_DIR)/prime_rules_v2.crlprule
+	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 64 --trace $(BUILD_DIR)/traces/prime_rule_search.jsonl --save $(BUILD_DIR)/prime_rules_v2.crlprule
+
+prime-rule-search-conditional: $(PRIME_RULE_SEARCH)
+	mkdir -p $(BUILD_DIR)/traces
+	./$(PRIME_RULE_SEARCH) --gap-only --trace $(BUILD_DIR)/traces/prime_rule_search_conditional.jsonl --save $(BUILD_DIR)/prime_rules_conditional.crlprule
 
 prime-rule-search-smoke: $(PRIME_RULE_SEARCH)
 	mkdir -p $(BUILD_DIR)/traces
-	./$(PRIME_RULE_SEARCH) --gap-only --train-limit 100000 --test-limit 200000 --max-train-states 1000 --max-test-states 1000 --max-rules 32 --moduli 3,5,7,11 --trace $(BUILD_DIR)/traces/prime_rule_search_smoke.jsonl --save $(BUILD_DIR)/prime_rules_v2_smoke.crlprule
+	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:31 --train-limit 100000 --test-limit 200000 --max-train-states 1000 --max-test-states 1000 --max-rules 32 --trace $(BUILD_DIR)/traces/prime_rule_search_smoke.jsonl --save $(BUILD_DIR)/prime_rules_v2_smoke.crlprule
 
 prime-gap-sweep: $(PRIME_GAP_EXAMPLE)
 	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 2 1 30000 30000
