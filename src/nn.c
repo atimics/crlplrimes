@@ -1643,6 +1643,64 @@ static nn_real train_softmax_scorer_from_workspace(NeuralNet *net,
     return loss;
 }
 
+static nn_real train_pairwise_ranker_from_workspace(NeuralNet *net,
+                                                    size_t candidate_count,
+                                                    size_t target_index,
+                                                    nn_real margin,
+                                                    nn_real learning_rate)
+{
+    if (!ensure_gradient_buffers(net)) {
+        return (nn_real)NAN;
+    }
+
+    zero_gradients(net);
+
+    size_t output_layer = net->layer_count - 1;
+    const nn_real *scores = net->batch_activations[output_layer];
+    nn_real *output_deltas = net->batch_deltas[output_layer];
+    memset(output_deltas, 0, candidate_count * sizeof(*output_deltas));
+
+    nn_real loss = (nn_real)0;
+    nn_real target_score = scores[target_index];
+    nn_real scale = (nn_real)1 / (nn_real)(candidate_count - 1);
+    for (size_t sample = 0; sample < candidate_count; ++sample) {
+        if (sample == target_index) {
+            continue;
+        }
+
+        nn_real violation = margin - target_score + scores[sample];
+        if (violation <= (nn_real)0) {
+            continue;
+        }
+
+        loss += violation;
+        output_deltas[target_index] -= scale;
+        output_deltas[sample] += scale;
+    }
+
+    for (size_t sample = 0; sample < candidate_count; ++sample) {
+        output_deltas[sample] *= activation_derivative_from_activation(
+            scores[sample], net->output_activation);
+    }
+
+    for (size_t layer = net->layer_count - 2; layer > 0; --layer) {
+        size_t current = net->sizes[layer];
+        size_t next = net->sizes[layer + 1];
+        dense_backprop_deltas_batch(net->batch_deltas[layer + 1],
+                                    net->weights[layer + 1],
+                                    net->batch_activations[layer],
+                                    net->batch_deltas[layer],
+                                    candidate_count,
+                                    current,
+                                    next,
+                                    activation_for_layer(net, layer));
+    }
+
+    accumulate_batch_gradients(net, candidate_count);
+    apply_gradients(net, learning_rate);
+    return loss * scale;
+}
+
 nn_real nn_train_softmax_scorer_cached(NeuralNet *net,
                                        size_t candidate_count,
                                        size_t selected_index,
@@ -1808,6 +1866,35 @@ nn_real nn_train_action_scorer(NeuralNet *net,
 {
     return nn_train_softmax_scorer_weighted(
         net, candidate_inputs, candidate_count, target_index, (nn_real)1, learning_rate);
+}
+
+nn_real nn_train_pairwise_action_ranker(NeuralNet *net,
+                                        const nn_real *candidate_inputs,
+                                        size_t candidate_count,
+                                        size_t target_index,
+                                        nn_real margin,
+                                        nn_real learning_rate)
+{
+    if (net == NULL || candidate_inputs == NULL || candidate_count < 2 ||
+        target_index >= candidate_count || margin <= (nn_real)0 ||
+        learning_rate <= (nn_real)0 || nn_output_size(net) != 1 ||
+        net->output_activation != NN_ACTIVATION_LINEAR) {
+        return (nn_real)NAN;
+    }
+
+    invalidate_batch_cache(net);
+
+    if (!ensure_batch_workspace(net, candidate_count)) {
+        return (nn_real)NAN;
+    }
+
+    size_t input_width = nn_input_size(net);
+    memcpy(net->batch_activations[0],
+           candidate_inputs,
+           candidate_count * input_width * sizeof(*candidate_inputs));
+    forward_batch_workspace(net, candidate_count);
+    return train_pairwise_ranker_from_workspace(
+        net, candidate_count, target_index, margin, learning_rate);
 }
 
 nn_real nn_train(NeuralNet *net,
@@ -2427,7 +2514,11 @@ int nn_trace_write_jsonl(FILE *fp, const NNTraceRecord *record)
     const char *verifier_cost =
         record->verifier_cost_json == NULL ? "{}" : record->verifier_cost_json;
 
-    if (fputc('{', fp) == EOF || fputs("\"schema\":\"crlp.trace.v1\"", fp) == EOF ||
+    if (fputc('{', fp) == EOF || fputs("\"schema\":", fp) == EOF ||
+        !trace_write_json_string(fp, NN_TRACE_SCHEMA) ||
+        fprintf(fp, ",\"trace_version\":%u", (unsigned int)NN_TRACE_VERSION) < 0 ||
+        fputs(",\"action_id_contract\":", fp) == EOF ||
+        !trace_write_json_string(fp, NN_TRACE_ACTION_ID_CONTRACT) ||
         fputs(",\"task\":", fp) == EOF || !trace_write_json_string(fp, task) ||
         fputs(",\"state_hash\":\"", fp) == EOF ||
         fprintf(fp, "%016llx", (unsigned long long)record->state_hash) < 0 ||
@@ -2701,11 +2792,19 @@ int nn_trace_parse_jsonl(const char *line,
     uint64_t candidate_count = 0;
     uint64_t selected_index = 0;
     uint64_t target_index = 0;
+    uint64_t trace_version = 0;
     uint64_t feature_encoder_version = 0;
     nn_real loss = 0;
 
     if (!nn_trace_json_get_string(line, "schema", parsed.schema, sizeof(parsed.schema)) ||
-        strcmp(parsed.schema, "crlp.trace.v1") != 0 ||
+        strcmp(parsed.schema, NN_TRACE_SCHEMA) != 0 ||
+        !nn_trace_json_get_u64(line, "trace_version", &trace_version) ||
+        trace_version != NN_TRACE_VERSION ||
+        !nn_trace_json_get_string(line,
+                                  "action_id_contract",
+                                  parsed.action_id_contract,
+                                  sizeof(parsed.action_id_contract)) ||
+        strcmp(parsed.action_id_contract, NN_TRACE_ACTION_ID_CONTRACT) != 0 ||
         !nn_trace_json_get_string(line, "task", parsed.task_name, sizeof(parsed.task_name)) ||
         !trace_parse_hex_u64(line, "state_hash", &parsed.state_hash) ||
         !nn_trace_json_get_string(
@@ -2725,6 +2824,7 @@ int nn_trace_parse_jsonl(const char *line,
     }
 
     parsed.feature_encoder_version = (uint32_t)feature_encoder_version;
+    parsed.trace_version = (uint32_t)trace_version;
     parsed.candidate_count = (size_t)candidate_count;
     parsed.selected_index = (size_t)selected_index;
     parsed.target_index = (size_t)target_index;
@@ -2734,6 +2834,14 @@ int nn_trace_parse_jsonl(const char *line,
         !trace_parse_real_array(line, "scores", scores, parsed.candidate_count) ||
         !trace_parse_real_array(line, "probabilities", probabilities, parsed.candidate_count)) {
         return 0;
+    }
+
+    for (size_t i = 0; i < parsed.candidate_count; ++i) {
+        for (size_t j = i + 1; j < parsed.candidate_count; ++j) {
+            if (action_ids[i] == action_ids[j]) {
+                return 0;
+            }
+        }
     }
 
     nn_real probability_sum = 0;

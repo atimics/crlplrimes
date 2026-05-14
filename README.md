@@ -258,7 +258,7 @@ Run the repeatable experiment harness with:
 make prime-gap-experiments
 ```
 
-The harness runs supervised epoch sweeps, KL/entropy regularization sweeps, and writes parsed CSV plus a Markdown summary under `build/float/prime_gap_experiments/`. The selected regularization row is chosen by validation NLL, not by test accuracy. Override the default one-seed quick run with:
+The harness runs supervised epoch sweeps, KL/entropy regularization sweeps, and writes parsed CSV plus a Markdown summary under `build/float/prime_gap_experiments/`. Curated result snapshots that should survive `make clean` live under `results/`. The selected regularization row is chosen by validation NLL, not by test accuracy. Override the default one-seed quick run with:
 
 ```sh
 make prime-gap-experiments PRIME_GAP_EXPERIMENT_SEEDS=20240511,20240512,20240513
@@ -421,12 +421,12 @@ The hash is SHA-256 over the exact checkpoint bytes, so changing weights or meta
 Trace rows are JSONL records with schema `crlp.trace.v1`:
 
 ```json
-{"schema":"crlp.trace.v1","task":"prime_gap","state_hash":"0000000000000000","model_hash":"unknown","feature_encoder_version":1,"candidate_count":0,"action_ids":[],"scores":[],"probabilities":[],"selected_index":0,"target_index":0,"loss":0.0,"verifier_result":"correct","verifier_cost":{},"seed":0}
+{"schema":"crlp.trace.v1","trace_version":1,"action_id_contract":"stable_unique_action_ids","task":"prime_gap","state_hash":"0000000000000000","model_hash":"unknown","feature_encoder_version":1,"candidate_count":0,"action_ids":[],"scores":[],"probabilities":[],"selected_index":0,"target_index":0,"loss":0.0,"verifier_result":"correct","verifier_cost":{},"seed":0}
 ```
 
 Prime-gap traces add `p`, `true_gap`, `proposal_steps`, `wheel_exact`, `assisted_wheel`, `block_cost`, `assisted_block`, and `log_scale`. Delayed-claim traces use the deterministic per-row seed for replay.
 
-Use `nn_trace_parse_jsonl` to validate rows before replay. It checks the schema string, required scalar fields, action ids, score/probability array lengths, selected/target index bounds, and probability mass. `nn_trace_json_get_u64`, `nn_trace_json_get_real`, and `nn_trace_json_get_string` are small helpers for task-specific extra fields.
+Use `nn_trace_parse_jsonl` to validate rows before replay. It checks the schema string, trace version, action-id contract, required scalar fields, unique action ids, score/probability array lengths, selected/target index bounds, and probability mass. Replay code resolves `target_index` to the row's stable `action_id`, then maps that action id back into the regenerated candidate rows before training. `nn_trace_json_get_u64`, `nn_trace_json_get_real`, and `nn_trace_json_get_string` are small helpers for task-specific extra fields.
 
 Comparison reports are JSONL records with schema `crlp.compare.v1`, `report_version`, `model_hash`, `parent_hash`, `feature_encoder_version`, benchmark seed, sample count, capability metrics, calibration metrics, and any task-specific verifier or utility fields.
 

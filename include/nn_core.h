@@ -19,6 +19,10 @@
 typedef NN_REAL nn_real;
 typedef struct NeuralNet NeuralNet;
 
+#define NN_TRACE_SCHEMA "crlp.trace.v1"
+#define NN_TRACE_VERSION 1u
+#define NN_TRACE_ACTION_ID_CONTRACT "stable_unique_action_ids"
+
 typedef enum {
     NN_ACTIVATION_SIGMOID = 0,
     NN_ACTIVATION_RELU = 1,
@@ -82,6 +86,8 @@ typedef struct {
 
 typedef struct {
     char schema[32];
+    uint32_t trace_version;
+    char action_id_contract[32];
     char task_name[64];
     char model_hash_hex[65];
     uint64_t state_hash;

@@ -46,11 +46,14 @@ LEARNED_WHEEL_VALIDATION_RE = re.compile(
 
 EPOCH_SWEEP_LABELS = (
     "empirical-gap",
+    "hand-wheel empirical",
     "residue-conditioned",
+    "hand-wheel residue-conditioned",
     "linear-scorer",
     "linear-scorer temp-scaled",
     "supervised",
     "supervised temp-scaled",
+    "pairwise-ranking",
     "learned-wheel supervised",
     "learned-wheel supervised temp-scaled",
 )
@@ -432,9 +435,12 @@ def write_summary(
             and row["label"]
             in (
                 "empirical-gap",
+                "hand-wheel empirical",
                 "residue-conditioned",
+                "hand-wheel residue-conditioned",
                 "linear-scorer temp-scaled",
                 "supervised temp-scaled",
+                "pairwise-ranking",
                 "learned-wheel supervised temp-scaled",
             )
         ],

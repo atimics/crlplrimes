@@ -156,6 +156,40 @@ static void fill_claim_candidate_features(nn_real *candidate_inputs, const Claim
     }
 }
 
+static uint32_t claim_action_id_for_action(size_t action)
+{
+    return (uint32_t)action;
+}
+
+static int claim_action_from_action_id(uint32_t action_id, size_t *out_action)
+{
+    if (action_id >= DC_ACTION_COUNT || out_action == NULL) {
+        return 0;
+    }
+
+    *out_action = (size_t)action_id;
+    return 1;
+}
+
+static void fill_claim_action_ids(uint32_t *action_ids)
+{
+    for (size_t action = 0; action < DC_ACTION_COUNT; ++action) {
+        action_ids[action] = claim_action_id_for_action(action);
+    }
+}
+
+static size_t claim_row_for_action_id(const uint32_t *action_ids,
+                                      size_t candidate_count,
+                                      uint32_t action_id)
+{
+    for (size_t row = 0; row < candidate_count; ++row) {
+        if (action_ids[row] == action_id) {
+            return row;
+        }
+    }
+    return candidate_count;
+}
+
 static NeuralNet *create_claim_model(unsigned int seed)
 {
     static const size_t layers[] = {DC_FEATURE_COUNT, 24, 12, 1};
@@ -324,12 +358,17 @@ static int emit_claim_trace(NeuralNet *net,
         return 0;
     }
 
-    uint32_t action_ids[DC_ACTION_COUNT] = {0, 1, 2, 3};
+    uint32_t action_ids[DC_ACTION_COUNT];
+    fill_claim_action_ids(action_ids);
     size_t ranked[DC_ACTION_COUNT];
     int ok = 1;
     for (size_t i = 0; ok && i < samples; ++i) {
         uint64_t seed = seed_start + (uint64_t)i;
         ClaimState state = generate_claim_state(seed);
+        uint32_t target_action_id = claim_action_id_for_action(state.target);
+        size_t target_index = claim_row_for_action_id(action_ids,
+                                                      DC_ACTION_COUNT,
+                                                      target_action_id);
         fill_claim_candidate_features(candidate_inputs, &state);
         ok = nn_score_action_rows(net,
                                   candidate_inputs,
@@ -340,12 +379,21 @@ static int emit_claim_trace(NeuralNet *net,
         if (!ok) {
             break;
         }
+        if (target_index == DC_ACTION_COUNT) {
+            ok = 0;
+            break;
+        }
         size_t proposal_steps = DC_ACTION_COUNT;
         for (size_t rank = 0; rank < DC_ACTION_COUNT; ++rank) {
-            if (ranked[rank] == state.target) {
+            if (action_ids[ranked[rank]] == target_action_id) {
                 proposal_steps = rank + 1;
                 break;
             }
+        }
+        size_t selected_action = DC_ACTION_COUNT;
+        if (!claim_action_from_action_id(action_ids[ranked[0]], &selected_action)) {
+            ok = 0;
+            break;
         }
 
         char cost_json[128];
@@ -354,14 +402,14 @@ static int emit_claim_trace(NeuralNet *net,
                  sizeof(cost_json),
                  "{\"decision_utility\":%.6f,\"proposal_steps\":%zu,"
                  "\"baseline_steps\":%zu}",
-                 (double)state.utility[ranked[0]],
+                 (double)state.utility[selected_action],
                  proposal_steps,
                  state.target + 1);
         snprintf(extra_json,
                  sizeof(extra_json),
                  "\"decision_utility\":%.6f,\"proposal_steps\":%zu,"
                  "\"baseline_steps\":%zu",
-                 (double)state.utility[ranked[0]],
+                 (double)state.utility[selected_action],
                  proposal_steps,
                  state.target + 1);
 
@@ -376,9 +424,11 @@ static int emit_claim_trace(NeuralNet *net,
         record.scores = scores;
         record.probabilities = probabilities;
         record.selected_index = ranked[0];
-        record.target_index = state.target;
-        record.loss = (nn_real)(-log(dc_safe_probability((double)probabilities[state.target])));
-        record.verifier_result = ranked[0] == state.target ? "correct" : "corrected";
+        record.target_index = target_index;
+        record.loss =
+            (nn_real)(-log(dc_safe_probability((double)probabilities[target_index])));
+        record.verifier_result =
+            action_ids[ranked[0]] == target_action_id ? "correct" : "corrected";
         record.verifier_cost_json = cost_json;
         record.seed = seed;
         record.extra_json = extra_json;
@@ -396,7 +446,7 @@ static int emit_claim_trace(NeuralNet *net,
 
 typedef struct {
     uint64_t *seeds;
-    size_t *targets;
+    uint32_t *target_action_ids;
     nn_real *reference_probabilities;
     size_t count;
     size_t capacity;
@@ -414,39 +464,42 @@ typedef struct {
 
 static int claim_trace_append(ClaimTrace *trace,
                               uint64_t seed,
-                              size_t target,
+                              uint32_t target_action_id,
                               const nn_real *reference_probabilities)
 {
     if (trace->count == trace->capacity) {
         size_t next_capacity = trace->capacity == 0 ? 1024 : trace->capacity * 2;
         uint64_t *next_seeds = calloc(next_capacity, sizeof(*next_seeds));
-        size_t *next_targets = calloc(next_capacity, sizeof(*next_targets));
+        uint32_t *next_target_action_ids =
+            calloc(next_capacity, sizeof(*next_target_action_ids));
         nn_real *next_reference_probabilities =
             calloc(next_capacity * DC_ACTION_COUNT, sizeof(*next_reference_probabilities));
-        if (next_seeds == NULL || next_targets == NULL ||
+        if (next_seeds == NULL || next_target_action_ids == NULL ||
             next_reference_probabilities == NULL) {
             free(next_seeds);
-            free(next_targets);
+            free(next_target_action_ids);
             free(next_reference_probabilities);
             return 0;
         }
         if (trace->count != 0) {
             memcpy(next_seeds, trace->seeds, trace->count * sizeof(*next_seeds));
-            memcpy(next_targets, trace->targets, trace->count * sizeof(*next_targets));
+            memcpy(next_target_action_ids,
+                   trace->target_action_ids,
+                   trace->count * sizeof(*next_target_action_ids));
             memcpy(next_reference_probabilities,
                    trace->reference_probabilities,
                    trace->count * DC_ACTION_COUNT * sizeof(*next_reference_probabilities));
         }
         free(trace->seeds);
-        free(trace->targets);
+        free(trace->target_action_ids);
         free(trace->reference_probabilities);
         trace->seeds = next_seeds;
-        trace->targets = next_targets;
+        trace->target_action_ids = next_target_action_ids;
         trace->reference_probabilities = next_reference_probabilities;
         trace->capacity = next_capacity;
     }
     trace->seeds[trace->count] = seed;
-    trace->targets[trace->count] = target;
+    trace->target_action_ids[trace->count] = target_action_id;
     memcpy(&trace->reference_probabilities[trace->count * DC_ACTION_COUNT],
            reference_probabilities,
            DC_ACTION_COUNT * sizeof(*reference_probabilities));
@@ -457,7 +510,7 @@ static int claim_trace_append(ClaimTrace *trace,
 static void claim_trace_free(ClaimTrace *trace)
 {
     free(trace->seeds);
-    free(trace->targets);
+    free(trace->target_action_ids);
     free(trace->reference_probabilities);
     memset(trace, 0, sizeof(*trace));
 }
@@ -491,14 +544,16 @@ static int load_claim_trace(const char *path, ClaimTrace *trace)
             continue;
         }
         nn_real reference_probabilities[DC_ACTION_COUNT] = {0};
-        uint8_t seen_action_ids[DC_ACTION_COUNT] = {0};
-        for (size_t action = 0; action < record.candidate_count; ++action) {
-            if (action_ids[action] >= DC_ACTION_COUNT || seen_action_ids[action_ids[action]]) {
+        uint8_t seen_actions[DC_ACTION_COUNT] = {0};
+        for (size_t row = 0; row < record.candidate_count; ++row) {
+            size_t action = DC_ACTION_COUNT;
+            if (!claim_action_from_action_id(action_ids[row], &action) ||
+                seen_actions[action]) {
                 ok = 0;
                 break;
             }
-            seen_action_ids[action_ids[action]] = 1;
-            reference_probabilities[action_ids[action]] = probabilities[action];
+            seen_actions[action] = 1;
+            reference_probabilities[action] = probabilities[row];
         }
         if (!ok || record.candidate_count != DC_ACTION_COUNT ||
             record.target_index >= DC_ACTION_COUNT) {
@@ -511,7 +566,7 @@ static int load_claim_trace(const char *path, ClaimTrace *trace)
         }
         ok = claim_trace_append(trace,
                                 record.seed,
-                                (size_t)action_ids[record.target_index],
+                                action_ids[record.target_index],
                                 reference_probabilities);
     }
     if (fclose(fp) != 0) {
@@ -544,10 +599,37 @@ static int replay_claim_trace(const ClaimReplayConfig *config)
         return 0;
     }
 
+    uint32_t current_action_ids[DC_ACTION_COUNT];
+    fill_claim_action_ids(current_action_ids);
     for (size_t epoch = 0; epoch < config->epochs; ++epoch) {
         double loss = 0.0;
         for (size_t i = 0; i < trace.count; ++i) {
             ClaimState state = generate_claim_state(trace.seeds[i]);
+            size_t target_index = claim_row_for_action_id(current_action_ids,
+                                                          DC_ACTION_COUNT,
+                                                          trace.target_action_ids[i]);
+            nn_real row_reference_probabilities[DC_ACTION_COUNT];
+
+            if (target_index == DC_ACTION_COUNT) {
+                nn_free(net);
+                free(candidate_inputs);
+                free(scores);
+                claim_trace_free(&trace);
+                return 0;
+            }
+            for (size_t row = 0; row < DC_ACTION_COUNT; ++row) {
+                size_t action = DC_ACTION_COUNT;
+                if (!claim_action_from_action_id(current_action_ids[row], &action)) {
+                    nn_free(net);
+                    free(candidate_inputs);
+                    free(scores);
+                    claim_trace_free(&trace);
+                    return 0;
+                }
+                row_reference_probabilities[row] =
+                    trace.reference_probabilities[i * DC_ACTION_COUNT + action];
+            }
+
             fill_claim_candidate_features(candidate_inputs, &state);
             if (!nn_score_action_rows(net, candidate_inputs, DC_ACTION_COUNT, scores, NULL)) {
                 nn_free(net);
@@ -559,9 +641,9 @@ static int replay_claim_trace(const ClaimReplayConfig *config)
             nn_real step_loss = nn_train_softmax_scorer_policy_regularized_cached(
                 net,
                 DC_ACTION_COUNT,
-                trace.targets[i],
+                target_index,
                 config->hard_weight,
-                &trace.reference_probabilities[i * DC_ACTION_COUNT],
+                row_reference_probabilities,
                 config->soft_weight,
                 (nn_real)0,
                 config->learning_rate);

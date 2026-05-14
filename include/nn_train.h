@@ -33,6 +33,12 @@ nn_real nn_train_action_scorer(NeuralNet *net,
                                size_t candidate_count,
                                size_t target_index,
                                nn_real learning_rate);
+nn_real nn_train_pairwise_action_ranker(NeuralNet *net,
+                                        const nn_real *candidate_inputs,
+                                        size_t candidate_count,
+                                        size_t target_index,
+                                        nn_real margin,
+                                        nn_real learning_rate);
 nn_real nn_train_softmax_scorer(NeuralNet *net,
                                 const nn_real *candidate_inputs,
                                 size_t candidate_count,

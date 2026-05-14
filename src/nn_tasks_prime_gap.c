@@ -197,6 +197,8 @@ typedef struct {
     double assisted_wheel_exact_tests_top10;
     double block_scan_cost;
     double assisted_block_cost_top10;
+    double scorer_seconds;
+    double verifier_seconds;
 } EvalMetrics;
 
 typedef struct {
@@ -677,6 +679,55 @@ static size_t residue_signature(uint32_t p, size_t action, size_t mod_count)
         }
     }
     return signature;
+}
+
+static int feature_wheel_rejects_action(uint32_t p, size_t action)
+{
+    if (action_is_overflow(action)) {
+        return 0;
+    }
+
+    uint32_t candidate = p + (uint32_t)action_gap(action);
+    for (size_t i = 0; i < FEATURE_MOD_COUNT; ++i) {
+        uint32_t mod = FEATURE_MODS[i];
+        if (candidate > mod && candidate % mod == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void apply_feature_wheel_filter(uint32_t p,
+                                       nn_real *scores,
+                                       nn_real *probabilities)
+{
+    double survivor_probability = 0.0;
+    size_t survivors = 0;
+
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        if (feature_wheel_rejects_action(p, action)) {
+            scores[action] = (nn_real)-1.0e9;
+            probabilities[action] = (nn_real)0;
+            continue;
+        }
+
+        survivor_probability += (double)probabilities[action];
+        ++survivors;
+    }
+
+    if (survivors == 0 || survivor_probability <= 0.0) {
+        nn_real uniform = (nn_real)(1.0 / (double)ACTION_COUNT);
+        for (size_t action = 0; action < ACTION_COUNT; ++action) {
+            scores[action] = uniform;
+            probabilities[action] = uniform;
+        }
+        return;
+    }
+
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        probabilities[action] =
+            (nn_real)((double)probabilities[action] / survivor_probability);
+    }
 }
 
 #if defined(NN_ENABLE_TEST_API)
@@ -1912,6 +1963,7 @@ static void accumulate_eval_sample(EvalMetrics *metrics,
     metrics->bucket_true_rank[bucket] += (double)rank + 1.0;
 
     if (include_verifier) {
+        double verifier_started = now_seconds();
         VerifierWork wheel = wheel_scan_work(sieve, p, gap);
         VerifierWork assisted = assisted_wheel_work(sieve, p, gap, ranked, 10);
         BlockWork block = block_scan_work(sieve, p, gap);
@@ -1924,6 +1976,7 @@ static void accumulate_eval_sample(EvalMetrics *metrics,
         metrics->assisted_wheel_exact_tests_top10 += (double)assisted.exact_tests;
         metrics->block_scan_cost += block_work_cost(block);
         metrics->assisted_block_cost_top10 += block_work_cost(assisted_block);
+        metrics->verifier_seconds += now_seconds() - verifier_started;
     }
 }
 
@@ -2097,12 +2150,14 @@ static EvalMetrics evaluate_model(NeuralNet *net,
         uint32_t p = dataset->prime[index];
         uint32_t gap = dataset->gap[index];
 
+        double scorer_started = now_seconds();
         fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
         if (!nn_score_action_rows(net, candidate_inputs, ACTION_COUNT, scores, NULL)) {
             continue;
         }
         softmax_temperature(scores, probabilities, ACTION_COUNT, temperature);
         rank_actions(scores, ranked);
+        metrics.scorer_seconds += now_seconds() - scorer_started;
         accumulate_eval_sample(&metrics,
                                sieve,
                                dataset,
@@ -2147,6 +2202,7 @@ static EvalMetrics evaluate_model_symbolic_masked(NeuralNet *net,
         size_t index = eval_sample_index(dataset, sample, samples);
         uint32_t p = dataset->prime[index];
         uint32_t gap = dataset->gap[index];
+        double scorer_started = now_seconds();
         size_t survivor_count = fill_symbolic_survivor_candidates(rules,
                                                                   candidate_inputs,
                                                                   p,
@@ -2165,6 +2221,7 @@ static EvalMetrics evaluate_model_symbolic_masked(NeuralNet *net,
                                       compact_probabilities,
                                       probabilities);
         expand_symbolic_ranking(survivor_actions, survivor_count, compact_ranked, ranked);
+        metrics.scorer_seconds += now_seconds() - scorer_started;
         accumulate_eval_sample(&metrics,
                                sieve,
                                dataset,
@@ -2345,12 +2402,12 @@ static double fit_temperature_symbolic_masked(NeuralNet *net,
     return best_temperature;
 }
 
-static EvalMetrics evaluate_static_policy(const Sieve *sieve,
-                                          const GapDataset *dataset,
-                                          const size_t *ranked,
-                                          const nn_real *probabilities,
-                                          size_t max_states,
-                                          int include_verifier)
+static EvalMetrics evaluate_frequency_policy(const Sieve *sieve,
+                                             const GapDataset *dataset,
+                                             const nn_real *base_probabilities,
+                                             size_t max_states,
+                                             int include_verifier,
+                                             int apply_wheel_filter)
 {
     EvalMetrics metrics;
     memset(&metrics, 0, sizeof(metrics));
@@ -2360,8 +2417,21 @@ static EvalMetrics evaluate_static_policy(const Sieve *sieve,
         samples = max_states;
     }
 
+    size_t ranked[ACTION_COUNT];
+    nn_real scores[ACTION_COUNT];
+    nn_real probabilities[ACTION_COUNT];
     for (size_t sample = 0; sample < samples; ++sample) {
         size_t index = eval_sample_index(dataset, sample, samples);
+        double scorer_started = now_seconds();
+        for (size_t action = 0; action < ACTION_COUNT; ++action) {
+            scores[action] = base_probabilities[action];
+            probabilities[action] = base_probabilities[action];
+        }
+        if (apply_wheel_filter) {
+            apply_feature_wheel_filter(dataset->prime[index], scores, probabilities);
+        }
+        rank_actions(scores, ranked);
+        metrics.scorer_seconds += now_seconds() - scorer_started;
         accumulate_eval_sample(&metrics,
                                sieve,
                                dataset,
@@ -2377,9 +2447,33 @@ static EvalMetrics evaluate_static_policy(const Sieve *sieve,
     return metrics;
 }
 
+static void print_reliability_bins(const EvalMetrics *metrics)
+{
+    printf("    reliability bins");
+    for (size_t bin = 0; bin < CALIBRATION_BINS; ++bin) {
+        if (metrics->calibration_count[bin] == 0) {
+            continue;
+        }
+        double low = (double)bin / (double)CALIBRATION_BINS;
+        double high = (double)(bin + 1) / (double)CALIBRATION_BINS;
+        printf(" [%.1f,%.1f):n=%zu conf=%.3f acc=%.3f",
+               low,
+               high,
+               metrics->calibration_count[bin],
+               metrics->calibration_confidence[bin],
+               metrics->calibration_correct[bin]);
+    }
+    printf("\n");
+}
+
 static void print_metrics(const char *label, EvalMetrics metrics)
 {
     double samples = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
+    double scorer_ms = 1000.0 * metrics.scorer_seconds / samples;
+    double verifier_ms = metrics.verifier_samples == 0
+                             ? 0.0
+                             : 1000.0 * metrics.verifier_seconds /
+                                   (double)metrics.verifier_samples;
     double high_confidence_coverage =
         100.0 * (double)metrics.high_confidence / samples;
     double high_confidence_accuracy =
@@ -2436,6 +2530,14 @@ static void print_metrics(const char *label, EvalMetrics metrics)
     printf("    conf>=0.50 coverage=%.2f%% accuracy=%.2f%%\n",
            high_confidence_coverage,
            high_confidence_accuracy);
+    print_reliability_bins(&metrics);
+
+    printf("  wall-clock cost\n");
+    printf("    scorer=%.6f ms/sample total=%.6fs verifier=%.6f ms/sample total=%.6fs\n",
+           scorer_ms,
+           metrics.scorer_seconds,
+           verifier_ms,
+           metrics.verifier_seconds);
 
     printf("  prime buckets\n");
     for (size_t bucket = 0; bucket < PRIME_BUCKET_COUNT; ++bucket) {
@@ -2523,11 +2625,47 @@ static uint64_t prime_state_hash(uint32_t p)
     return hash;
 }
 
+static uint32_t prime_action_id_for_action(size_t action)
+{
+    return (uint32_t)action;
+}
+
+static int prime_action_from_action_id(uint32_t action_id, size_t *out_action)
+{
+    if (action_id >= ACTION_COUNT || out_action == NULL) {
+        return 0;
+    }
+
+    *out_action = (size_t)action_id;
+    return 1;
+}
+
 static void fill_action_ids(uint32_t *action_ids)
 {
     for (size_t action = 0; action < ACTION_COUNT; ++action) {
-        action_ids[action] = (uint32_t)action;
+        action_ids[action] = prime_action_id_for_action(action);
     }
+}
+
+static size_t action_row_for_action_id(const uint32_t *action_ids,
+                                       size_t candidate_count,
+                                       uint32_t action_id)
+{
+    for (size_t row = 0; row < candidate_count; ++row) {
+        if (action_ids[row] == action_id) {
+            return row;
+        }
+    }
+    return candidate_count;
+}
+
+static size_t action_row_for_action(const uint32_t *action_ids,
+                                    size_t candidate_count,
+                                    size_t action)
+{
+    return action_row_for_action_id(action_ids,
+                                    candidate_count,
+                                    prime_action_id_for_action(action));
 }
 
 static int save_prime_checkpoint_with_meta(NeuralNet *net,
@@ -2602,8 +2740,13 @@ static int emit_prime_gap_trace(NeuralNet *net,
         uint32_t p = dataset->prime[index];
         uint32_t gap = dataset->gap[index];
         size_t target = gap_to_action(gap);
+        size_t target_index = action_row_for_action(action_ids, ACTION_COUNT, target);
         size_t ranked[ACTION_COUNT];
 
+        if (target_index == ACTION_COUNT) {
+            ok = 0;
+            break;
+        }
         fill_candidate_features_masked(candidate_inputs, p, log_scale, &FEATURE_MASK_FULL);
         ok = nn_score_action_rows(net, candidate_inputs, ACTION_COUNT, scores, probabilities) &&
              nn_rank_action_scores(scores, ACTION_COUNT, ranked);
@@ -2656,9 +2799,10 @@ static int emit_prime_gap_trace(NeuralNet *net,
         record.scores = scores;
         record.probabilities = probabilities;
         record.selected_index = ranked[0];
-        record.target_index = target;
-        record.loss = (nn_real)(-log(safe_probability((double)probabilities[target])));
-        record.verifier_result = ranked[0] == target ? "correct" : "corrected";
+        record.target_index = target_index;
+        record.loss = (nn_real)(-log(safe_probability((double)probabilities[target_index])));
+        record.verifier_result =
+            action_ids[ranked[0]] == action_ids[target_index] ? "correct" : "corrected";
         record.verifier_cost_json = verifier_cost;
         record.seed = seed + (uint64_t)sample;
         record.extra_json = extra;
@@ -2766,6 +2910,7 @@ static EvalMetrics evaluate_conditioned_frequency_policy(
     const GapDataset *dataset,
     size_t max_states,
     int include_verifier,
+    int apply_wheel_filter,
     nn_real *scores,
     nn_real *probabilities)
 {
@@ -2780,8 +2925,13 @@ static EvalMetrics evaluate_conditioned_frequency_policy(
     size_t ranked[ACTION_COUNT];
     for (size_t sample = 0; sample < samples; ++sample) {
         size_t index = eval_sample_index(dataset, sample, samples);
+        double scorer_started = now_seconds();
         conditioned_frequency_scores(policy, dataset->prime[index], scores, probabilities);
+        if (apply_wheel_filter) {
+            apply_feature_wheel_filter(dataset->prime[index], scores, probabilities);
+        }
         rank_actions(scores, ranked);
+        metrics.scorer_seconds += now_seconds() - scorer_started;
         accumulate_eval_sample(&metrics,
                                sieve,
                                dataset,
@@ -2835,6 +2985,55 @@ static int train_supervised(NeuralNet *net,
 
         double elapsed = now_seconds() - started;
         printf("%s epoch %zu loss=%.4f updates=%zu %.0f states/s\n",
+               label,
+               epoch + 1,
+               loss / (double)train_steps,
+               train_steps,
+               elapsed > 0.0 ? (double)train_steps / elapsed : 0.0);
+    }
+
+    return 1;
+}
+
+static int train_pairwise_ranker(NeuralNet *net,
+                                 const char *label,
+                                 const GapDataset *dataset,
+                                 size_t max_states,
+                                 size_t epochs,
+                                 nn_real learning_rate,
+                                 double log_scale,
+                                 const FeatureMask *mask,
+                                 nn_real *candidate_inputs,
+                                 size_t *order,
+                                 uint32_t *rng)
+{
+    size_t train_steps = dataset->count;
+    if (max_states != 0 && max_states < train_steps) {
+        train_steps = max_states;
+    }
+
+    for (size_t epoch = 0; epoch < epochs; ++epoch) {
+        shuffle_order(order, dataset->count, rng);
+        double started = now_seconds();
+        double loss = 0.0;
+
+        for (size_t step = 0; step < train_steps; ++step) {
+            size_t index = order[step];
+            fill_candidate_features_masked(candidate_inputs, dataset->prime[index], log_scale, mask);
+            nn_real step_loss = nn_train_pairwise_action_ranker(net,
+                                                                candidate_inputs,
+                                                                ACTION_COUNT,
+                                                                gap_to_action(dataset->gap[index]),
+                                                                (nn_real)1,
+                                                                learning_rate);
+            if (isnan((double)step_loss)) {
+                return 0;
+            }
+            loss += (double)step_loss;
+        }
+
+        double elapsed = now_seconds() - started;
+        printf("%s epoch %zu pairwise_hinge=%.4f updates=%zu %.0f states/s\n",
                label,
                epoch + 1,
                loss / (double)train_steps,
@@ -3317,6 +3516,7 @@ int nn_prime_gap_main(int argc, char **argv)
 
     NeuralNet *net = nn_create_config(&config);
     NeuralNet *learned_wheel_net = NULL;
+    NeuralNet *pairwise_net = NULL;
     NeuralNet *strict_net = NULL;
     NeuralNet *regularized_net = NULL;
     ConditionedFrequencyPolicy conditioned_policy = {0};
@@ -3422,24 +3622,35 @@ int nn_prime_gap_main(int argc, char **argv)
     size_t frequency_ranked[ACTION_COUNT];
     nn_real frequency_probabilities[ACTION_COUNT];
     EvalMetrics frequency_metrics;
+    EvalMetrics wheel_frequency_metrics;
     EvalMetrics conditioned_metrics;
+    EvalMetrics wheel_conditioned_metrics;
     EvalMetrics model_before_metrics;
     EvalMetrics linear_metrics;
     EvalMetrics linear_temp_metrics;
     EvalMetrics learned_wheel_metrics;
     EvalMetrics learned_wheel_temp_metrics;
+    EvalMetrics pairwise_metrics;
     double linear_temperature = 1.0;
     double learned_wheel_temperature = 1.0;
 
     printf("\n=== Baselines ===\n");
     build_frequency_policy(&train, frequency_ranked, frequency_probabilities);
-    frequency_metrics = evaluate_static_policy(&sieve,
-                                               &test,
-                                               frequency_ranked,
-                                               frequency_probabilities,
-                                               run_config.max_test_states,
-                                               1);
+    (void)frequency_ranked;
+    frequency_metrics = evaluate_frequency_policy(&sieve,
+                                                  &test,
+                                                  frequency_probabilities,
+                                                  run_config.max_test_states,
+                                                  1,
+                                                  0);
     print_metrics("baseline empirical-gap", frequency_metrics);
+    wheel_frequency_metrics = evaluate_frequency_policy(&sieve,
+                                                        &test,
+                                                        frequency_probabilities,
+                                                        run_config.max_test_states,
+                                                        1,
+                                                        1);
+    print_metrics("baseline hand-wheel empirical", wheel_frequency_metrics);
 
     if (!build_conditioned_frequency_policy(&conditioned_policy, &train)) {
         fputs("failed to build conditioned frequency policy\n", stderr);
@@ -3451,9 +3662,19 @@ int nn_prime_gap_main(int argc, char **argv)
                                                                 &test,
                                                                 run_config.max_test_states,
                                                                 1,
+                                                                0,
                                                                 scores,
                                                                 probabilities);
     print_metrics("baseline residue-conditioned", conditioned_metrics);
+    wheel_conditioned_metrics = evaluate_conditioned_frequency_policy(&conditioned_policy,
+                                                                      &sieve,
+                                                                      &test,
+                                                                      run_config.max_test_states,
+                                                                      1,
+                                                                      1,
+                                                                      scores,
+                                                                      probabilities);
+    print_metrics("baseline hand-wheel residue-conditioned", wheel_conditioned_metrics);
     free_conditioned_frequency_policy(&conditioned_policy);
 
     SymbolicWheelMetrics symbolic_metrics;
@@ -3645,6 +3866,41 @@ int nn_prime_gap_main(int argc, char **argv)
                                                          probabilities);
     print_metrics("model supervised", supervised_metrics);
     print_metrics("model supervised temp-scaled", supervised_temp_metrics);
+
+    printf("\n=== Ranking Loss Ablation ===\n");
+    pairwise_net = nn_create_config(&config);
+    if (pairwise_net == NULL) {
+        fputs("failed to allocate pairwise-ranking model\n", stderr);
+        ok = 0;
+        goto cleanup;
+    }
+    fill_order(order, train.count);
+    ok = train_pairwise_ranker(pairwise_net,
+                               "model pairwise-ranking",
+                               &train,
+                               run_config.max_train_states,
+                               run_config.supervised_epochs,
+                               (nn_real)0.002,
+                               log_scale,
+                               &FEATURE_MASK_FULL,
+                               candidate_inputs,
+                               order,
+                               &rng);
+    if (!ok) {
+        goto cleanup;
+    }
+    pairwise_metrics = evaluate_model(pairwise_net,
+                                      &sieve,
+                                      &test,
+                                      run_config.max_test_states,
+                                      log_scale,
+                                      &FEATURE_MASK_FULL,
+                                      1,
+                                      1.0,
+                                      candidate_inputs,
+                                      scores,
+                                      probabilities);
+    print_metrics("model pairwise-ranking", pairwise_metrics);
 
     printf("\n=== Learned-Wheel Proposal Training ===\n");
     learned_wheel_net = nn_create_config(&config);
@@ -3863,13 +4119,16 @@ int nn_prime_gap_main(int argc, char **argv)
 
     print_comparison_header();
     print_comparison_row("empirical-gap", 1.0, frequency_metrics);
+    print_comparison_row("hand-wheel empirical", 1.0, wheel_frequency_metrics);
     print_comparison_row("residue-conditioned", 1.0, conditioned_metrics);
+    print_comparison_row("hand-wheel residue-conditioned", 1.0, wheel_conditioned_metrics);
     print_comparison_row("linear-scorer", 1.0, linear_metrics);
     print_comparison_row("linear-scorer temp-scaled", linear_temperature, linear_temp_metrics);
     print_comparison_row("supervised", 1.0, supervised_metrics);
     print_comparison_row("supervised temp-scaled",
                          supervised_temperature,
                          supervised_temp_metrics);
+    print_comparison_row("pairwise-ranking", 1.0, pairwise_metrics);
     print_comparison_row("learned-wheel supervised", 1.0, learned_wheel_metrics);
     print_comparison_row("learned-wheel supervised temp-scaled",
                          learned_wheel_temperature,
@@ -3933,6 +4192,7 @@ cleanup:
     free(candidate_inputs);
     nn_free(regularized_net);
     nn_free(strict_net);
+    nn_free(pairwise_net);
     nn_free(learned_wheel_net);
     nn_free(net);
     free_gap_dataset(&train);
@@ -3944,7 +4204,7 @@ cleanup:
 
 typedef struct {
     uint32_t p;
-    size_t target_action_id;
+    uint32_t target_action_id;
     double log_scale;
 } ReplaySample;
 
@@ -4035,13 +4295,15 @@ static int load_replay_trace(const char *path, ReplayTrace *trace)
                 strcpy(trace->rule_hash, parsed_rule_hash);
             }
         }
-        uint8_t seen_action_ids[ACTION_COUNT] = {0};
-        for (size_t action = 0; action < record.candidate_count; ++action) {
-            if (action_ids[action] >= ACTION_COUNT || seen_action_ids[action_ids[action]]) {
+        uint8_t seen_actions[ACTION_COUNT] = {0};
+        for (size_t row = 0; row < record.candidate_count; ++row) {
+            size_t action = ACTION_COUNT;
+            if (!prime_action_from_action_id(action_ids[row], &action) ||
+                seen_actions[action]) {
                 ok = 0;
                 break;
             }
-            seen_action_ids[action_ids[action]] = 1;
+            seen_actions[action] = 1;
         }
         if (!ok || p > UINT32_MAX || record.target_index >= ACTION_COUNT) {
             ok = 0;
@@ -4050,7 +4312,7 @@ static int load_replay_trace(const char *path, ReplayTrace *trace)
 
         ReplaySample sample;
         sample.p = (uint32_t)p;
-        sample.target_action_id = (size_t)action_ids[record.target_index];
+        sample.target_action_id = action_ids[record.target_index];
         sample.log_scale = (double)log_scale;
         ok = append_replay_sample(trace, sample);
     }
@@ -4159,23 +4421,35 @@ int nn_prime_replay_main(int argc, char **argv)
     }
 
     size_t survivor_actions[ACTION_COUNT];
+    uint32_t current_action_ids[ACTION_COUNT];
+    fill_action_ids(current_action_ids);
     for (size_t epoch = 0; epoch < epochs; ++epoch) {
         double loss = 0.0;
         for (size_t i = 0; i < trace.count; ++i) {
             ReplaySample sample = trace.items[i];
             size_t candidate_count = ACTION_COUNT;
-            size_t target_index = sample.target_action_id;
+            size_t target_index = action_row_for_action_id(current_action_ids,
+                                                           ACTION_COUNT,
+                                                           sample.target_action_id);
             if (use_rules) {
+                size_t target_action = ACTION_COUNT;
                 candidate_count = fill_symbolic_survivor_candidates(&replay_rules,
                                                                     candidate_inputs,
                                                                     sample.p,
                                                                     sample.log_scale,
                                                                     &FEATURE_MASK_FULL,
                                                                     survivor_actions);
-                target_index =
-                    survivor_index_for_action(survivor_actions,
-                                              candidate_count,
-                                              sample.target_action_id);
+                if (!prime_action_from_action_id(sample.target_action_id, &target_action)) {
+                    fputs("replay trace target action_id is unknown\n", stderr);
+                    nn_free(net);
+                    free(candidate_inputs);
+                    free_replay_trace(&trace);
+                    free_symbolic_rule_set(&replay_rules);
+                    return EXIT_FAILURE;
+                }
+                target_index = survivor_index_for_action(survivor_actions,
+                                                         candidate_count,
+                                                         target_action);
                 if (candidate_count == 0 || target_index == candidate_count) {
                     fputs("replay symbolic rules rejected the target action\n", stderr);
                     nn_free(net);
@@ -4189,6 +4463,14 @@ int nn_prime_replay_main(int argc, char **argv)
                                                sample.p,
                                                sample.log_scale,
                                                &FEATURE_MASK_FULL);
+                if (target_index == ACTION_COUNT) {
+                    fputs("replay trace target action_id is not in current candidates\n", stderr);
+                    nn_free(net);
+                    free(candidate_inputs);
+                    free_replay_trace(&trace);
+                    free_symbolic_rule_set(&replay_rules);
+                    return EXIT_FAILURE;
+                }
             }
             nn_real step_loss = nn_train_action_scorer(net,
                                                        candidate_inputs,
@@ -4267,7 +4549,8 @@ static void print_report_json(const char *model_hash,
            "\"nll\":%.8f,\"mrr\":%.8f,\"ece\":%.8f,"
            "\"mean_rank\":%.8f,\"proposal_steps\":%.8f,"
            "\"wheel_exact\":%.8f,\"assisted_wheel\":%.8f,"
-           "\"block_cost\":%.8f,\"assisted_block\":%.8f}\n",
+           "\"block_cost\":%.8f,\"assisted_block\":%.8f,"
+           "\"model_ms_per_sample\":%.8f,\"verifier_ms_per_sample\":%.8f}\n",
            model_hash,
            meta->parent_model_hash[0] == '\0' ? "unknown" : meta->parent_model_hash,
            evaluation_mode == NULL ? "raw" : evaluation_mode,
@@ -4286,7 +4569,13 @@ static void print_report_json(const char *model_hash,
            metrics.wheel_scan_exact_tests,
            metrics.assisted_wheel_exact_tests_top10,
            metrics.block_scan_cost,
-           metrics.assisted_block_cost_top10);
+           metrics.assisted_block_cost_top10,
+           metrics.samples == 0 ? 0.0
+                                : 1000.0 * metrics.scorer_seconds /
+                                      (double)metrics.samples,
+           metrics.verifier_samples == 0 ? 0.0
+                                          : 1000.0 * metrics.verifier_seconds /
+                                                (double)metrics.verifier_samples);
 }
 
 static void print_symbolic_compare_json(const char *rule_hash,

@@ -696,6 +696,59 @@ static int test_action_scorer_api_scores_probabilities_and_ranking(void)
     return ok;
 }
 
+static int test_pairwise_action_ranker_orders_target(void)
+{
+    const size_t layers[] = {3, 5, 1};
+    const nn_real candidate_inputs[] = {
+        1.00, 0.00, 0.00,
+        0.00, 1.00, 0.00,
+        0.00, 0.00, 1.00,
+    };
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = 3;
+    config.seed = 7711;
+    config.hidden_activation = NN_ACTIVATION_RELU;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+
+    NeuralNet *net = nn_create_config(&config);
+    nn_real scores[3];
+    nn_real probabilities[3];
+    size_t ranked[3];
+    int ok = 1;
+
+    if (net == NULL) {
+        return 0;
+    }
+
+    for (size_t step = 0; step < 200; ++step) {
+        nn_real loss = nn_train_pairwise_action_ranker(net,
+                                                       candidate_inputs,
+                                                       3,
+                                                       2,
+                                                       (nn_real)0.5,
+                                                       (nn_real)0.02);
+        if (isnan((double)loss)) {
+            ok = 0;
+            break;
+        }
+    }
+
+    ok = ok && nn_score_action_rows(net, candidate_inputs, 3, scores, probabilities) &&
+         nn_rank_action_scores(scores, 3, ranked);
+    ok = ok && ranked[0] == 2 && scores[2] > scores[0] && scores[2] > scores[1];
+    ok = ok && isnan((double)nn_train_pairwise_action_ranker(net,
+                                                             candidate_inputs,
+                                                             3,
+                                                             2,
+                                                             (nn_real)0,
+                                                             (nn_real)0.02));
+
+    nn_free(net);
+    return ok;
+}
+
 static int test_checkpoint_roundtrip_hash_and_invalid_files(void)
 {
     const char *path_a = "/tmp/crlplrimes_test_a.nnckpt";
@@ -840,6 +893,8 @@ static int test_trace_writer_emits_parseable_jsonl(void)
     remove(path);
 
     ok = ok && line[0] == '{' && strstr(line, "\"schema\":\"crlp.trace.v1\"") != NULL &&
+         strstr(line, "\"trace_version\":1") != NULL &&
+         strstr(line, "\"action_id_contract\":\"stable_unique_action_ids\"") != NULL &&
          strstr(line, "\"candidate_count\":2") != NULL &&
          strstr(line, "\"action_ids\":[10,20]") != NULL &&
          strstr(line, "\"verifier_cost\":{\"steps\":2}") != NULL &&
@@ -850,7 +905,9 @@ static int test_trace_writer_emits_parseable_jsonl(void)
                                     parsed_scores,
                                     parsed_probabilities,
                                     2);
-    ok = ok && strcmp(parsed.schema, "crlp.trace.v1") == 0 &&
+    ok = ok && strcmp(parsed.schema, NN_TRACE_SCHEMA) == 0 &&
+         parsed.trace_version == NN_TRACE_VERSION &&
+         strcmp(parsed.action_id_contract, NN_TRACE_ACTION_ID_CONTRACT) == 0 &&
          strcmp(parsed.task_name, "unit") == 0 &&
          parsed.state_hash == 0x1234u &&
          parsed.candidate_count == 2 &&
@@ -1031,7 +1088,10 @@ static int test_fixture_trace_parser(void)
     fclose(fp);
 
     ok = ok && nn_trace_parse_jsonl(line, &parsed, action_ids, scores, probabilities, 3);
-    ok = ok && strcmp(parsed.task_name, "fixture") == 0 &&
+    ok = ok && strcmp(parsed.schema, NN_TRACE_SCHEMA) == 0 &&
+         parsed.trace_version == NN_TRACE_VERSION &&
+         strcmp(parsed.action_id_contract, NN_TRACE_ACTION_ID_CONTRACT) == 0 &&
+         strcmp(parsed.task_name, "fixture") == 0 &&
          strcmp(parsed.model_hash_hex, "fixture-model") == 0 &&
          parsed.state_hash == 0x1234u &&
          parsed.candidate_count == 3 &&
@@ -1043,13 +1103,25 @@ static int test_fixture_trace_parser(void)
          p == 42;
 
     const char *bad =
-        "{\"schema\":\"crlp.trace.v1\",\"task\":\"fixture\","
+        "{\"schema\":\"crlp.trace.v1\",\"trace_version\":1,"
+        "\"action_id_contract\":\"stable_unique_action_ids\",\"task\":\"fixture\","
         "\"state_hash\":\"0000000000001234\",\"model_hash\":\"fixture-model\","
         "\"feature_encoder_version\":1,\"candidate_count\":2,\"action_ids\":[1,2],"
         "\"scores\":[0,1],\"probabilities\":[0.7,0.7],"
         "\"selected_index\":0,\"target_index\":1,\"loss\":0.1,"
         "\"verifier_result\":\"corrected\",\"verifier_cost\":{},\"seed\":42}";
     ok = ok && !nn_trace_parse_jsonl(bad, &parsed, action_ids, scores, probabilities, 3);
+
+    const char *duplicate_ids =
+        "{\"schema\":\"crlp.trace.v1\",\"trace_version\":1,"
+        "\"action_id_contract\":\"stable_unique_action_ids\",\"task\":\"fixture\","
+        "\"state_hash\":\"0000000000001234\",\"model_hash\":\"fixture-model\","
+        "\"feature_encoder_version\":1,\"candidate_count\":2,\"action_ids\":[1,1],"
+        "\"scores\":[0,1],\"probabilities\":[0.5,0.5],"
+        "\"selected_index\":0,\"target_index\":1,\"loss\":0.1,"
+        "\"verifier_result\":\"corrected\",\"verifier_cost\":{},\"seed\":42}";
+    ok = ok && !nn_trace_parse_jsonl(
+                   duplicate_ids, &parsed, action_ids, scores, probabilities, 3);
     return ok;
 }
 
@@ -1307,7 +1379,8 @@ static int test_prime_gap_replay_uses_trace_action_ids(void)
     }
 
     fprintf(fp,
-            "{\"schema\":\"crlp.trace.v1\",\"task\":\"prime_gap\","
+            "{\"schema\":\"crlp.trace.v1\",\"trace_version\":1,"
+            "\"action_id_contract\":\"stable_unique_action_ids\",\"task\":\"prime_gap\","
             "\"state_hash\":\"0000000000000001\",\"model_hash\":\"fixture\","
             "\"feature_encoder_version\":1,\"candidate_count\":%d,\"action_ids\":[",
             ACTION_COUNT);
@@ -1339,8 +1412,13 @@ static int test_prime_gap_replay_uses_trace_action_ids(void)
 
     ReplayTrace trace;
     int ok = load_replay_trace(trace_path, &trace);
+    uint32_t current_action_ids[ACTION_COUNT];
+    fill_action_ids(current_action_ids);
     ok = ok && trace.count == 1 && trace.items[0].p == 101 &&
-         trace.items[0].target_action_id == 7;
+         trace.items[0].target_action_id == 7 &&
+         action_row_for_action_id(current_action_ids,
+                                  ACTION_COUNT,
+                                  trace.items[0].target_action_id) == 7;
     free_replay_trace(&trace);
     return ok;
 }
@@ -1398,6 +1476,8 @@ int main(void)
           "policy-regularized cached update matches policy update");
     check(test_action_scorer_api_scores_probabilities_and_ranking(),
           "action scorer scores probabilities and ranks deterministically");
+    check(test_pairwise_action_ranker_orders_target(),
+          "pairwise action ranker orders target");
     check(test_checkpoint_roundtrip_hash_and_invalid_files(),
           "checkpoint roundtrip hash and invalid files");
     check(test_trace_writer_emits_parseable_jsonl(),
