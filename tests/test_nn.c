@@ -1231,6 +1231,120 @@ static int test_prime_gap_wheel_verifier_accounting(void)
     return ok;
 }
 
+static int test_prime_gap_symbolic_rule_discovery_is_verified(void)
+{
+    Sieve sieve;
+    GapDataset train;
+    GapDataset validation;
+    GapDataset test;
+    SymbolicRuleSet rules;
+    SymbolicWheelMetrics metrics;
+    int ok = 1;
+
+    if (!build_sieve(1000 + G_MAX, &sieve)) {
+        return 0;
+    }
+    if (!build_gap_datasets(&sieve, 200, 1000, &train, &validation, &test)) {
+        free_sieve(&sieve);
+        return 0;
+    }
+
+    ok = ok && discover_symbolic_wheel(&sieve, &train, &validation, &rules, &metrics);
+    if (ok) {
+        metrics = evaluate_symbolic_wheel(&sieve, &rules, &test, 0, metrics);
+        ok = ok && rules.count > 0;
+        ok = ok && metrics.test_false_rejections == 0;
+        ok = ok && metrics.learned_exact_tests <= metrics.hand_wheel_exact_tests;
+        ok = ok && rules.items[0].modulus == 3 && rules.items[0].residue == 0;
+
+#if NN_REAL_IS_FLOAT
+        const char *rules_path = "build/test_symbolic_rules_float.crlprule";
+#else
+        const char *rules_path = "build/test_symbolic_rules_double.crlprule";
+#endif
+        SymbolicRuleSet loaded_rules;
+        SymbolicWheelMetrics loaded_metrics;
+        char saved_hash[65];
+        char loaded_hash[65];
+        memset(&loaded_rules, 0, sizeof(loaded_rules));
+        memset(&loaded_metrics, 0, sizeof(loaded_metrics));
+        ok = ok && save_symbolic_rule_checkpoint(&rules, rules_path, &metrics, saved_hash);
+        ok = ok && load_symbolic_rules_with_hash(rules_path, &loaded_rules, loaded_hash);
+        if (ok) {
+            loaded_metrics.accepted_rules = loaded_rules.count;
+            loaded_metrics = evaluate_symbolic_wheel(&sieve,
+                                                     &loaded_rules,
+                                                     &test,
+                                                     0,
+                                                     loaded_metrics);
+            ok = ok && strcmp(saved_hash, loaded_hash) == 0 &&
+                 loaded_rules.count == rules.count &&
+                 loaded_rules.items[0].modulus == rules.items[0].modulus &&
+                 loaded_rules.items[0].residue == rules.items[0].residue &&
+                 loaded_metrics.test_false_rejections == 0;
+        }
+        free_symbolic_rule_set(&loaded_rules);
+    }
+
+    free_symbolic_rule_set(&rules);
+    free_gap_dataset(&train);
+    free_gap_dataset(&validation);
+    free_gap_dataset(&test);
+    free_sieve(&sieve);
+    return ok;
+}
+
+static int test_prime_gap_replay_uses_trace_action_ids(void)
+{
+#if NN_REAL_IS_FLOAT
+    const char *trace_path = "build/test_prime_replay_action_ids_float.jsonl";
+#else
+    const char *trace_path = "build/test_prime_replay_action_ids_double.jsonl";
+#endif
+    FILE *fp = fopen(trace_path, "w");
+    if (fp == NULL) {
+        return 0;
+    }
+
+    fprintf(fp,
+            "{\"schema\":\"crlp.trace.v1\",\"task\":\"prime_gap\","
+            "\"state_hash\":\"0000000000000001\",\"model_hash\":\"fixture\","
+            "\"feature_encoder_version\":1,\"candidate_count\":%d,\"action_ids\":[",
+            ACTION_COUNT);
+    for (size_t i = 0; i < ACTION_COUNT; ++i) {
+        uint32_t action_id = (uint32_t)i;
+        if (i == 0) {
+            action_id = 7;
+        } else if (i == 7) {
+            action_id = 0;
+        }
+        fprintf(fp, "%s%u", i == 0 ? "" : ",", action_id);
+    }
+    fputs("],\"scores\":[", fp);
+    for (size_t i = 0; i < ACTION_COUNT; ++i) {
+        fputs(i == 0 ? "0" : ",0", fp);
+    }
+    fputs("],\"probabilities\":[", fp);
+    for (size_t i = 0; i < ACTION_COUNT; ++i) {
+        fputs(i == 0 ? "1" : ",0", fp);
+    }
+    fprintf(fp,
+            "],\"selected_index\":0,\"target_index\":0,\"loss\":0,"
+            "\"verifier_result\":\"correct\",\"verifier_cost\":{},\"seed\":42,"
+            "\"p\":101,\"log_scale\":%.17g}\n",
+            log(1000.0));
+    if (fclose(fp) != 0) {
+        return 0;
+    }
+
+    ReplayTrace trace;
+    int ok = load_replay_trace(trace_path, &trace);
+    ok = ok && trace.count == 1 && trace.items[0].p == 101 &&
+         trace.items[0].target_action_id == 7;
+    free_replay_trace(&trace);
+    return ok;
+}
+
 static int test_prime_gap_dataset_tracks_overflow_actions(void)
 {
     Sieve sieve;
@@ -1307,6 +1421,10 @@ int main(void)
           "prime-gap temperature softmax flattens confidence");
     check(test_prime_gap_wheel_verifier_accounting(),
           "prime-gap wheel verifier accounting");
+    check(test_prime_gap_symbolic_rule_discovery_is_verified(),
+          "prime-gap symbolic rule discovery is verified");
+    check(test_prime_gap_replay_uses_trace_action_ids(),
+          "prime-gap replay uses trace action ids");
     check(test_prime_gap_dataset_tracks_overflow_actions(),
           "prime-gap dataset tracks overflow actions");
 

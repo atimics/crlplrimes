@@ -94,13 +94,13 @@ prime-gap: $(PRIME_GAP_EXAMPLE)
 
 prime-gap-trace: $(PRIME_GAP_EXAMPLE)
 	mkdir -p $(BUILD_DIR)/traces
-	./$(PRIME_GAP_EXAMPLE) 100000 200000 1 0 4000 1000 1.20 0.12 20240511 --save $(BUILD_DIR)/prime_v1.nnckpt --trace $(BUILD_DIR)/traces/prime_gap.jsonl
+	./$(PRIME_GAP_EXAMPLE) 100000 200000 1 0 4000 1000 1.20 0.12 20240511 --save $(BUILD_DIR)/prime_v1.nnckpt --save-rules $(BUILD_DIR)/prime_rules.crlprule --save-learned-model $(BUILD_DIR)/prime_learned_v1.nnckpt --trace $(BUILD_DIR)/traces/prime_gap.jsonl
 
 prime-gap-replay: $(PRIME_REPLAY) prime-gap-trace
-	./$(PRIME_REPLAY) $(BUILD_DIR)/traces/prime_gap.jsonl --out $(BUILD_DIR)/prime_v2.nnckpt 2
+	./$(PRIME_REPLAY) $(BUILD_DIR)/traces/prime_gap.jsonl --out $(BUILD_DIR)/prime_v2.nnckpt 2 --rules $(BUILD_DIR)/prime_rules.crlprule
 
 prime-gap-eval: $(PRIME_COMPARE) prime-gap-replay
-	./$(PRIME_COMPARE) $(BUILD_DIR)/prime_v1.nnckpt $(BUILD_DIR)/prime_v2.nnckpt
+	./$(PRIME_COMPARE) --rules $(BUILD_DIR)/prime_rules.crlprule $(BUILD_DIR)/prime_v1.nnckpt $(BUILD_DIR)/prime_learned_v1.nnckpt $(BUILD_DIR)/prime_v2.nnckpt
 
 prime-gap-sweep: $(PRIME_GAP_EXAMPLE)
 	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 2 1 30000 30000
@@ -130,10 +130,10 @@ delayed-claim: $(DELAYED_CLAIM)
 	./$(DELAYED_CLAIM)
 
 delayed-claim-trace: $(DELAYED_CLAIM)
-	./$(DELAYED_CLAIM) --save $(BUILD_DIR)/delayed_claim_v1.nnckpt --trace $(BUILD_DIR)/delayed_claim.jsonl
+	./$(DELAYED_CLAIM) --save $(BUILD_DIR)/delayed_claim_v1.nnckpt --trace $(BUILD_DIR)/delayed_claim.jsonl --trace-train
 
 delayed-claim-replay: $(DELAYED_CLAIM) delayed-claim-trace
-	./$(DELAYED_CLAIM) --replay $(BUILD_DIR)/delayed_claim.jsonl --out $(BUILD_DIR)/delayed_claim_v2.nnckpt
+	./$(DELAYED_CLAIM) --replay $(BUILD_DIR)/delayed_claim.jsonl --out $(BUILD_DIR)/delayed_claim_v2.nnckpt --epochs 6
 
 delayed-claim-eval: $(DELAYED_CLAIM) delayed-claim-replay
 	./$(DELAYED_CLAIM) --compare $(BUILD_DIR)/delayed_claim_v1.nnckpt $(BUILD_DIR)/delayed_claim_v2.nnckpt

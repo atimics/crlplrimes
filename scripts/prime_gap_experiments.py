@@ -11,7 +11,7 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from statistics import mean
+from statistics import mean, stdev
 
 
 DEFAULT_REGULARIZATION_GRID = "0.00:0.00,0.40:0.04,0.80:0.08,1.20:0.12"
@@ -39,6 +39,10 @@ LINEAR_VALIDATION_RE = re.compile(
     r"^baseline linear-scorer temperature=(?P<temperature>\d+(?:\.\d+)?) "
     r"validation_nll=(?P<nll>\d+(?:\.\d+)?)$"
 )
+LEARNED_WHEEL_VALIDATION_RE = re.compile(
+    r"^model learned-wheel supervised temperature=(?P<temperature>\d+(?:\.\d+)?) "
+    r"validation_nll=(?P<nll>\d+(?:\.\d+)?)$"
+)
 
 EPOCH_SWEEP_LABELS = (
     "empirical-gap",
@@ -47,6 +51,8 @@ EPOCH_SWEEP_LABELS = (
     "linear-scorer temp-scaled",
     "supervised",
     "supervised temp-scaled",
+    "learned-wheel supervised",
+    "learned-wheel supervised temp-scaled",
 )
 
 
@@ -216,10 +222,16 @@ def run_epoch_sweep(args: argparse.Namespace, output_dir: Path) -> list[dict[str
                 output, SUPERVISED_VALIDATION_RE
             )
             linear_temperature, linear_nll = parse_validation(output, LINEAR_VALIDATION_RE)
+            learned_wheel_temperature, learned_wheel_nll = parse_validation(
+                output, LEARNED_WHEEL_VALIDATION_RE
+            )
             for label in EPOCH_SWEEP_LABELS:
                 if label.startswith("linear-scorer"):
                     validation_temperature = linear_temperature
                     validation_nll = linear_nll
+                elif label.startswith("learned-wheel"):
+                    validation_temperature = learned_wheel_temperature
+                    validation_nll = learned_wheel_nll
                 elif label.startswith("supervised"):
                     validation_temperature = supervised_temperature
                     validation_nll = supervised_nll
@@ -302,9 +314,19 @@ def write_csv(path: Path, rows: list[dict[str, str]], fieldnames: list[str] | No
     if fieldnames is None:
         fieldnames = CSV_FIELDS
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
+
+
+def aggregate_fieldnames(
+    key_fields: tuple[str, ...],
+    metric_fields: tuple[str, ...],
+) -> list[str]:
+    fields = [*key_fields, "seeds", "seed_values"]
+    for field in metric_fields:
+        fields.extend([field, f"{field}_std", f"{field}_min", f"{field}_max"])
+    return fields
 
 
 def aggregate_rows(
@@ -319,12 +341,25 @@ def aggregate_rows(
     output: list[dict[str, str]] = []
     for key, group in sorted(grouped.items()):
         summary = {field: value for field, value in zip(key_fields, key)}
-        summary["seeds"] = str(len({row["seed"] for row in group}))
+        seed_values = sorted({row["seed"] for row in group}, key=int)
+        summary["seeds"] = str(len(seed_values))
+        summary["seed_values"] = ",".join(seed_values)
         for field in metric_fields:
             values = [float(row[field]) for row in group]
             summary[field] = f"{mean(values):.6f}"
+            summary[f"{field}_std"] = f"{stdev(values):.6f}" if len(values) > 1 else "0.000000"
+            summary[f"{field}_min"] = f"{min(values):.6f}"
+            summary[f"{field}_max"] = f"{max(values):.6f}"
         output.append(summary)
     return output
+
+
+def add_spread_fields(rows: list[dict[str, str]], metric_fields: tuple[str, ...]) -> list[dict[str, str]]:
+    for row in rows:
+        for field in metric_fields:
+            if field in row and f"{field}_std" in row:
+                row[f"{field}_spread"] = f"{row[field]} +/- {row[f'{field}_std']}"
+    return rows
 
 
 def select_regularization(rows: list[dict[str, str]]) -> dict[str, str] | None:
@@ -372,6 +407,7 @@ def write_summary(
         ("supervised_epochs",),
         ("validation_nll", "top1", "top10", "nll", "ece"),
     )
+    add_spread_fields(epoch_aggregate, ("validation_nll", "top1", "top10", "nll", "ece"))
     regularization_aggregate = aggregate_rows(
         [
             row
@@ -381,26 +417,42 @@ def write_summary(
         ("reference_weight", "entropy_weight"),
         ("validation_nll", "top1", "top10", "nll", "ece", "confidence"),
     )
+    add_spread_fields(
+        regularization_aggregate,
+        ("validation_nll", "top1", "top10", "nll", "ece", "confidence"),
+    )
     baseline_epoch = ""
     if epoch_rows:
         baseline_epoch = "2" if any(row["supervised_epochs"] == "2" for row in epoch_rows) else epoch_rows[0]["supervised_epochs"]
-    baseline_rows = [
-        row
-        for row in epoch_rows
-        if row["supervised_epochs"] == baseline_epoch
-        and row["label"]
-        in (
-            "empirical-gap",
-            "residue-conditioned",
-            "linear-scorer temp-scaled",
-            "supervised temp-scaled",
+    baseline_rows = aggregate_rows(
+        [
+            row
+            for row in epoch_rows
+            if row["supervised_epochs"] == baseline_epoch
+            and row["label"]
+            in (
+                "empirical-gap",
+                "residue-conditioned",
+                "linear-scorer temp-scaled",
+                "supervised temp-scaled",
+                "learned-wheel supervised temp-scaled",
+            )
+        ],
+        ("label",),
+        ("temp", "top1", "top10", "nll", "ece"),
+    )
+    add_spread_fields(baseline_rows, ("top1", "top10", "nll", "ece"))
+    if selected is not None:
+        add_spread_fields(
+            [selected],
+            ("validation_nll", "top1", "top10", "nll", "ece", "confidence"),
         )
-    ]
 
     lines = [
         "# Prime-Gap Experiment Summary",
         "",
-        "Selection metric: mean validation NLL across configured seeds.",
+        "Selection metric: mean validation NLL across configured seeds. "
+        "Tables show mean +/- sample standard deviation.",
         "",
         "## Supervised Epoch Sweep",
         "",
@@ -409,11 +461,12 @@ def write_summary(
             [
                 ("Epochs", "supervised_epochs"),
                 ("Seeds", "seeds"),
-                ("Val NLL", "validation_nll"),
-                ("Test top-1", "top1"),
-                ("Test top-10", "top10"),
-                ("Test NLL", "nll"),
-                ("Test ECE", "ece"),
+                ("Seed Values", "seed_values"),
+                ("Val NLL", "validation_nll_spread"),
+                ("Test top-1", "top1_spread"),
+                ("Test top-10", "top10_spread"),
+                ("Test NLL", "nll_spread"),
+                ("Test ECE", "ece_spread"),
             ],
         ),
         "",
@@ -423,10 +476,11 @@ def write_summary(
             baseline_rows,
             [
                 ("Model", "label"),
-                ("Test top-1", "top1"),
-                ("Test top-10", "top10"),
-                ("Test NLL", "nll"),
-                ("Test ECE", "ece"),
+                ("Seeds", "seeds"),
+                ("Test top-1", "top1_spread"),
+                ("Test top-10", "top10_spread"),
+                ("Test NLL", "nll_spread"),
+                ("Test ECE", "ece_spread"),
                 ("Temp", "temp"),
             ],
         ),
@@ -439,12 +493,13 @@ def write_summary(
                 ("Ref", "reference_weight"),
                 ("Entropy", "entropy_weight"),
                 ("Seeds", "seeds"),
-                ("Val NLL", "validation_nll"),
-                ("Test top-1", "top1"),
-                ("Test top-10", "top10"),
-                ("Test NLL", "nll"),
-                ("Test ECE", "ece"),
-                ("Conf", "confidence"),
+                ("Seed Values", "seed_values"),
+                ("Val NLL", "validation_nll_spread"),
+                ("Test top-1", "top1_spread"),
+                ("Test top-10", "top10_spread"),
+                ("Test NLL", "nll_spread"),
+                ("Test ECE", "ece_spread"),
+                ("Conf", "confidence_spread"),
             ],
         ),
         "",
@@ -468,11 +523,12 @@ def write_summary(
                         ("Ref", "reference_weight"),
                         ("Entropy", "entropy_weight"),
                         ("Seeds", "seeds"),
-                        ("Val NLL", "validation_nll"),
-                        ("Test top-1", "top1"),
-                        ("Test top-10", "top10"),
-                        ("Test NLL", "nll"),
-                        ("Test ECE", "ece"),
+                        ("Seed Values", "seed_values"),
+                        ("Val NLL", "validation_nll_spread"),
+                        ("Test top-1", "top1_spread"),
+                        ("Test top-10", "top10_spread"),
+                        ("Test NLL", "nll_spread"),
+                        ("Test ECE", "ece_spread"),
                     ],
                 ),
             ]
@@ -519,23 +575,41 @@ def main(argv: list[str]) -> int:
 
     write_csv(output_dir / "epoch_sweep.csv", epoch_rows)
     write_csv(output_dir / "regularization_sweep.csv", regularization_rows)
+    epoch_summary_metrics = tuple(METRIC_FIELDS)
+    epoch_summary_keys = ("supervised_epochs", "label")
+    write_csv(
+        output_dir / "epoch_sweep_summary.csv",
+        aggregate_rows(epoch_rows, epoch_summary_keys, epoch_summary_metrics),
+        aggregate_fieldnames(epoch_summary_keys, epoch_summary_metrics),
+    )
+    regularization_summary_metrics = ("validation_nll", *METRIC_FIELDS)
+    regularization_summary_keys = ("reference_weight", "entropy_weight", "label")
+    write_csv(
+        output_dir / "regularization_sweep_summary.csv",
+        aggregate_rows(
+            regularization_rows,
+            regularization_summary_keys,
+            regularization_summary_metrics,
+        ),
+        aggregate_fieldnames(regularization_summary_keys, regularization_summary_metrics),
+    )
     if selected is not None:
         write_csv(
             output_dir / "selected_regularization.csv",
             [selected],
-            [
-                "reference_weight",
-                "entropy_weight",
-                "seeds",
-                "validation_nll",
-                "top1",
-                "top10",
-                "nll",
-                "ece",
-                "confidence",
-                "high_confidence_coverage",
-                "high_confidence_accuracy",
-            ],
+            aggregate_fieldnames(
+                ("reference_weight", "entropy_weight"),
+                (
+                    "validation_nll",
+                    "top1",
+                    "top10",
+                    "nll",
+                    "ece",
+                    "confidence",
+                    "high_confidence_coverage",
+                    "high_confidence_accuracy",
+                ),
+            ),
         )
     write_summary(output_dir / "summary.md", epoch_rows, regularization_rows, selected)
 

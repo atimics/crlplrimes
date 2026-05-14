@@ -1,5 +1,6 @@
 #include "nn.h"
 
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,8 +12,15 @@ enum {
     DC_FEATURE_COUNT = DC_STATE_FEATURES + DC_ACTION_COUNT,
     DC_TRAIN_SAMPLES = 4000,
     DC_TEST_SAMPLES = 1000,
+    DC_TRAIN_SEED_START = 1000,
+    DC_TEST_SEED_START = 900000,
+    DC_REPLAY_EPOCHS = 6,
     DC_CALIBRATION_BINS = 10,
 };
+
+static const nn_real DC_REPLAY_LEARNING_RATE = (nn_real)0.008;
+static const nn_real DC_REPLAY_HARD_WEIGHT = (nn_real)1.0;
+static const nn_real DC_REPLAY_SOFT_WEIGHT = (nn_real)0.35;
 
 typedef struct {
     nn_real state[DC_STATE_FEATURES];
@@ -26,6 +34,8 @@ typedef struct {
     double nll;
     double ece;
     double utility;
+    double proposal_steps;
+    double baseline_steps;
     size_t bin_count[DC_CALIBRATION_BINS];
     double bin_confidence[DC_CALIBRATION_BINS];
     double bin_accuracy[DC_CALIBRATION_BINS];
@@ -40,6 +50,57 @@ static uint32_t dc_rng_next(uint32_t *state)
 static nn_real dc_rng_unit(uint32_t *state)
 {
     return (nn_real)((double)dc_rng_next(state) / (double)UINT32_MAX);
+}
+
+static int parse_size_text(const char *text, size_t *out_value)
+{
+    if (text == NULL || text[0] == '\0' || text[0] == '-' || text[0] == '+') {
+        return 0;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    unsigned long value = strtoul(text, &end, 10);
+    if (end == text || *end != '\0' || errno == ERANGE || value == 0) {
+        return 0;
+    }
+
+    *out_value = (size_t)value;
+    return 1;
+}
+
+static int parse_u64_text(const char *text, uint64_t *out_value)
+{
+    if (text == NULL || text[0] == '\0' || text[0] == '-' || text[0] == '+') {
+        return 0;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    unsigned long long value = strtoull(text, &end, 10);
+    if (end == text || *end != '\0' || errno == ERANGE) {
+        return 0;
+    }
+
+    *out_value = (uint64_t)value;
+    return 1;
+}
+
+static int parse_real_text(const char *text, nn_real *out_value)
+{
+    if (text == NULL || text[0] == '\0') {
+        return 0;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    double value = strtod(text, &end);
+    if (end == text || *end != '\0' || errno == ERANGE || !isfinite(value) || value < 0.0) {
+        return 0;
+    }
+
+    *out_value = (nn_real)value;
+    return 1;
 }
 
 static double dc_safe_probability(double probability)
@@ -132,6 +193,13 @@ static ClaimMetrics evaluate_claim_model(NeuralNet *net,
         }
 
         size_t selected = ranked[0];
+        size_t target_rank = DC_ACTION_COUNT;
+        for (size_t rank = 0; rank < DC_ACTION_COUNT; ++rank) {
+            if (ranked[rank] == state.target) {
+                target_rank = rank;
+                break;
+            }
+        }
         double confidence = (double)probabilities[selected];
         size_t bin = confidence >= 1.0 ? DC_CALIBRATION_BINS - 1
                                        : (size_t)(confidence * DC_CALIBRATION_BINS);
@@ -143,6 +211,8 @@ static ClaimMetrics evaluate_claim_model(NeuralNet *net,
         metrics.correct += selected == state.target ? 1u : 0u;
         metrics.nll += -log(dc_safe_probability((double)probabilities[state.target]));
         metrics.utility += (double)state.utility[selected];
+        metrics.proposal_steps += (double)target_rank + 1.0;
+        metrics.baseline_steps += (double)state.target + 1.0;
         ++metrics.bin_count[bin];
         metrics.bin_confidence[bin] += confidence;
         metrics.bin_accuracy[bin] += selected == state.target ? 1.0 : 0.0;
@@ -151,6 +221,8 @@ static ClaimMetrics evaluate_claim_model(NeuralNet *net,
     double sample_count = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
     metrics.nll /= sample_count;
     metrics.utility /= sample_count;
+    metrics.proposal_steps /= sample_count;
+    metrics.baseline_steps /= sample_count;
     for (size_t bin = 0; bin < DC_CALIBRATION_BINS; ++bin) {
         if (metrics.bin_count[bin] == 0) {
             continue;
@@ -197,13 +269,20 @@ static int train_claim_model(NeuralNet *net,
 static void print_claim_metrics(const char *label, const char *hash, ClaimMetrics metrics)
 {
     double samples = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
-    printf("[%s] hash=%s accuracy=%.2f%% nll=%.4f ece=%.4f decision_utility=%.4f samples=%zu\n",
+    double saved = metrics.baseline_steps - metrics.proposal_steps;
+    double saved_pct = metrics.baseline_steps <= 0.0 ? 0.0 : 100.0 * saved / metrics.baseline_steps;
+    printf("[%s] hash=%s accuracy=%.2f%% nll=%.4f ece=%.4f decision_utility=%.4f "
+           "proposal_steps=%.2f baseline_steps=%.2f saved=%.2f (%.1f%%) samples=%zu\n",
            label,
            hash == NULL ? "unknown" : hash,
            100.0 * (double)metrics.correct / samples,
            metrics.nll,
            metrics.ece,
            metrics.utility,
+           metrics.proposal_steps,
+           metrics.baseline_steps,
+           saved,
+           saved_pct,
            metrics.samples);
 }
 
@@ -261,14 +340,30 @@ static int emit_claim_trace(NeuralNet *net,
         if (!ok) {
             break;
         }
+        size_t proposal_steps = DC_ACTION_COUNT;
+        for (size_t rank = 0; rank < DC_ACTION_COUNT; ++rank) {
+            if (ranked[rank] == state.target) {
+                proposal_steps = rank + 1;
+                break;
+            }
+        }
 
         char cost_json[128];
         char extra_json[128];
         snprintf(cost_json,
                  sizeof(cost_json),
-                 "{\"decision_utility\":%.6f}",
-                 (double)state.utility[ranked[0]]);
-        snprintf(extra_json, sizeof(extra_json), "\"decision_utility\":%.6f", (double)state.utility[ranked[0]]);
+                 "{\"decision_utility\":%.6f,\"proposal_steps\":%zu,"
+                 "\"baseline_steps\":%zu}",
+                 (double)state.utility[ranked[0]],
+                 proposal_steps,
+                 state.target + 1);
+        snprintf(extra_json,
+                 sizeof(extra_json),
+                 "\"decision_utility\":%.6f,\"proposal_steps\":%zu,"
+                 "\"baseline_steps\":%zu",
+                 (double)state.utility[ranked[0]],
+                 proposal_steps,
+                 state.target + 1);
 
         NNTraceRecord record;
         memset(&record, 0, sizeof(record));
@@ -302,34 +397,59 @@ static int emit_claim_trace(NeuralNet *net,
 typedef struct {
     uint64_t *seeds;
     size_t *targets;
+    nn_real *reference_probabilities;
     size_t count;
     size_t capacity;
     char parent_hash[65];
 } ClaimTrace;
 
-static int claim_trace_append(ClaimTrace *trace, uint64_t seed, size_t target)
+typedef struct {
+    const char *trace_path;
+    const char *out_path;
+    size_t epochs;
+    nn_real learning_rate;
+    nn_real hard_weight;
+    nn_real soft_weight;
+} ClaimReplayConfig;
+
+static int claim_trace_append(ClaimTrace *trace,
+                              uint64_t seed,
+                              size_t target,
+                              const nn_real *reference_probabilities)
 {
     if (trace->count == trace->capacity) {
         size_t next_capacity = trace->capacity == 0 ? 1024 : trace->capacity * 2;
         uint64_t *next_seeds = calloc(next_capacity, sizeof(*next_seeds));
         size_t *next_targets = calloc(next_capacity, sizeof(*next_targets));
-        if (next_seeds == NULL || next_targets == NULL) {
+        nn_real *next_reference_probabilities =
+            calloc(next_capacity * DC_ACTION_COUNT, sizeof(*next_reference_probabilities));
+        if (next_seeds == NULL || next_targets == NULL ||
+            next_reference_probabilities == NULL) {
             free(next_seeds);
             free(next_targets);
+            free(next_reference_probabilities);
             return 0;
         }
         if (trace->count != 0) {
             memcpy(next_seeds, trace->seeds, trace->count * sizeof(*next_seeds));
             memcpy(next_targets, trace->targets, trace->count * sizeof(*next_targets));
+            memcpy(next_reference_probabilities,
+                   trace->reference_probabilities,
+                   trace->count * DC_ACTION_COUNT * sizeof(*next_reference_probabilities));
         }
         free(trace->seeds);
         free(trace->targets);
+        free(trace->reference_probabilities);
         trace->seeds = next_seeds;
         trace->targets = next_targets;
+        trace->reference_probabilities = next_reference_probabilities;
         trace->capacity = next_capacity;
     }
     trace->seeds[trace->count] = seed;
     trace->targets[trace->count] = target;
+    memcpy(&trace->reference_probabilities[trace->count * DC_ACTION_COUNT],
+           reference_probabilities,
+           DC_ACTION_COUNT * sizeof(*reference_probabilities));
     ++trace->count;
     return 1;
 }
@@ -338,6 +458,7 @@ static void claim_trace_free(ClaimTrace *trace)
 {
     free(trace->seeds);
     free(trace->targets);
+    free(trace->reference_probabilities);
     memset(trace, 0, sizeof(*trace));
 }
 
@@ -369,7 +490,18 @@ static int load_claim_trace(const char *path, ClaimTrace *trace)
         if (strcmp(record.task_name, "delayed_claim") != 0) {
             continue;
         }
-        if (record.candidate_count != DC_ACTION_COUNT || record.target_index >= DC_ACTION_COUNT) {
+        nn_real reference_probabilities[DC_ACTION_COUNT] = {0};
+        uint8_t seen_action_ids[DC_ACTION_COUNT] = {0};
+        for (size_t action = 0; action < record.candidate_count; ++action) {
+            if (action_ids[action] >= DC_ACTION_COUNT || seen_action_ids[action_ids[action]]) {
+                ok = 0;
+                break;
+            }
+            seen_action_ids[action_ids[action]] = 1;
+            reference_probabilities[action_ids[action]] = probabilities[action];
+        }
+        if (!ok || record.candidate_count != DC_ACTION_COUNT ||
+            record.target_index >= DC_ACTION_COUNT) {
             ok = 0;
             break;
         }
@@ -377,7 +509,10 @@ static int load_claim_trace(const char *path, ClaimTrace *trace)
             strcmp(record.model_hash_hex, "unknown") != 0) {
             strcpy(trace->parent_hash, record.model_hash_hex);
         }
-        ok = claim_trace_append(trace, record.seed, record.target_index);
+        ok = claim_trace_append(trace,
+                                record.seed,
+                                (size_t)action_ids[record.target_index],
+                                reference_probabilities);
     }
     if (fclose(fp) != 0) {
         ok = 0;
@@ -389,37 +524,51 @@ static int load_claim_trace(const char *path, ClaimTrace *trace)
     return 1;
 }
 
-static int replay_claim_trace(const char *trace_path, const char *out_path)
+static int replay_claim_trace(const ClaimReplayConfig *config)
 {
     ClaimTrace trace;
-    if (!load_claim_trace(trace_path, &trace)) {
-        fprintf(stderr, "failed to load trace: %s\n", trace_path);
+    if (!load_claim_trace(config->trace_path, &trace)) {
+        fprintf(stderr, "failed to load trace: %s\n", config->trace_path);
         return 0;
     }
 
     NeuralNet *net = create_claim_model(9090);
     nn_real *candidate_inputs = calloc((size_t)DC_ACTION_COUNT * DC_FEATURE_COUNT,
                                        sizeof(*candidate_inputs));
-    if (net == NULL || candidate_inputs == NULL) {
+    nn_real *scores = calloc(DC_ACTION_COUNT, sizeof(*scores));
+    if (net == NULL || candidate_inputs == NULL || scores == NULL) {
         nn_free(net);
         free(candidate_inputs);
+        free(scores);
         claim_trace_free(&trace);
         return 0;
     }
 
-    for (size_t epoch = 0; epoch < 3; ++epoch) {
+    for (size_t epoch = 0; epoch < config->epochs; ++epoch) {
         double loss = 0.0;
         for (size_t i = 0; i < trace.count; ++i) {
             ClaimState state = generate_claim_state(trace.seeds[i]);
             fill_claim_candidate_features(candidate_inputs, &state);
-            nn_real step_loss = nn_train_action_scorer(net,
-                                                       candidate_inputs,
-                                                       DC_ACTION_COUNT,
-                                                       trace.targets[i],
-                                                       (nn_real)0.01);
+            if (!nn_score_action_rows(net, candidate_inputs, DC_ACTION_COUNT, scores, NULL)) {
+                nn_free(net);
+                free(candidate_inputs);
+                free(scores);
+                claim_trace_free(&trace);
+                return 0;
+            }
+            nn_real step_loss = nn_train_softmax_scorer_policy_regularized_cached(
+                net,
+                DC_ACTION_COUNT,
+                trace.targets[i],
+                config->hard_weight,
+                &trace.reference_probabilities[i * DC_ACTION_COUNT],
+                config->soft_weight,
+                (nn_real)0,
+                config->learning_rate);
             if (isnan((double)step_loss)) {
                 nn_free(net);
                 free(candidate_inputs);
+                free(scores);
                 claim_trace_free(&trace);
                 return 0;
             }
@@ -433,18 +582,23 @@ static int replay_claim_trace(const char *trace_path, const char *out_path)
 
     char hash[65];
     int ok = save_claim_checkpoint(net,
-                                   out_path,
+                                   config->out_path,
                                    trace.parent_hash,
-                                   "delayed_claim successor trained from trace replay",
+                                   "delayed_claim successor trained from soft trace replay",
                                    hash);
     if (ok) {
-        printf("saved delayed_claim replay checkpoint: %s hash=%s parent=%s\n",
-               out_path,
+        printf("saved delayed_claim replay checkpoint: %s hash=%s parent=%s "
+               "epochs=%zu hard_weight=%.2f soft_weight=%.2f\n",
+               config->out_path,
                hash,
-               trace.parent_hash);
+               trace.parent_hash,
+               config->epochs,
+               (double)config->hard_weight,
+               (double)config->soft_weight);
     }
     nn_free(net);
     free(candidate_inputs);
+    free(scores);
     claim_trace_free(&trace);
     return ok;
 }
@@ -474,7 +628,7 @@ static int compare_claim_models(int argc, char **argv)
         }
         nn_hash_checkpoint_hex(argv[i], hash);
         ClaimMetrics metrics = evaluate_claim_model(net,
-                                                    900000,
+                                                    DC_TEST_SEED_START,
                                                     DC_TEST_SAMPLES,
                                                     candidate_inputs,
                                                     scores,
@@ -482,17 +636,22 @@ static int compare_claim_models(int argc, char **argv)
         printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"delayed_claim\","
                "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
                "\"feature_encoder_version\":%u,"
-               "\"benchmark_seed\":900000,\"sample_count\":%zu,"
+               "\"benchmark_seed\":%u,\"sample_count\":%zu,"
                "\"accuracy\":%.8f,\"nll\":%.8f,\"ece\":%.8f,"
-               "\"decision_utility\":%.8f}\n",
+               "\"decision_utility\":%.8f,\"proposal_steps\":%.8f,"
+               "\"baseline_steps\":%.8f,\"search_saved\":%.8f}\n",
                hash,
                meta.parent_model_hash[0] == '\0' ? "unknown" : meta.parent_model_hash,
                meta.feature_encoder_version,
+               (unsigned int)DC_TEST_SEED_START,
                metrics.samples,
                metrics.samples == 0 ? 0.0 : (double)metrics.correct / (double)metrics.samples,
                metrics.nll,
                metrics.ece,
-               metrics.utility);
+               metrics.utility,
+               metrics.proposal_steps,
+               metrics.baseline_steps,
+               metrics.baseline_steps - metrics.proposal_steps);
         print_claim_metrics(argv[i], hash, metrics);
         nn_free(net);
     }
@@ -505,8 +664,10 @@ static int compare_claim_models(int argc, char **argv)
 
 static void print_usage(FILE *stream)
 {
-    fputs("usage: delayed_claim [--trace path] [--save path]\n"
-          "       delayed_claim --replay trace.jsonl --out model.nnckpt\n"
+    fputs("usage: delayed_claim [--trace path] [--save path] "
+          "[--trace-train] [--trace-seed seed] [--trace-samples count]\n"
+          "       delayed_claim --replay trace.jsonl --out model.nnckpt "
+          "[--epochs count] [--hard-weight value] [--soft-weight value]\n"
           "       delayed_claim --compare model_a.nnckpt model_b.nnckpt [...]\n",
           stream);
 }
@@ -514,11 +675,56 @@ static void print_usage(FILE *stream)
 int main(int argc, char **argv)
 {
     if (argc >= 2 && strcmp(argv[1], "--replay") == 0) {
-        if (argc < 5 || strcmp(argv[3], "--out") != 0) {
+        if (argc < 5) {
             print_usage(stderr);
             return EXIT_FAILURE;
         }
-        return replay_claim_trace(argv[2], argv[4]) ? EXIT_SUCCESS : EXIT_FAILURE;
+
+        ClaimReplayConfig replay_config;
+        replay_config.trace_path = argv[2];
+        replay_config.out_path = NULL;
+        replay_config.epochs = DC_REPLAY_EPOCHS;
+        replay_config.learning_rate = DC_REPLAY_LEARNING_RATE;
+        replay_config.hard_weight = DC_REPLAY_HARD_WEIGHT;
+        replay_config.soft_weight = DC_REPLAY_SOFT_WEIGHT;
+
+        for (int i = 3; i < argc; ++i) {
+            if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
+                replay_config.out_path = argv[++i];
+            } else if (strcmp(argv[i], "--epochs") == 0 && i + 1 < argc) {
+                if (!parse_size_text(argv[++i], &replay_config.epochs)) {
+                    print_usage(stderr);
+                    return EXIT_FAILURE;
+                }
+            } else if (strcmp(argv[i], "--learning-rate") == 0 && i + 1 < argc) {
+                if (!parse_real_text(argv[++i], &replay_config.learning_rate) ||
+                    replay_config.learning_rate <= (nn_real)0) {
+                    print_usage(stderr);
+                    return EXIT_FAILURE;
+                }
+            } else if (strcmp(argv[i], "--hard-weight") == 0 && i + 1 < argc) {
+                if (!parse_real_text(argv[++i], &replay_config.hard_weight)) {
+                    print_usage(stderr);
+                    return EXIT_FAILURE;
+                }
+            } else if (strcmp(argv[i], "--soft-weight") == 0 && i + 1 < argc) {
+                if (!parse_real_text(argv[++i], &replay_config.soft_weight)) {
+                    print_usage(stderr);
+                    return EXIT_FAILURE;
+                }
+            } else {
+                print_usage(stderr);
+                return EXIT_FAILURE;
+            }
+        }
+
+        if (replay_config.out_path == NULL ||
+            (replay_config.hard_weight == (nn_real)0 &&
+             replay_config.soft_weight == (nn_real)0)) {
+            print_usage(stderr);
+            return EXIT_FAILURE;
+        }
+        return replay_claim_trace(&replay_config) ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (argc >= 2 && strcmp(argv[1], "--compare") == 0) {
         if (argc < 4) {
@@ -530,11 +736,26 @@ int main(int argc, char **argv)
 
     const char *trace_path = NULL;
     const char *save_path = NULL;
+    uint64_t trace_seed_start = DC_TEST_SEED_START;
+    size_t trace_samples = DC_TEST_SAMPLES;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc) {
             trace_path = argv[++i];
         } else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) {
             save_path = argv[++i];
+        } else if (strcmp(argv[i], "--trace-train") == 0) {
+            trace_seed_start = DC_TRAIN_SEED_START;
+            trace_samples = DC_TRAIN_SAMPLES;
+        } else if (strcmp(argv[i], "--trace-seed") == 0 && i + 1 < argc) {
+            if (!parse_u64_text(argv[++i], &trace_seed_start)) {
+                print_usage(stderr);
+                return EXIT_FAILURE;
+            }
+        } else if (strcmp(argv[i], "--trace-samples") == 0 && i + 1 < argc) {
+            if (!parse_size_text(argv[++i], &trace_samples)) {
+                print_usage(stderr);
+                return EXIT_FAILURE;
+            }
         } else {
             print_usage(stderr);
             return EXIT_FAILURE;
@@ -555,9 +776,9 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    int ok = train_claim_model(net, 1000, DC_TRAIN_SAMPLES, 4, candidate_inputs);
+    int ok = train_claim_model(net, DC_TRAIN_SEED_START, DC_TRAIN_SAMPLES, 4, candidate_inputs);
     ClaimMetrics metrics = evaluate_claim_model(net,
-                                                900000,
+                                                DC_TEST_SEED_START,
                                                 DC_TEST_SAMPLES,
                                                 candidate_inputs,
                                                 scores,
@@ -579,8 +800,8 @@ int main(int argc, char **argv)
         ok = emit_claim_trace(net,
                               trace_path,
                               hash,
-                              900000,
-                              DC_TEST_SAMPLES,
+                              trace_seed_start,
+                              trace_samples,
                               candidate_inputs,
                               scores,
                               probabilities);

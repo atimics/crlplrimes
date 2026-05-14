@@ -9,15 +9,39 @@
 #include <string.h>
 #include <time.h>
 
+#ifndef NN_PRIME_GAP_G_MAX
+#define NN_PRIME_GAP_G_MAX 256
+#endif
+
+#ifndef NN_PRIME_GAP_FEATURE_MOD_COUNT
+#define NN_PRIME_GAP_FEATURE_MOD_COUNT 10
+#endif
+
+#ifndef NN_PRIME_GAP_HIDDEN1
+#define NN_PRIME_GAP_HIDDEN1 32
+#endif
+
+#ifndef NN_PRIME_GAP_HIDDEN2
+#define NN_PRIME_GAP_HIDDEN2 16
+#endif
+
+#ifndef NN_SYMBOLIC_RULE_MAX_MOD
+#define NN_SYMBOLIC_RULE_MAX_MOD 255
+#endif
+
+#ifndef NN_SYMBOLIC_MAX_LEARNED_RULES
+#define NN_SYMBOLIC_MAX_LEARNED_RULES 64
+#endif
+
 enum {
-    G_MAX = 256,
+    G_MAX = NN_PRIME_GAP_G_MAX,
     EXACT_ACTION_COUNT = G_MAX / 2,
     OVERFLOW_ACTION = EXACT_ACTION_COUNT,
     ACTION_COUNT = EXACT_ACTION_COUNT + 1,
-    FEATURE_MOD_COUNT = 10,
+    FEATURE_MOD_COUNT = NN_PRIME_GAP_FEATURE_MOD_COUNT,
     FEATURE_COUNT = 3 + FEATURE_MOD_COUNT,
-    RESIDUE_SIGNATURE_COUNT = 1 << FEATURE_MOD_COUNT,
-    CONDITION_SIGNATURE_COUNT = RESIDUE_SIGNATURE_COUNT + 1,
+    CONDITION_FEATURE_MOD_COUNT = FEATURE_MOD_COUNT <= 16 ? FEATURE_MOD_COUNT : 16,
+    CONDITION_SIGNATURE_COUNT = (1 << CONDITION_FEATURE_MOD_COUNT) + 1,
     DEFAULT_TRAIN_LIMIT = 1000000,
     DEFAULT_TEST_LIMIT = 3000000,
     DEFAULT_SUPERVISED_EPOCHS = 2,
@@ -26,11 +50,34 @@ enum {
     DEFAULT_MAX_TEST_STATES = 30000,
     CALIBRATION_BINS = 10,
     PRIME_BUCKET_COUNT = 4,
+    SYMBOLIC_RULE_MOD_MIN = 3,
+    SYMBOLIC_RULE_FEATURE_COUNT = 5,
+    SYMBOLIC_RULE_SCORER_EPOCHS = 20,
 };
 
 static const double DEFAULT_REGULARIZED_RL_REFERENCE_WEIGHT = 1.20;
 static const double DEFAULT_REGULARIZED_RL_ENTROPY_WEIGHT = 0.12;
-static const uint32_t FEATURE_MODS[FEATURE_MOD_COUNT] = {3, 5, 7, 11, 13, 17, 19, 23, 29, 31};
+static const uint32_t FEATURE_MODS[] = {
+    3,  5,  7,  11, 13, 17, 19, 23, 29, 31, 37, 41,
+    43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97,
+    101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 157,
+    163, 167, 173, 179, 181, 191, 193, 197, 199, 211, 223, 227,
+    229, 233, 239, 241, 251,
+};
+
+_Static_assert(NN_PRIME_GAP_FEATURE_MOD_COUNT > 0,
+               "NN_PRIME_GAP_FEATURE_MOD_COUNT must be positive");
+_Static_assert(NN_PRIME_GAP_FEATURE_MOD_COUNT <=
+                   sizeof(FEATURE_MODS) / sizeof(FEATURE_MODS[0]),
+               "not enough configured prime-gap residue moduli");
+_Static_assert(NN_PRIME_GAP_G_MAX >= 2 && NN_PRIME_GAP_G_MAX % 2 == 0,
+               "NN_PRIME_GAP_G_MAX must be an even value of at least 2");
+_Static_assert(NN_PRIME_GAP_HIDDEN1 > 0 && NN_PRIME_GAP_HIDDEN2 > 0,
+               "prime-gap hidden layer sizes must be positive");
+_Static_assert(NN_SYMBOLIC_RULE_MAX_MOD >= SYMBOLIC_RULE_MOD_MIN,
+               "NN_SYMBOLIC_RULE_MAX_MOD must be at least 3");
+_Static_assert(NN_SYMBOLIC_MAX_LEARNED_RULES > 0,
+               "NN_SYMBOLIC_MAX_LEARNED_RULES must be positive");
 
 typedef struct {
     const char *name;
@@ -71,6 +118,40 @@ typedef struct {
     size_t mod_tests;
     size_t exact_tests;
 } VerifierWork;
+
+typedef struct {
+    uint32_t modulus;
+    uint32_t residue;
+    size_t train_rejects;
+    size_t validation_rejects;
+    nn_real model_score;
+    int domain_valid;
+} SymbolicRejectRule;
+
+typedef struct {
+    SymbolicRejectRule *items;
+    size_t count;
+    size_t capacity;
+} SymbolicRuleSet;
+
+typedef struct {
+    size_t proposed_rules;
+    size_t domain_valid_rules;
+    size_t accepted_rules;
+    size_t train_rejects;
+    size_t validation_rejects;
+    double proposer_loss;
+    size_t samples;
+    size_t test_false_rejections;
+    double direct_exact_tests;
+    double hand_wheel_mod_tests;
+    double hand_wheel_exact_tests;
+    double learned_mod_tests;
+    double learned_exact_tests;
+} SymbolicWheelMetrics;
+
+static size_t eval_sample_index(const GapDataset *dataset, size_t sample, size_t samples);
+static int compare_symbolic_rules_canonical(const void *left, const void *right);
 
 typedef struct {
     size_t candidates;
@@ -131,6 +212,9 @@ typedef struct {
     const char *trace_path;
     const char *save_path;
     const char *load_model_path;
+    const char *save_rules_path;
+    const char *load_rules_path;
+    const char *save_learned_model_path;
 } PrimeGapRunConfig;
 
 static double now_seconds(void)
@@ -222,6 +306,9 @@ static PrimeGapRunConfig default_run_config(void)
     config.trace_path = NULL;
     config.save_path = NULL;
     config.load_model_path = NULL;
+    config.save_rules_path = NULL;
+    config.load_rules_path = NULL;
+    config.save_learned_model_path = NULL;
     return config;
 }
 
@@ -249,6 +336,21 @@ static int parse_run_config(int argc, char **argv, PrimeGapRunConfig *config)
                 return 0;
             }
             config->load_model_path = argv[i];
+        } else if (strcmp(argv[i], "--save-rules") == 0) {
+            if (++i >= argc || argv[i][0] == '\0') {
+                return 0;
+            }
+            config->save_rules_path = argv[i];
+        } else if (strcmp(argv[i], "--rules") == 0) {
+            if (++i >= argc || argv[i][0] == '\0') {
+                return 0;
+            }
+            config->load_rules_path = argv[i];
+        } else if (strcmp(argv[i], "--save-learned-model") == 0) {
+            if (++i >= argc || argv[i][0] == '\0') {
+                return 0;
+            }
+            config->save_learned_model_path = argv[i];
         } else if (strcmp(argv[i], "--help") == 0) {
             return 0;
         } else if (positional_count < (int)(sizeof(positionals) / sizeof(positionals[0]))) {
@@ -317,7 +419,8 @@ static void print_usage(FILE *stream)
     fputs("usage: prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] "
           "[max_train_states] [max_test_states] [regularized_reference_weight] "
           "[regularized_entropy_weight] [rng_seed] "
-          "[--trace path] [--save path] [--model checkpoint]\n",
+          "[--trace path] [--save path] [--model checkpoint] "
+          "[--save-rules path] [--rules path] [--save-learned-model path]\n",
           stream);
 }
 
@@ -559,15 +662,15 @@ static void fill_candidate_features_masked(nn_real *inputs,
     }
 }
 
-static size_t residue_signature(uint32_t p, size_t action)
+static size_t residue_signature(uint32_t p, size_t action, size_t mod_count)
 {
     if (action_is_overflow(action)) {
-        return RESIDUE_SIGNATURE_COUNT;
+        return (size_t)1u << mod_count;
     }
 
     uint32_t candidate = p + (uint32_t)action_gap(action);
     size_t signature = 0;
-    for (size_t i = 0; i < FEATURE_MOD_COUNT; ++i) {
+    for (size_t i = 0; i < mod_count; ++i) {
         uint32_t mod = FEATURE_MODS[i];
         if (candidate > mod && candidate % mod == 0) {
             signature |= (size_t)1u << i;
@@ -751,6 +854,658 @@ static VerifierWork assisted_wheel_work(const Sieve *sieve,
 
     wheel_scan_to_gap_cached(sieve, p, true_gap, tested, prime_result, &work);
     return work;
+}
+
+static size_t symbolic_rule_count(void)
+{
+    size_t count = 0;
+    for (uint32_t modulus = SYMBOLIC_RULE_MOD_MIN;
+         modulus <= (uint32_t)NN_SYMBOLIC_RULE_MAX_MOD;
+         ++modulus) {
+        count += modulus;
+    }
+    return count;
+}
+
+static void fill_symbolic_rule_offsets(size_t *offsets)
+{
+    size_t offset = 0;
+    for (uint32_t modulus = 0; modulus <= (uint32_t)NN_SYMBOLIC_RULE_MAX_MOD + 1u; ++modulus) {
+        offsets[modulus] = 0;
+    }
+    for (uint32_t modulus = SYMBOLIC_RULE_MOD_MIN;
+         modulus <= (uint32_t)NN_SYMBOLIC_RULE_MAX_MOD;
+         ++modulus) {
+        offsets[modulus] = offset;
+        offset += modulus;
+    }
+    offsets[(uint32_t)NN_SYMBOLIC_RULE_MAX_MOD + 1u] = offset;
+}
+
+static void init_symbolic_rules(SymbolicRejectRule *rules, const size_t *offsets)
+{
+    for (uint32_t modulus = SYMBOLIC_RULE_MOD_MIN;
+         modulus <= (uint32_t)NN_SYMBOLIC_RULE_MAX_MOD;
+         ++modulus) {
+        for (uint32_t residue = 0; residue < modulus; ++residue) {
+            SymbolicRejectRule *rule = &rules[offsets[modulus] + residue];
+            rule->modulus = modulus;
+            rule->residue = residue;
+        }
+    }
+}
+
+static void mark_domain_invalid_symbolic_residues(const Sieve *sieve,
+                                                  uint8_t *invalid,
+                                                  const size_t *offsets)
+{
+    for (size_t prime_index = 0; prime_index < sieve->prime_count; ++prime_index) {
+        uint32_t prime = sieve->primes[prime_index];
+        for (uint32_t modulus = SYMBOLIC_RULE_MOD_MIN;
+             modulus <= (uint32_t)NN_SYMBOLIC_RULE_MAX_MOD && modulus < prime;
+             ++modulus) {
+            invalid[offsets[modulus] + (prime % modulus)] = 1;
+        }
+    }
+}
+
+static void accumulate_symbolic_rule_rejects(SymbolicRejectRule *rules,
+                                             const size_t *offsets,
+                                             const GapDataset *dataset,
+                                             int validation)
+{
+    for (size_t sample = 0; sample < dataset->count; ++sample) {
+        uint32_t p = dataset->prime[sample];
+        uint32_t true_gap = dataset->gap[sample];
+
+        for (uint32_t gap = 2; gap < true_gap; gap += 2) {
+            uint32_t candidate = p + gap;
+            for (uint32_t modulus = SYMBOLIC_RULE_MOD_MIN;
+                 modulus <= (uint32_t)NN_SYMBOLIC_RULE_MAX_MOD && modulus < candidate;
+                 ++modulus) {
+                SymbolicRejectRule *rule = &rules[offsets[modulus] + (candidate % modulus)];
+                if (validation) {
+                    ++rule->validation_rejects;
+                } else {
+                    ++rule->train_rejects;
+                }
+            }
+        }
+    }
+}
+
+static uint32_t gcd_u32(uint32_t a, uint32_t b)
+{
+    while (b != 0) {
+        uint32_t tmp = a % b;
+        a = b;
+        b = tmp;
+    }
+    return a;
+}
+
+static void fill_symbolic_rule_features(const SymbolicRejectRule *rule,
+                                        size_t max_train_rejects,
+                                        nn_real *features)
+{
+    double modulus = (double)rule->modulus;
+    double residue = (double)rule->residue;
+    double max_modulus = (double)NN_SYMBOLIC_RULE_MAX_MOD;
+    double support_scale = max_train_rejects == 0 ? 1.0 : (double)max_train_rejects;
+    uint32_t common = gcd_u32(rule->modulus, rule->residue);
+
+    features[0] = (nn_real)(modulus / max_modulus);
+    features[1] = (nn_real)(residue / modulus);
+    features[2] = rule->residue == 0 ? (nn_real)1 : (nn_real)0;
+    features[3] = (nn_real)((double)common / modulus);
+    features[4] = (nn_real)((double)rule->train_rejects / support_scale);
+}
+
+static int score_symbolic_rules_with_model(SymbolicRejectRule *rules,
+                                           size_t count,
+                                           double *loss_out)
+{
+    size_t max_train_rejects = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (rules[i].train_rejects > max_train_rejects) {
+            max_train_rejects = rules[i].train_rejects;
+        }
+    }
+
+    nn_real *inputs = calloc(count * SYMBOLIC_RULE_FEATURE_COUNT, sizeof(*inputs));
+    nn_real *targets = calloc(count, sizeof(*targets));
+    nn_real *scores = calloc(count, sizeof(*scores));
+    if (inputs == NULL || targets == NULL || scores == NULL) {
+        free(inputs);
+        free(targets);
+        free(scores);
+        return 0;
+    }
+
+    double support_scale = max_train_rejects == 0 ? 1.0 : (double)max_train_rejects;
+    for (size_t i = 0; i < count; ++i) {
+        fill_symbolic_rule_features(&rules[i],
+                                    max_train_rejects,
+                                    &inputs[i * SYMBOLIC_RULE_FEATURE_COUNT]);
+        targets[i] = rules[i].domain_valid
+                         ? (nn_real)((double)rules[i].train_rejects / support_scale)
+                         : (nn_real)0;
+    }
+
+    const size_t layers[] = {SYMBOLIC_RULE_FEATURE_COUNT, 16, 8, 1};
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = sizeof(layers) / sizeof(layers[0]);
+    config.seed = 7319;
+    config.hidden_activation = NN_ACTIVATION_RELU;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+
+    NeuralNet *net = nn_create_config(&config);
+    if (net == NULL) {
+        free(inputs);
+        free(targets);
+        free(scores);
+        return 0;
+    }
+
+    nn_real loss = nn_train_batched(net,
+                                    inputs,
+                                    targets,
+                                    count,
+                                    256,
+                                    (nn_real)0.02,
+                                    SYMBOLIC_RULE_SCORER_EPOCHS,
+                                    1);
+    nn_forward_batch(net, inputs, scores, count);
+    for (size_t i = 0; i < count; ++i) {
+        rules[i].model_score = scores[i];
+    }
+    if (loss_out != NULL) {
+        *loss_out = (double)loss;
+    }
+
+    nn_free(net);
+    free(inputs);
+    free(targets);
+    free(scores);
+    return 1;
+}
+
+static int compare_symbolic_rules(const void *left, const void *right)
+{
+    const SymbolicRejectRule *a = (const SymbolicRejectRule *)left;
+    const SymbolicRejectRule *b = (const SymbolicRejectRule *)right;
+
+    if ((double)a->model_score < (double)b->model_score) {
+        return 1;
+    }
+    if ((double)a->model_score > (double)b->model_score) {
+        return -1;
+    }
+    if (a->train_rejects != b->train_rejects) {
+        return a->train_rejects < b->train_rejects ? 1 : -1;
+    }
+    if (a->validation_rejects != b->validation_rejects) {
+        return a->validation_rejects < b->validation_rejects ? 1 : -1;
+    }
+    if (a->modulus != b->modulus) {
+        return a->modulus < b->modulus ? -1 : 1;
+    }
+    if (a->residue != b->residue) {
+        return a->residue < b->residue ? -1 : 1;
+    }
+    return 0;
+}
+
+static int compare_symbolic_rules_canonical(const void *left, const void *right)
+{
+    const SymbolicRejectRule *a = (const SymbolicRejectRule *)left;
+    const SymbolicRejectRule *b = (const SymbolicRejectRule *)right;
+
+    if (a->modulus != b->modulus) {
+        return a->modulus < b->modulus ? -1 : 1;
+    }
+    if (a->residue != b->residue) {
+        return a->residue < b->residue ? -1 : 1;
+    }
+    return 0;
+}
+
+
+static int symbolic_rule_subset_of(const SymbolicRejectRule *candidate,
+                                   const SymbolicRejectRule *accepted)
+{
+    return candidate->modulus % accepted->modulus == 0 &&
+           candidate->residue % accepted->modulus == accepted->residue;
+}
+
+static int symbolic_rule_is_covered(const SymbolicRuleSet *accepted,
+                                    const SymbolicRejectRule *candidate)
+{
+    for (size_t i = 0; i < accepted->count; ++i) {
+        if (symbolic_rule_subset_of(candidate, &accepted->items[i])) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void symbolic_rule_remove_subsets(SymbolicRuleSet *accepted,
+                                         const SymbolicRejectRule *candidate)
+{
+    size_t write = 0;
+    for (size_t read = 0; read < accepted->count; ++read) {
+        if (symbolic_rule_subset_of(&accepted->items[read], candidate)) {
+            continue;
+        }
+        if (write != read) {
+            accepted->items[write] = accepted->items[read];
+        }
+        ++write;
+    }
+    accepted->count = write;
+}
+
+static void free_symbolic_rule_set(SymbolicRuleSet *rules)
+{
+    free(rules->items);
+    memset(rules, 0, sizeof(*rules));
+}
+
+static int save_symbolic_rule_checkpoint(const SymbolicRuleSet *rules,
+                                         const char *path,
+                                         const SymbolicWheelMetrics *metrics,
+                                         char out_hash[65])
+{
+    if (rules == NULL || path == NULL) {
+        return 0;
+    }
+
+    FILE *fp = fopen(path, "w");
+    if (fp == NULL) {
+        return 0;
+    }
+
+    int ok = fprintf(fp, "crlp.symbolic_rules.v1\n") >= 0 &&
+             fprintf(fp, "rule_count %zu\n", rules->count) >= 0 &&
+             fprintf(fp, "max_modulus %u\n", (uint32_t)NN_SYMBOLIC_RULE_MAX_MOD) >= 0 &&
+             fprintf(fp, "feature_mod_count %u\n", (uint32_t)FEATURE_MOD_COUNT) >= 0;
+    if (metrics != NULL) {
+        ok = ok &&
+             fprintf(fp,
+                     "proposed_rules %zu\n"
+                     "domain_valid_rules %zu\n"
+                     "accepted_train_reject_support %zu\n"
+                     "validation_reject_support %zu\n"
+                     "proposer_loss %.17g\n",
+                     metrics->proposed_rules,
+                     metrics->domain_valid_rules,
+                     metrics->train_rejects,
+                     metrics->validation_rejects,
+                     metrics->proposer_loss) >= 0;
+    } else {
+        ok = ok &&
+             fprintf(fp,
+                     "proposed_rules 0\n"
+                     "domain_valid_rules 0\n"
+                     "accepted_train_reject_support 0\n"
+                     "validation_reject_support 0\n"
+                     "proposer_loss 0\n") >= 0;
+    }
+
+    for (size_t i = 0; ok && i < rules->count; ++i) {
+        const SymbolicRejectRule *rule = &rules->items[i];
+        ok = fprintf(fp,
+                     "rule %u %u %zu %zu %.9g\n",
+                     rule->modulus,
+                     rule->residue,
+                     rule->train_rejects,
+                     rule->validation_rejects,
+                     (double)rule->model_score) >= 0;
+    }
+
+    if (fclose(fp) != 0) {
+        ok = 0;
+    }
+    if (!ok) {
+        return 0;
+    }
+    if (out_hash != NULL && !nn_hash_checkpoint_hex(path, out_hash)) {
+        return 0;
+    }
+    return 1;
+}
+
+static int load_symbolic_rule_checkpoint(const char *path, SymbolicRuleSet *rules)
+{
+    memset(rules, 0, sizeof(*rules));
+    if (path == NULL) {
+        return 0;
+    }
+
+    FILE *fp = fopen(path, "r");
+    if (fp == NULL) {
+        return 0;
+    }
+
+    char magic[64];
+    size_t count = 0;
+    unsigned int max_modulus = 0;
+    unsigned int feature_mod_count = 0;
+    int ok = fscanf(fp, "%63s", magic) == 1 &&
+             strcmp(magic, "crlp.symbolic_rules.v1") == 0 &&
+             fscanf(fp, " rule_count %zu", &count) == 1 &&
+             fscanf(fp, " max_modulus %u", &max_modulus) == 1 &&
+             fscanf(fp, " feature_mod_count %u", &feature_mod_count) == 1;
+
+    size_t ignored_size = 0;
+    double ignored_loss = 0.0;
+    ok = ok &&
+         fscanf(fp, " proposed_rules %zu", &ignored_size) == 1 &&
+         fscanf(fp, " domain_valid_rules %zu", &ignored_size) == 1 &&
+         fscanf(fp, " accepted_train_reject_support %zu", &ignored_size) == 1 &&
+         fscanf(fp, " validation_reject_support %zu", &ignored_size) == 1 &&
+         fscanf(fp, " proposer_loss %lf", &ignored_loss) == 1;
+    ok = ok && max_modulus == (unsigned int)NN_SYMBOLIC_RULE_MAX_MOD &&
+         feature_mod_count == (unsigned int)FEATURE_MOD_COUNT;
+
+    if (ok) {
+        rules->items = calloc(count == 0 ? 1 : count, sizeof(*rules->items));
+        rules->capacity = count;
+        ok = rules->items != NULL;
+    }
+
+    for (size_t i = 0; ok && i < count; ++i) {
+        unsigned int modulus = 0;
+        unsigned int residue = 0;
+        size_t train_rejects = 0;
+        size_t validation_rejects = 0;
+        double model_score = 0.0;
+        ok = fscanf(fp,
+                    " rule %u %u %zu %zu %lf",
+                    &modulus,
+                    &residue,
+                    &train_rejects,
+                    &validation_rejects,
+                    &model_score) == 5 &&
+             modulus >= SYMBOLIC_RULE_MOD_MIN &&
+             modulus <= max_modulus &&
+             residue < modulus;
+        if (!ok) {
+            break;
+        }
+
+        rules->items[i].modulus = (uint32_t)modulus;
+        rules->items[i].residue = (uint32_t)residue;
+        rules->items[i].train_rejects = train_rejects;
+        rules->items[i].validation_rejects = validation_rejects;
+        rules->items[i].model_score = (nn_real)model_score;
+        rules->items[i].domain_valid = 1;
+        ++rules->count;
+    }
+
+    if (fclose(fp) != 0) {
+        ok = 0;
+    }
+    if (!ok || rules->count != count) {
+        free_symbolic_rule_set(rules);
+        return 0;
+    }
+
+    qsort(rules->items,
+          rules->count,
+          sizeof(*rules->items),
+          compare_symbolic_rules_canonical);
+    return 1;
+}
+
+static int load_symbolic_rules_with_hash(const char *path,
+                                         SymbolicRuleSet *rules,
+                                         char out_hash[65])
+{
+    if (!load_symbolic_rule_checkpoint(path, rules)) {
+        return 0;
+    }
+    if (out_hash != NULL && !nn_hash_checkpoint_hex(path, out_hash)) {
+        strcpy(out_hash, "unknown");
+    }
+    return 1;
+}
+
+static int discover_symbolic_wheel(const Sieve *sieve,
+                                   const GapDataset *train,
+                                   const GapDataset *validation,
+                                   SymbolicRuleSet *accepted,
+                                   SymbolicWheelMetrics *metrics)
+{
+    size_t offsets[(uint32_t)NN_SYMBOLIC_RULE_MAX_MOD + 2u];
+    size_t count = symbolic_rule_count();
+    SymbolicRejectRule *rules = calloc(count, sizeof(*rules));
+    uint8_t *invalid = calloc(count, sizeof(*invalid));
+
+    memset(accepted, 0, sizeof(*accepted));
+    memset(metrics, 0, sizeof(*metrics));
+    metrics->proposed_rules = count;
+
+    if (rules == NULL || invalid == NULL) {
+        free(rules);
+        free(invalid);
+        return 0;
+    }
+
+    fill_symbolic_rule_offsets(offsets);
+    init_symbolic_rules(rules, offsets);
+    mark_domain_invalid_symbolic_residues(sieve, invalid, offsets);
+
+    for (size_t i = 0; i < count; ++i) {
+        rules[i].domain_valid = invalid[i] ? 0 : 1;
+        metrics->domain_valid_rules += rules[i].domain_valid ? 1u : 0u;
+    }
+
+    accumulate_symbolic_rule_rejects(rules, offsets, train, 0);
+    accumulate_symbolic_rule_rejects(rules, offsets, validation, 1);
+    if (!score_symbolic_rules_with_model(rules, count, &metrics->proposer_loss)) {
+        free_symbolic_rule_set(accepted);
+        free(rules);
+        free(invalid);
+        return 0;
+    }
+    qsort(rules, count, sizeof(*rules), compare_symbolic_rules);
+
+    accepted->capacity = NN_SYMBOLIC_MAX_LEARNED_RULES;
+    accepted->items = calloc(accepted->capacity, sizeof(*accepted->items));
+    if (accepted->items == NULL) {
+        free(rules);
+        free(invalid);
+        return 0;
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+        if (!rules[i].domain_valid || rules[i].train_rejects == 0) {
+            continue;
+        }
+        if (symbolic_rule_is_covered(accepted, &rules[i])) {
+            continue;
+        }
+
+        symbolic_rule_remove_subsets(accepted, &rules[i]);
+        if (accepted->count >= accepted->capacity) {
+            continue;
+        }
+        accepted->items[accepted->count++] = rules[i];
+    }
+
+    metrics->accepted_rules = accepted->count;
+    qsort(accepted->items,
+          accepted->count,
+          sizeof(*accepted->items),
+          compare_symbolic_rules_canonical);
+    for (size_t i = 0; i < accepted->count; ++i) {
+        metrics->train_rejects += accepted->items[i].train_rejects;
+        metrics->validation_rejects += accepted->items[i].validation_rejects;
+    }
+    free(rules);
+    free(invalid);
+    return 1;
+}
+
+static int symbolic_rule_rejects(const SymbolicRejectRule *rule, uint32_t candidate)
+{
+    return candidate > rule->modulus && candidate % rule->modulus == rule->residue;
+}
+
+static int learned_symbolic_probe_gap(const Sieve *sieve,
+                                      const SymbolicRuleSet *rules,
+                                      uint32_t p,
+                                      uint32_t gap,
+                                      VerifierWork *work,
+                                      int *rejected)
+{
+    uint32_t candidate = p + gap;
+
+    ++work->candidates;
+    *rejected = 0;
+    for (size_t i = 0; i < rules->count; ++i) {
+        ++work->mod_tests;
+        if (symbolic_rule_rejects(&rules->items[i], candidate)) {
+            *rejected = 1;
+            return 0;
+        }
+    }
+
+    ++work->exact_tests;
+    return is_prime_sieve(sieve, candidate);
+}
+
+static VerifierWork learned_symbolic_scan_work(const Sieve *sieve,
+                                               const SymbolicRuleSet *rules,
+                                               uint32_t p,
+                                               uint32_t true_gap,
+                                               int *false_rejection)
+{
+    VerifierWork work = {0, 0, 0};
+    *false_rejection = 0;
+
+    for (uint32_t gap = 2; gap <= true_gap; gap += 2) {
+        int rejected = 0;
+        int prime = learned_symbolic_probe_gap(sieve, rules, p, gap, &work, &rejected);
+        if (rejected && gap == true_gap) {
+            *false_rejection = 1;
+            return work;
+        }
+        if (prime) {
+            return work;
+        }
+    }
+
+    return work;
+}
+
+static SymbolicWheelMetrics evaluate_symbolic_wheel(const Sieve *sieve,
+                                                    const SymbolicRuleSet *rules,
+                                                    const GapDataset *dataset,
+                                                    size_t max_states,
+                                                    SymbolicWheelMetrics metrics)
+{
+    size_t samples = dataset->count;
+    if (max_states != 0 && max_states < samples) {
+        samples = max_states;
+    }
+
+    for (size_t sample = 0; sample < samples; ++sample) {
+        size_t index = eval_sample_index(dataset, sample, samples);
+        uint32_t p = dataset->prime[index];
+        uint32_t gap = dataset->gap[index];
+        VerifierWork direct = direct_scan_work(gap);
+        VerifierWork hand = wheel_scan_work(sieve, p, gap);
+        int false_rejection = 0;
+        VerifierWork learned = learned_symbolic_scan_work(sieve,
+                                                          rules,
+                                                          p,
+                                                          gap,
+                                                          &false_rejection);
+
+        metrics.direct_exact_tests += (double)direct.exact_tests;
+        metrics.hand_wheel_mod_tests += (double)hand.mod_tests;
+        metrics.hand_wheel_exact_tests += (double)hand.exact_tests;
+        metrics.learned_mod_tests += (double)learned.mod_tests;
+        metrics.learned_exact_tests += (double)learned.exact_tests;
+        metrics.test_false_rejections += false_rejection ? 1u : 0u;
+    }
+
+    metrics.samples = samples;
+    if (samples != 0) {
+        double denominator = (double)samples;
+        metrics.direct_exact_tests /= denominator;
+        metrics.hand_wheel_mod_tests /= denominator;
+        metrics.hand_wheel_exact_tests /= denominator;
+        metrics.learned_mod_tests /= denominator;
+        metrics.learned_exact_tests /= denominator;
+    }
+    return metrics;
+}
+
+static void print_symbolic_rule(const SymbolicRejectRule *rule)
+{
+    printf("n %% %u == %u", rule->modulus, rule->residue);
+}
+
+static void print_symbolic_wheel_report(const SymbolicRuleSet *rules,
+                                        SymbolicWheelMetrics metrics)
+{
+    double learned_saved = metrics.direct_exact_tests - metrics.learned_exact_tests;
+    double hand_saved = metrics.direct_exact_tests - metrics.hand_wheel_exact_tests;
+    double learned_saved_pct = metrics.direct_exact_tests == 0.0
+                                   ? 0.0
+                                   : 100.0 * learned_saved / metrics.direct_exact_tests;
+    double hand_saved_pct = metrics.direct_exact_tests == 0.0
+                                ? 0.0
+                                : 100.0 * hand_saved / metrics.direct_exact_tests;
+
+    printf("\n[learned symbolic wheel]\n");
+    printf("  grammar: reject candidate n when n > m and n %% m == r; m=3..%u\n",
+           (uint32_t)NN_SYMBOLIC_RULE_MAX_MOD);
+    printf("  proposer/verifier\n");
+    printf("    neural_rule_scorer_epochs=%u final_mse=%.6f\n",
+           (uint32_t)SYMBOLIC_RULE_SCORER_EPOCHS,
+           metrics.proposer_loss);
+    printf("    proposed_rules=%zu domain_valid=%zu accepted=%zu max_rules=%u\n",
+           metrics.proposed_rules,
+           metrics.domain_valid_rules,
+           metrics.accepted_rules,
+           (uint32_t)NN_SYMBOLIC_MAX_LEARNED_RULES);
+    printf("    accepted_train_reject_support=%zu validation_reject_support=%zu\n",
+           metrics.train_rejects,
+           metrics.validation_rejects);
+    printf("  accepted rules");
+    for (size_t i = 0; i < rules->count; ++i) {
+        printf("%s", i == 0 ? ": " : ", ");
+        print_symbolic_rule(&rules->items[i]);
+        if (i == 15 && rules->count > 16) {
+            printf(", ...");
+            break;
+        }
+    }
+    if (rules->count == 0) {
+        printf(": none");
+    }
+    printf("\n");
+    printf("  verifier diagnostics\n");
+    printf("    samples=%zu false_rejections=%zu\n",
+           metrics.samples,
+           metrics.test_false_rejections);
+    printf("    direct exact=%.2f\n", metrics.direct_exact_tests);
+    printf("    hand wheel exact=%.2f saved=%.2f (%.1f%%) mod_tests=%.2f\n",
+           metrics.hand_wheel_exact_tests,
+           hand_saved,
+           hand_saved_pct,
+           metrics.hand_wheel_mod_tests);
+    printf("    learned wheel exact=%.2f saved=%.2f (%.1f%%) mod_tests=%.2f\n",
+           metrics.learned_exact_tests,
+           learned_saved,
+           learned_saved_pct,
+           metrics.learned_mod_tests);
 }
 
 static void add_block_work(BlockWork *total, BlockWork part)
@@ -1229,6 +1984,93 @@ static void finalize_eval_metrics(EvalMetrics *metrics)
     }
 }
 
+static int symbolic_rules_reject_action(const SymbolicRuleSet *rules, uint32_t p, size_t action)
+{
+    if (rules == NULL || action_is_overflow(action)) {
+        return 0;
+    }
+
+    uint32_t candidate = p + (uint32_t)action_gap(action);
+    for (size_t i = 0; i < rules->count; ++i) {
+        if (symbolic_rule_rejects(&rules->items[i], candidate)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static size_t fill_symbolic_survivor_candidates(const SymbolicRuleSet *rules,
+                                                nn_real *candidate_inputs,
+                                                uint32_t p,
+                                                double log_scale,
+                                                const FeatureMask *mask,
+                                                size_t *survivor_actions)
+{
+    size_t survivor_count = 0;
+    fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
+
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        if (symbolic_rules_reject_action(rules, p, action)) {
+            continue;
+        }
+
+        if (survivor_count != action) {
+            memmove(&candidate_inputs[survivor_count * FEATURE_COUNT],
+                    &candidate_inputs[action * FEATURE_COUNT],
+                    FEATURE_COUNT * sizeof(*candidate_inputs));
+        }
+        survivor_actions[survivor_count++] = action;
+    }
+
+    return survivor_count;
+}
+
+static size_t survivor_index_for_action(const size_t *survivor_actions,
+                                        size_t survivor_count,
+                                        size_t action)
+{
+    for (size_t i = 0; i < survivor_count; ++i) {
+        if (survivor_actions[i] == action) {
+            return i;
+        }
+    }
+    return survivor_count;
+}
+
+static void expand_symbolic_probabilities(const size_t *survivor_actions,
+                                          size_t survivor_count,
+                                          const nn_real *compact_probabilities,
+                                          nn_real *probabilities)
+{
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        probabilities[action] = (nn_real)0;
+    }
+    for (size_t i = 0; i < survivor_count; ++i) {
+        probabilities[survivor_actions[i]] = compact_probabilities[i];
+    }
+}
+
+static void expand_symbolic_ranking(const size_t *survivor_actions,
+                                    size_t survivor_count,
+                                    const size_t *compact_ranked,
+                                    size_t *ranked)
+{
+    uint8_t present[ACTION_COUNT] = {0};
+    size_t out = 0;
+
+    for (size_t i = 0; i < survivor_count; ++i) {
+        size_t action = survivor_actions[compact_ranked[i]];
+        ranked[out++] = action;
+        present[action] = 1;
+    }
+
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        if (!present[action]) {
+            ranked[out++] = action;
+        }
+    }
+}
+
 static EvalMetrics evaluate_model(NeuralNet *net,
                                   const Sieve *sieve,
                                   const GapDataset *dataset,
@@ -1261,6 +2103,68 @@ static EvalMetrics evaluate_model(NeuralNet *net,
         }
         softmax_temperature(scores, probabilities, ACTION_COUNT, temperature);
         rank_actions(scores, ranked);
+        accumulate_eval_sample(&metrics,
+                               sieve,
+                               dataset,
+                               p,
+                               gap,
+                               ranked,
+                               probabilities,
+                               include_verifier);
+    }
+
+    metrics.samples = samples;
+    finalize_eval_metrics(&metrics);
+    return metrics;
+}
+
+static EvalMetrics evaluate_model_symbolic_masked(NeuralNet *net,
+                                                  const Sieve *sieve,
+                                                  const SymbolicRuleSet *rules,
+                                                  const GapDataset *dataset,
+                                                  size_t max_states,
+                                                  double log_scale,
+                                                  const FeatureMask *mask,
+                                                  int include_verifier,
+                                                  double temperature,
+                                                  nn_real *candidate_inputs,
+                                                  nn_real *scores,
+                                                  nn_real *probabilities)
+{
+    EvalMetrics metrics;
+    memset(&metrics, 0, sizeof(metrics));
+
+    size_t samples = dataset->count;
+    if (max_states != 0 && max_states < samples) {
+        samples = max_states;
+    }
+
+    size_t survivor_actions[ACTION_COUNT];
+    size_t compact_ranked[ACTION_COUNT];
+    size_t ranked[ACTION_COUNT];
+    nn_real compact_probabilities[ACTION_COUNT];
+    for (size_t sample = 0; sample < samples; ++sample) {
+        size_t index = eval_sample_index(dataset, sample, samples);
+        uint32_t p = dataset->prime[index];
+        uint32_t gap = dataset->gap[index];
+        size_t survivor_count = fill_symbolic_survivor_candidates(rules,
+                                                                  candidate_inputs,
+                                                                  p,
+                                                                  log_scale,
+                                                                  mask,
+                                                                  survivor_actions);
+
+        if (survivor_count == 0 ||
+            !nn_score_action_rows(net, candidate_inputs, survivor_count, scores, NULL)) {
+            continue;
+        }
+        softmax_temperature(scores, compact_probabilities, survivor_count, temperature);
+        nn_rank_action_scores(scores, survivor_count, compact_ranked);
+        expand_symbolic_probabilities(survivor_actions,
+                                      survivor_count,
+                                      compact_probabilities,
+                                      probabilities);
+        expand_symbolic_ranking(survivor_actions, survivor_count, compact_ranked, ranked);
         accumulate_eval_sample(&metrics,
                                sieve,
                                dataset,
@@ -1315,6 +2219,52 @@ static double temperature_nll(NeuralNet *net,
     return nll / (double)samples;
 }
 
+static double temperature_nll_symbolic_masked(NeuralNet *net,
+                                             const SymbolicRuleSet *rules,
+                                             const GapDataset *dataset,
+                                             size_t max_states,
+                                             double log_scale,
+                                             const FeatureMask *mask,
+                                             double temperature,
+                                             nn_real *candidate_inputs,
+                                             nn_real *scores,
+                                             nn_real *probabilities)
+{
+    size_t samples = dataset->count;
+    double nll = 0.0;
+    size_t survivor_actions[ACTION_COUNT];
+
+    if (max_states != 0 && max_states < samples) {
+        samples = max_states;
+    }
+    if (samples == 0) {
+        return INFINITY;
+    }
+
+    for (size_t sample = 0; sample < samples; ++sample) {
+        size_t index = eval_sample_index(dataset, sample, samples);
+        size_t target = gap_to_action(dataset->gap[index]);
+        size_t survivor_count = fill_symbolic_survivor_candidates(rules,
+                                                                  candidate_inputs,
+                                                                  dataset->prime[index],
+                                                                  log_scale,
+                                                                  mask,
+                                                                  survivor_actions);
+        size_t survivor_target =
+            survivor_index_for_action(survivor_actions, survivor_count, target);
+
+        if (survivor_count == 0 || survivor_target == survivor_count ||
+            !nn_score_action_rows(net, candidate_inputs, survivor_count, scores, NULL)) {
+            nll += -log(safe_probability(0.0));
+            continue;
+        }
+        softmax_temperature(scores, probabilities, survivor_count, temperature);
+        nll += -log(safe_probability((double)probabilities[survivor_target]));
+    }
+
+    return nll / (double)samples;
+}
+
 static double fit_temperature(NeuralNet *net,
                               const GapDataset *dataset,
                               size_t max_states,
@@ -1342,6 +2292,47 @@ static double fit_temperature(NeuralNet *net,
                                                candidate_inputs,
                                                scores,
                                                probabilities);
+        if (candidate_nll < lowest_nll) {
+            lowest_nll = candidate_nll;
+            best_temperature = candidates[i];
+        }
+    }
+
+    if (best_nll != NULL) {
+        *best_nll = lowest_nll;
+    }
+    return best_temperature;
+}
+
+static double fit_temperature_symbolic_masked(NeuralNet *net,
+                                             const SymbolicRuleSet *rules,
+                                             const GapDataset *dataset,
+                                             size_t max_states,
+                                             double log_scale,
+                                             const FeatureMask *mask,
+                                             nn_real *candidate_inputs,
+                                             nn_real *scores,
+                                             nn_real *probabilities,
+                                             double *best_nll)
+{
+    static const double candidates[] = {
+        0.25, 0.35, 0.50, 0.70, 0.85, 1.00, 1.20, 1.50,
+        2.00, 2.50, 3.00, 4.00, 6.00, 8.00, 12.00,
+    };
+    double best_temperature = 1.0;
+    double lowest_nll = INFINITY;
+
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); ++i) {
+        double candidate_nll = temperature_nll_symbolic_masked(net,
+                                                               rules,
+                                                               dataset,
+                                                               max_states,
+                                                               log_scale,
+                                                               mask,
+                                                               candidates[i],
+                                                               candidate_inputs,
+                                                               scores,
+                                                               probabilities);
         if (candidate_nll < lowest_nll) {
             lowest_nll = candidate_nll;
             best_temperature = candidates[i];
@@ -1539,20 +2530,44 @@ static void fill_action_ids(uint32_t *action_ids)
     }
 }
 
-static int save_prime_checkpoint(NeuralNet *net, const char *path, char out_hash[65])
+static int save_prime_checkpoint_with_meta(NeuralNet *net,
+                                           const char *path,
+                                           const char *notes,
+                                           const char *parent_hash,
+                                           const char *rule_hash,
+                                           char out_hash[65])
 {
     NNCheckpointMeta meta;
     memset(&meta, 0, sizeof(meta));
     meta.checkpoint_version = 1;
     meta.feature_encoder_version = 1;
-    strcpy(meta.parent_model_hash, "unknown");
-    strcpy(meta.notes, "prime_gap full-feature action scorer");
+    snprintf(meta.parent_model_hash,
+             sizeof(meta.parent_model_hash),
+             "%s",
+             parent_hash == NULL ? "unknown" : parent_hash);
+    if (rule_hash != NULL && rule_hash[0] != '\0' && strcmp(rule_hash, "unknown") != 0) {
+        snprintf(meta.training_trace_root, sizeof(meta.training_trace_root), "%s", rule_hash);
+    }
+    snprintf(meta.notes,
+             sizeof(meta.notes),
+             "%s",
+             notes == NULL ? "prime_gap action scorer" : notes);
 
     if (!nn_save_checkpoint(net, path, &meta) || !nn_hash_checkpoint_hex(path, out_hash)) {
         return 0;
     }
     printf("saved checkpoint: %s hash=%s\n", path, out_hash);
     return 1;
+}
+
+static int save_prime_checkpoint(NeuralNet *net, const char *path, char out_hash[65])
+{
+    return save_prime_checkpoint_with_meta(net,
+                                           path,
+                                           "prime_gap full-feature action scorer",
+                                           "unknown",
+                                           NULL,
+                                           out_hash);
 }
 
 static int emit_prime_gap_trace(NeuralNet *net,
@@ -1562,6 +2577,7 @@ static int emit_prime_gap_trace(NeuralNet *net,
                                 double log_scale,
                                 const char *path,
                                 const char *model_hash,
+                                const char *rule_hash,
                                 uint64_t seed,
                                 nn_real *candidate_inputs,
                                 nn_real *scores,
@@ -1601,7 +2617,7 @@ static int emit_prime_gap_trace(NeuralNet *net,
         BlockWork assisted_block = assisted_block_work(sieve, p, gap, ranked, 10);
         size_t proposal_steps = proposal_steps_with_topk(ranked, 10, target);
         char verifier_cost[256];
-        char extra[512];
+        char extra[640];
 
         snprintf(verifier_cost,
                  sizeof(verifier_cost),
@@ -1617,7 +2633,8 @@ static int emit_prime_gap_trace(NeuralNet *net,
                  sizeof(extra),
                  "\"p\":%u,\"true_gap\":%u,\"proposal_steps\":%zu,"
                  "\"wheel_exact\":%zu,\"assisted_wheel\":%zu,"
-                 "\"block_cost\":%.6f,\"assisted_block\":%.6f,\"log_scale\":%.17g",
+                 "\"block_cost\":%.6f,\"assisted_block\":%.6f,\"log_scale\":%.17g,"
+                 "\"rule_set_hash\":\"%s\"",
                  p,
                  gap,
                  proposal_steps,
@@ -1625,7 +2642,8 @@ static int emit_prime_gap_trace(NeuralNet *net,
                  assisted.exact_tests,
                  block_work_cost(block),
                  block_work_cost(assisted_block),
-                 log_scale);
+                 log_scale,
+                 rule_hash == NULL ? "unknown" : rule_hash);
 
         NNTraceRecord record;
         memset(&record, 0, sizeof(record));
@@ -1702,7 +2720,9 @@ static int build_conditioned_frequency_policy(ConditionedFrequencyPolicy *policy
 
     for (size_t i = 0; i < dataset->count; ++i) {
         size_t action = gap_to_action(dataset->gap[i]);
-        size_t signature = residue_signature(dataset->prime[i], action);
+        size_t signature = residue_signature(dataset->prime[i],
+                                             action,
+                                             CONDITION_FEATURE_MOD_COUNT);
         ++policy->action_counts[signature * ACTION_COUNT + action];
         ++policy->condition_totals[signature];
     }
@@ -1718,7 +2738,7 @@ static void conditioned_frequency_scores(const ConditionedFrequencyPolicy *polic
     double sum = 0.0;
 
     for (size_t action = 0; action < ACTION_COUNT; ++action) {
-        size_t signature = residue_signature(p, action);
+        size_t signature = residue_signature(p, action, CONDITION_FEATURE_MOD_COUNT);
         size_t count = policy->action_counts[signature * ACTION_COUNT + action];
         size_t total = policy->condition_totals[signature];
         double score = ((double)count + 1.0) / ((double)total + (double)ACTION_COUNT);
@@ -1819,6 +2839,78 @@ static int train_supervised(NeuralNet *net,
                epoch + 1,
                loss / (double)train_steps,
                train_steps,
+               elapsed > 0.0 ? (double)train_steps / elapsed : 0.0);
+    }
+
+    return 1;
+}
+
+static int train_supervised_symbolic_masked(NeuralNet *net,
+                                            const char *label,
+                                            const SymbolicRuleSet *rules,
+                                            const GapDataset *dataset,
+                                            size_t max_states,
+                                            size_t epochs,
+                                            nn_real learning_rate,
+                                            double log_scale,
+                                            const FeatureMask *mask,
+                                            nn_real *candidate_inputs,
+                                            size_t *order,
+                                            uint32_t *rng)
+{
+    size_t train_steps = dataset->count;
+    size_t survivor_actions[ACTION_COUNT];
+    if (max_states != 0 && max_states < train_steps) {
+        train_steps = max_states;
+    }
+
+    for (size_t epoch = 0; epoch < epochs; ++epoch) {
+        shuffle_order(order, dataset->count, rng);
+        double started = now_seconds();
+        double loss = 0.0;
+        size_t masked_out_targets = 0;
+        size_t survivor_total = 0;
+
+        for (size_t step = 0; step < train_steps; ++step) {
+            size_t index = order[step];
+            size_t target = gap_to_action(dataset->gap[index]);
+            size_t survivor_count = fill_symbolic_survivor_candidates(rules,
+                                                                      candidate_inputs,
+                                                                      dataset->prime[index],
+                                                                      log_scale,
+                                                                      mask,
+                                                                      survivor_actions);
+            size_t survivor_target =
+                survivor_index_for_action(survivor_actions, survivor_count, target);
+            if (survivor_count == 0 || survivor_target == survivor_count) {
+                ++masked_out_targets;
+                continue;
+            }
+            survivor_total += survivor_count;
+
+            nn_real step_loss = nn_train_action_scorer(net,
+                                                       candidate_inputs,
+                                                       survivor_count,
+                                                       survivor_target,
+                                                       learning_rate);
+            if (isnan((double)step_loss)) {
+                return 0;
+            }
+            loss += (double)step_loss;
+        }
+
+        double elapsed = now_seconds() - started;
+        double divisor = train_steps == masked_out_targets
+                             ? 1.0
+                             : (double)(train_steps - masked_out_targets);
+        printf("%s epoch %zu loss=%.4f updates=%zu masked_targets=%zu "
+               "mean_survivors=%.2f %.0f states/s\n",
+               label,
+               epoch + 1,
+               loss / divisor,
+               train_steps - masked_out_targets,
+               masked_out_targets,
+               survivor_total / divisor,
                elapsed > 0.0 ? (double)train_steps / elapsed : 0.0);
     }
 
@@ -2131,6 +3223,8 @@ int nn_prime_gap_main(int argc, char **argv)
     uint32_t rng;
     int ok = 1;
     char model_hash[65] = "unknown";
+    char rule_hash[65] = "unknown";
+    int rules_loaded_from_checkpoint = 0;
 
     if (!parse_run_config(argc, argv, &run_config) || !run_config_is_valid(&run_config)) {
         print_usage(stderr);
@@ -2206,7 +3300,7 @@ int nn_prime_gap_main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    const size_t layers[] = {FEATURE_COUNT, 32, 16, 1};
+    const size_t layers[] = {FEATURE_COUNT, NN_PRIME_GAP_HIDDEN1, NN_PRIME_GAP_HIDDEN2, 1};
     const size_t linear_layers[] = {FEATURE_COUNT, 1};
     NNConfig config;
     config.layer_sizes = layers;
@@ -2222,9 +3316,11 @@ int nn_prime_gap_main(int argc, char **argv)
     linear_config.seed = 4201;
 
     NeuralNet *net = nn_create_config(&config);
+    NeuralNet *learned_wheel_net = NULL;
     NeuralNet *strict_net = NULL;
     NeuralNet *regularized_net = NULL;
     ConditionedFrequencyPolicy conditioned_policy = {0};
+    SymbolicRuleSet learned_symbolic_rules = {0};
     nn_real *candidate_inputs = calloc((size_t)ACTION_COUNT * FEATURE_COUNT, sizeof(*candidate_inputs));
     nn_real *scores = calloc(ACTION_COUNT, sizeof(*scores));
     nn_real *probabilities = calloc(ACTION_COUNT, sizeof(*probabilities));
@@ -2241,6 +3337,21 @@ int nn_prime_gap_main(int argc, char **argv)
     fill_order(order, train.count);
 
     double log_scale = log((double)test_limit + (double)G_MAX);
+
+    if (run_config.load_rules_path != NULL) {
+        if (!load_symbolic_rules_with_hash(run_config.load_rules_path,
+                                           &learned_symbolic_rules,
+                                           rule_hash)) {
+            fprintf(stderr, "failed to load symbolic rules: %s\n", run_config.load_rules_path);
+            ok = 0;
+            goto cleanup;
+        }
+        rules_loaded_from_checkpoint = 1;
+        printf("loaded symbolic rules: %s hash=%s rules=%zu\n",
+               run_config.load_rules_path,
+               rule_hash,
+               learned_symbolic_rules.count);
+    }
 
     if (run_config.load_model_path != NULL) {
         NNCheckpointMeta loaded_meta;
@@ -2274,6 +3385,21 @@ int nn_prime_gap_main(int argc, char **argv)
                                      candidate_inputs,
                                      scores,
                                      probabilities));
+        if (rules_loaded_from_checkpoint) {
+            print_metrics("loaded model learned-wheel",
+                          evaluate_model_symbolic_masked(net,
+                                                         &sieve,
+                                                         &learned_symbolic_rules,
+                                                         &test,
+                                                         run_config.max_test_states,
+                                                         log_scale,
+                                                         &FEATURE_MASK_FULL,
+                                                         1,
+                                                         1.0,
+                                                         candidate_inputs,
+                                                         scores,
+                                                         probabilities));
+        }
         if (run_config.trace_path != NULL &&
             !emit_prime_gap_trace(net,
                                   &sieve,
@@ -2282,6 +3408,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                   log_scale,
                                   run_config.trace_path,
                                   model_hash,
+                                  rule_hash,
                                   (uint64_t)rng,
                                   candidate_inputs,
                                   scores,
@@ -2299,7 +3426,10 @@ int nn_prime_gap_main(int argc, char **argv)
     EvalMetrics model_before_metrics;
     EvalMetrics linear_metrics;
     EvalMetrics linear_temp_metrics;
+    EvalMetrics learned_wheel_metrics;
+    EvalMetrics learned_wheel_temp_metrics;
     double linear_temperature = 1.0;
+    double learned_wheel_temperature = 1.0;
 
     printf("\n=== Baselines ===\n");
     build_frequency_policy(&train, frequency_ranked, frequency_probabilities);
@@ -2325,6 +3455,44 @@ int nn_prime_gap_main(int argc, char **argv)
                                                                 probabilities);
     print_metrics("baseline residue-conditioned", conditioned_metrics);
     free_conditioned_frequency_policy(&conditioned_policy);
+
+    SymbolicWheelMetrics symbolic_metrics;
+    if (rules_loaded_from_checkpoint) {
+        memset(&symbolic_metrics, 0, sizeof(symbolic_metrics));
+        symbolic_metrics.accepted_rules = learned_symbolic_rules.count;
+    } else {
+        if (!discover_symbolic_wheel(&sieve,
+                                     &train,
+                                     &validation,
+                                     &learned_symbolic_rules,
+                                     &symbolic_metrics)) {
+            fputs("failed to discover symbolic wheel\n", stderr);
+            ok = 0;
+            goto cleanup;
+        }
+    }
+    symbolic_metrics = evaluate_symbolic_wheel(&sieve,
+                                               &learned_symbolic_rules,
+                                               &test,
+                                               run_config.max_test_states,
+                                               symbolic_metrics);
+    print_symbolic_wheel_report(&learned_symbolic_rules, symbolic_metrics);
+
+    if (run_config.save_rules_path != NULL &&
+        !save_symbolic_rule_checkpoint(&learned_symbolic_rules,
+                                       run_config.save_rules_path,
+                                       &symbolic_metrics,
+                                       rule_hash)) {
+        fputs("failed to save symbolic rules\n", stderr);
+        ok = 0;
+        goto cleanup;
+    }
+    if (run_config.save_rules_path != NULL) {
+        printf("saved symbolic rules: %s hash=%s rules=%zu\n",
+               run_config.save_rules_path,
+               rule_hash,
+               learned_symbolic_rules.count);
+    }
 
     uint32_t linear_rng = rng;
     fill_order(order, train.count);
@@ -2477,6 +3645,73 @@ int nn_prime_gap_main(int argc, char **argv)
                                                          probabilities);
     print_metrics("model supervised", supervised_metrics);
     print_metrics("model supervised temp-scaled", supervised_temp_metrics);
+
+    printf("\n=== Learned-Wheel Proposal Training ===\n");
+    learned_wheel_net = nn_create_config(&config);
+    if (learned_wheel_net == NULL) {
+        fputs("failed to allocate learned-wheel model\n", stderr);
+        ok = 0;
+        goto cleanup;
+    }
+    fill_order(order, train.count);
+    ok = train_supervised_symbolic_masked(learned_wheel_net,
+                                          "model learned-wheel supervised",
+                                          &learned_symbolic_rules,
+                                          &train,
+                                          run_config.max_train_states,
+                                          run_config.supervised_epochs,
+                                          (nn_real)0.005,
+                                          log_scale,
+                                          &FEATURE_MASK_FULL,
+                                          candidate_inputs,
+                                          order,
+                                          &rng);
+    if (!ok) {
+        goto cleanup;
+    }
+
+    double learned_wheel_temperature_nll = 0.0;
+    learned_wheel_temperature = fit_temperature_symbolic_masked(learned_wheel_net,
+                                                                &learned_symbolic_rules,
+                                                                &validation,
+                                                                max_validation_states,
+                                                                log_scale,
+                                                                &FEATURE_MASK_FULL,
+                                                                candidate_inputs,
+                                                                scores,
+                                                                probabilities,
+                                                                &learned_wheel_temperature_nll);
+    printf("model learned-wheel supervised temperature=%.2f validation_nll=%.4f\n",
+           learned_wheel_temperature,
+           learned_wheel_temperature_nll);
+
+    learned_wheel_metrics = evaluate_model_symbolic_masked(learned_wheel_net,
+                                                           &sieve,
+                                                           &learned_symbolic_rules,
+                                                           &test,
+                                                           run_config.max_test_states,
+                                                           log_scale,
+                                                           &FEATURE_MASK_FULL,
+                                                           1,
+                                                           1.0,
+                                                           candidate_inputs,
+                                                           scores,
+                                                           probabilities);
+    learned_wheel_temp_metrics = evaluate_model_symbolic_masked(learned_wheel_net,
+                                                                &sieve,
+                                                                &learned_symbolic_rules,
+                                                                &test,
+                                                                run_config.max_test_states,
+                                                                log_scale,
+                                                                &FEATURE_MASK_FULL,
+                                                                0,
+                                                                learned_wheel_temperature,
+                                                                candidate_inputs,
+                                                                scores,
+                                                                probabilities);
+    print_metrics("model learned-wheel supervised", learned_wheel_metrics);
+    print_metrics("model learned-wheel supervised temp-scaled",
+                  learned_wheel_temp_metrics);
 
     printf("\n=== Strict Verifier RL ===\n");
     int have_rl_metrics = 0;
@@ -2635,6 +3870,10 @@ int nn_prime_gap_main(int argc, char **argv)
     print_comparison_row("supervised temp-scaled",
                          supervised_temperature,
                          supervised_temp_metrics);
+    print_comparison_row("learned-wheel supervised", 1.0, learned_wheel_metrics);
+    print_comparison_row("learned-wheel supervised temp-scaled",
+                         learned_wheel_temperature,
+                         learned_wheel_temp_metrics);
     if (have_rl_metrics) {
         print_comparison_row("strict-rl", 1.0, strict_metrics);
         print_comparison_row("strict-rl temp-scaled", rl_temperature, strict_temp_metrics);
@@ -2651,6 +3890,20 @@ int nn_prime_gap_main(int argc, char **argv)
         goto cleanup;
     }
 
+    if (run_config.save_learned_model_path != NULL) {
+        char learned_model_hash[65] = "unknown";
+        if (!save_prime_checkpoint_with_meta(learned_wheel_net,
+                                             run_config.save_learned_model_path,
+                                             "prime_gap learned-wheel action scorer",
+                                             "unknown",
+                                             rule_hash,
+                                             learned_model_hash)) {
+            fputs("failed to save learned-wheel checkpoint\n", stderr);
+            ok = 0;
+            goto cleanup;
+        }
+    }
+
     if (run_config.trace_path != NULL &&
         !emit_prime_gap_trace(net,
                               &sieve,
@@ -2659,6 +3912,7 @@ int nn_prime_gap_main(int argc, char **argv)
                               log_scale,
                               run_config.trace_path,
                               model_hash,
+                              rule_hash,
                               (uint64_t)run_config.rng_seed_arg,
                               candidate_inputs,
                               scores,
@@ -2669,6 +3923,7 @@ int nn_prime_gap_main(int argc, char **argv)
     }
 
 cleanup:
+    free_symbolic_rule_set(&learned_symbolic_rules);
     free_conditioned_frequency_policy(&conditioned_policy);
     free(order);
     free(reference_probabilities);
@@ -2678,6 +3933,7 @@ cleanup:
     free(candidate_inputs);
     nn_free(regularized_net);
     nn_free(strict_net);
+    nn_free(learned_wheel_net);
     nn_free(net);
     free_gap_dataset(&train);
     free_gap_dataset(&validation);
@@ -2688,7 +3944,7 @@ cleanup:
 
 typedef struct {
     uint32_t p;
-    size_t target_index;
+    size_t target_action_id;
     double log_scale;
 } ReplaySample;
 
@@ -2697,6 +3953,7 @@ typedef struct {
     size_t count;
     size_t capacity;
     char parent_hash[65];
+    char rule_hash[65];
 } ReplayTrace;
 
 static int append_replay_sample(ReplayTrace *trace, ReplaySample sample)
@@ -2729,6 +3986,7 @@ static int load_replay_trace(const char *path, ReplayTrace *trace)
 {
     memset(trace, 0, sizeof(*trace));
     strcpy(trace->parent_hash, "unknown");
+    strcpy(trace->rule_hash, "unknown");
 
     FILE *fp = fopen(path, "r");
     if (fp == NULL) {
@@ -2767,14 +4025,32 @@ static int load_replay_trace(const char *path, ReplayTrace *trace)
             strcmp(record.model_hash_hex, "unknown") != 0) {
             strcpy(trace->parent_hash, record.model_hash_hex);
         }
-        if (p > UINT32_MAX || record.target_index >= ACTION_COUNT) {
+        if (strcmp(trace->rule_hash, "unknown") == 0) {
+            char parsed_rule_hash[65];
+            if (nn_trace_json_get_string(line,
+                                         "rule_set_hash",
+                                         parsed_rule_hash,
+                                         sizeof(parsed_rule_hash)) &&
+                parsed_rule_hash[0] != '\0') {
+                strcpy(trace->rule_hash, parsed_rule_hash);
+            }
+        }
+        uint8_t seen_action_ids[ACTION_COUNT] = {0};
+        for (size_t action = 0; action < record.candidate_count; ++action) {
+            if (action_ids[action] >= ACTION_COUNT || seen_action_ids[action_ids[action]]) {
+                ok = 0;
+                break;
+            }
+            seen_action_ids[action_ids[action]] = 1;
+        }
+        if (!ok || p > UINT32_MAX || record.target_index >= ACTION_COUNT) {
             ok = 0;
             break;
         }
 
         ReplaySample sample;
         sample.p = (uint32_t)p;
-        sample.target_index = record.target_index;
+        sample.target_action_id = (size_t)action_ids[record.target_index];
         sample.log_scale = (double)log_scale;
         ok = append_replay_sample(trace, sample);
     }
@@ -2791,36 +4067,77 @@ static int load_replay_trace(const char *path, ReplayTrace *trace)
 
 static void print_replay_usage(FILE *stream)
 {
-    fputs("usage: prime_replay trace.jsonl --out model.nnckpt [epochs]\n", stream);
+    fputs("usage: prime_replay trace.jsonl --out model.nnckpt [epochs] [--rules rules.crlprule]\n",
+          stream);
 }
 
 int nn_prime_replay_main(int argc, char **argv)
 {
-    if (argc < 4 || strcmp(argv[2], "--out") != 0) {
+    if (argc < 4) {
         print_replay_usage(stderr);
         return EXIT_FAILURE;
     }
 
     const char *trace_path = argv[1];
-    const char *out_path = argv[3];
+    const char *out_path = NULL;
+    const char *rules_path = NULL;
     size_t epochs = 3;
-    if (argc >= 5) {
-        char *end = NULL;
-        unsigned long value = strtoul(argv[4], &end, 10);
-        if (end == argv[4] || *end != '\0' || value == 0) {
+
+    for (int i = 2; i < argc; ++i) {
+        if (strcmp(argv[i], "--out") == 0) {
+            if (++i >= argc || argv[i][0] == '\0') {
+                print_replay_usage(stderr);
+                return EXIT_FAILURE;
+            }
+            out_path = argv[i];
+        } else if (strcmp(argv[i], "--rules") == 0) {
+            if (++i >= argc || argv[i][0] == '\0') {
+                print_replay_usage(stderr);
+                return EXIT_FAILURE;
+            }
+            rules_path = argv[i];
+        } else {
+            char *end = NULL;
+            unsigned long value = strtoul(argv[i], &end, 10);
+            if (end == argv[i] || *end != '\0' || value == 0) {
+                print_replay_usage(stderr);
+                return EXIT_FAILURE;
+            }
+            epochs = (size_t)value;
+        }
+    }
+    if (out_path == NULL) {
+        print_replay_usage(stderr);
+        return EXIT_FAILURE;
+    }
+
+    SymbolicRuleSet replay_rules = {0};
+    char rule_hash[65] = "unknown";
+    int use_rules = 0;
+    if (rules_path != NULL) {
+        if (!load_symbolic_rules_with_hash(rules_path, &replay_rules, rule_hash)) {
+            fprintf(stderr, "failed to load symbolic rules: %s\n", rules_path);
             print_replay_usage(stderr);
             return EXIT_FAILURE;
         }
-        epochs = (size_t)value;
+        use_rules = 1;
+        printf("loaded replay symbolic rules: %s hash=%s rules=%zu\n",
+               rules_path,
+               rule_hash,
+               replay_rules.count);
     }
 
     ReplayTrace trace;
     if (!load_replay_trace(trace_path, &trace)) {
         fprintf(stderr, "failed to load replay trace: %s\n", trace_path);
+        free_symbolic_rule_set(&replay_rules);
         return EXIT_FAILURE;
     }
+    if (!use_rules && strcmp(trace.rule_hash, "unknown") != 0) {
+        strcpy(rule_hash, trace.rule_hash);
+    }
 
-    const size_t layers[] = {FEATURE_COUNT, 32, 16, 1};
+    const size_t layers[] = {FEATURE_COUNT, NN_PRIME_GAP_HIDDEN1, NN_PRIME_GAP_HIDDEN2, 1};
     NNConfig config;
     config.layer_sizes = layers;
     config.layer_count = sizeof(layers) / sizeof(layers[0]);
@@ -2837,27 +4154,53 @@ int nn_prime_replay_main(int argc, char **argv)
         nn_free(net);
         free(candidate_inputs);
         free_replay_trace(&trace);
+        free_symbolic_rule_set(&replay_rules);
         return EXIT_FAILURE;
     }
 
+    size_t survivor_actions[ACTION_COUNT];
     for (size_t epoch = 0; epoch < epochs; ++epoch) {
         double loss = 0.0;
         for (size_t i = 0; i < trace.count; ++i) {
             ReplaySample sample = trace.items[i];
-            fill_candidate_features_masked(candidate_inputs,
-                                           sample.p,
-                                           sample.log_scale,
-                                           &FEATURE_MASK_FULL);
+            size_t candidate_count = ACTION_COUNT;
+            size_t target_index = sample.target_action_id;
+            if (use_rules) {
+                candidate_count = fill_symbolic_survivor_candidates(&replay_rules,
+                                                                    candidate_inputs,
+                                                                    sample.p,
+                                                                    sample.log_scale,
+                                                                    &FEATURE_MASK_FULL,
+                                                                    survivor_actions);
+                target_index =
+                    survivor_index_for_action(survivor_actions,
+                                              candidate_count,
+                                              sample.target_action_id);
+                if (candidate_count == 0 || target_index == candidate_count) {
+                    fputs("replay symbolic rules rejected the target action\n", stderr);
+                    nn_free(net);
+                    free(candidate_inputs);
+                    free_replay_trace(&trace);
+                    free_symbolic_rule_set(&replay_rules);
+                    return EXIT_FAILURE;
+                }
+            } else {
+                fill_candidate_features_masked(candidate_inputs,
+                                               sample.p,
+                                               sample.log_scale,
+                                               &FEATURE_MASK_FULL);
+            }
             nn_real step_loss = nn_train_action_scorer(net,
                                                        candidate_inputs,
-                                                       ACTION_COUNT,
-                                                       sample.target_index,
+                                                       candidate_count,
+                                                       target_index,
                                                        (nn_real)0.005);
             if (isnan((double)step_loss)) {
                 fputs("replay training failed\n", stderr);
                 nn_free(net);
                 free(candidate_inputs);
                 free_replay_trace(&trace);
+                free_symbolic_rule_set(&replay_rules);
                 return EXIT_FAILURE;
             }
             loss += (double)step_loss;
@@ -2873,8 +4216,15 @@ int nn_prime_replay_main(int argc, char **argv)
     meta.checkpoint_version = 1;
     meta.feature_encoder_version = 1;
     strcpy(meta.parent_model_hash, trace.parent_hash);
-    strcpy(meta.training_trace_root, "jsonl");
-    strcpy(meta.notes, "prime_gap successor trained from trace replay");
+    snprintf(meta.training_trace_root,
+             sizeof(meta.training_trace_root),
+             "%s",
+             strcmp(rule_hash, "unknown") == 0 ? "jsonl" : rule_hash);
+    snprintf(meta.notes,
+             sizeof(meta.notes),
+             "%s",
+             use_rules ? "prime_gap successor trained from learned-wheel trace replay"
+                       : "prime_gap successor trained from trace replay");
 
     char hash[65];
     int ok = nn_save_checkpoint(net, out_path, &meta) &&
@@ -2889,22 +4239,28 @@ int nn_prime_replay_main(int argc, char **argv)
     nn_free(net);
     free(candidate_inputs);
     free_replay_trace(&trace);
+    free_symbolic_rule_set(&replay_rules);
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 static void print_compare_usage(FILE *stream)
 {
-    fputs("usage: prime_compare model_a.nnckpt model_b.nnckpt [model_c.nnckpt ...]\n", stream);
+    fputs("usage: prime_compare [--rules rules.crlprule] "
+          "model_a.nnckpt model_b.nnckpt [model_c.nnckpt ...]\n",
+          stream);
 }
 
 static void print_report_json(const char *model_hash,
                               const NNCheckpointMeta *meta,
                               uint32_t seed,
+                              const char *evaluation_mode,
+                              const char *rule_hash,
                               EvalMetrics metrics)
 {
     double samples = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
     printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"prime_gap\","
            "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
+           "\"evaluation_mode\":\"%s\",\"rule_set_hash\":\"%s\","
            "\"feature_encoder_version\":%u,"
            "\"benchmark_seed\":%u,\"sample_count\":%zu,"
            "\"top1\":%.8f,\"top5\":%.8f,\"top10\":%.8f,"
@@ -2914,6 +4270,8 @@ static void print_report_json(const char *model_hash,
            "\"block_cost\":%.8f,\"assisted_block\":%.8f}\n",
            model_hash,
            meta->parent_model_hash[0] == '\0' ? "unknown" : meta->parent_model_hash,
+           evaluation_mode == NULL ? "raw" : evaluation_mode,
+           rule_hash == NULL ? "unknown" : rule_hash,
            meta->feature_encoder_version,
            seed,
            metrics.samples,
@@ -2931,9 +4289,49 @@ static void print_report_json(const char *model_hash,
            metrics.assisted_block_cost_top10);
 }
 
+static void print_symbolic_compare_json(const char *rule_hash,
+                                        uint32_t seed,
+                                        SymbolicWheelMetrics metrics)
+{
+    printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"prime_gap\","
+           "\"model_hash\":\"none\",\"parent_hash\":\"unknown\","
+           "\"evaluation_mode\":\"learned_wheel_rules\","
+           "\"rule_set_hash\":\"%s\",\"feature_encoder_version\":1,"
+           "\"benchmark_seed\":%u,\"sample_count\":%zu,"
+           "\"accepted_rules\":%zu,\"false_rejections\":%zu,"
+           "\"direct_exact\":%.8f,\"hand_wheel_exact\":%.8f,"
+           "\"learned_wheel_exact\":%.8f,\"learned_wheel_mod\":%.8f}\n",
+           rule_hash == NULL ? "unknown" : rule_hash,
+           seed,
+           metrics.samples,
+           metrics.accepted_rules,
+           metrics.test_false_rejections,
+           metrics.direct_exact_tests,
+           metrics.hand_wheel_exact_tests,
+           metrics.learned_exact_tests,
+           metrics.learned_mod_tests);
+}
+
 int nn_prime_compare_main(int argc, char **argv)
 {
-    if (argc < 3) {
+    const char *rules_path = NULL;
+    size_t model_count = 0;
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--rules") == 0) {
+            if (++i >= argc || argv[i][0] == '\0') {
+                print_compare_usage(stderr);
+                return EXIT_FAILURE;
+            }
+            rules_path = argv[i];
+        } else if (argv[i][0] == '-') {
+            print_compare_usage(stderr);
+            return EXIT_FAILURE;
+        } else {
+            ++model_count;
+        }
+    }
+
+    if (model_count < 2) {
         print_compare_usage(stderr);
         return EXIT_FAILURE;
     }
@@ -2944,6 +4342,17 @@ int nn_prime_compare_main(int argc, char **argv)
     const uint32_t benchmark_seed = 20240511u;
     const double log_scale = log((double)test_limit + (double)G_MAX);
 
+    SymbolicRuleSet compare_rules = {0};
+    char rule_hash[65] = "unknown";
+    int use_rules = 0;
+    if (rules_path != NULL) {
+        if (!load_symbolic_rules_with_hash(rules_path, &compare_rules, rule_hash)) {
+            fprintf(stderr, "failed to load symbolic rules: %s\n", rules_path);
+            return EXIT_FAILURE;
+        }
+        use_rules = 1;
+    }
+
     Sieve sieve;
     GapDataset train;
     GapDataset validation;
@@ -2951,6 +4360,7 @@ int nn_prime_compare_main(int argc, char **argv)
     if (!build_sieve(sieve_limit, &sieve) ||
         !build_gap_datasets(&sieve, train_limit, test_limit, &train, &validation, &test)) {
         fputs("failed to build benchmark data\n", stderr);
+        free_symbolic_rule_set(&compare_rules);
         free_sieve(&sieve);
         return EXIT_FAILURE;
     }
@@ -2964,6 +4374,7 @@ int nn_prime_compare_main(int argc, char **argv)
         free(candidate_inputs);
         free(scores);
         free(probabilities);
+        free_symbolic_rule_set(&compare_rules);
         free_gap_dataset(&train);
         free_gap_dataset(&validation);
         free_gap_dataset(&test);
@@ -2972,8 +4383,30 @@ int nn_prime_compare_main(int argc, char **argv)
     }
 
     puts("jsonl report:");
+    if (use_rules) {
+        SymbolicWheelMetrics symbolic_metrics;
+        memset(&symbolic_metrics, 0, sizeof(symbolic_metrics));
+        symbolic_metrics.accepted_rules = compare_rules.count;
+        symbolic_metrics = evaluate_symbolic_wheel(&sieve,
+                                                   &compare_rules,
+                                                   &test,
+                                                   DEFAULT_MAX_TEST_STATES,
+                                                   symbolic_metrics);
+        print_symbolic_compare_json(rule_hash, benchmark_seed, symbolic_metrics);
+        printf("learned wheel rules hash=%s direct_exact=%.2f hand_wheel_exact=%.2f "
+               "learned_wheel_exact=%.2f false_rejections=%zu\n",
+               rule_hash,
+               symbolic_metrics.direct_exact_tests,
+               symbolic_metrics.hand_wheel_exact_tests,
+               symbolic_metrics.learned_exact_tests,
+               symbolic_metrics.test_false_rejections);
+    }
     int ok = 1;
     for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--rules") == 0) {
+            ++i;
+            continue;
+        }
         NNCheckpointMeta meta;
         NeuralNet *net = nn_load_checkpoint(argv[i], &meta);
         char hash[65] = "unknown";
@@ -2994,14 +4427,37 @@ int nn_prime_compare_main(int argc, char **argv)
                                              candidate_inputs,
                                              scores,
                                              probabilities);
-        print_report_json(hash, &meta, benchmark_seed, metrics);
+        print_report_json(hash, &meta, benchmark_seed, "raw", "unknown", metrics);
         print_comparison_row(argv[i], 1.0, metrics);
+        if (use_rules) {
+            EvalMetrics learned_metrics =
+                evaluate_model_symbolic_masked(net,
+                                               &sieve,
+                                               &compare_rules,
+                                               &test,
+                                               DEFAULT_MAX_TEST_STATES,
+                                               log_scale,
+                                               &FEATURE_MASK_FULL,
+                                               1,
+                                               1.0,
+                                               candidate_inputs,
+                                               scores,
+                                               probabilities);
+            print_report_json(hash,
+                              &meta,
+                              benchmark_seed,
+                              "learned_wheel_model",
+                              rule_hash,
+                              learned_metrics);
+            print_comparison_row("learned-wheel+model", 1.0, learned_metrics);
+        }
         nn_free(net);
     }
 
     free(candidate_inputs);
     free(scores);
     free(probabilities);
+    free_symbolic_rule_set(&compare_rules);
     free_gap_dataset(&train);
     free_gap_dataset(&validation);
     free_gap_dataset(&test);
