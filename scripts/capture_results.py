@@ -74,7 +74,11 @@ def markdown_table(rows: list[list[str]], headers: list[str]) -> str:
 
 def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
     delayed = [row for row in rows if row.get("task") == "delayed_claim"]
-    grid = [row for row in rows if row.get("task") == "grid_path"]
+    grid = [
+        row
+        for row in rows
+        if row.get("task") == "grid_path" and row.get("schema") == "crlp.compare.v1"
+    ]
     rule_search: list[dict[str, object]] = []
     seen_rule_search: set[tuple[object, ...]] = set()
     for row in rows:
@@ -132,18 +136,33 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
         markdown_table(
             [
                 [
+                    str(row.get("task", "")),
                     str(row.get("model_hash", "unknown"))[:12],
                     str(row.get("parent_hash", "unknown"))[:12],
+                    str(row.get("evaluation_mode", "raw")),
                     fmt_percent(row, "accuracy"),
                     fmt_number(row, "nll"),
                     fmt_number(row, "ece"),
                     fmt_number(row, "decision_utility"),
+                    fmt_number(row, "candidate_count", 2),
                     fmt_number(row, "proposal_steps", 3),
                     fmt_number(row, "verifier_nodes", 2),
                 ]
                 for row in grid
             ],
-            ["model", "parent", "accuracy", "nll", "ece", "utility", "steps", "nodes"],
+            [
+                "task",
+                "model",
+                "parent",
+                "mode",
+                "accuracy",
+                "nll",
+                "ece",
+                "utility",
+                "candidates",
+                "steps",
+                "nodes",
+            ],
         )
         if grid
         else "_No grid-path rows captured._"
@@ -181,36 +200,42 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
         if prime
         else "_No prime-gap rows captured._"
     )
-    lines.extend(["", "## Prime Rule Search", ""])
+    lines.extend(["", "## Rule Search", ""])
     lines.append(
         markdown_table(
             [
                 [
+                    str(row.get("task", "")),
                     str(row.get("rule_set_hash", "unknown"))[:12],
                     str(row.get("grammar_version", "")),
                     str(row.get("proposer_feature_set", "")),
+                    str(row.get("proposed_rules", "")),
+                    str(row.get("verified_rules", "")),
                     str(row.get("accepted_rules", "")),
-                    str(row.get("accepted_candidate_rules", "")),
-                    str(row.get("accepted_gap_rules", "")),
                     str(row.get("false_rejections", "")),
+                    str(row.get("train_rejects", "")),
+                    str(row.get("test_rejects", "")),
                     fmt_number(row, "direct_exact", 3),
-                    fmt_number(row, "hand_wheel_exact", 3),
                     fmt_number(row, "expanded_exact", 3),
-                    f"{fmt_number(row, 'expanded_saved_pct', 2)}%",
+                    (f"{fmt_number(row, 'expanded_saved_pct', 2)}%"
+                     if fmt_number(row, "expanded_saved_pct", 2)
+                     else ""),
                 ]
                 for row in rule_search
             ],
             [
+                "task",
                 "rule hash",
                 "grammar",
                 "features",
+                "proposed",
+                "verified",
                 "accepted",
-                "candidate rules",
-                "gap rules",
                 "false rejects",
+                "train rejects",
+                "test rejects",
                 "direct",
-                "hand",
-                "expanded",
+                "gated",
                 "saved",
             ],
         )

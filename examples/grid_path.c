@@ -12,6 +12,10 @@ enum {
     GP_CELLS = GP_GRID * GP_GRID,
     GP_ACTION_COUNT = 4,
     GP_FEATURE_ENCODER_VERSION = 2,
+    GP_RULE_SEARCH_GRAMMAR_VERSION = 1,
+    GP_RULE_FEATURE_COUNT = 10,
+    GP_RULE_COUNT = 5,
+    GP_RULE_SCORER_EPOCHS = 96,
     GP_MAP_FEATURE_OFFSET = 10,
     GP_ACTION_FEATURE_OFFSET = GP_MAP_FEATURE_OFFSET + GP_CELLS,
     GP_FEATURE_COUNT = GP_ACTION_FEATURE_OFFSET + GP_ACTION_COUNT,
@@ -35,6 +39,8 @@ typedef struct {
 typedef struct {
     size_t samples;
     size_t correct;
+    double candidate_count;
+    double rejected_candidates;
     double nll;
     double ece;
     double utility;
@@ -54,6 +60,31 @@ typedef struct {
     size_t capacity;
     char parent_hash[65];
 } GridTrace;
+
+typedef enum {
+    GP_RULE_UP_AT_TOP = 0,
+    GP_RULE_RIGHT_AT_RIGHT_EDGE = 1,
+    GP_RULE_DOWN_AT_BOTTOM = 2,
+    GP_RULE_LEFT_AT_LEFT_EDGE = 3,
+    GP_RULE_BLOCKED_NEXT = 4,
+} GridGateRuleKind;
+
+typedef struct {
+    GridGateRuleKind kind;
+    size_t train_rejects;
+    size_t test_rejects;
+    size_t false_rejections;
+    nn_real model_score;
+    int accepted;
+} GridGateRule;
+
+typedef struct {
+    GridGateRule items[GP_RULE_COUNT];
+    size_t count;
+    size_t accepted_rules;
+    size_t false_rejections;
+    double proposer_loss;
+} GridGateRuleSet;
 
 static const int ACTION_DX[GP_ACTION_COUNT] = {0, 1, 0, -1};
 static const int ACTION_DY[GP_ACTION_COUNT] = {-1, 0, 1, 0};
@@ -324,6 +355,326 @@ static size_t fill_grid_candidates(const GridState *state,
     return GP_ACTION_COUNT;
 }
 
+static const char *grid_rule_name(GridGateRuleKind kind)
+{
+    switch (kind) {
+    case GP_RULE_UP_AT_TOP:
+        return "reject up when y == 0";
+    case GP_RULE_RIGHT_AT_RIGHT_EDGE:
+        return "reject right when x == max";
+    case GP_RULE_DOWN_AT_BOTTOM:
+        return "reject down when y == max";
+    case GP_RULE_LEFT_AT_LEFT_EDGE:
+        return "reject left when x == 0";
+    case GP_RULE_BLOCKED_NEXT:
+        return "reject action when next cell is blocked";
+    }
+    return "unknown";
+}
+
+static void init_grid_gate_rules(GridGateRuleSet *rules)
+{
+    memset(rules, 0, sizeof(*rules));
+    rules->count = GP_RULE_COUNT;
+    for (size_t i = 0; i < rules->count; ++i) {
+        rules->items[i].kind = (GridGateRuleKind)i;
+    }
+}
+
+static int grid_gate_rule_has_certificate(const GridGateRule *rule)
+{
+    return rule != NULL && rule->kind >= GP_RULE_UP_AT_TOP &&
+           rule->kind <= GP_RULE_BLOCKED_NEXT;
+}
+
+static int grid_gate_rule_rejects(const GridGateRule *rule,
+                                  const GridState *state,
+                                  size_t action)
+{
+    if (rule == NULL || state == NULL || action >= GP_ACTION_COUNT) {
+        return 0;
+    }
+
+    int nx = state->sx + ACTION_DX[action];
+    int ny = state->sy + ACTION_DY[action];
+    switch (rule->kind) {
+    case GP_RULE_UP_AT_TOP:
+        return action == 0 && state->sy == 0;
+    case GP_RULE_RIGHT_AT_RIGHT_EDGE:
+        return action == 1 && state->sx == GP_GRID - 1;
+    case GP_RULE_DOWN_AT_BOTTOM:
+        return action == 2 && state->sy == GP_GRID - 1;
+    case GP_RULE_LEFT_AT_LEFT_EDGE:
+        return action == 3 && state->sx == 0;
+    case GP_RULE_BLOCKED_NEXT:
+        return in_bounds(nx, ny) && state->blocked[cell_index(nx, ny)];
+    }
+    return 0;
+}
+
+static int grid_gate_rules_reject_action(const GridGateRuleSet *rules,
+                                         const GridState *state,
+                                         size_t action)
+{
+    if (rules == NULL) {
+        return 0;
+    }
+    for (size_t i = 0; i < rules->count; ++i) {
+        const GridGateRule *rule = &rules->items[i];
+        if (rule->accepted && grid_gate_rule_rejects(rule, state, action)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static size_t fill_grid_candidates_gated(const GridState *state,
+                                         const GridGateRuleSet *rules,
+                                         nn_real *candidate_inputs,
+                                         uint32_t *action_ids,
+                                         size_t *target_index)
+{
+    nn_real raw_inputs[(size_t)GP_ACTION_COUNT * GP_FEATURE_COUNT];
+    uint32_t raw_action_ids[GP_ACTION_COUNT];
+    size_t raw_target = GP_ACTION_COUNT;
+    fill_grid_candidates(state, raw_inputs, raw_action_ids, &raw_target);
+
+    *target_index = GP_ACTION_COUNT;
+    size_t candidate_count = 0;
+    for (size_t action = 0; action < GP_ACTION_COUNT; ++action) {
+        if (grid_gate_rules_reject_action(rules, state, action)) {
+            continue;
+        }
+        memcpy(&candidate_inputs[candidate_count * GP_FEATURE_COUNT],
+               &raw_inputs[action * GP_FEATURE_COUNT],
+               GP_FEATURE_COUNT * sizeof(*candidate_inputs));
+        action_ids[candidate_count] = raw_action_ids[action];
+        if (action == raw_target) {
+            *target_index = candidate_count;
+        }
+        ++candidate_count;
+    }
+    return candidate_count;
+}
+
+static void accumulate_grid_rule_stats(GridGateRuleSet *rules,
+                                       uint64_t seed_start,
+                                       size_t samples,
+                                       int test_split)
+{
+    for (size_t i = 0; i < samples; ++i) {
+        GridState state;
+        size_t target_index = GP_ACTION_COUNT;
+        nn_real candidate_inputs[(size_t)GP_ACTION_COUNT * GP_FEATURE_COUNT];
+        uint32_t action_ids[GP_ACTION_COUNT];
+        if (!generate_grid_state(seed_start + (uint64_t)i, &state)) {
+            continue;
+        }
+        fill_grid_candidates(&state, candidate_inputs, action_ids, &target_index);
+
+        for (size_t rule_index = 0; rule_index < rules->count; ++rule_index) {
+            GridGateRule *rule = &rules->items[rule_index];
+            for (size_t action = 0; action < GP_ACTION_COUNT; ++action) {
+                if (!grid_gate_rule_rejects(rule, &state, action)) {
+                    continue;
+                }
+                if (test_split) {
+                    ++rule->test_rejects;
+                } else {
+                    ++rule->train_rejects;
+                }
+                if (action == target_index) {
+                    ++rule->false_rejections;
+                    ++rules->false_rejections;
+                }
+            }
+        }
+    }
+}
+
+static void fill_grid_rule_features(const GridGateRule *rule, nn_real *features)
+{
+    memset(features, 0, GP_RULE_FEATURE_COUNT * sizeof(*features));
+    size_t action = 0;
+    int uses_x = 0;
+    int uses_y = 0;
+    int low_edge = 0;
+    int high_edge = 0;
+    int observes_map = 0;
+
+    switch (rule->kind) {
+    case GP_RULE_UP_AT_TOP:
+        action = 0;
+        uses_y = 1;
+        low_edge = 1;
+        break;
+    case GP_RULE_RIGHT_AT_RIGHT_EDGE:
+        action = 1;
+        uses_x = 1;
+        high_edge = 1;
+        break;
+    case GP_RULE_DOWN_AT_BOTTOM:
+        action = 2;
+        uses_y = 1;
+        high_edge = 1;
+        break;
+    case GP_RULE_LEFT_AT_LEFT_EDGE:
+        action = 3;
+        uses_x = 1;
+        low_edge = 1;
+        break;
+    case GP_RULE_BLOCKED_NEXT:
+        action = 0;
+        observes_map = 1;
+        break;
+    }
+
+    features[0] = (nn_real)((double)rule->kind / (double)(GP_RULE_COUNT - 1));
+    features[1] = (nn_real)((double)action / (double)(GP_ACTION_COUNT - 1));
+    features[2] = (nn_real)ACTION_DX[action];
+    features[3] = (nn_real)ACTION_DY[action];
+    features[4] = uses_x ? (nn_real)1 : (nn_real)0;
+    features[5] = uses_y ? (nn_real)1 : (nn_real)0;
+    features[6] = low_edge ? (nn_real)1 : (nn_real)0;
+    features[7] = high_edge ? (nn_real)1 : (nn_real)0;
+    features[8] = observes_map ? (nn_real)1 : (nn_real)0;
+    features[9] = grid_gate_rule_has_certificate(rule) ? (nn_real)1 : (nn_real)0;
+}
+
+static int compare_grid_gate_rules(const void *left, const void *right)
+{
+    const GridGateRule *a = (const GridGateRule *)left;
+    const GridGateRule *b = (const GridGateRule *)right;
+    if (a->model_score > b->model_score) {
+        return -1;
+    }
+    if (a->model_score < b->model_score) {
+        return 1;
+    }
+    return (int)a->kind - (int)b->kind;
+}
+
+static int score_grid_gate_rules(GridGateRuleSet *rules)
+{
+    nn_real inputs[(size_t)GP_RULE_COUNT * GP_RULE_FEATURE_COUNT];
+    nn_real targets[GP_RULE_COUNT];
+    nn_real outputs[GP_RULE_COUNT];
+    size_t max_rejects = 1;
+
+    for (size_t i = 0; i < rules->count; ++i) {
+        if (rules->items[i].train_rejects > max_rejects) {
+            max_rejects = rules->items[i].train_rejects;
+        }
+    }
+    for (size_t i = 0; i < rules->count; ++i) {
+        fill_grid_rule_features(&rules->items[i], &inputs[i * GP_RULE_FEATURE_COUNT]);
+        targets[i] = (nn_real)((double)rules->items[i].train_rejects /
+                               (double)max_rejects);
+    }
+
+    const size_t layers[] = {GP_RULE_FEATURE_COUNT, 8, 1};
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = sizeof(layers) / sizeof(layers[0]);
+    config.seed = 31415;
+    config.hidden_activation = NN_ACTIVATION_RELU;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+    NeuralNet *net = nn_create_config(&config);
+    if (net == NULL) {
+        return 0;
+    }
+
+    rules->proposer_loss = (double)nn_train(net,
+                                            inputs,
+                                            targets,
+                                            rules->count,
+                                            (nn_real)0.05,
+                                            GP_RULE_SCORER_EPOCHS,
+                                            0);
+    nn_forward_batch(net, inputs, outputs, rules->count);
+    for (size_t i = 0; i < rules->count; ++i) {
+        rules->items[i].model_score = outputs[i];
+    }
+    nn_free(net);
+    return 1;
+}
+
+static int discover_grid_gate_rules(GridGateRuleSet *rules)
+{
+    init_grid_gate_rules(rules);
+    accumulate_grid_rule_stats(rules, GP_TRAIN_SEED_START, GP_TRAIN_SAMPLES, 0);
+    accumulate_grid_rule_stats(rules, GP_TEST_SEED_START, GP_TEST_SAMPLES, 1);
+    if (!score_grid_gate_rules(rules)) {
+        return 0;
+    }
+    qsort(rules->items, rules->count, sizeof(*rules->items), compare_grid_gate_rules);
+
+    rules->accepted_rules = 0;
+    for (size_t i = 0; i < rules->count; ++i) {
+        GridGateRule *rule = &rules->items[i];
+        rule->accepted = grid_gate_rule_has_certificate(rule) &&
+                         rule->train_rejects != 0 &&
+                         rule->false_rejections == 0;
+        rules->accepted_rules += rule->accepted ? 1u : 0u;
+    }
+    return 1;
+}
+
+static void print_grid_rule_search_json(const GridGateRuleSet *rules)
+{
+    size_t train_rejects = 0;
+    size_t test_rejects = 0;
+    for (size_t i = 0; i < rules->count; ++i) {
+        train_rejects += rules->items[i].train_rejects;
+        test_rejects += rules->items[i].test_rejects;
+    }
+
+    printf("{\"schema\":\"crlp.rule_search.summary.v1\",\"task\":\"grid_path\","
+           "\"grammar_version\":%u,\"rule_set_hash\":\"grid-legality-v1\","
+           "\"proposer_feature_set\":\"structural\","
+           "\"proposed_rules\":%zu,\"verified_rules\":%zu,"
+           "\"accepted_rules\":%zu,\"false_rejections\":%zu,"
+           "\"train_rejects\":%zu,\"test_rejects\":%zu,"
+           "\"proposer_loss\":%.8f}\n",
+           (unsigned int)GP_RULE_SEARCH_GRAMMAR_VERSION,
+           rules->count,
+           rules->count,
+           rules->accepted_rules,
+           rules->false_rejections,
+           train_rejects,
+           test_rejects,
+           rules->proposer_loss);
+}
+
+static void print_grid_rule_search_report(const GridGateRuleSet *rules)
+{
+    printf("[grid_path legality rule search]\n"
+           "  grammar_version=%u proposed=%zu accepted=%zu false_rejections=%zu\n"
+           "  proposer_feature_set=structural final_mse=%.6f\n"
+           "  accepted rules:",
+           (unsigned int)GP_RULE_SEARCH_GRAMMAR_VERSION,
+           rules->count,
+           rules->accepted_rules,
+           rules->false_rejections,
+           rules->proposer_loss);
+    int first = 1;
+    for (size_t i = 0; i < rules->count; ++i) {
+        const GridGateRule *rule = &rules->items[i];
+        if (!rule->accepted) {
+            continue;
+        }
+        printf("%s%s(train=%zu test=%zu score=%.4f)",
+               first ? " " : ", ",
+               grid_rule_name(rule->kind),
+               rule->train_rejects,
+               rule->test_rejects,
+               (double)rule->model_score);
+        first = 0;
+    }
+    fputc('\n', stdout);
+}
+
 static NeuralNet *create_grid_model(unsigned int seed)
 {
     static const size_t layers[] = {GP_FEATURE_COUNT, 48, 24, 1};
@@ -359,13 +710,14 @@ static int save_grid_checkpoint(NeuralNet *net,
     return nn_save_checkpoint(net, path, &meta) && nn_hash_checkpoint_hex(path, out_hash);
 }
 
-static GridMetrics evaluate_grid_model(NeuralNet *net,
-                                       uint64_t seed_start,
-                                       size_t samples,
-                                       nn_real *candidate_inputs,
-                                       uint32_t *action_ids,
-                                       nn_real *scores,
-                                       nn_real *probabilities)
+static GridMetrics evaluate_grid_model_with_rules(NeuralNet *net,
+                                                  const GridGateRuleSet *rules,
+                                                  uint64_t seed_start,
+                                                  size_t samples,
+                                                  nn_real *candidate_inputs,
+                                                  uint32_t *action_ids,
+                                                  nn_real *scores,
+                                                  nn_real *probabilities)
 {
     GridMetrics metrics;
     memset(&metrics, 0, sizeof(metrics));
@@ -377,8 +729,16 @@ static GridMetrics evaluate_grid_model(NeuralNet *net,
         if (!generate_grid_state(seed_start + (uint64_t)i, &state)) {
             continue;
         }
-        size_t candidate_count =
-            fill_grid_candidates(&state, candidate_inputs, action_ids, &target_index);
+        size_t candidate_count = rules == NULL
+                                     ? fill_grid_candidates(&state,
+                                                            candidate_inputs,
+                                                            action_ids,
+                                                            &target_index)
+                                     : fill_grid_candidates_gated(&state,
+                                                                  rules,
+                                                                  candidate_inputs,
+                                                                  action_ids,
+                                                                  &target_index);
         if (candidate_count == 0 || target_index >= candidate_count ||
             !nn_score_action_rows(net,
                                   candidate_inputs,
@@ -405,6 +765,8 @@ static GridMetrics evaluate_grid_model(NeuralNet *net,
         }
 
         ++metrics.samples;
+        metrics.candidate_count += (double)candidate_count;
+        metrics.rejected_candidates += (double)(GP_ACTION_COUNT - candidate_count);
         metrics.correct += selected == target_index ? 1u : 0u;
         metrics.nll += -log(safe_probability((double)probabilities[target_index]));
         metrics.utility += selected == target_index ? 1.0 : -0.25;
@@ -432,6 +794,8 @@ static GridMetrics evaluate_grid_model(NeuralNet *net,
 
     double sample_count = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
     metrics.nll /= sample_count;
+    metrics.candidate_count /= sample_count;
+    metrics.rejected_candidates /= sample_count;
     metrics.utility /= sample_count;
     metrics.proposal_steps /= sample_count;
     metrics.baseline_steps /= sample_count;
@@ -449,6 +813,24 @@ static GridMetrics evaluate_grid_model(NeuralNet *net,
         metrics.bin_accuracy[bin] = accuracy;
     }
     return metrics;
+}
+
+static GridMetrics evaluate_grid_model(NeuralNet *net,
+                                       uint64_t seed_start,
+                                       size_t samples,
+                                       nn_real *candidate_inputs,
+                                       uint32_t *action_ids,
+                                       nn_real *scores,
+                                       nn_real *probabilities)
+{
+    return evaluate_grid_model_with_rules(net,
+                                          NULL,
+                                          seed_start,
+                                          samples,
+                                          candidate_inputs,
+                                          action_ids,
+                                          scores,
+                                          probabilities);
 }
 
 static int train_grid_model(NeuralNet *net,
@@ -521,6 +903,7 @@ static void print_grid_metrics(const char *label, const char *hash, GridMetrics 
     double node_saved_pct =
         metrics.baseline_nodes <= 0.0 ? 0.0 : 100.0 * node_saved / metrics.baseline_nodes;
     printf("[%s] hash=%s accuracy=%.2f%% nll=%.4f ece=%.4f utility=%.4f "
+           "candidates=%.2f rejected=%.2f "
            "proposal_steps=%.3f baseline_steps=%.3f saved=%.1f%% "
            "verifier_nodes=%.2f baseline_nodes=%.2f node_saved=%.1f%% samples=%zu\n",
            label,
@@ -529,6 +912,8 @@ static void print_grid_metrics(const char *label, const char *hash, GridMetrics 
            metrics.nll,
            metrics.ece,
            metrics.utility,
+           metrics.candidate_count,
+           metrics.rejected_candidates,
            metrics.proposal_steps,
            metrics.baseline_steps,
            saved_pct,
@@ -847,6 +1232,14 @@ static int replay_grid_trace(const char *trace_path,
 
 static int compare_grid_models(int argc, char **argv)
 {
+    GridGateRuleSet gate_rules;
+    if (!discover_grid_gate_rules(&gate_rules)) {
+        fputs("failed to discover grid_path gate rules\n", stderr);
+        return 0;
+    }
+    print_grid_rule_search_json(&gate_rules);
+    print_grid_rule_search_report(&gate_rules);
+
     nn_real *candidate_inputs = calloc((size_t)GP_ACTION_COUNT * GP_FEATURE_COUNT,
                                        sizeof(*candidate_inputs));
     uint32_t *action_ids = calloc(GP_ACTION_COUNT, sizeof(*action_ids));
@@ -891,9 +1284,11 @@ static int compare_grid_models(int argc, char **argv)
         double samples = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
         printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"grid_path\","
                "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
+               "\"evaluation_mode\":\"raw\",\"rule_set_hash\":\"none\","
                "\"feature_encoder_version\":%u,"
                "\"benchmark_seed\":%u,\"sample_count\":%zu,"
                "\"accuracy\":%.8f,\"nll\":%.8f,\"ece\":%.8f,"
+               "\"candidate_count\":%.8f,\"rejected_candidates\":%.8f,"
                "\"decision_utility\":%.8f,\"proposal_steps\":%.8f,"
                "\"baseline_steps\":%.8f,\"verifier_nodes\":%.8f,"
                "\"baseline_nodes\":%.8f,\"search_saved\":%.8f",
@@ -905,6 +1300,8 @@ static int compare_grid_models(int argc, char **argv)
                (double)metrics.correct / samples,
                metrics.nll,
                metrics.ece,
+               metrics.candidate_count,
+               metrics.rejected_candidates,
                metrics.utility,
                metrics.proposal_steps,
                metrics.baseline_steps,
@@ -914,6 +1311,48 @@ static int compare_grid_models(int argc, char **argv)
         print_grid_reliability_bins_json(&metrics);
         printf("}\n");
         print_grid_metrics(argv[i], hash, metrics);
+
+        GridMetrics gated_metrics = evaluate_grid_model_with_rules(net,
+                                                                   &gate_rules,
+                                                                   GP_TEST_SEED_START,
+                                                                   GP_TEST_SAMPLES,
+                                                                   candidate_inputs,
+                                                                   action_ids,
+                                                                   scores,
+                                                                   probabilities);
+        samples = gated_metrics.samples == 0 ? 1.0 : (double)gated_metrics.samples;
+        printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"grid_path\","
+               "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
+               "\"evaluation_mode\":\"legality_gate_model\","
+               "\"rule_set_hash\":\"grid-legality-v1\","
+               "\"accepted_rules\":%zu,"
+               "\"feature_encoder_version\":%u,"
+               "\"benchmark_seed\":%u,\"sample_count\":%zu,"
+               "\"accuracy\":%.8f,\"nll\":%.8f,\"ece\":%.8f,"
+               "\"candidate_count\":%.8f,\"rejected_candidates\":%.8f,"
+               "\"decision_utility\":%.8f,\"proposal_steps\":%.8f,"
+               "\"baseline_steps\":%.8f,\"verifier_nodes\":%.8f,"
+               "\"baseline_nodes\":%.8f,\"search_saved\":%.8f",
+               hash,
+               meta.parent_model_hash[0] == '\0' ? "unknown" : meta.parent_model_hash,
+               gate_rules.accepted_rules,
+               meta.feature_encoder_version,
+               (unsigned int)GP_TEST_SEED_START,
+               gated_metrics.samples,
+               (double)gated_metrics.correct / samples,
+               gated_metrics.nll,
+               gated_metrics.ece,
+               gated_metrics.candidate_count,
+               gated_metrics.rejected_candidates,
+               gated_metrics.utility,
+               gated_metrics.proposal_steps,
+               gated_metrics.baseline_steps,
+               gated_metrics.verifier_nodes,
+               gated_metrics.baseline_nodes,
+               gated_metrics.baseline_steps - gated_metrics.proposal_steps);
+        print_grid_reliability_bins_json(&gated_metrics);
+        printf("}\n");
+        print_grid_metrics("legality-gate", hash, gated_metrics);
         nn_free(net);
     }
 
@@ -929,6 +1368,7 @@ static void print_usage(FILE *stream)
     fputs("usage: grid_path [--trace path] [--save path] "
           "[--trace-train] [--trace-seed seed] [--trace-samples count]\n"
           "       grid_path --replay trace.jsonl --out model.nnckpt [--epochs count]\n"
+          "       grid_path --rule-search\n"
           "       grid_path --compare model_a.nnckpt model_b.nnckpt [...]\n",
           stream);
 }
@@ -965,6 +1405,20 @@ int main(int argc, char **argv)
             return EXIT_FAILURE;
         }
         return compare_grid_models(argc, argv) ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+    if (argc >= 2 && strcmp(argv[1], "--rule-search") == 0) {
+        if (argc != 2) {
+            print_usage(stderr);
+            return EXIT_FAILURE;
+        }
+        GridGateRuleSet rules;
+        if (!discover_grid_gate_rules(&rules)) {
+            fputs("failed to discover grid_path gate rules\n", stderr);
+            return EXIT_FAILURE;
+        }
+        print_grid_rule_search_json(&rules);
+        print_grid_rule_search_report(&rules);
+        return EXIT_SUCCESS;
     }
 
     const char *trace_path = NULL;

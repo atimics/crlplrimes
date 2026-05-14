@@ -42,7 +42,7 @@ PRIME_GAP_EXPERIMENT_MAX_TRAIN ?= 15000
 PRIME_GAP_EXPERIMENT_MAX_TEST ?= 15000
 RESULTS_DIR ?= results/latest
 
-.PHONY: all run action-score prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-trace grid-path-replay grid-path-eval results benchmark test sanitize check clean
+.PHONY: all run action-score prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-trace grid-path-replay grid-path-eval results benchmark test sanitize check clean
 
 all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(BENCHMARK)
 
@@ -167,6 +167,9 @@ delayed-claim-self-test: $(DELAYED_CLAIM)
 
 grid-path: $(GRID_PATH)
 	./$(GRID_PATH)
+
+grid-path-rule-search: $(GRID_PATH)
+	./$(GRID_PATH) --rule-search
 
 grid-path-trace: $(GRID_PATH)
 	./$(GRID_PATH) --save $(BUILD_DIR)/grid_path_v1.nnckpt --trace $(BUILD_DIR)/grid_path.jsonl --trace-train

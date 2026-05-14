@@ -8,7 +8,7 @@ The repository develops three claims:
 2. **A certificate-gated proposer can discover sound symbolic gates.** A structural-only neural proposer over a compact rule grammar, paired with a soundness-certificate verifier, produces **52 accepted rules out of 4,692 verified candidates with 0 false rejections**, cutting exact verifier work from **7.20** probes to **1.47** without hand-coding the wheel. The proposer sees rule shape only (`m`, residues, zero indicators, gcd ratios, derived candidate residue), while empirical support is only the training target. The soundness guarantee is a property of the certificate, not of training. How much of the recovery is attributable to *learning* (rather than to enumerate-then-filter) is an open question — see Limitations.
 3. **KL-regularized verifier RL prevents calibration collapse on the prime-gap task.** Strict policy-gradient RL on exact rewards inflates logit scale rather than improving ranking (minimal-feature ECE 0.0704 -> 0.1271 with top-1 unchanged). Adding a KL term toward the supervised prior plus an entropy bonus restores calibration (ECE 0.0604) at the same top-k. Whether the same failure mode and fix transfer to `grid_path` and `delayed_claim` is planned work, not yet demonstrated.
 
-Prime gaps are used as **the experiment domain**, not the goal. They give us a compact, totally-ordered candidate space with a fast deterministic verifier, exact labels at all scales, and a known classical baseline (sieves) we cannot beat — which is precisely what makes them a clean substrate for studying learned proposal policies under perfect feedback. Two other exact-verifier tasks (`delayed_claim`, `grid_path`) are included to show the protocol generalizes.
+Prime gaps are used as **the experiment domain**, not the goal. They give us a compact, totally-ordered candidate space with a fast deterministic verifier, exact labels at all scales, and a known classical baseline (sieves) we cannot beat — which is precisely what makes them a clean substrate for studying learned proposal policies under perfect feedback. Two other exact-verifier tasks (`delayed_claim`, `grid_path`) are included to test which parts of the protocol generalize.
 
 ## Headline Result
 
@@ -166,16 +166,22 @@ The interpretation is now sharper. Among raw-action-space scorers without residu
 
 `grid_path` is a shortest-path task with an exact BFS verifier owning correctness. Candidate actions are all four moves, including out-of-bounds and blocked moves. The neural model sees start/goal coordinates, the obstacle map, local invalid-move indicators, and an action one-hot; BFS supplies labels and verification cost, not a pruned candidate set.
 
-| Model | Accuracy | NLL | ECE | Decision utility | Steps | Nodes |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Trained parent | 89.40% | 0.3684 | 0.0416 | 0.8675 | 1.118 | 21.45 |
-| Trace-replay successor | 90.10% | 0.3480 | 0.0353 | 0.8762 | 1.114 | 21.29 |
+A small structural rule proposer now runs on this task too. Its grammar is the certified legality gate: reject edge moves that leave the grid, and reject moves into blocked cells. This is intentionally not a pathfinding solver; it is a cross-domain sanity check that certificate-gated pruning can be represented and evaluated outside prime residues.
+
+| Model / mode | Accuracy | NLL | ECE | Candidates | Decision utility | Steps | Nodes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Trained parent, raw | 89.40% | 0.3684 | 0.0416 | 4.00 | 0.8675 | 1.118 | 21.45 |
+| Trained parent, legality gate | 89.40% | 0.3680 | 0.0415 | 2.85 | 0.8675 | 1.118 | 21.45 |
+| Trace-replay successor, raw | 90.10% | 0.3480 | 0.0353 | 4.00 | 0.8762 | 1.114 | 21.29 |
+| Trace-replay successor, legality gate | 90.10% | 0.3477 | 0.0343 | 2.85 | 0.8762 | 1.114 | 21.29 |
+
+The grid legality proposer accepts 5/5 certified rules with 0 false rejections, rejecting 1.16 impossible moves per held-out state on average. Accuracy is unchanged because the model already learned to avoid most illegal moves; the useful signal here is that the gate protocol transfers, not that legality pruning solves shortest-path ranking.
 
 ## Limitations and Next Work
 
 - **Random-proposer baseline at fixed verifier-call budget.** Finding 2 currently shows that *a certificate-gated structural proposer* cuts exact verifier work by 79.64% without support-count feature leakage; it does not yet distinguish "the neural proposer found the rules" from "the certificate gate filtered a large enumeration." Running random and exhaustive rule proposers at the same budget is the missing experiment that elevates Finding 2 from "sound" to "the learned proposer is essential." This is two days of work and on the immediate roadmap.
 - **Cross-task verifier-RL comparison.** Finding 3 (strict-vs-regularized RL on the prime-gap task) needs a matching run on `grid_path` and `delayed_claim` before it can be stated as a general property of sparse-exact-reward policy gradient. The pipeline supports it; the comparison is not in the canonical results yet.
-- **Explicit grid_path gate baseline.** Finding 1 is currently demonstrated on prime gaps only. A separate `grid_path` symbolic-gate experiment could report legality or admissible-heuristic pruning as a verifier-assisted gate, but the raw `grid_path` task now keeps all four moves in the candidate set.
+- **Richer non-prime gate grammars.** `grid_path` now has a certified legality gate, but that gate is intentionally shallow. The next cross-domain test should learn admissible dead-end or distance-bound pruning rules that reduce BFS verifier work without becoming a hand-coded solver.
 - **Statistical rigor.** The default `make prime-gap-experiments` config currently runs 1 seed; the harness supports more (`PRIME_GAP_EXPERIMENT_SEEDS=...`). The minimal-vs-leakage, strict-vs-regularized, and hand-wheel-vs-learned-rule deltas should be reported with confidence intervals across >=5 seeds.
 - **Reliability diagrams.** The comparison schema stores `reliability_bins`; the README currently reports only ECE. Calibration claims would be stronger with a small reliability plot.
 - **Learned-rule calibration.** The learned rule program improves ranking sharply, but its ECE is worse than the raw minimal and hand-wheel rows in the default run. That calibration tradeoff deserves a focused reliability-diagram pass.
@@ -532,12 +538,13 @@ make delayed-claim-eval
 
 ## Grid-Path Task
 
-`grid_path` is a second exact-verifier task. A deterministic generator creates a small obstructed grid, start, and goal. Candidate actions are all four moves. The neural model ranks moves from observable map and move features, while an exact BFS verifier owns correctness by identifying the shortest-path successor.
+`grid_path` is a second exact-verifier task. A deterministic generator creates a small obstructed grid, start, and goal. Candidate actions are all four moves. The neural model ranks moves from observable map and move features, while an exact BFS verifier owns correctness by identifying the shortest-path successor. `grid_path --rule-search` runs the cross-task legality-gate experiment: a structural proposer ranks five certified rules that reject out-of-bounds and blocked-cell moves.
 
-The task reports accuracy, NLL, calibration error, decision utility, proposal steps, fixed-order baseline steps, exact verifier nodes, and baseline verifier nodes. Trace replay stores stable move action IDs, then maps them back into the regenerated four-row candidate set before training a successor model.
+The task reports accuracy, NLL, calibration error, decision utility, proposal steps, fixed-order baseline steps, exact verifier nodes, baseline verifier nodes, and candidate counts before/after the legality gate. Trace replay stores stable move action IDs, then maps them back into the regenerated four-row candidate set before training a successor model.
 
 ```sh
 make grid-path
+make grid-path-rule-search
 make grid-path-trace
 make grid-path-replay
 make grid-path-eval

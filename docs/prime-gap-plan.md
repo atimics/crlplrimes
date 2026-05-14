@@ -1,6 +1,6 @@
 # Prime-Gap Experiment Plan
 
-This document covers the prime-gap experiments specifically. The repository-level thesis is in `README.md` — hybrid neural-symbolic scoring under exact verification, with three findings (certificate-gating dominates raw scoring, the symbolic gate can be learned, KL-regularized RL prevents calibration collapse). Prime gaps are the load-bearing benchmark for that thesis; this plan tracks the work that runs on top of them.
+This document covers the prime-gap experiments specifically. The repository-level thesis is in `README.md` — hybrid neural-symbolic scoring under exact verification, with three findings (certificate-gating dominates raw scoring, the symbolic gate can be learned, KL-regularized RL prevents calibration collapse). Prime gaps are one load-bearing benchmark for that thesis, not the project goal; `grid_path` now carries the first non-prime certified gate check.
 
 ## Why Primes Are the Substrate
 
@@ -135,7 +135,7 @@ Ordered roughly by priority for the writeup.
 3. **Reliability diagrams.** `crlp.compare.v1` already carries `reliability_bins`; render them.
 4. **Calibration sweep over larger held-out ranges.** Expand the KL/entropy grid; check whether the validation-selected weights are stable across prime-size buckets.
 5. **Stronger verifier-aware baselines.** Hand-coded wheel ranking, linear scorer with explicit wheel-survivor features, conditioned frequency over larger residue signatures.
-6. **Explicit grid_path gate baseline.** A natural symbolic gate (legality + admissible heuristic pruning) could extend Finding 1 to a second domain, but it must be reported as a verifier-assisted gate. The raw `grid_path` task keeps all four moves in the candidate set.
+6. **Richer grid_path gate baseline.** The current `grid_path` legality gate rejects out-of-bounds and blocked moves with 0 false rejections, but it is only a protocol sanity check. Add admissible dead-end or distance-bound pruning rules that reduce BFS work without becoming a hand-coded shortest-path solver.
 7. **Expanded ablations.** Different small-prime feature sets, remove overflow action, train on wheel survivors only.
 8. **RL-only experiments.** No supervised warm start, strict-only, entropy-only, baseline/advantage variants. Useful for triangulating the calibration-collapse story.
 9. **Capability-oriented task variants.** Find any prime after `p`, rank prime candidates in a fixed interval, rank wheel-surviving candidates only, predict overflow probability for larger gaps.
