@@ -1,6 +1,63 @@
-# C Neural Network
+# CRLPLRIMES: C Neural Networks for Prime-Gap Policy Research
 
-A small feed-forward neural network in C. It implements dense layers, configurable sigmoid/ReLU/tanh/linear activations, mean-squared-error and softmax cross-entropy losses, stochastic gradient descent, layer-wise mini-batch training, tiled batch kernels, and simple CPU benchmarks.
+This repository is a compact C neural-network library and an exact-verifier research harness for learned proposal policies over prime gaps.
+
+The headline experiment asks whether a small dense network can learn a useful probability distribution over next-prime gap actions while a deterministic sieve remains the oracle for labels, rewards, and correctness. The current answer is: yes for proposal quality, no for replacing exact verification. On the default held-out test slice, the full model reaches `45.12%` top-1 and `99.77%` top-10 gap-action accuracy; KL/entropy-regularized verifier RL preserves that ranking while avoiding the probability blow-up produced by strict verifier RL.
+
+## Research Snapshot
+
+Default command:
+
+```sh
+make prime-gap
+```
+
+Default split:
+
+```text
+train p < 800,000
+validation 800,000 <= p < 1,000,000
+test 1,000,000 <= p <= 3,000,000
+reported metrics use 30,000 held-out test states
+```
+
+Policy comparison from the current default run:
+
+| Method | Temp | Top-1 | Top-10 | NLL | ECE | Top-1 confidence |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Empirical gap baseline | 1.00 | 15.46% | 78.71% | 2.8585 | 0.0196 | 0.1743 |
+| Supervised full scorer | 1.00 | 45.12% | 99.77% | 1.5778 | 0.0743 | 0.4882 |
+| Supervised full scorer, temp-scaled | 1.20 | 45.12% | 99.77% | 1.5585 | 0.0694 | 0.4323 |
+| Strict verifier RL | 1.00 | 45.12% | 99.46% | 2.3612 | 0.3100 | 0.7613 |
+| Strict verifier RL, temp-scaled | 2.50 | 45.12% | 99.46% | 1.5816 | 0.0707 | 0.4814 |
+| KL/entropy-regularized verifier RL | 1.00 | 45.12% | 99.75% | 1.5878 | 0.0821 | 0.5038 |
+| KL/entropy-regularized verifier RL, temp-scaled | 1.20 | 45.12% | 99.75% | 1.5602 | 0.0682 | 0.4468 |
+
+Interpretation:
+
+- Candidate residue features expose a learned soft sieve: the model becomes a strong ranker over candidate gaps.
+- The full feature set improves probability quality over residue-only ranking, reducing held-out NLL while keeping top-k accuracy high.
+- Strict verifier RL mostly inflates logits: ranking stays useful, but calibration degrades sharply.
+- KL/entropy regularization is the cleaner training-side fix: it keeps top-10 near `99.75%` while bringing unscaled ECE down from `0.3100` to `0.0821`.
+- Exact next-prime verification is still classical. Model-assisted verification does not beat wheel or block verification in the current setup because wrong proposals add proof obligations.
+
+## Method Summary
+
+The prime-gap experiment is deliberately verifier-guided:
+
+1. Generate exact next-prime gap labels with a deterministic sieve.
+2. Encode each candidate action as `[log(p), normalized_gap, overflow_flag, divisibility flags for p + gap modulo small primes]`.
+3. Score all candidate gaps `2..256` plus an overflow action with one shared scalar neural scorer.
+4. Train a supervised warm start with softmax cross-entropy across candidate actions.
+5. Fit a scalar softmax temperature on a held-out validation slice.
+6. Clone the supervised checkpoint and compare strict verifier policy-gradient RL against KL/entropy-regularized verifier RL.
+7. Evaluate proposal capability, calibration, generalization by prime-size bucket, and exact verifier work diagnostics separately.
+
+The important framing is that the verifier is the correctness mechanism. The neural network is judged by proposal quality, generalization, and calibrated uncertainty under perfect mathematical feedback.
+
+## C Neural Network Library
+
+The underlying library implements dense layers, configurable sigmoid/ReLU/tanh/linear activations, mean-squared-error and softmax cross-entropy losses, stochastic gradient descent, layer-wise mini-batch training, tiled batch kernels, cloned networks, shared softmax scorers, cached policy-gradient updates, and simple CPU benchmarks.
 
 ## Build
 
