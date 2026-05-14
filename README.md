@@ -86,12 +86,15 @@ make prime-gap
 make prime-gap-trace
 make prime-gap-replay
 make prime-gap-eval
+make prime-rule-search
 make delayed-claim
 make grid-path
 make results
 ```
 
 `prime-gap-trace` writes `build/float/prime_v1.nnckpt` and `build/float/traces/prime_gap.jsonl`. `prime-gap-replay` trains `build/float/prime_v2.nnckpt` from that trace. `prime-gap-eval` compares both checkpoints on the same frozen benchmark.
+
+`prime-rule-search` runs the expanded grammar experiment. The neural scorer ranks deterministic gap-filter candidates, but the verifier accepts only rules with checkable certificates such as `p % m + gap % m == 0`, so accepted rules cannot reject the true next-prime gap.
 
 ## C Neural Network Library
 
@@ -298,7 +301,7 @@ Run the CI-style local check with:
 make check
 ```
 
-This runs the unit tests, sanitizer tests, double-precision tests, the standalone action-scoring example, delayed-claim trace/replay/eval, and a small prime-gap trace/replay/eval smoke path.
+This runs the unit tests, sanitizer tests, double-precision tests, the standalone action-scoring example, delayed-claim trace/replay/eval, the expanded prime-rule-search smoke path, and a small prime-gap trace/replay/eval smoke path.
 
 The tests compare scalar and batched forward results, verify `batch_size=1` training against sample-wise training, finite-difference check batched gradients through the tiled kernels, and check the softmax cross-entropy and shared softmax-scorer gradients.
 
@@ -441,6 +444,22 @@ Use `nn_trace_parse_jsonl` to validate rows before replay. It checks the schema 
 Comparison reports are JSONL records with schema `crlp.compare.v1`, `report_version`, `model_hash`, `parent_hash`, `feature_encoder_version`, benchmark seed, sample count, capability metrics, calibration metrics, machine-readable `reliability_bins`, and any task-specific verifier or utility fields.
 
 Deterministic fixtures live in `tests/fixtures/` and cover a tiny action scorer, expected scores, expected probabilities, expected ranking, and an example trace row. The tests exercise those fixtures in both `float` and `double` builds.
+
+## Prime Rule Search
+
+`prime_rule_search` expands the symbolic grammar from candidate-only residue filters to conditional gap filters:
+
+```text
+if p % m == a then reject gap % m == b
+```
+
+The neural scorer ranks proposed rules, but the verifier accepts only deterministic certificates. For the default gap-only experiment, an accepted rule must prove that `p + gap` is composite, for example because `(a + b) % m` shares a non-trivial factor with `m`. This lets the system derive wheel-like deterministic work from state and action relations instead of being handed candidate divisibility directly.
+
+```sh
+make prime-rule-search
+```
+
+The target writes `build/float/prime_rules_v2.crlprule` and `build/float/traces/prime_rule_search.jsonl`. The JSONL trace uses schema `crlp.rule_trace.v1` and records the grammar version, rule text, model score, verifier result, deterministic-certificate flag, accepted flag, support counts, and false-rejection counts.
 
 ## Delayed-Claim Task
 

@@ -24,6 +24,7 @@ ACTION_SCORE_EXAMPLE := $(BUILD_DIR)/action_score
 PRIME_GAP_EXAMPLE := $(BUILD_DIR)/prime_gap
 PRIME_REPLAY := $(BUILD_DIR)/prime_replay
 PRIME_COMPARE := $(BUILD_DIR)/prime_compare
+PRIME_RULE_SEARCH := $(BUILD_DIR)/prime_rule_search
 DELAYED_CLAIM := $(BUILD_DIR)/delayed_claim
 GRID_PATH := $(BUILD_DIR)/grid_path
 BENCHMARK := $(BUILD_DIR)/benchmark
@@ -39,9 +40,9 @@ PRIME_GAP_EXPERIMENT_MAX_TRAIN ?= 15000
 PRIME_GAP_EXPERIMENT_MAX_TEST ?= 15000
 RESULTS_DIR ?= results/latest
 
-.PHONY: all run action-score prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-trace grid-path-replay grid-path-eval results benchmark test sanitize check clean
+.PHONY: all run action-score prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-trace grid-path-replay grid-path-eval results benchmark test sanitize check clean
 
-all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(DELAYED_CLAIM) $(GRID_PATH) $(BENCHMARK)
+all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(BENCHMARK)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -72,6 +73,9 @@ $(PRIME_REPLAY): examples/prime_replay.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(NN_HE
 
 $(PRIME_COMPARE): examples/prime_compare.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_compare.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(PRIME_RULE_SEARCH): examples/prime_rule_search.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_rule_search.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(DELAYED_CLAIM): examples/delayed_claim.c $(NN_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/delayed_claim.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
@@ -106,6 +110,14 @@ prime-gap-replay: $(PRIME_REPLAY) prime-gap-trace
 
 prime-gap-eval: $(PRIME_COMPARE) prime-gap-replay
 	./$(PRIME_COMPARE) --rules $(BUILD_DIR)/prime_rules.crlprule $(BUILD_DIR)/prime_v1.nnckpt $(BUILD_DIR)/prime_learned_v1.nnckpt $(BUILD_DIR)/prime_v2.nnckpt
+
+prime-rule-search: $(PRIME_RULE_SEARCH)
+	mkdir -p $(BUILD_DIR)/traces
+	./$(PRIME_RULE_SEARCH) --gap-only --trace $(BUILD_DIR)/traces/prime_rule_search.jsonl --save $(BUILD_DIR)/prime_rules_v2.crlprule
+
+prime-rule-search-smoke: $(PRIME_RULE_SEARCH)
+	mkdir -p $(BUILD_DIR)/traces
+	./$(PRIME_RULE_SEARCH) --gap-only --train-limit 100000 --test-limit 200000 --max-train-states 1000 --max-test-states 1000 --max-rules 32 --moduli 3,5,7,11 --trace $(BUILD_DIR)/traces/prime_rule_search_smoke.jsonl --save $(BUILD_DIR)/prime_rules_v2_smoke.crlprule
 
 prime-gap-sweep: $(PRIME_GAP_EXAMPLE)
 	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 2 1 30000 30000
@@ -158,7 +170,7 @@ grid-path-replay: $(GRID_PATH) grid-path-trace
 grid-path-eval: $(GRID_PATH) grid-path-replay
 	./$(GRID_PATH) --compare $(BUILD_DIR)/grid_path_v1.nnckpt $(BUILD_DIR)/grid_path_v2.nnckpt
 
-results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE)
+results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH)
 	$(PYTHON) scripts/capture_results.py --output-dir $(RESULTS_DIR) --real $(REAL)
 
 test: $(TEST_RUNNER)
@@ -167,7 +179,7 @@ test: $(TEST_RUNNER)
 sanitize: $(SANITIZE_TEST_RUNNER)
 	./$(SANITIZE_TEST_RUNNER)
 
-check: test sanitize action-score delayed-claim-self-test delayed-claim-eval grid-path-eval prime-gap-eval
+check: test sanitize action-score delayed-claim-self-test delayed-claim-eval grid-path-eval prime-rule-search-smoke prime-gap-eval
 	$(MAKE) test REAL=double
 
 clean:

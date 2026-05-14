@@ -4,5 +4,6 @@
 int nn_prime_gap_main(int argc, char **argv);
 int nn_prime_replay_main(int argc, char **argv);
 int nn_prime_compare_main(int argc, char **argv);
+int nn_prime_rule_search_main(int argc, char **argv);
 
 #endif

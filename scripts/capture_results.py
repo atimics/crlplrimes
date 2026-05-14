@@ -13,6 +13,7 @@ from pathlib import Path
 COMMANDS = (
     ("delayed_claim", ("delayed-claim-eval",)),
     ("grid_path", ("grid-path-eval",)),
+    ("prime_rule_search", ("prime-rule-search",)),
     ("prime_gap", ("prime-gap-eval",)),
 )
 
@@ -35,7 +36,7 @@ def run_make(repo: Path, real: str, target: str, log_path: Path) -> list[dict[st
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if row.get("schema") == "crlp.compare.v1":
+        if row.get("schema") in {"crlp.compare.v1", "crlp.rule_search.summary.v1"}:
             row["source_target"] = target
             rows.append(row)
     return rows
@@ -74,7 +75,14 @@ def markdown_table(rows: list[list[str]], headers: list[str]) -> str:
 def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
     delayed = [row for row in rows if row.get("task") == "delayed_claim"]
     grid = [row for row in rows if row.get("task") == "grid_path"]
-    prime = [row for row in rows if row.get("task") == "prime_gap"]
+    rule_search = [
+        row for row in rows if row.get("schema") == "crlp.rule_search.summary.v1"
+    ]
+    prime = [
+        row
+        for row in rows
+        if row.get("task") == "prime_gap" and row.get("schema") == "crlp.compare.v1"
+    ]
 
     lines = [
         "# Latest Verifier Results",
@@ -148,6 +156,38 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
         )
         if prime
         else "_No prime-gap rows captured._"
+    )
+    lines.extend(["", "## Prime Rule Search", ""])
+    lines.append(
+        markdown_table(
+            [
+                [
+                    str(row.get("rule_set_hash", "unknown"))[:12],
+                    str(row.get("grammar_version", "")),
+                    str(row.get("accepted_rules", "")),
+                    str(row.get("accepted_gap_rules", "")),
+                    str(row.get("false_rejections", "")),
+                    fmt_number(row, "direct_exact", 3),
+                    fmt_number(row, "hand_wheel_exact", 3),
+                    fmt_number(row, "expanded_exact", 3),
+                    f"{fmt_number(row, 'expanded_saved_pct', 2)}%",
+                ]
+                for row in rule_search
+            ],
+            [
+                "rule hash",
+                "grammar",
+                "accepted",
+                "gap rules",
+                "false rejects",
+                "direct",
+                "hand",
+                "expanded",
+                "saved",
+            ],
+        )
+        if rule_search
+        else "_No rule-search rows captured._"
     )
     lines.extend(
         [
