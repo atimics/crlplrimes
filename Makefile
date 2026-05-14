@@ -1,4 +1,5 @@
 CC ?= cc
+PYTHON ?= python3
 REAL ?= float
 CPPFLAGS ?= -Iinclude
 CPPFLAGS += -DNN_REAL=$(REAL)
@@ -22,8 +23,14 @@ TEST_RUNNER := $(BUILD_DIR)/test_nn
 SANITIZE_TEST_RUNNER := $(BUILD_DIR)/test_nn_sanitize
 SANITIZE_CFLAGS ?= -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
 SANITIZE_LDFLAGS ?= -fsanitize=address,undefined
+PRIME_GAP_REPORT_DIR ?= $(BUILD_DIR)/prime_gap_experiments
+PRIME_GAP_EXPERIMENT_SEEDS ?= 20240511
+PRIME_GAP_EXPERIMENT_EPOCHS ?= 1,2,4,8
+PRIME_GAP_EXPERIMENT_GRID ?= 0.00:0.00,0.40:0.04,0.80:0.08,1.20:0.12
+PRIME_GAP_EXPERIMENT_MAX_TRAIN ?= 15000
+PRIME_GAP_EXPERIMENT_MAX_TEST ?= 15000
 
-.PHONY: all run prime-gap prime-gap-sweep prime-gap-regularization-sweep benchmark test sanitize clean
+.PHONY: all run prime-gap prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments benchmark test sanitize clean
 
 all: $(XOR_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(BENCHMARK)
 
@@ -70,6 +77,16 @@ prime-gap-regularization-sweep: $(PRIME_GAP_EXAMPLE)
 	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 2 1 15000 15000 0.40 0.04
 	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 2 1 15000 15000 0.80 0.08
 	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 2 1 15000 15000 1.20 0.12
+
+prime-gap-experiments: $(PRIME_GAP_EXAMPLE)
+	$(PYTHON) scripts/prime_gap_experiments.py \
+		--binary ./$(PRIME_GAP_EXAMPLE) \
+		--output-dir $(PRIME_GAP_REPORT_DIR) \
+		--supervised-epochs $(PRIME_GAP_EXPERIMENT_EPOCHS) \
+		--regularization-grid $(PRIME_GAP_EXPERIMENT_GRID) \
+		--seeds $(PRIME_GAP_EXPERIMENT_SEEDS) \
+		--max-train-states $(PRIME_GAP_EXPERIMENT_MAX_TRAIN) \
+		--max-test-states $(PRIME_GAP_EXPERIMENT_MAX_TEST)
 
 benchmark: $(BENCHMARK)
 	./$(BENCHMARK)

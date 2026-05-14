@@ -119,6 +119,7 @@ typedef struct {
     size_t max_test_states;
     double regularized_reference_weight;
     double regularized_entropy_weight;
+    size_t rng_seed_arg;
 } PrimeGapRunConfig;
 
 static double now_seconds(void)
@@ -206,6 +207,7 @@ static PrimeGapRunConfig default_run_config(void)
     config.max_test_states = DEFAULT_MAX_TEST_STATES;
     config.regularized_reference_weight = DEFAULT_REGULARIZED_RL_REFERENCE_WEIGHT;
     config.regularized_entropy_weight = DEFAULT_REGULARIZED_RL_ENTROPY_WEIGHT;
+    config.rng_seed_arg = 20240511u;
     return config;
 }
 
@@ -227,7 +229,8 @@ static int parse_run_config(int argc, char **argv, PrimeGapRunConfig *config)
                             argv,
                             8,
                             DEFAULT_REGULARIZED_RL_ENTROPY_WEIGHT,
-                            &config->regularized_entropy_weight);
+                            &config->regularized_entropy_weight) &&
+           parse_size_arg(argc, argv, 9, 20240511u, &config->rng_seed_arg);
 }
 
 static int run_config_is_valid(const PrimeGapRunConfig *config)
@@ -236,6 +239,7 @@ static int run_config_is_valid(const PrimeGapRunConfig *config)
            config->train_limit_arg >= 16 &&
            config->test_limit_arg <= (size_t)UINT32_MAX - (size_t)G_MAX &&
            config->train_limit_arg <= (size_t)UINT32_MAX &&
+           config->rng_seed_arg <= (size_t)UINT32_MAX &&
            config->regularized_reference_weight >= 0.0 &&
            config->regularized_entropy_weight >= 0.0;
 }
@@ -244,7 +248,7 @@ static void print_usage(FILE *stream)
 {
     fputs("usage: prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] "
           "[max_train_states] [max_test_states] [regularized_reference_weight] "
-          "[regularized_entropy_weight]\n",
+          "[regularized_entropy_weight] [rng_seed]\n",
           stream);
 }
 
@@ -1727,13 +1731,15 @@ int main(int argc, char **argv)
     GapDataset train;
     GapDataset validation;
     GapDataset test;
-    uint32_t rng = 20240511u;
+    uint32_t rng;
     int ok = 1;
 
     if (!parse_run_config(argc, argv, &run_config) || !run_config_is_valid(&run_config)) {
         print_usage(stderr);
         return EXIT_FAILURE;
     }
+
+    rng = (uint32_t)run_config.rng_seed_arg;
 
     uint32_t train_limit = (uint32_t)run_config.train_limit_arg;
     uint32_t test_limit = (uint32_t)run_config.test_limit_arg;
@@ -1749,9 +1755,10 @@ int main(int argc, char **argv)
            G_MAX,
            ACTION_COUNT,
            FEATURE_COUNT);
-    printf("regularized_rl reference_weight=%.3f entropy_weight=%.3f\n",
+    printf("regularized_rl reference_weight=%.3f entropy_weight=%.3f rng_seed=%u\n",
            run_config.regularized_reference_weight,
-           run_config.regularized_entropy_weight);
+           run_config.regularized_entropy_weight,
+           rng);
 
     double started = now_seconds();
     if (!build_sieve(sieve_limit, &sieve)) {

@@ -641,6 +641,17 @@ static int test_prime_gap_rejects_invalid_regularization_args(void)
            !parse_run_config(9, bad_weight, &config);
 }
 
+static int test_prime_gap_parses_rng_seed(void)
+{
+    char *argv[] = {
+        "prime_gap", "1000", "2000", "1", "1", "100", "100", "0.4", "0.04", "12345",
+    };
+    PrimeGapRunConfig config;
+
+    return parse_run_config(10, argv, &config) && run_config_is_valid(&config) &&
+           config.rng_seed_arg == 12345;
+}
+
 static int test_prime_gap_features_are_divisibility_flags(void)
 {
     nn_real inputs[ACTION_COUNT * FEATURE_COUNT];
@@ -808,6 +819,7 @@ int main(void)
           "prime-gap parser rejects negative size args");
     check(test_prime_gap_rejects_invalid_regularization_args(),
           "prime-gap parser rejects invalid regularization args");
+    check(test_prime_gap_parses_rng_seed(), "prime-gap parser accepts rng seed");
     check(test_prime_gap_features_are_divisibility_flags(),
           "prime-gap features are divisibility flags");
     check(test_prime_gap_frequency_policy_is_smoothed(),

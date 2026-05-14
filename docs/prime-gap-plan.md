@@ -107,6 +107,9 @@ which confirms that the regularizer prevents most of the post-RL logit inflation
 
 Regularization weights are now CLI arguments, and `make prime-gap-regularization-sweep` runs a
 small default-range grid so the calibration/ranking tradeoff can be checked without editing code.
+Runs are also seedable, and `make prime-gap-experiments` now drives supervised epoch sweeps plus
+regularization sweeps through a parser that writes CSV and Markdown summaries. Its selected
+regularization row is chosen by validation NLL across the configured seeds.
 
 The deterministic verifier remains the correctness mechanism.
 
@@ -116,7 +119,7 @@ Model-assisted exact verification currently does not beat wheel or block verific
 
 1. Improve calibration.
    - expand the KL/entropy sweep across larger held-out ranges
-   - add validation-selected regularization weights instead of fixed defaults
+   - compare validation-selected regularization weights across multiple seeds and held-out ranges
 
 2. Add stronger non-neural baselines.
    - frequency conditioned on divisibility flags

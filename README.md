@@ -197,10 +197,22 @@ Sweep regularization weights on the default range with:
 make prime-gap-regularization-sweep
 ```
 
+Run the repeatable experiment harness with:
+
+```sh
+make prime-gap-experiments
+```
+
+The harness runs supervised epoch sweeps, KL/entropy regularization sweeps, and writes parsed CSV plus a Markdown summary under `build/float/prime_gap_experiments/`. The selected regularization row is chosen by validation NLL, not by test accuracy. Override the default one-seed quick run with:
+
+```sh
+make prime-gap-experiments PRIME_GAP_EXPERIMENT_SEEDS=20240511,20240512,20240513
+```
+
 Optional arguments:
 
 ```sh
-./build/float/prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] [max_train_states] [max_test_states] [regularized_reference_weight] [regularized_entropy_weight]
+./build/float/prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] [max_train_states] [max_test_states] [regularized_reference_weight] [regularized_entropy_weight] [rng_seed]
 ```
 
 ## Run Tests
