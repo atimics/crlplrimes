@@ -35,6 +35,19 @@ REGULARIZED_VALIDATION_RE = re.compile(
     r"^model regularized-rl temperature=(?P<temperature>\d+(?:\.\d+)?) "
     r"validation_nll=(?P<nll>\d+(?:\.\d+)?)$"
 )
+LINEAR_VALIDATION_RE = re.compile(
+    r"^baseline linear-scorer temperature=(?P<temperature>\d+(?:\.\d+)?) "
+    r"validation_nll=(?P<nll>\d+(?:\.\d+)?)$"
+)
+
+EPOCH_SWEEP_LABELS = (
+    "empirical-gap",
+    "residue-conditioned",
+    "linear-scorer",
+    "linear-scorer temp-scaled",
+    "supervised",
+    "supervised temp-scaled",
+)
 
 
 METRIC_FIELDS = [
@@ -151,8 +164,8 @@ def row_from_metrics(
     reference_weight: float,
     entropy_weight: float,
     label: str,
-    validation_temperature: float,
-    validation_nll: float,
+    validation_temperature: float | None,
+    validation_nll: float | None,
     metrics: dict[str, float],
     command: list[str],
     log_path: Path,
@@ -169,8 +182,10 @@ def row_from_metrics(
         "reference_weight": f"{reference_weight:.4f}",
         "entropy_weight": f"{entropy_weight:.4f}",
         "label": label,
-        "validation_temperature": f"{validation_temperature:.4f}",
-        "validation_nll": f"{validation_nll:.6f}",
+        "validation_temperature": ""
+        if validation_temperature is None
+        else f"{validation_temperature:.4f}",
+        "validation_nll": "" if validation_nll is None else f"{validation_nll:.6f}",
         "command": " ".join(command),
         "log": str(log_path),
     }
@@ -197,10 +212,20 @@ def run_epoch_sweep(args: argparse.Namespace, output_dir: Path) -> list[dict[str
             log_name = f"epoch_seed-{seed}_epochs-{epochs}"
             output, log_path = run_prime_gap(args.binary, run_args, output_dir, log_name)
             policy_rows = parse_policy_rows(output)
-            validation_temperature, validation_nll = parse_validation(
+            supervised_temperature, supervised_nll = parse_validation(
                 output, SUPERVISED_VALIDATION_RE
             )
-            for label in ("supervised", "supervised temp-scaled"):
+            linear_temperature, linear_nll = parse_validation(output, LINEAR_VALIDATION_RE)
+            for label in EPOCH_SWEEP_LABELS:
+                if label.startswith("linear-scorer"):
+                    validation_temperature = linear_temperature
+                    validation_nll = linear_nll
+                elif label.startswith("supervised"):
+                    validation_temperature = supervised_temperature
+                    validation_nll = supervised_nll
+                else:
+                    validation_temperature = None
+                    validation_nll = None
                 rows.append(
                     row_from_metrics(
                         experiment="epoch_sweep",
@@ -356,6 +381,21 @@ def write_summary(
         ("reference_weight", "entropy_weight"),
         ("validation_nll", "top1", "top10", "nll", "ece", "confidence"),
     )
+    baseline_epoch = ""
+    if epoch_rows:
+        baseline_epoch = "2" if any(row["supervised_epochs"] == "2" for row in epoch_rows) else epoch_rows[0]["supervised_epochs"]
+    baseline_rows = [
+        row
+        for row in epoch_rows
+        if row["supervised_epochs"] == baseline_epoch
+        and row["label"]
+        in (
+            "empirical-gap",
+            "residue-conditioned",
+            "linear-scorer temp-scaled",
+            "supervised temp-scaled",
+        )
+    ]
 
     lines = [
         "# Prime-Gap Experiment Summary",
@@ -374,6 +414,20 @@ def write_summary(
                 ("Test top-10", "top10"),
                 ("Test NLL", "nll"),
                 ("Test ECE", "ece"),
+            ],
+        ),
+        "",
+        "## Baseline Comparison",
+        "",
+        markdown_table(
+            baseline_rows,
+            [
+                ("Model", "label"),
+                ("Test top-1", "top1"),
+                ("Test top-10", "top10"),
+                ("Test NLL", "nll"),
+                ("Test ECE", "ece"),
+                ("Temp", "temp"),
             ],
         ),
         "",

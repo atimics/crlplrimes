@@ -702,6 +702,39 @@ static int test_prime_gap_frequency_policy_is_smoothed(void)
     return ok;
 }
 
+static int test_prime_gap_conditioned_frequency_uses_residue_flags(void)
+{
+    GapDataset dataset;
+    ConditionedFrequencyPolicy policy;
+    nn_real scores[ACTION_COUNT];
+    nn_real probabilities[ACTION_COUNT];
+    double sum = 0.0;
+    int ok;
+
+    memset(&dataset, 0, sizeof(dataset));
+    memset(&policy, 0, sizeof(policy));
+    ok = append_gap(&dataset, 11, 2) && append_gap(&dataset, 17, 4) &&
+         append_gap(&dataset, 59, 4);
+    if (!ok || !build_conditioned_frequency_policy(&policy, &dataset)) {
+        free_conditioned_frequency_policy(&policy);
+        free_gap_dataset(&dataset);
+        return 0;
+    }
+
+    conditioned_frequency_scores(&policy, 17, scores, probabilities);
+    for (size_t i = 0; i < ACTION_COUNT; ++i) {
+        sum += (double)probabilities[i];
+    }
+
+    ok = scores[gap_to_action(4)] > scores[gap_to_action(2)] &&
+         probabilities[OVERFLOW_ACTION] > (nn_real)0 &&
+         fabs(sum - 1.0) < 1e-5;
+
+    free_conditioned_frequency_policy(&policy);
+    free_gap_dataset(&dataset);
+    return ok;
+}
+
 static int test_prime_gap_temperature_softmax_flattens_confidence(void)
 {
     const nn_real scores[] = {(nn_real)0, (nn_real)1, (nn_real)3};
@@ -824,6 +857,8 @@ int main(void)
           "prime-gap features are divisibility flags");
     check(test_prime_gap_frequency_policy_is_smoothed(),
           "prime-gap frequency policy is smoothed");
+    check(test_prime_gap_conditioned_frequency_uses_residue_flags(),
+          "prime-gap conditioned frequency uses residue flags");
     check(test_prime_gap_temperature_softmax_flattens_confidence(),
           "prime-gap temperature softmax flattens confidence");
     check(test_prime_gap_wheel_verifier_accounting(),
