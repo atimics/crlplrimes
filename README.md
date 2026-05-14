@@ -87,13 +87,15 @@ make prime-gap-trace
 make prime-gap-replay
 make prime-gap-eval
 make delayed-claim
+make grid-path
+make results
 ```
 
 `prime-gap-trace` writes `build/float/prime_v1.nnckpt` and `build/float/traces/prime_gap.jsonl`. `prime-gap-replay` trains `build/float/prime_v2.nnckpt` from that trace. `prime-gap-eval` compares both checkpoints on the same frozen benchmark.
 
 ## C Neural Network Library
 
-The underlying library implements dense layers, configurable sigmoid/ReLU/tanh/linear activations, mean-squared-error and softmax cross-entropy losses, stochastic gradient descent, layer-wise mini-batch training, tiled batch kernels, cloned networks, first-class action scoring, cached policy-gradient updates, deterministic checkpoint save/load, SHA-256 checkpoint hashing, JSONL trace writing, and simple CPU benchmarks.
+The underlying library implements dense layers, configurable sigmoid/ReLU/tanh/linear activations, mean-squared-error and softmax cross-entropy losses, stochastic gradient descent, layer-wise mini-batch training, tiled batch kernels, cloned networks, first-class action scoring, pairwise action-ranking loss, cached policy-gradient updates, deterministic checkpoint save/load, SHA-256 checkpoint hashing, JSONL trace writing, and simple CPU benchmarks.
 
 The public headers are split conceptually:
 
@@ -270,6 +272,14 @@ Optional arguments:
 ./build/float/prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] [max_train_states] [max_test_states] [regularized_reference_weight] [regularized_entropy_weight] [rng_seed]
 ```
 
+Run the canonical result capture with:
+
+```sh
+make results
+```
+
+This writes `results/latest/summary.md`, `results/latest/comparison.jsonl`, and `results/latest/commands.txt`. Bulky command logs stay out of git under ignored `results/**/logs/`.
+
 ## Run Tests
 
 ```sh
@@ -428,7 +438,7 @@ Prime-gap traces add `p`, `true_gap`, `proposal_steps`, `wheel_exact`, `assisted
 
 Use `nn_trace_parse_jsonl` to validate rows before replay. It checks the schema string, trace version, action-id contract, required scalar fields, unique action ids, score/probability array lengths, selected/target index bounds, and probability mass. Replay code resolves `target_index` to the row's stable `action_id`, then maps that action id back into the regenerated candidate rows before training. `nn_trace_json_get_u64`, `nn_trace_json_get_real`, and `nn_trace_json_get_string` are small helpers for task-specific extra fields.
 
-Comparison reports are JSONL records with schema `crlp.compare.v1`, `report_version`, `model_hash`, `parent_hash`, `feature_encoder_version`, benchmark seed, sample count, capability metrics, calibration metrics, and any task-specific verifier or utility fields.
+Comparison reports are JSONL records with schema `crlp.compare.v1`, `report_version`, `model_hash`, `parent_hash`, `feature_encoder_version`, benchmark seed, sample count, capability metrics, calibration metrics, machine-readable `reliability_bins`, and any task-specific verifier or utility fields.
 
 Deterministic fixtures live in `tests/fixtures/` and cover a tiny action scorer, expected scores, expected probabilities, expected ranking, and an example trace row. The tests exercise those fixtures in both `float` and `double` builds.
 
@@ -452,4 +462,17 @@ make delayed-claim
 make delayed-claim-trace
 make delayed-claim-replay
 make delayed-claim-eval
+```
+
+## Grid-Path Task
+
+`grid_path` is a second exact-verifier task. A deterministic generator creates a small obstructed grid, start, and goal. Candidate actions are legal moves. The neural model ranks moves, but an exact BFS verifier owns correctness by identifying the shortest-path successor.
+
+The task reports accuracy, NLL, calibration error, decision utility, proposal steps, fixed-order baseline steps, exact verifier nodes, and baseline verifier nodes. Trace replay stores stable move action IDs, then maps them back into regenerated legal-move rows before training a successor model.
+
+```sh
+make grid-path
+make grid-path-trace
+make grid-path-replay
+make grid-path-eval
 ```

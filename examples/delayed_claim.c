@@ -515,6 +515,55 @@ static void claim_trace_free(ClaimTrace *trace)
     memset(trace, 0, sizeof(*trace));
 }
 
+static int load_claim_trace(const char *path, ClaimTrace *trace);
+
+static int delayed_claim_reordered_trace_self_test(void)
+{
+    const char *path = "/tmp/crlplrimes_delayed_claim_reordered_trace.jsonl";
+    FILE *fp = fopen(path, "w");
+    if (fp == NULL) {
+        return 0;
+    }
+
+    fprintf(fp,
+            "{\"schema\":\"crlp.trace.v1\",\"trace_version\":1,"
+            "\"action_id_contract\":\"stable_unique_action_ids\",\"task\":\"delayed_claim\","
+            "\"state_hash\":\"0000000000000001\",\"model_hash\":\"fixture\","
+            "\"feature_encoder_version\":1,\"candidate_count\":4,"
+            "\"action_ids\":[2,0,3,1],\"scores\":[2,0,-1,-2],"
+            "\"probabilities\":[0.7,0.1,0.1,0.1],"
+            "\"selected_index\":0,\"target_index\":0,\"loss\":0.1,"
+            "\"verifier_result\":\"correct\",\"verifier_cost\":{},\"seed\":1000}\n");
+    if (fclose(fp) != 0) {
+        return 0;
+    }
+
+    ClaimTrace trace;
+    int ok = load_claim_trace(path, &trace);
+    if (ok) {
+        uint32_t current_action_ids[DC_ACTION_COUNT];
+        nn_real row_reference_probabilities[DC_ACTION_COUNT];
+        fill_claim_action_ids(current_action_ids);
+        for (size_t row = 0; row < DC_ACTION_COUNT; ++row) {
+            size_t action = DC_ACTION_COUNT;
+            ok = ok && claim_action_from_action_id(current_action_ids[row], &action);
+            if (ok) {
+                row_reference_probabilities[row] =
+                    trace.reference_probabilities[action];
+            }
+        }
+        ok = ok && trace.count == 1 && trace.target_action_ids[0] == 2 &&
+             claim_row_for_action_id(current_action_ids,
+                                     DC_ACTION_COUNT,
+                                     trace.target_action_ids[0]) == 2 &&
+             fabs((double)row_reference_probabilities[2] - 0.7) < 1e-6;
+    }
+    claim_trace_free(&trace);
+    remove(path);
+    printf("%s delayed_claim reordered trace action-id replay\n", ok ? "ok" : "FAIL");
+    return ok;
+}
+
 static int load_claim_trace(const char *path, ClaimTrace *trace)
 {
     memset(trace, 0, sizeof(*trace));
@@ -685,6 +734,27 @@ static int replay_claim_trace(const ClaimReplayConfig *config)
     return ok;
 }
 
+static void print_claim_reliability_bins_json(const ClaimMetrics *metrics)
+{
+    fputs(",\"reliability_bins\":[", stdout);
+    int first = 1;
+    for (size_t bin = 0; bin < DC_CALIBRATION_BINS; ++bin) {
+        if (metrics->bin_count[bin] == 0) {
+            continue;
+        }
+        printf("%s{\"low\":%.2f,\"high\":%.2f,\"count\":%zu,"
+               "\"confidence\":%.8f,\"accuracy\":%.8f}",
+               first ? "" : ",",
+               (double)bin / (double)DC_CALIBRATION_BINS,
+               (double)(bin + 1) / (double)DC_CALIBRATION_BINS,
+               metrics->bin_count[bin],
+               metrics->bin_confidence[bin],
+               metrics->bin_accuracy[bin]);
+        first = 0;
+    }
+    fputc(']', stdout);
+}
+
 static int compare_claim_models(int argc, char **argv)
 {
     nn_real *candidate_inputs = calloc((size_t)DC_ACTION_COUNT * DC_FEATURE_COUNT,
@@ -721,7 +791,7 @@ static int compare_claim_models(int argc, char **argv)
                "\"benchmark_seed\":%u,\"sample_count\":%zu,"
                "\"accuracy\":%.8f,\"nll\":%.8f,\"ece\":%.8f,"
                "\"decision_utility\":%.8f,\"proposal_steps\":%.8f,"
-               "\"baseline_steps\":%.8f,\"search_saved\":%.8f}\n",
+               "\"baseline_steps\":%.8f,\"search_saved\":%.8f",
                hash,
                meta.parent_model_hash[0] == '\0' ? "unknown" : meta.parent_model_hash,
                meta.feature_encoder_version,
@@ -734,6 +804,8 @@ static int compare_claim_models(int argc, char **argv)
                metrics.proposal_steps,
                metrics.baseline_steps,
                metrics.baseline_steps - metrics.proposal_steps);
+        print_claim_reliability_bins_json(&metrics);
+        printf("}\n");
         print_claim_metrics(argv[i], hash, metrics);
         nn_free(net);
     }
@@ -756,6 +828,9 @@ static void print_usage(FILE *stream)
 
 int main(int argc, char **argv)
 {
+    if (argc == 2 && strcmp(argv[1], "--self-test-reordered-trace") == 0) {
+        return delayed_claim_reordered_trace_self_test() ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
     if (argc >= 2 && strcmp(argv[1], "--replay") == 0) {
         if (argc < 5) {
             print_usage(stderr);

@@ -4532,6 +4532,27 @@ static void print_compare_usage(FILE *stream)
           stream);
 }
 
+static void print_eval_reliability_bins_json(const EvalMetrics *metrics)
+{
+    fputs(",\"reliability_bins\":[", stdout);
+    int first = 1;
+    for (size_t bin = 0; bin < CALIBRATION_BINS; ++bin) {
+        if (metrics->calibration_count[bin] == 0) {
+            continue;
+        }
+        printf("%s{\"low\":%.2f,\"high\":%.2f,\"count\":%zu,"
+               "\"confidence\":%.8f,\"accuracy\":%.8f}",
+               first ? "" : ",",
+               (double)bin / (double)CALIBRATION_BINS,
+               (double)(bin + 1) / (double)CALIBRATION_BINS,
+               metrics->calibration_count[bin],
+               metrics->calibration_confidence[bin],
+               metrics->calibration_correct[bin]);
+        first = 0;
+    }
+    fputc(']', stdout);
+}
+
 static void print_report_json(const char *model_hash,
                               const NNCheckpointMeta *meta,
                               uint32_t seed,
@@ -4550,7 +4571,7 @@ static void print_report_json(const char *model_hash,
            "\"mean_rank\":%.8f,\"proposal_steps\":%.8f,"
            "\"wheel_exact\":%.8f,\"assisted_wheel\":%.8f,"
            "\"block_cost\":%.8f,\"assisted_block\":%.8f,"
-           "\"model_ms_per_sample\":%.8f,\"verifier_ms_per_sample\":%.8f}\n",
+           "\"model_ms_per_sample\":%.8f,\"verifier_ms_per_sample\":%.8f",
            model_hash,
            meta->parent_model_hash[0] == '\0' ? "unknown" : meta->parent_model_hash,
            evaluation_mode == NULL ? "raw" : evaluation_mode,
@@ -4576,6 +4597,8 @@ static void print_report_json(const char *model_hash,
            metrics.verifier_samples == 0 ? 0.0
                                           : 1000.0 * metrics.verifier_seconds /
                                                 (double)metrics.verifier_samples);
+    print_eval_reliability_bins_json(&metrics);
+    printf("}\n");
 }
 
 static void print_symbolic_compare_json(const char *rule_hash,

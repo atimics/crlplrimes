@@ -317,7 +317,12 @@ def write_csv(path: Path, rows: list[dict[str, str]], fieldnames: list[str] | No
     if fieldnames is None:
         fieldnames = CSV_FIELDS
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=fieldnames,
+            extrasaction="ignore",
+            lineterminator="\n",
+        )
         writer.writeheader()
         writer.writerows(rows)
 
