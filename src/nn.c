@@ -577,6 +577,12 @@ static nn_real softmax_cross_entropy_index(const nn_real *scores, size_t count, 
     return max_score + NN_LOG(sum_exp) - scores[target_index];
 }
 
+static nn_real safe_log_probability(nn_real probability)
+{
+    const nn_real floor = (nn_real)1e-30;
+    return NN_LOG(probability < floor ? floor : probability);
+}
+
 static nn_real compute_deltas_and_loss(NeuralNet *net, const nn_real *target)
 {
     size_t output_layer = net->layer_count - 1;
@@ -1144,6 +1150,40 @@ NeuralNet *nn_create(const size_t *layer_sizes, size_t layer_count, unsigned int
     return nn_create_config(&config);
 }
 
+NeuralNet *nn_clone(const NeuralNet *source)
+{
+    if (source == NULL) {
+        return NULL;
+    }
+
+    NNConfig config;
+    config.layer_sizes = source->sizes;
+    config.layer_count = source->layer_count;
+    config.seed = source->rng_state;
+    config.hidden_activation = source->hidden_activation;
+    config.output_activation = source->output_activation;
+    config.loss = source->loss;
+
+    NeuralNet *copy = nn_create_config(&config);
+    if (copy == NULL) {
+        return NULL;
+    }
+
+    copy->rng_state = source->rng_state;
+    for (size_t layer = 1; layer < source->layer_count; ++layer) {
+        size_t previous = source->sizes[layer - 1];
+        size_t current = source->sizes[layer];
+        memcpy(copy->biases[layer],
+               source->biases[layer],
+               current * sizeof(*copy->biases[layer]));
+        memcpy(copy->weights[layer],
+               source->weights[layer],
+               current * previous * sizeof(*copy->weights[layer]));
+    }
+
+    return copy;
+}
+
 void nn_free(NeuralNet *net)
 {
     if (net == NULL) {
@@ -1471,6 +1511,99 @@ nn_real nn_train_softmax_scorer_cached(NeuralNet *net,
 
     return train_softmax_scorer_from_workspace(
         net, candidate_count, selected_index, weight, learning_rate);
+}
+
+nn_real nn_train_softmax_scorer_policy_regularized_cached(
+    NeuralNet *net,
+    size_t candidate_count,
+    size_t selected_index,
+    nn_real policy_weight,
+    const nn_real *reference_probabilities,
+    nn_real reference_weight,
+    nn_real entropy_weight,
+    nn_real learning_rate)
+{
+    if (net == NULL || candidate_count == 0 || selected_index >= candidate_count ||
+        learning_rate <= (nn_real)0 || nn_output_size(net) != 1 ||
+        net->output_activation != NN_ACTIVATION_LINEAR ||
+        reference_weight < (nn_real)0 || entropy_weight < (nn_real)0 ||
+        (reference_weight != (nn_real)0 && reference_probabilities == NULL) ||
+        !net->batch_cache_valid || net->batch_cache_sample_count != candidate_count ||
+        net->batch_capacity < candidate_count || net->batch_activations == NULL ||
+        net->batch_deltas == NULL) {
+        return (nn_real)NAN;
+    }
+
+    if (policy_weight == (nn_real)0 && reference_weight == (nn_real)0 &&
+        entropy_weight == (nn_real)0) {
+        return (nn_real)0;
+    }
+
+    if (!ensure_gradient_buffers(net)) {
+        return (nn_real)NAN;
+    }
+
+    zero_gradients(net);
+
+    size_t output_layer = net->layer_count - 1;
+    const nn_real *scores = net->batch_activations[output_layer];
+    nn_real *output_deltas = net->batch_deltas[output_layer];
+    nn_softmax(scores, output_deltas, candidate_count);
+
+    nn_real loss = (nn_real)0;
+    if (policy_weight != (nn_real)0) {
+        loss += policy_weight * softmax_cross_entropy_index(scores, candidate_count, selected_index);
+    }
+    if (reference_weight != (nn_real)0) {
+        loss += reference_weight *
+                nn_softmax_cross_entropy(scores, reference_probabilities, candidate_count);
+    }
+
+    nn_real entropy_loss = (nn_real)0;
+    if (entropy_weight != (nn_real)0) {
+        for (size_t sample = 0; sample < candidate_count; ++sample) {
+            nn_real probability = output_deltas[sample];
+            entropy_loss += probability * safe_log_probability(probability);
+        }
+        loss += entropy_weight * entropy_loss;
+    }
+
+    for (size_t sample = 0; sample < candidate_count; ++sample) {
+        nn_real probability = output_deltas[sample];
+        nn_real delta = (nn_real)0;
+
+        if (policy_weight != (nn_real)0) {
+            nn_real target = sample == selected_index ? (nn_real)1 : (nn_real)0;
+            delta += policy_weight * (probability - target);
+        }
+        if (reference_weight != (nn_real)0) {
+            delta += reference_weight * (probability - reference_probabilities[sample]);
+        }
+        if (entropy_weight != (nn_real)0) {
+            delta += entropy_weight * probability *
+                     (safe_log_probability(probability) - entropy_loss);
+        }
+
+        output_deltas[sample] =
+            delta * activation_derivative_from_activation(scores[sample], net->output_activation);
+    }
+
+    for (size_t layer = net->layer_count - 2; layer > 0; --layer) {
+        size_t current = net->sizes[layer];
+        size_t next = net->sizes[layer + 1];
+        dense_backprop_deltas_batch(net->batch_deltas[layer + 1],
+                                    net->weights[layer + 1],
+                                    net->batch_activations[layer],
+                                    net->batch_deltas[layer],
+                                    candidate_count,
+                                    current,
+                                    next,
+                                    activation_for_layer(net, layer));
+    }
+
+    accumulate_batch_gradients(net, candidate_count);
+    apply_gradients(net, learning_rate);
+    return loss;
 }
 
 nn_real nn_train_softmax_scorer_weighted(NeuralNet *net,

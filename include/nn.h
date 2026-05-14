@@ -40,6 +40,7 @@ typedef struct {
 
 NeuralNet *nn_create(const size_t *layer_sizes, size_t layer_count, unsigned int seed);
 NeuralNet *nn_create_config(const NNConfig *config);
+NeuralNet *nn_clone(const NeuralNet *net);
 void nn_free(NeuralNet *net);
 
 size_t nn_input_size(const NeuralNet *net);
@@ -99,6 +100,25 @@ nn_real nn_train_softmax_scorer_cached(NeuralNet *net,
                                        size_t selected_index,
                                        nn_real weight,
                                        nn_real learning_rate);
+/*
+ * Reuses the same cached scorer workspace, but optimizes a policy-style
+ * objective:
+ *
+ *   policy_weight * CE(selected action)
+ *   + reference_weight * CE(reference_probabilities)
+ *   + entropy_weight * sum_i p_i log(p_i)
+ *
+ * Positive entropy_weight therefore rewards higher-entropy policies.
+ */
+nn_real nn_train_softmax_scorer_policy_regularized_cached(
+    NeuralNet *net,
+    size_t candidate_count,
+    size_t selected_index,
+    nn_real policy_weight,
+    const nn_real *reference_probabilities,
+    nn_real reference_weight,
+    nn_real entropy_weight,
+    nn_real learning_rate);
 
 #ifdef NN_ENABLE_TEST_API
 nn_real nn_test_get_parameter(const NeuralNet *net, size_t index);

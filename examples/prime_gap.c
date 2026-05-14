@@ -25,6 +25,8 @@ enum {
     PRIME_BUCKET_COUNT = 4,
 };
 
+static const double DEFAULT_REGULARIZED_RL_REFERENCE_WEIGHT = 1.20;
+static const double DEFAULT_REGULARIZED_RL_ENTROPY_WEIGHT = 0.12;
 static const uint32_t FEATURE_MODS[FEATURE_MOD_COUNT] = {3, 5, 7, 11, 13, 17, 19, 23, 29, 31};
 
 typedef struct {
@@ -108,6 +110,17 @@ typedef struct {
     double assisted_block_cost_top10;
 } EvalMetrics;
 
+typedef struct {
+    size_t train_limit_arg;
+    size_t test_limit_arg;
+    size_t supervised_epochs;
+    size_t rl_epochs;
+    size_t max_train_states;
+    size_t max_test_states;
+    double regularized_reference_weight;
+    double regularized_entropy_weight;
+} PrimeGapRunConfig;
+
 static double now_seconds(void)
 {
 #if defined(CLOCK_MONOTONIC)
@@ -157,6 +170,91 @@ static int parse_size_arg(int argc, char **argv, int index, size_t fallback, siz
 
     *value_out = (size_t)value;
     return 1;
+}
+
+static int parse_double_arg(int argc, char **argv, int index, double fallback, double *value_out)
+{
+    if (index >= argc) {
+        *value_out = fallback;
+        return 1;
+    }
+
+    const char *text = argv[index];
+    if (text[0] == '\0') {
+        return 0;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    double value = strtod(text, &end);
+    if (end == text || *end != '\0' || errno == ERANGE || !isfinite(value)) {
+        return 0;
+    }
+
+    *value_out = value;
+    return 1;
+}
+
+static PrimeGapRunConfig default_run_config(void)
+{
+    PrimeGapRunConfig config;
+    config.train_limit_arg = DEFAULT_TRAIN_LIMIT;
+    config.test_limit_arg = DEFAULT_TEST_LIMIT;
+    config.supervised_epochs = DEFAULT_SUPERVISED_EPOCHS;
+    config.rl_epochs = DEFAULT_RL_EPOCHS;
+    config.max_train_states = DEFAULT_MAX_TRAIN_STATES;
+    config.max_test_states = DEFAULT_MAX_TEST_STATES;
+    config.regularized_reference_weight = DEFAULT_REGULARIZED_RL_REFERENCE_WEIGHT;
+    config.regularized_entropy_weight = DEFAULT_REGULARIZED_RL_ENTROPY_WEIGHT;
+    return config;
+}
+
+static int parse_run_config(int argc, char **argv, PrimeGapRunConfig *config)
+{
+    *config = default_run_config();
+    return parse_size_arg(argc, argv, 1, DEFAULT_TRAIN_LIMIT, &config->train_limit_arg) &&
+           parse_size_arg(argc, argv, 2, DEFAULT_TEST_LIMIT, &config->test_limit_arg) &&
+           parse_size_arg(argc, argv, 3, DEFAULT_SUPERVISED_EPOCHS, &config->supervised_epochs) &&
+           parse_size_arg(argc, argv, 4, DEFAULT_RL_EPOCHS, &config->rl_epochs) &&
+           parse_size_arg(argc, argv, 5, DEFAULT_MAX_TRAIN_STATES, &config->max_train_states) &&
+           parse_size_arg(argc, argv, 6, DEFAULT_MAX_TEST_STATES, &config->max_test_states) &&
+           parse_double_arg(argc,
+                            argv,
+                            7,
+                            DEFAULT_REGULARIZED_RL_REFERENCE_WEIGHT,
+                            &config->regularized_reference_weight) &&
+           parse_double_arg(argc,
+                            argv,
+                            8,
+                            DEFAULT_REGULARIZED_RL_ENTROPY_WEIGHT,
+                            &config->regularized_entropy_weight);
+}
+
+static int run_config_is_valid(const PrimeGapRunConfig *config)
+{
+    return config->test_limit_arg > config->train_limit_arg &&
+           config->train_limit_arg >= 16 &&
+           config->test_limit_arg <= (size_t)UINT32_MAX - (size_t)G_MAX &&
+           config->train_limit_arg <= (size_t)UINT32_MAX &&
+           config->regularized_reference_weight >= 0.0 &&
+           config->regularized_entropy_weight >= 0.0;
+}
+
+static void print_usage(FILE *stream)
+{
+    fputs("usage: prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] "
+          "[max_train_states] [max_test_states] [regularized_reference_weight] "
+          "[regularized_entropy_weight]\n",
+          stream);
+}
+
+static uint32_t validation_start_limit(uint32_t train_limit)
+{
+    uint32_t holdout = train_limit / 5u;
+    if (holdout == 0 || holdout >= train_limit - 3u) {
+        return train_limit;
+    }
+    return train_limit - holdout;
 }
 
 static void free_sieve(Sieve *sieve)
@@ -256,10 +354,14 @@ static int build_gap_datasets(const Sieve *sieve,
                               uint32_t train_limit,
                               uint32_t test_limit,
                               GapDataset *train,
+                              GapDataset *validation,
                               GapDataset *test)
 {
     memset(train, 0, sizeof(*train));
+    memset(validation, 0, sizeof(*validation));
     memset(test, 0, sizeof(*test));
+
+    uint32_t validation_start = validation_start_limit(train_limit);
 
     for (size_t i = 0; i + 1 < sieve->prime_count; ++i) {
         uint32_t p = sieve->primes[i];
@@ -271,8 +373,10 @@ static int build_gap_datasets(const Sieve *sieve,
         }
 
         GapDataset *target = NULL;
-        if (p < train_limit) {
+        if (p < validation_start) {
             target = train;
+        } else if (p < train_limit) {
+            target = validation;
         } else if (p >= train_limit && next <= test_limit) {
             target = test;
         }
@@ -288,6 +392,7 @@ static int build_gap_datasets(const Sieve *sieve,
 
         if (!append_gap(target, p, gap)) {
             free_gap_dataset(train);
+            free_gap_dataset(validation);
             free_gap_dataset(test);
             return 0;
         }
@@ -303,6 +408,13 @@ static void shuffle_order(size_t *order, size_t count, uint32_t *rng)
         size_t tmp = order[i - 1];
         order[i - 1] = order[j];
         order[j] = tmp;
+    }
+}
+
+static void fill_order(size_t *order, size_t count)
+{
+    for (size_t i = 0; i < count; ++i) {
+        order[i] = i;
     }
 }
 
@@ -865,6 +977,29 @@ static double safe_probability(double probability)
     return probability < 1e-12 ? 1e-12 : probability;
 }
 
+static double distribution_entropy(const nn_real *probabilities, size_t count)
+{
+    double entropy = 0.0;
+    for (size_t i = 0; i < count; ++i) {
+        double probability = safe_probability((double)probabilities[i]);
+        entropy -= probability * log(probability);
+    }
+    return entropy;
+}
+
+static double distribution_kl(const nn_real *reference,
+                              const nn_real *probabilities,
+                              size_t count)
+{
+    double kl = 0.0;
+    for (size_t i = 0; i < count; ++i) {
+        double reference_probability = safe_probability((double)reference[i]);
+        double probability = safe_probability((double)probabilities[i]);
+        kl += reference_probability * (log(reference_probability) - log(probability));
+    }
+    return kl;
+}
+
 static size_t eval_sample_index(const GapDataset *dataset, size_t sample, size_t samples)
 {
     return samples != dataset->count ? (sample * dataset->count) / samples : sample;
@@ -1272,6 +1407,44 @@ static void print_metrics(const char *label, EvalMetrics metrics)
            block_delta_pct);
 }
 
+static void print_comparison_header(void)
+{
+    printf("\n=== Policy Comparison ===\n");
+    printf("%-30s %6s %8s %8s %8s %8s %9s %9s %9s\n",
+           "model",
+           "temp",
+           "top1",
+           "top10",
+           "nll",
+           "ece",
+           "conf",
+           "hi_cov",
+           "hi_acc");
+}
+
+static void print_comparison_row(const char *label, double temperature, EvalMetrics metrics)
+{
+    double samples = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
+    double high_confidence_coverage =
+        100.0 * (double)metrics.high_confidence / samples;
+    double high_confidence_accuracy =
+        metrics.high_confidence == 0
+            ? 0.0
+            : 100.0 * (double)metrics.high_confidence_correct /
+                  (double)metrics.high_confidence;
+
+    printf("%-30s %6.2f %7.2f%% %7.2f%% %8.4f %8.4f %9.4f %8.2f%% %8.2f%%\n",
+           label,
+           temperature,
+           100.0 * (double)metrics.top1 / samples,
+           100.0 * (double)metrics.top10 / samples,
+           metrics.nll,
+           metrics.expected_calibration_error,
+           metrics.top1_confidence,
+           high_confidence_coverage,
+           high_confidence_accuracy);
+}
+
 static void build_frequency_policy(const GapDataset *dataset,
                                    size_t *ranked,
                                    nn_real *probabilities)
@@ -1407,6 +1580,91 @@ static int train_strict_verifier_rl(NeuralNet *net,
     return 1;
 }
 
+static int train_regularized_verifier_rl(NeuralNet *net,
+                                         NeuralNet *reference_net,
+                                         const char *label,
+                                         const GapDataset *dataset,
+                                         size_t max_states,
+                                         size_t epochs,
+                                         nn_real learning_rate,
+                                         nn_real reference_weight,
+                                         nn_real entropy_weight,
+                                         double log_scale,
+                                         const FeatureMask *mask,
+                                         nn_real *candidate_inputs,
+                                         nn_real *scores,
+                                         nn_real *probabilities,
+                                         nn_real *reference_scores,
+                                         nn_real *reference_probabilities,
+                                         size_t *order,
+                                         uint32_t *rng)
+{
+    size_t train_steps = dataset->count;
+    double baseline = 0.0;
+    if (max_states != 0 && max_states < train_steps) {
+        train_steps = max_states;
+    }
+
+    for (size_t epoch = 0; epoch < epochs; ++epoch) {
+        shuffle_order(order, dataset->count, rng);
+        double started = now_seconds();
+        double objective = 0.0;
+        double mean_entropy = 0.0;
+        double mean_reference_kl = 0.0;
+        size_t exact_hits = 0;
+
+        for (size_t step = 0; step < train_steps; ++step) {
+            size_t index = order[step];
+            size_t target = gap_to_action(dataset->gap[index]);
+
+            fill_candidate_features_masked(candidate_inputs, dataset->prime[index], log_scale, mask);
+            nn_forward_batch(net, candidate_inputs, scores, ACTION_COUNT);
+            nn_softmax(scores, probabilities, ACTION_COUNT);
+            nn_forward_batch(reference_net, candidate_inputs, reference_scores, ACTION_COUNT);
+            nn_softmax(reference_scores, reference_probabilities, ACTION_COUNT);
+
+            size_t selected = sample_action(probabilities, rng);
+            double reward = selected == target ? 1.0 : 0.0;
+            double advantage = reward - baseline;
+
+            baseline += 0.01 * (reward - baseline);
+            exact_hits += reward > 0.0 ? 1u : 0u;
+            mean_entropy += distribution_entropy(probabilities, ACTION_COUNT);
+            mean_reference_kl +=
+                distribution_kl(reference_probabilities, probabilities, ACTION_COUNT);
+
+            nn_real step_loss = nn_train_softmax_scorer_policy_regularized_cached(
+                net,
+                ACTION_COUNT,
+                selected,
+                (nn_real)advantage,
+                reference_probabilities,
+                reference_weight,
+                entropy_weight,
+                learning_rate);
+            if (isnan((double)step_loss)) {
+                return 0;
+            }
+            objective += (double)step_loss;
+        }
+
+        double elapsed = now_seconds() - started;
+        printf("%s epoch %zu sampled_exact=%.2f%% baseline=%.3f objective=%.4f "
+               "entropy=%.3f ref_kl=%.4f updates=%zu %.0f states/s\n",
+               label,
+               epoch + 1,
+               100.0 * (double)exact_hits / (double)train_steps,
+               baseline,
+               objective / (double)train_steps,
+               mean_entropy / (double)train_steps,
+               mean_reference_kl / (double)train_steps,
+               train_steps,
+               elapsed > 0.0 ? (double)train_steps / elapsed : 0.0);
+    }
+
+    return 1;
+}
+
 static int run_supervised_ablation(const char *label,
                                    const FeatureMask *mask,
                                    const NNConfig *config,
@@ -1464,43 +1722,36 @@ static int run_supervised_ablation(const char *label,
 #ifndef PRIME_GAP_NO_MAIN
 int main(int argc, char **argv)
 {
-    size_t train_limit_arg = DEFAULT_TRAIN_LIMIT;
-    size_t test_limit_arg = DEFAULT_TEST_LIMIT;
-    size_t supervised_epochs = DEFAULT_SUPERVISED_EPOCHS;
-    size_t rl_epochs = DEFAULT_RL_EPOCHS;
-    size_t max_train_states = DEFAULT_MAX_TRAIN_STATES;
-    size_t max_test_states = DEFAULT_MAX_TEST_STATES;
+    PrimeGapRunConfig run_config;
     Sieve sieve;
     GapDataset train;
+    GapDataset validation;
     GapDataset test;
     uint32_t rng = 20240511u;
     int ok = 1;
-    int args_ok = parse_size_arg(argc, argv, 1, DEFAULT_TRAIN_LIMIT, &train_limit_arg) &&
-                  parse_size_arg(argc, argv, 2, DEFAULT_TEST_LIMIT, &test_limit_arg) &&
-                  parse_size_arg(argc, argv, 3, DEFAULT_SUPERVISED_EPOCHS, &supervised_epochs) &&
-                  parse_size_arg(argc, argv, 4, DEFAULT_RL_EPOCHS, &rl_epochs) &&
-                  parse_size_arg(argc, argv, 5, DEFAULT_MAX_TRAIN_STATES, &max_train_states) &&
-                  parse_size_arg(argc, argv, 6, DEFAULT_MAX_TEST_STATES, &max_test_states);
 
-    if (!args_ok || test_limit_arg <= train_limit_arg || train_limit_arg < 16 ||
-        test_limit_arg > (size_t)UINT32_MAX - (size_t)G_MAX ||
-        train_limit_arg > (size_t)UINT32_MAX) {
-        fputs("usage: prime_gap [train_limit] [test_limit] [supervised_epochs] [rl_epochs] "
-              "[max_train_states] [max_test_states]\n",
-              stderr);
+    if (!parse_run_config(argc, argv, &run_config) || !run_config_is_valid(&run_config)) {
+        print_usage(stderr);
         return EXIT_FAILURE;
     }
 
-    uint32_t train_limit = (uint32_t)train_limit_arg;
-    uint32_t test_limit = (uint32_t)test_limit_arg;
+    uint32_t train_limit = (uint32_t)run_config.train_limit_arg;
+    uint32_t test_limit = (uint32_t)run_config.test_limit_arg;
     uint32_t sieve_limit = test_limit + (uint32_t)G_MAX;
+    uint32_t validation_start = validation_start_limit(train_limit);
+    size_t max_validation_states = run_config.max_test_states;
 
-    printf("prime-gap scorer train_limit=%u test_limit=%u g_max=%d actions=%d features=%d\n",
+    printf("prime-gap scorer train_limit=%u validation_start=%u test_limit=%u "
+           "g_max=%d actions=%d features=%d\n",
            train_limit,
+           validation_start,
            test_limit,
            G_MAX,
            ACTION_COUNT,
            FEATURE_COUNT);
+    printf("regularized_rl reference_weight=%.3f entropy_weight=%.3f\n",
+           run_config.regularized_reference_weight,
+           run_config.regularized_entropy_weight);
 
     double started = now_seconds();
     if (!build_sieve(sieve_limit, &sieve)) {
@@ -1512,30 +1763,39 @@ int main(int argc, char **argv)
            sieve.prime_count,
            now_seconds() - started);
 
-    if (!build_gap_datasets(&sieve, train_limit, test_limit, &train, &test)) {
+    if (!build_gap_datasets(&sieve, train_limit, test_limit, &train, &validation, &test)) {
         fputs("failed to build gap datasets\n", stderr);
         free_sieve(&sieve);
         return EXIT_FAILURE;
     }
 
-    printf("dataset train=%zu exact_action_coverage=%.2f%% test=%zu exact_action_coverage=%.2f%% "
-           "overflow_actions train=%zu test=%zu\n",
+    printf("dataset train=%zu exact_action_coverage=%.2f%% "
+           "validation=%zu exact_action_coverage=%.2f%% "
+           "test=%zu exact_action_coverage=%.2f%% "
+           "overflow_actions train=%zu validation=%zu test=%zu\n",
            train.count,
            train.total_seen == 0
                ? 0.0
                : 100.0 * (double)(train.total_seen - train.overflow_count) /
                      (double)train.total_seen,
+           validation.count,
+           validation.total_seen == 0
+               ? 0.0
+               : 100.0 * (double)(validation.total_seen - validation.overflow_count) /
+                     (double)validation.total_seen,
            test.count,
            test.total_seen == 0
                ? 0.0
                : 100.0 * (double)(test.total_seen - test.overflow_count) /
                      (double)test.total_seen,
            train.overflow_count,
+           validation.overflow_count,
            test.overflow_count);
 
-    if (train.count == 0 || test.count == 0) {
-        fputs("empty train or test split\n", stderr);
+    if (train.count == 0 || validation.count == 0 || test.count == 0) {
+        fputs("empty train, validation, or test split\n", stderr);
         free_gap_dataset(&train);
+        free_gap_dataset(&validation);
         free_gap_dataset(&test);
         free_sieve(&sieve);
         return EXIT_FAILURE;
@@ -1551,20 +1811,22 @@ int main(int argc, char **argv)
     config.loss = NN_LOSS_MSE;
 
     NeuralNet *net = nn_create_config(&config);
+    NeuralNet *strict_net = NULL;
+    NeuralNet *regularized_net = NULL;
     nn_real *candidate_inputs = calloc((size_t)ACTION_COUNT * FEATURE_COUNT, sizeof(*candidate_inputs));
     nn_real *scores = calloc(ACTION_COUNT, sizeof(*scores));
     nn_real *probabilities = calloc(ACTION_COUNT, sizeof(*probabilities));
+    nn_real *reference_scores = calloc(ACTION_COUNT, sizeof(*reference_scores));
+    nn_real *reference_probabilities = calloc(ACTION_COUNT, sizeof(*reference_probabilities));
     size_t *order = calloc(train.count, sizeof(*order));
     if (net == NULL || candidate_inputs == NULL || scores == NULL || probabilities == NULL ||
-        order == NULL) {
+        reference_scores == NULL || reference_probabilities == NULL || order == NULL) {
         fputs("failed to allocate model buffers\n", stderr);
         ok = 0;
         goto cleanup;
     }
 
-    for (size_t i = 0; i < train.count; ++i) {
-        order[i] = i;
-    }
+    fill_order(order, train.count);
 
     double log_scale = log((double)test_limit + (double)G_MAX);
     size_t frequency_ranked[ACTION_COUNT];
@@ -1577,14 +1839,14 @@ int main(int argc, char **argv)
                                          &test,
                                          frequency_ranked,
                                          frequency_probabilities,
-                                         max_test_states,
+                                         run_config.max_test_states,
                                          1));
 
     print_metrics("model before",
                   evaluate_model(net,
                                  &sieve,
                                  &test,
-                                 max_test_states,
+                                 run_config.max_test_states,
                                  log_scale,
                                  &FEATURE_MASK_FULL,
                                  1,
@@ -1601,9 +1863,9 @@ int main(int argc, char **argv)
                                  &sieve,
                                  &train,
                                  &test,
-                                 max_train_states,
-                                 max_test_states,
-                                 supervised_epochs,
+                                 run_config.max_train_states,
+                                 run_config.max_test_states,
+                                 run_config.supervised_epochs,
                                  log_scale,
                                  candidate_inputs,
                                  scores,
@@ -1620,9 +1882,9 @@ int main(int argc, char **argv)
                                  &sieve,
                                  &train,
                                  &test,
-                                 max_train_states,
-                                 max_test_states,
-                                 supervised_epochs,
+                                 run_config.max_train_states,
+                                 run_config.max_test_states,
+                                 run_config.supervised_epochs,
                                  log_scale,
                                  candidate_inputs,
                                  scores,
@@ -1639,9 +1901,9 @@ int main(int argc, char **argv)
                                  &sieve,
                                  &train,
                                  &test,
-                                 max_train_states,
-                                 max_test_states,
-                                 supervised_epochs,
+                                 run_config.max_train_states,
+                                 run_config.max_test_states,
+                                 run_config.supervised_epochs,
                                  log_scale,
                                  candidate_inputs,
                                  scores,
@@ -1656,8 +1918,8 @@ int main(int argc, char **argv)
     ok = train_supervised(net,
                           "model supervised",
                           &train,
-                          max_train_states,
-                          supervised_epochs,
+                          run_config.max_train_states,
+                          run_config.supervised_epochs,
                           (nn_real)0.005,
                           log_scale,
                           &FEATURE_MASK_FULL,
@@ -1670,52 +1932,72 @@ int main(int argc, char **argv)
 
     double supervised_temperature_nll = 0.0;
     double supervised_temperature = fit_temperature(net,
-                                                    &train,
-                                                    max_train_states,
+                                                    &validation,
+                                                    max_validation_states,
                                                     log_scale,
                                                     &FEATURE_MASK_FULL,
                                                     candidate_inputs,
                                                     scores,
                                                     probabilities,
                                                     &supervised_temperature_nll);
-    printf("model supervised temperature=%.2f train_nll=%.4f\n",
+    printf("model supervised temperature=%.2f validation_nll=%.4f\n",
            supervised_temperature,
            supervised_temperature_nll);
 
-    print_metrics("model supervised",
-                  evaluate_model(net,
-                                 &sieve,
-                                 &test,
-                                 max_test_states,
-                                 log_scale,
-                                 &FEATURE_MASK_FULL,
-                                 1,
-                                 1.0,
-                                 candidate_inputs,
-                                 scores,
-                                 probabilities));
-    print_metrics("model supervised temp-scaled",
-                  evaluate_model(net,
-                                 &sieve,
-                                 &test,
-                                 max_test_states,
-                                 log_scale,
-                                 &FEATURE_MASK_FULL,
-                                 0,
-                                 supervised_temperature,
-                                 candidate_inputs,
-                                 scores,
-                                 probabilities));
+    EvalMetrics supervised_metrics = evaluate_model(net,
+                                                    &sieve,
+                                                    &test,
+                                                    run_config.max_test_states,
+                                                    log_scale,
+                                                    &FEATURE_MASK_FULL,
+                                                    1,
+                                                    1.0,
+                                                    candidate_inputs,
+                                                    scores,
+                                                    probabilities);
+    EvalMetrics supervised_temp_metrics = evaluate_model(net,
+                                                         &sieve,
+                                                         &test,
+                                                         run_config.max_test_states,
+                                                         log_scale,
+                                                         &FEATURE_MASK_FULL,
+                                                         0,
+                                                         supervised_temperature,
+                                                         candidate_inputs,
+                                                         scores,
+                                                         probabilities);
+    print_metrics("model supervised", supervised_metrics);
+    print_metrics("model supervised temp-scaled", supervised_temp_metrics);
 
     printf("\n=== Strict Verifier RL ===\n");
-    if (rl_epochs == 0) {
+    int have_rl_metrics = 0;
+    double rl_temperature = 1.0;
+    EvalMetrics strict_metrics;
+    EvalMetrics strict_temp_metrics;
+    double regularized_temperature = 1.0;
+    EvalMetrics regularized_metrics;
+    EvalMetrics regularized_temp_metrics;
+
+    if (run_config.rl_epochs == 0) {
         printf("skipped because rl_epochs=0\n");
     } else {
-        ok = train_strict_verifier_rl(net,
+        strict_net = nn_clone(net);
+        regularized_net = nn_clone(net);
+        if (strict_net == NULL || regularized_net == NULL) {
+            fputs("failed to clone supervised model\n", stderr);
+            ok = 0;
+            goto cleanup;
+        }
+
+        uint32_t strict_rng = rng;
+        uint32_t regularized_rng = rng;
+
+        fill_order(order, train.count);
+        ok = train_strict_verifier_rl(strict_net,
                                       "model strict-rl",
                                       &train,
-                                      max_train_states,
-                                      rl_epochs,
+                                      run_config.max_train_states,
+                                      run_config.rl_epochs,
                                       (nn_real)0.001,
                                       log_scale,
                                       &FEATURE_MASK_FULL,
@@ -1723,58 +2005,144 @@ int main(int argc, char **argv)
                                       scores,
                                       probabilities,
                                       order,
-                                      &rng);
+                                      &strict_rng);
         if (!ok) {
             goto cleanup;
         }
 
         double rl_temperature_nll = 0.0;
-        double rl_temperature = fit_temperature(net,
-                                                &train,
-                                                max_train_states,
-                                                log_scale,
-                                                &FEATURE_MASK_FULL,
-                                                candidate_inputs,
-                                                scores,
-                                                probabilities,
-                                                &rl_temperature_nll);
-        printf("model strict-rl temperature=%.2f train_nll=%.4f\n",
+        rl_temperature = fit_temperature(strict_net,
+                                         &validation,
+                                         max_validation_states,
+                                         log_scale,
+                                         &FEATURE_MASK_FULL,
+                                         candidate_inputs,
+                                         scores,
+                                         probabilities,
+                                         &rl_temperature_nll);
+        printf("model strict-rl temperature=%.2f validation_nll=%.4f\n",
                rl_temperature,
                rl_temperature_nll);
 
-        print_metrics("model strict-rl",
-                      evaluate_model(net,
-                                     &sieve,
-                                     &test,
-                                     max_test_states,
-                                     log_scale,
-                                     &FEATURE_MASK_FULL,
-                                     1,
-                                     1.0,
-                                     candidate_inputs,
-                                     scores,
-                                     probabilities));
-        print_metrics("model strict-rl temp-scaled",
-                      evaluate_model(net,
-                                     &sieve,
-                                     &test,
-                                     max_test_states,
-                                     log_scale,
-                                     &FEATURE_MASK_FULL,
-                                     0,
-                                     rl_temperature,
-                                     candidate_inputs,
-                                     scores,
-                                     probabilities));
+        strict_metrics = evaluate_model(strict_net,
+                                        &sieve,
+                                        &test,
+                                        run_config.max_test_states,
+                                        log_scale,
+                                        &FEATURE_MASK_FULL,
+                                        1,
+                                        1.0,
+                                        candidate_inputs,
+                                        scores,
+                                        probabilities);
+        strict_temp_metrics = evaluate_model(strict_net,
+                                             &sieve,
+                                             &test,
+                                             run_config.max_test_states,
+                                             log_scale,
+                                             &FEATURE_MASK_FULL,
+                                             0,
+                                             rl_temperature,
+                                             candidate_inputs,
+                                             scores,
+                                             probabilities);
+        print_metrics("model strict-rl", strict_metrics);
+        print_metrics("model strict-rl temp-scaled", strict_temp_metrics);
+
+        printf("\n=== Regularized Verifier RL ===\n");
+        printf("reference_weight=%.3f entropy_weight=%.3f\n",
+               run_config.regularized_reference_weight,
+               run_config.regularized_entropy_weight);
+        fill_order(order, train.count);
+        ok = train_regularized_verifier_rl(regularized_net,
+                                           net,
+                                           "model regularized-rl",
+                                           &train,
+                                           run_config.max_train_states,
+                                           run_config.rl_epochs,
+                                           (nn_real)0.001,
+                                           (nn_real)run_config.regularized_reference_weight,
+                                           (nn_real)run_config.regularized_entropy_weight,
+                                           log_scale,
+                                           &FEATURE_MASK_FULL,
+                                           candidate_inputs,
+                                           scores,
+                                           probabilities,
+                                           reference_scores,
+                                           reference_probabilities,
+                                           order,
+                                           &regularized_rng);
+        if (!ok) {
+            goto cleanup;
+        }
+
+        double regularized_temperature_nll = 0.0;
+        regularized_temperature = fit_temperature(regularized_net,
+                                                  &validation,
+                                                  max_validation_states,
+                                                  log_scale,
+                                                  &FEATURE_MASK_FULL,
+                                                  candidate_inputs,
+                                                  scores,
+                                                  probabilities,
+                                                  &regularized_temperature_nll);
+        printf("model regularized-rl temperature=%.2f validation_nll=%.4f\n",
+               regularized_temperature,
+               regularized_temperature_nll);
+
+        regularized_metrics = evaluate_model(regularized_net,
+                                             &sieve,
+                                             &test,
+                                             run_config.max_test_states,
+                                             log_scale,
+                                             &FEATURE_MASK_FULL,
+                                             1,
+                                             1.0,
+                                             candidate_inputs,
+                                             scores,
+                                             probabilities);
+        regularized_temp_metrics = evaluate_model(regularized_net,
+                                                  &sieve,
+                                                  &test,
+                                                  run_config.max_test_states,
+                                                  log_scale,
+                                                  &FEATURE_MASK_FULL,
+                                                  0,
+                                                  regularized_temperature,
+                                                  candidate_inputs,
+                                                  scores,
+                                                  probabilities);
+        print_metrics("model regularized-rl", regularized_metrics);
+        print_metrics("model regularized-rl temp-scaled", regularized_temp_metrics);
+        have_rl_metrics = 1;
+    }
+
+    print_comparison_header();
+    print_comparison_row("supervised", 1.0, supervised_metrics);
+    print_comparison_row("supervised temp-scaled",
+                         supervised_temperature,
+                         supervised_temp_metrics);
+    if (have_rl_metrics) {
+        print_comparison_row("strict-rl", 1.0, strict_metrics);
+        print_comparison_row("strict-rl temp-scaled", rl_temperature, strict_temp_metrics);
+        print_comparison_row("regularized-rl", 1.0, regularized_metrics);
+        print_comparison_row("regularized-rl temp-scaled",
+                             regularized_temperature,
+                             regularized_temp_metrics);
     }
 
 cleanup:
     free(order);
+    free(reference_probabilities);
+    free(reference_scores);
     free(probabilities);
     free(scores);
     free(candidate_inputs);
+    nn_free(regularized_net);
+    nn_free(strict_net);
     nn_free(net);
     free_gap_dataset(&train);
+    free_gap_dataset(&validation);
     free_gap_dataset(&test);
     free_sieve(&sieve);
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
