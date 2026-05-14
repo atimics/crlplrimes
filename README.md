@@ -55,9 +55,51 @@ The prime-gap experiment is deliberately verifier-guided:
 
 The important framing is that the verifier is the correctness mechanism. The neural network is judged by proposal quality, generalization, and calibrated uncertainty under perfect mathematical feedback.
 
+## Verifier-Grounded Proposal Learning
+
+Design invariant:
+
+```text
+The model proposes. The verifier decides. The trace remembers.
+```
+
+The reusable loop is:
+
+1. A symbolic task defines state, legal candidate actions, and an exact verifier or delayed outcome rule.
+2. A shared neural scorer assigns one logit to each legal candidate action.
+3. Softmax turns those logits into proposal probabilities; deterministic ranking breaks score ties by original candidate order.
+4. The verifier supplies the correct action, correction, reward, cost, or delayed label. The model is not the oracle.
+5. JSONL traces record state identity, action ids, scores, probabilities, selected action, target action, loss, verifier result, and cost.
+6. Replay training builds successor checkpoints from traces while active evaluation models remain frozen.
+
+End-to-end quick path:
+
+```sh
+make
+make test
+make prime-gap
+make prime-gap-trace
+make prime-gap-replay
+make prime-gap-eval
+make delayed-claim
+```
+
+`prime-gap-trace` writes `build/float/prime_v1.nnckpt` and `build/float/traces/prime_gap.jsonl`. `prime-gap-replay` trains `build/float/prime_v2.nnckpt` from that trace. `prime-gap-eval` compares both checkpoints on the same frozen benchmark.
+
 ## C Neural Network Library
 
-The underlying library implements dense layers, configurable sigmoid/ReLU/tanh/linear activations, mean-squared-error and softmax cross-entropy losses, stochastic gradient descent, layer-wise mini-batch training, tiled batch kernels, cloned networks, shared softmax scorers, cached policy-gradient updates, and simple CPU benchmarks.
+The underlying library implements dense layers, configurable sigmoid/ReLU/tanh/linear activations, mean-squared-error and softmax cross-entropy losses, stochastic gradient descent, layer-wise mini-batch training, tiled batch kernels, cloned networks, first-class action scoring, cached policy-gradient updates, deterministic checkpoint save/load, SHA-256 checkpoint hashing, JSONL trace writing, and simple CPU benchmarks.
+
+The public headers are split conceptually:
+
+```text
+include/nn_core.h   allocation, inspection, forward pass, softmax, action scoring, checkpoints, traces
+include/nn_train.h  sample training, batch training, action-scorer training
+include/nn_tasks_prime_gap.h  command entry points for the prime-gap task module
+include/nn.h        compatibility umbrella for existing users
+```
+
+The prime-gap implementation lives in `src/nn_tasks_prime_gap.c`; the files in `examples/prime_gap.c`, `examples/prime_replay.c`, and `examples/prime_compare.c` are thin command wrappers. That keeps the reusable verifier/task logic out of the CLI layer.
 
 ## Build
 
@@ -97,6 +139,14 @@ accuracy
 inference latency
 inference throughput
 ```
+
+## Run the Standalone Action-Scoring Example
+
+```sh
+make action-score
+```
+
+This example trains a tiny shared scorer over three candidate rows and prints deterministic ranked actions with scores and probabilities. It is independent of the prime-gap experiment.
 
 ## Run Benchmarks
 
@@ -227,6 +277,14 @@ Run sanitizer coverage with:
 make sanitize
 ```
 
+Run the CI-style local check with:
+
+```sh
+make check
+```
+
+This runs the unit tests, sanitizer tests, double-precision tests, the standalone action-scoring example, delayed-claim trace/replay/eval, and a small prime-gap trace/replay/eval smoke path.
+
 The tests compare scalar and batched forward results, verify `batch_size=1` training against sample-wise training, finite-difference check batched gradients through the tiled kernels, and check the softmax cross-entropy and shared softmax-scorer gradients.
 
 ## API
@@ -270,12 +328,21 @@ With a linear output layer, `nn_forward` returns logits; call `nn_softmax` when 
 For a shared scalar scorer over candidate actions, train one state at a time with softmax cross-entropy across the candidate rows:
 
 ```c
-nn_real loss = nn_train_softmax_scorer(scorer,
-                                       candidate_inputs,
-                                       candidate_count,
-                                       true_candidate_index,
-                                       0.005f);
+nn_real scores[16];
+nn_real probabilities[16];
+size_t ranked[16];
+
+nn_score_action_rows(scorer, candidate_inputs, candidate_count, scores, probabilities);
+nn_rank_action_scores(scores, candidate_count, ranked);
+
+nn_real loss = nn_train_action_scorer(scorer,
+                                      candidate_inputs,
+                                      candidate_count,
+                                      true_candidate_index,
+                                      0.005f);
 ```
+
+`candidate_inputs` is row-major: `candidate_count * nn_input_size(scorer)` values. The scorer must have one scalar output. Probabilities sum to approximately `1.0`, and ranking is deterministic for equal scores.
 
 Verifier-guided or policy-gradient experiments can reuse a cached candidate
 forward pass and add KL/entropy regularization against a reference policy:
@@ -306,3 +373,78 @@ nn_real final_loss = nn_train_batched(net, inputs, targets, sample_count, 32, 0.
 ```
 
 `inputs` must contain `sample_count * nn_input_size(net)` values. `targets` must contain `sample_count * nn_output_size(net)` values.
+
+## Checkpoints
+
+Checkpoints use a small canonical binary format with:
+
+```text
+magic
+checkpoint_version
+scalar_type
+layer_count
+layer_sizes
+hidden_activation
+output_activation
+loss
+weights
+biases
+metadata block length
+metadata block
+```
+
+Metadata currently stores `parent_model_hash`, `training_trace_root`, `feature_encoder_version`, `benchmark_report_hash`, and `notes`.
+
+```c
+NNCheckpointMeta meta = {0};
+meta.checkpoint_version = 1;
+meta.feature_encoder_version = 1;
+
+nn_save_checkpoint(net, "model.nnckpt", &meta);
+
+char hash[65];
+nn_hash_checkpoint_hex("model.nnckpt", hash);
+
+NNCheckpointMeta loaded_meta;
+NeuralNet *loaded = nn_load_checkpoint("model.nnckpt", &loaded_meta);
+```
+
+The hash is SHA-256 over the exact checkpoint bytes, so changing weights or metadata changes model identity.
+
+## Trace Schema
+
+Trace rows are JSONL records with schema `crlp.trace.v1`:
+
+```json
+{"schema":"crlp.trace.v1","task":"prime_gap","state_hash":"0000000000000000","model_hash":"unknown","feature_encoder_version":1,"candidate_count":0,"action_ids":[],"scores":[],"probabilities":[],"selected_index":0,"target_index":0,"loss":0.0,"verifier_result":"correct","verifier_cost":{},"seed":0}
+```
+
+Prime-gap traces add `p`, `true_gap`, `proposal_steps`, `wheel_exact`, `assisted_wheel`, `block_cost`, `assisted_block`, and `log_scale`. Delayed-claim traces use the deterministic per-row seed for replay.
+
+Use `nn_trace_parse_jsonl` to validate rows before replay. It checks the schema string, required scalar fields, action ids, score/probability array lengths, selected/target index bounds, and probability mass. `nn_trace_json_get_u64`, `nn_trace_json_get_real`, and `nn_trace_json_get_string` are small helpers for task-specific extra fields.
+
+Comparison reports are JSONL records with schema `crlp.compare.v1`, `report_version`, `model_hash`, `parent_hash`, `feature_encoder_version`, benchmark seed, sample count, capability metrics, calibration metrics, and any task-specific verifier or utility fields.
+
+Deterministic fixtures live in `tests/fixtures/` and cover a tiny action scorer, expected scores, expected probabilities, expected ranking, and an example trace row. The tests exercise those fixtures in both `float` and `double` builds.
+
+## Delayed-Claim Task
+
+`delayed_claim` is a small delayed-label synthetic task with six state features:
+
+```text
+source_reliability
+evidence_strength
+contradiction_count
+claim_age
+local_history_score
+noise_level
+```
+
+The model scores four actions: `trust`, `ignore`, `request_more_evidence`, and `act_cautiously`. A deterministic hidden rule resolves the later outcome and defines the best action. The task reports accuracy, NLL, calibration error, and decision utility.
+
+```sh
+make delayed-claim
+make delayed-claim-trace
+make delayed-claim-replay
+make delayed-claim-eval
+```

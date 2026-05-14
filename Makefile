@@ -13,11 +13,18 @@ LDFLAGS ?=
 LDLIBS ?= -lm
 
 BUILD_DIR := build/$(REAL)
+NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h
+PRIME_GAP_TASK_HEADERS := include/nn_tasks_prime_gap.h
 NN_OBJ := $(BUILD_DIR)/nn.o
+PRIME_GAP_TASK_OBJ := $(BUILD_DIR)/nn_tasks_prime_gap.o
 NN_TEST_OBJ := $(BUILD_DIR)/nn_test.o
 NN_SANITIZE_OBJ := $(BUILD_DIR)/nn_sanitize.o
 XOR_EXAMPLE := $(BUILD_DIR)/xor
+ACTION_SCORE_EXAMPLE := $(BUILD_DIR)/action_score
 PRIME_GAP_EXAMPLE := $(BUILD_DIR)/prime_gap
+PRIME_REPLAY := $(BUILD_DIR)/prime_replay
+PRIME_COMPARE := $(BUILD_DIR)/prime_compare
+DELAYED_CLAIM := $(BUILD_DIR)/delayed_claim
 BENCHMARK := $(BUILD_DIR)/benchmark
 TEST_RUNNER := $(BUILD_DIR)/test_nn
 SANITIZE_TEST_RUNNER := $(BUILD_DIR)/test_nn_sanitize
@@ -30,42 +37,70 @@ PRIME_GAP_EXPERIMENT_GRID ?= 0.00:0.00,0.40:0.04,0.80:0.08,1.20:0.12
 PRIME_GAP_EXPERIMENT_MAX_TRAIN ?= 15000
 PRIME_GAP_EXPERIMENT_MAX_TEST ?= 15000
 
-.PHONY: all run prime-gap prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments benchmark test sanitize clean
+.PHONY: all run action-score prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval benchmark test sanitize check clean
 
-all: $(XOR_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(BENCHMARK)
+all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(DELAYED_CLAIM) $(BENCHMARK)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(NN_OBJ): src/nn.c include/nn.h | $(BUILD_DIR)
+$(NN_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn.c -o $@
 
-$(NN_TEST_OBJ): src/nn.c include/nn.h | $(BUILD_DIR)
+$(NN_TEST_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn.c -o $@
 
-$(NN_SANITIZE_OBJ): src/nn.c include/nn.h | $(BUILD_DIR)
+$(NN_SANITIZE_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn.c -o $@
 
-$(XOR_EXAMPLE): examples/xor.c $(NN_OBJ) include/nn.h | $(BUILD_DIR)
+$(PRIME_GAP_TASK_OBJ): src/nn_tasks_prime_gap.c $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_tasks_prime_gap.c -o $@
+
+$(XOR_EXAMPLE): examples/xor.c $(NN_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/xor.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(PRIME_GAP_EXAMPLE): examples/prime_gap.c $(NN_OBJ) include/nn.h | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_gap.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+$(ACTION_SCORE_EXAMPLE): examples/action_score.c $(NN_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/action_score.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(BENCHMARK): benchmarks/benchmark.c $(NN_OBJ) include/nn.h | $(BUILD_DIR)
+$(PRIME_GAP_EXAMPLE): examples/prime_gap.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_gap.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(PRIME_REPLAY): examples/prime_replay.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_replay.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(PRIME_COMPARE): examples/prime_compare.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_compare.c $(NN_OBJ) $(PRIME_GAP_TASK_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(DELAYED_CLAIM): examples/delayed_claim.c $(NN_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/delayed_claim.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(BENCHMARK): benchmarks/benchmark.c $(NN_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) benchmarks/benchmark.c $(NN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(TEST_RUNNER): tests/test_nn.c examples/prime_gap.c $(NN_TEST_OBJ) include/nn.h | $(BUILD_DIR)
+$(TEST_RUNNER): tests/test_nn.c src/nn_tasks_prime_gap.c $(NN_TEST_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) tests/test_nn.c $(NN_TEST_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(SANITIZE_TEST_RUNNER): tests/test_nn.c examples/prime_gap.c $(NN_SANITIZE_OBJ) include/nn.h | $(BUILD_DIR)
+$(SANITIZE_TEST_RUNNER): tests/test_nn.c src/nn_tasks_prime_gap.c $(NN_SANITIZE_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) tests/test_nn.c $(NN_SANITIZE_OBJ) $(LDFLAGS) $(SANITIZE_LDFLAGS) $(LDLIBS) -o $@
 
 run: $(XOR_EXAMPLE)
 	./$(XOR_EXAMPLE)
 
+action-score: $(ACTION_SCORE_EXAMPLE)
+	./$(ACTION_SCORE_EXAMPLE)
+
 prime-gap: $(PRIME_GAP_EXAMPLE)
 	./$(PRIME_GAP_EXAMPLE)
+
+prime-gap-trace: $(PRIME_GAP_EXAMPLE)
+	mkdir -p $(BUILD_DIR)/traces
+	./$(PRIME_GAP_EXAMPLE) 100000 200000 1 0 4000 1000 1.20 0.12 20240511 --save $(BUILD_DIR)/prime_v1.nnckpt --trace $(BUILD_DIR)/traces/prime_gap.jsonl
+
+prime-gap-replay: $(PRIME_REPLAY) prime-gap-trace
+	./$(PRIME_REPLAY) $(BUILD_DIR)/traces/prime_gap.jsonl --out $(BUILD_DIR)/prime_v2.nnckpt 2
+
+prime-gap-eval: $(PRIME_COMPARE) prime-gap-replay
+	./$(PRIME_COMPARE) $(BUILD_DIR)/prime_v1.nnckpt $(BUILD_DIR)/prime_v2.nnckpt
 
 prime-gap-sweep: $(PRIME_GAP_EXAMPLE)
 	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 2 1 30000 30000
@@ -91,11 +126,26 @@ prime-gap-experiments: $(PRIME_GAP_EXAMPLE)
 benchmark: $(BENCHMARK)
 	./$(BENCHMARK)
 
+delayed-claim: $(DELAYED_CLAIM)
+	./$(DELAYED_CLAIM)
+
+delayed-claim-trace: $(DELAYED_CLAIM)
+	./$(DELAYED_CLAIM) --save $(BUILD_DIR)/delayed_claim_v1.nnckpt --trace $(BUILD_DIR)/delayed_claim.jsonl
+
+delayed-claim-replay: $(DELAYED_CLAIM) delayed-claim-trace
+	./$(DELAYED_CLAIM) --replay $(BUILD_DIR)/delayed_claim.jsonl --out $(BUILD_DIR)/delayed_claim_v2.nnckpt
+
+delayed-claim-eval: $(DELAYED_CLAIM) delayed-claim-replay
+	./$(DELAYED_CLAIM) --compare $(BUILD_DIR)/delayed_claim_v1.nnckpt $(BUILD_DIR)/delayed_claim_v2.nnckpt
+
 test: $(TEST_RUNNER)
 	./$(TEST_RUNNER)
 
 sanitize: $(SANITIZE_TEST_RUNNER)
 	./$(SANITIZE_TEST_RUNNER)
+
+check: test sanitize action-score delayed-claim-eval prime-gap-eval
+	$(MAKE) test REAL=double
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -1,7 +1,9 @@
 #include "nn.h"
 
+#include <errno.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -20,6 +22,12 @@
 #define NN_LOG log
 #define NN_TANH tanh
 #endif
+
+#define NN_CHECKPOINT_MAGIC "NNCKPT01"
+#define NN_CHECKPOINT_MAGIC_SIZE 8u
+#define NN_CHECKPOINT_VERSION 1u
+#define NN_SCALAR_FLOAT32 1u
+#define NN_SCALAR_FLOAT64 2u
 
 struct NeuralNet {
     size_t layer_count;
@@ -115,6 +123,71 @@ static void *checked_calloc(size_t count, size_t size)
     }
 
     return calloc(count, size);
+}
+
+static int write_all(FILE *fp, const void *data, size_t size)
+{
+    return fp != NULL && (size == 0 || fwrite(data, 1, size, fp) == size);
+}
+
+static int read_all(FILE *fp, void *data, size_t size)
+{
+    return fp != NULL && (size == 0 || fread(data, 1, size, fp) == size);
+}
+
+static int write_u32_le(FILE *fp, uint32_t value)
+{
+    unsigned char bytes[4];
+    bytes[0] = (unsigned char)(value & 0xffu);
+    bytes[1] = (unsigned char)((value >> 8) & 0xffu);
+    bytes[2] = (unsigned char)((value >> 16) & 0xffu);
+    bytes[3] = (unsigned char)((value >> 24) & 0xffu);
+    return write_all(fp, bytes, sizeof(bytes));
+}
+
+static int read_u32_le(FILE *fp, uint32_t *value)
+{
+    unsigned char bytes[4];
+    if (value == NULL || !read_all(fp, bytes, sizeof(bytes))) {
+        return 0;
+    }
+
+    *value = (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
+             ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+    return 1;
+}
+
+static int write_u64_le(FILE *fp, uint64_t value)
+{
+    unsigned char bytes[8];
+    for (size_t i = 0; i < sizeof(bytes); ++i) {
+        bytes[i] = (unsigned char)((value >> (8u * i)) & 0xffu);
+    }
+    return write_all(fp, bytes, sizeof(bytes));
+}
+
+static int read_u64_le(FILE *fp, uint64_t *value)
+{
+    unsigned char bytes[8];
+    uint64_t result = 0;
+    if (value == NULL || !read_all(fp, bytes, sizeof(bytes))) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < sizeof(bytes); ++i) {
+        result |= (uint64_t)bytes[i] << (8u * i);
+    }
+    *value = result;
+    return 1;
+}
+
+static uint32_t scalar_type_id(void)
+{
+#if NN_REAL_IS_FLOAT
+    return NN_SCALAR_FLOAT32;
+#else
+    return NN_SCALAR_FLOAT64;
+#endif
 }
 
 static int sizes_are_valid(const size_t *layer_sizes, size_t layer_count)
@@ -1238,6 +1311,31 @@ void nn_free(NeuralNet *net)
     free(net);
 }
 
+size_t nn_layer_count(const NeuralNet *net)
+{
+    return net == NULL ? 0 : net->layer_count;
+}
+
+size_t nn_layer_size(const NeuralNet *net, size_t layer_index)
+{
+    return net == NULL || layer_index >= net->layer_count ? 0 : net->sizes[layer_index];
+}
+
+NNActivation nn_hidden_activation(const NeuralNet *net)
+{
+    return net == NULL ? NN_ACTIVATION_SIGMOID : net->hidden_activation;
+}
+
+NNActivation nn_output_activation(const NeuralNet *net)
+{
+    return net == NULL ? NN_ACTIVATION_SIGMOID : net->output_activation;
+}
+
+NNLoss nn_loss(const NeuralNet *net)
+{
+    return net == NULL ? NN_LOSS_MSE : net->loss;
+}
+
 size_t nn_input_size(const NeuralNet *net)
 {
     return net == NULL ? 0 : net->sizes[0];
@@ -1408,6 +1506,57 @@ void nn_forward_batch(NeuralNet *net,
     for (size_t sample = 0; sample < sample_count; ++sample) {
         nn_forward(net, &inputs[sample * input_width], &outputs[sample * output_width]);
     }
+}
+
+int nn_score_action_rows(NeuralNet *net,
+                         const nn_real *candidate_inputs,
+                         size_t candidate_count,
+                         nn_real *scores,
+                         nn_real *probabilities)
+{
+    if (net == NULL || candidate_inputs == NULL || candidate_count == 0 || scores == NULL ||
+        nn_output_size(net) != 1) {
+        if (net != NULL) {
+            invalidate_batch_cache(net);
+        }
+        return 0;
+    }
+
+    nn_forward_batch(net, candidate_inputs, scores, candidate_count);
+    if (!net->batch_cache_valid || net->batch_cache_sample_count != candidate_count) {
+        return 0;
+    }
+
+    if (probabilities != NULL) {
+        nn_softmax(scores, probabilities, candidate_count);
+    }
+    return 1;
+}
+
+int nn_rank_action_scores(const nn_real *scores, size_t count, size_t *ranked_indices)
+{
+    if (scores == NULL || ranked_indices == NULL || count == 0) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+        ranked_indices[i] = i;
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+        size_t best = i;
+        for (size_t j = i + 1; j < count; ++j) {
+            if (scores[ranked_indices[j]] > scores[ranked_indices[best]]) {
+                best = j;
+            }
+        }
+
+        size_t tmp = ranked_indices[i];
+        ranked_indices[i] = ranked_indices[best];
+        ranked_indices[best] = tmp;
+    }
+
+    return 1;
 }
 
 nn_real nn_train_sample(NeuralNet *net,
@@ -1644,6 +1793,19 @@ nn_real nn_train_softmax_scorer(NeuralNet *net,
                                 size_t target_index,
                                 nn_real learning_rate)
 {
+    return nn_train_action_scorer(net,
+                                  candidate_inputs,
+                                  candidate_count,
+                                  target_index,
+                                  learning_rate);
+}
+
+nn_real nn_train_action_scorer(NeuralNet *net,
+                               const nn_real *candidate_inputs,
+                               size_t candidate_count,
+                               size_t target_index,
+                               nn_real learning_rate)
+{
     return nn_train_softmax_scorer_weighted(
         net, candidate_inputs, candidate_count, target_index, (nn_real)1, learning_rate);
 }
@@ -1768,4 +1930,824 @@ nn_real nn_train_batched(NeuralNet *net,
 
     free(order);
     return epoch_loss;
+}
+
+static size_t checkpoint_metadata_size(void)
+{
+    return sizeof(uint32_t) + 65u + 65u + 65u + 256u;
+}
+
+static int write_checkpoint_metadata(FILE *fp, const NNCheckpointMeta *meta)
+{
+    NNCheckpointMeta local;
+    memset(&local, 0, sizeof(local));
+    if (meta != NULL) {
+        local = *meta;
+    }
+
+    if (local.checkpoint_version == 0) {
+        local.checkpoint_version = NN_CHECKPOINT_VERSION;
+    }
+    local.parent_model_hash[sizeof(local.parent_model_hash) - 1] = '\0';
+    local.training_trace_root[sizeof(local.training_trace_root) - 1] = '\0';
+    local.benchmark_report_hash[sizeof(local.benchmark_report_hash) - 1] = '\0';
+    local.notes[sizeof(local.notes) - 1] = '\0';
+
+    return write_u32_le(fp, local.feature_encoder_version) &&
+           write_all(fp, local.parent_model_hash, sizeof(local.parent_model_hash)) &&
+           write_all(fp, local.training_trace_root, sizeof(local.training_trace_root)) &&
+           write_all(fp, local.benchmark_report_hash, sizeof(local.benchmark_report_hash)) &&
+           write_all(fp, local.notes, sizeof(local.notes));
+}
+
+static int read_checkpoint_metadata(FILE *fp,
+                                    uint32_t checkpoint_version,
+                                    uint64_t metadata_size,
+                                    NNCheckpointMeta *out_meta)
+{
+    NNCheckpointMeta local;
+    memset(&local, 0, sizeof(local));
+    local.checkpoint_version = checkpoint_version;
+
+    if (metadata_size != (uint64_t)checkpoint_metadata_size()) {
+        return 0;
+    }
+
+    if (!read_u32_le(fp, &local.feature_encoder_version) ||
+        !read_all(fp, local.parent_model_hash, sizeof(local.parent_model_hash)) ||
+        !read_all(fp, local.training_trace_root, sizeof(local.training_trace_root)) ||
+        !read_all(fp, local.benchmark_report_hash, sizeof(local.benchmark_report_hash)) ||
+        !read_all(fp, local.notes, sizeof(local.notes))) {
+        return 0;
+    }
+
+    local.parent_model_hash[sizeof(local.parent_model_hash) - 1] = '\0';
+    local.training_trace_root[sizeof(local.training_trace_root) - 1] = '\0';
+    local.benchmark_report_hash[sizeof(local.benchmark_report_hash) - 1] = '\0';
+    local.notes[sizeof(local.notes) - 1] = '\0';
+
+    if (out_meta != NULL) {
+        *out_meta = local;
+    }
+    return 1;
+}
+
+int nn_save_checkpoint(const NeuralNet *net, const char *path, const NNCheckpointMeta *meta)
+{
+    if (net == NULL || path == NULL) {
+        return 0;
+    }
+
+    uint32_t checkpoint_version =
+        meta != NULL && meta->checkpoint_version != 0 ? meta->checkpoint_version
+                                                      : NN_CHECKPOINT_VERSION;
+    if (checkpoint_version != NN_CHECKPOINT_VERSION) {
+        return 0;
+    }
+
+    FILE *fp = fopen(path, "wb");
+    if (fp == NULL) {
+        return 0;
+    }
+
+    int ok = write_all(fp, NN_CHECKPOINT_MAGIC, NN_CHECKPOINT_MAGIC_SIZE) &&
+             write_u32_le(fp, checkpoint_version) && write_u32_le(fp, scalar_type_id()) &&
+             write_u64_le(fp, (uint64_t)net->layer_count);
+
+    for (size_t layer = 0; ok && layer < net->layer_count; ++layer) {
+        ok = write_u64_le(fp, (uint64_t)net->sizes[layer]);
+    }
+
+    ok = ok && write_u32_le(fp, (uint32_t)net->hidden_activation) &&
+         write_u32_le(fp, (uint32_t)net->output_activation) &&
+         write_u32_le(fp, (uint32_t)net->loss);
+
+    for (size_t layer = 1; ok && layer < net->layer_count; ++layer) {
+        size_t previous = net->sizes[layer - 1];
+        size_t current = net->sizes[layer];
+        if (previous != 0 && current > SIZE_MAX / previous) {
+            ok = 0;
+            break;
+        }
+        size_t weight_count = previous * current;
+        ok = write_all(fp, net->weights[layer], weight_count * sizeof(*net->weights[layer])) &&
+             write_all(fp, net->biases[layer], current * sizeof(*net->biases[layer]));
+    }
+
+    ok = ok && write_u64_le(fp, (uint64_t)checkpoint_metadata_size()) &&
+         write_checkpoint_metadata(fp, meta);
+
+    if (fclose(fp) != 0) {
+        ok = 0;
+    }
+
+    return ok;
+}
+
+NeuralNet *nn_load_checkpoint(const char *path, NNCheckpointMeta *out_meta)
+{
+    if (path == NULL) {
+        return NULL;
+    }
+
+    FILE *fp = fopen(path, "rb");
+    if (fp == NULL) {
+        return NULL;
+    }
+
+    char magic[NN_CHECKPOINT_MAGIC_SIZE];
+    uint32_t checkpoint_version = 0;
+    uint32_t scalar_type = 0;
+    uint64_t layer_count64 = 0;
+    size_t *sizes = NULL;
+    NeuralNet *net = NULL;
+    int ok = read_all(fp, magic, sizeof(magic)) &&
+             memcmp(magic, NN_CHECKPOINT_MAGIC, sizeof(magic)) == 0 &&
+             read_u32_le(fp, &checkpoint_version) &&
+             checkpoint_version == NN_CHECKPOINT_VERSION &&
+             read_u32_le(fp, &scalar_type) && scalar_type == scalar_type_id() &&
+             read_u64_le(fp, &layer_count64) && layer_count64 <= (uint64_t)SIZE_MAX;
+
+    size_t layer_count = (size_t)layer_count64;
+    if (ok) {
+        sizes = checked_calloc(layer_count, sizeof(*sizes));
+        ok = sizes != NULL;
+    }
+
+    for (size_t layer = 0; ok && layer < layer_count; ++layer) {
+        uint64_t size64 = 0;
+        ok = read_u64_le(fp, &size64) && size64 <= (uint64_t)SIZE_MAX;
+        sizes[layer] = (size_t)size64;
+    }
+
+    uint32_t hidden_activation = 0;
+    uint32_t output_activation = 0;
+    uint32_t loss = 0;
+    ok = ok && read_u32_le(fp, &hidden_activation) &&
+         read_u32_le(fp, &output_activation) && read_u32_le(fp, &loss);
+
+    if (ok) {
+        NNConfig config;
+        config.layer_sizes = sizes;
+        config.layer_count = layer_count;
+        config.seed = 1u;
+        config.hidden_activation = (NNActivation)hidden_activation;
+        config.output_activation = (NNActivation)output_activation;
+        config.loss = (NNLoss)loss;
+        net = nn_create_config(&config);
+        ok = net != NULL;
+    }
+
+    for (size_t layer = 1; ok && layer < layer_count; ++layer) {
+        size_t previous = net->sizes[layer - 1];
+        size_t current = net->sizes[layer];
+        if (previous != 0 && current > SIZE_MAX / previous) {
+            ok = 0;
+            break;
+        }
+        size_t weight_count = previous * current;
+        ok = read_all(fp, net->weights[layer], weight_count * sizeof(*net->weights[layer])) &&
+             read_all(fp, net->biases[layer], current * sizeof(*net->biases[layer]));
+    }
+
+    uint64_t metadata_size = 0;
+    ok = ok && read_u64_le(fp, &metadata_size) &&
+         read_checkpoint_metadata(fp, checkpoint_version, metadata_size, out_meta);
+
+    if (fclose(fp) != 0) {
+        ok = 0;
+    }
+
+    free(sizes);
+    if (!ok) {
+        nn_free(net);
+        return NULL;
+    }
+
+    return net;
+}
+
+typedef struct {
+    uint32_t state[8];
+    uint64_t bit_count;
+    unsigned char buffer[64];
+    size_t buffer_count;
+} NNSha256;
+
+static uint32_t sha256_rotr(uint32_t value, uint32_t bits)
+{
+    return (value >> bits) | (value << (32u - bits));
+}
+
+static uint32_t sha256_load_be32(const unsigned char *bytes)
+{
+    return ((uint32_t)bytes[0] << 24) | ((uint32_t)bytes[1] << 16) |
+           ((uint32_t)bytes[2] << 8) | (uint32_t)bytes[3];
+}
+
+static void sha256_store_be32(unsigned char *bytes, uint32_t value)
+{
+    bytes[0] = (unsigned char)((value >> 24) & 0xffu);
+    bytes[1] = (unsigned char)((value >> 16) & 0xffu);
+    bytes[2] = (unsigned char)((value >> 8) & 0xffu);
+    bytes[3] = (unsigned char)(value & 0xffu);
+}
+
+static void sha256_transform(NNSha256 *sha, const unsigned char block[64])
+{
+    static const uint32_t k[64] = {
+        0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u, 0x3956c25bu, 0x59f111f1u,
+        0x923f82a4u, 0xab1c5ed5u, 0xd807aa98u, 0x12835b01u, 0x243185beu, 0x550c7dc3u,
+        0x72be5d74u, 0x80deb1feu, 0x9bdc06a7u, 0xc19bf174u, 0xe49b69c1u, 0xefbe4786u,
+        0x0fc19dc6u, 0x240ca1ccu, 0x2de92c6fu, 0x4a7484aau, 0x5cb0a9dcu, 0x76f988dau,
+        0x983e5152u, 0xa831c66du, 0xb00327c8u, 0xbf597fc7u, 0xc6e00bf3u, 0xd5a79147u,
+        0x06ca6351u, 0x14292967u, 0x27b70a85u, 0x2e1b2138u, 0x4d2c6dfcu, 0x53380d13u,
+        0x650a7354u, 0x766a0abbu, 0x81c2c92eu, 0x92722c85u, 0xa2bfe8a1u, 0xa81a664bu,
+        0xc24b8b70u, 0xc76c51a3u, 0xd192e819u, 0xd6990624u, 0xf40e3585u, 0x106aa070u,
+        0x19a4c116u, 0x1e376c08u, 0x2748774cu, 0x34b0bcb5u, 0x391c0cb3u, 0x4ed8aa4au,
+        0x5b9cca4fu, 0x682e6ff3u, 0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u,
+        0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u,
+    };
+    uint32_t w[64];
+    uint32_t a;
+    uint32_t b;
+    uint32_t c;
+    uint32_t d;
+    uint32_t e;
+    uint32_t f;
+    uint32_t g;
+    uint32_t h;
+
+    for (size_t i = 0; i < 16; ++i) {
+        w[i] = sha256_load_be32(&block[i * 4]);
+    }
+    for (size_t i = 16; i < 64; ++i) {
+        uint32_t s0 = sha256_rotr(w[i - 15], 7) ^ sha256_rotr(w[i - 15], 18) ^
+                      (w[i - 15] >> 3);
+        uint32_t s1 = sha256_rotr(w[i - 2], 17) ^ sha256_rotr(w[i - 2], 19) ^
+                      (w[i - 2] >> 10);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+
+    a = sha->state[0];
+    b = sha->state[1];
+    c = sha->state[2];
+    d = sha->state[3];
+    e = sha->state[4];
+    f = sha->state[5];
+    g = sha->state[6];
+    h = sha->state[7];
+
+    for (size_t i = 0; i < 64; ++i) {
+        uint32_t s1 = sha256_rotr(e, 6) ^ sha256_rotr(e, 11) ^ sha256_rotr(e, 25);
+        uint32_t ch = (e & f) ^ ((~e) & g);
+        uint32_t temp1 = h + s1 + ch + k[i] + w[i];
+        uint32_t s0 = sha256_rotr(a, 2) ^ sha256_rotr(a, 13) ^ sha256_rotr(a, 22);
+        uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+        uint32_t temp2 = s0 + maj;
+
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2;
+    }
+
+    sha->state[0] += a;
+    sha->state[1] += b;
+    sha->state[2] += c;
+    sha->state[3] += d;
+    sha->state[4] += e;
+    sha->state[5] += f;
+    sha->state[6] += g;
+    sha->state[7] += h;
+}
+
+static void sha256_init(NNSha256 *sha)
+{
+    sha->state[0] = 0x6a09e667u;
+    sha->state[1] = 0xbb67ae85u;
+    sha->state[2] = 0x3c6ef372u;
+    sha->state[3] = 0xa54ff53au;
+    sha->state[4] = 0x510e527fu;
+    sha->state[5] = 0x9b05688cu;
+    sha->state[6] = 0x1f83d9abu;
+    sha->state[7] = 0x5be0cd19u;
+    sha->bit_count = 0;
+    sha->buffer_count = 0;
+}
+
+static void sha256_update(NNSha256 *sha, const unsigned char *data, size_t size)
+{
+    sha->bit_count += (uint64_t)size * 8u;
+
+    while (size > 0) {
+        size_t available = sizeof(sha->buffer) - sha->buffer_count;
+        size_t take = size < available ? size : available;
+        memcpy(&sha->buffer[sha->buffer_count], data, take);
+        sha->buffer_count += take;
+        data += take;
+        size -= take;
+
+        if (sha->buffer_count == sizeof(sha->buffer)) {
+            sha256_transform(sha, sha->buffer);
+            sha->buffer_count = 0;
+        }
+    }
+}
+
+static void sha256_final(NNSha256 *sha, uint8_t out_hash[32])
+{
+    uint64_t bit_count = sha->bit_count;
+    unsigned char pad = 0x80u;
+    unsigned char zero = 0;
+    unsigned char length[8];
+
+    sha256_update(sha, &pad, 1);
+    while (sha->buffer_count != 56) {
+        sha256_update(sha, &zero, 1);
+    }
+
+    for (size_t i = 0; i < sizeof(length); ++i) {
+        length[7 - i] = (unsigned char)((bit_count >> (8u * i)) & 0xffu);
+    }
+    sha256_update(sha, length, sizeof(length));
+
+    for (size_t i = 0; i < 8; ++i) {
+        sha256_store_be32(&out_hash[i * 4], sha->state[i]);
+    }
+}
+
+int nn_hash_checkpoint_file(const char *path, uint8_t out_hash[32])
+{
+    if (path == NULL || out_hash == NULL) {
+        return 0;
+    }
+
+    FILE *fp = fopen(path, "rb");
+    if (fp == NULL) {
+        return 0;
+    }
+
+    NNSha256 sha;
+    sha256_init(&sha);
+
+    unsigned char buffer[4096];
+    int ok = 1;
+    for (;;) {
+        size_t count = fread(buffer, 1, sizeof(buffer), fp);
+        if (count != 0) {
+            sha256_update(&sha, buffer, count);
+        }
+        if (count < sizeof(buffer)) {
+            if (ferror(fp)) {
+                ok = 0;
+            }
+            break;
+        }
+    }
+
+    if (fclose(fp) != 0) {
+        ok = 0;
+    }
+    if (!ok) {
+        return 0;
+    }
+
+    sha256_final(&sha, out_hash);
+    return 1;
+}
+
+int nn_hash_checkpoint_hex(const char *path, char out_hex[65])
+{
+    static const char hex[] = "0123456789abcdef";
+    uint8_t hash[32];
+
+    if (out_hex == NULL || !nn_hash_checkpoint_file(path, hash)) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < sizeof(hash); ++i) {
+        out_hex[i * 2] = hex[hash[i] >> 4];
+        out_hex[i * 2 + 1] = hex[hash[i] & 0x0fu];
+    }
+    out_hex[64] = '\0';
+    return 1;
+}
+
+static int trace_write_json_string(FILE *fp, const char *text)
+{
+    if (fputc('"', fp) == EOF) {
+        return 0;
+    }
+
+    if (text != NULL) {
+        for (const unsigned char *p = (const unsigned char *)text; *p != '\0'; ++p) {
+            switch (*p) {
+            case '"':
+                if (fputs("\\\"", fp) == EOF) {
+                    return 0;
+                }
+                break;
+            case '\\':
+                if (fputs("\\\\", fp) == EOF) {
+                    return 0;
+                }
+                break;
+            case '\n':
+                if (fputs("\\n", fp) == EOF) {
+                    return 0;
+                }
+                break;
+            case '\r':
+                if (fputs("\\r", fp) == EOF) {
+                    return 0;
+                }
+                break;
+            case '\t':
+                if (fputs("\\t", fp) == EOF) {
+                    return 0;
+                }
+                break;
+            default:
+                if (*p < 0x20u) {
+                    if (fprintf(fp, "\\u%04x", (unsigned int)*p) < 0) {
+                        return 0;
+                    }
+                } else if (fputc(*p, fp) == EOF) {
+                    return 0;
+                }
+                break;
+            }
+        }
+    }
+
+    return fputc('"', fp) != EOF;
+}
+
+static int trace_write_real_array(FILE *fp, const nn_real *values, size_t count)
+{
+    if (fputc('[', fp) == EOF) {
+        return 0;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if (i != 0 && fputc(',', fp) == EOF) {
+            return 0;
+        }
+#if NN_REAL_IS_FLOAT
+        if (fprintf(fp, "%.9g", (double)values[i]) < 0) {
+            return 0;
+        }
+#else
+        if (fprintf(fp, "%.17g", (double)values[i]) < 0) {
+            return 0;
+        }
+#endif
+    }
+    return fputc(']', fp) != EOF;
+}
+
+int nn_trace_write_jsonl(FILE *fp, const NNTraceRecord *record)
+{
+    if (fp == NULL || record == NULL || record->candidate_count == 0 ||
+        record->scores == NULL || record->probabilities == NULL ||
+        record->selected_index >= record->candidate_count ||
+        record->target_index >= record->candidate_count) {
+        return 0;
+    }
+
+    const char *task = record->task_name == NULL ? "unknown" : record->task_name;
+    const char *model_hash =
+        record->model_hash_hex == NULL ? "unknown" : record->model_hash_hex;
+    const char *verifier_result =
+        record->verifier_result == NULL ? "unknown" : record->verifier_result;
+    const char *verifier_cost =
+        record->verifier_cost_json == NULL ? "{}" : record->verifier_cost_json;
+
+    if (fputc('{', fp) == EOF || fputs("\"schema\":\"crlp.trace.v1\"", fp) == EOF ||
+        fputs(",\"task\":", fp) == EOF || !trace_write_json_string(fp, task) ||
+        fputs(",\"state_hash\":\"", fp) == EOF ||
+        fprintf(fp, "%016llx", (unsigned long long)record->state_hash) < 0 ||
+        fputs("\",\"model_hash\":", fp) == EOF ||
+        !trace_write_json_string(fp, model_hash) ||
+        fprintf(fp,
+                ",\"feature_encoder_version\":%u,\"candidate_count\":%zu,"
+                "\"action_ids\":[",
+                record->feature_encoder_version,
+                record->candidate_count) < 0) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < record->candidate_count; ++i) {
+        uint32_t action_id = record->action_ids == NULL ? (uint32_t)i : record->action_ids[i];
+        if ((i != 0 && fputc(',', fp) == EOF) || fprintf(fp, "%u", action_id) < 0) {
+            return 0;
+        }
+    }
+
+    if (fputs("],\"scores\":", fp) == EOF ||
+        !trace_write_real_array(fp, record->scores, record->candidate_count) ||
+        fputs(",\"probabilities\":", fp) == EOF ||
+        !trace_write_real_array(fp, record->probabilities, record->candidate_count)) {
+        return 0;
+    }
+
+#if NN_REAL_IS_FLOAT
+    const char *loss_format =
+        ",\"selected_index\":%zu,\"target_index\":%zu,\"loss\":%.9g,\"verifier_result\":";
+#else
+    const char *loss_format =
+        ",\"selected_index\":%zu,\"target_index\":%zu,\"loss\":%.17g,\"verifier_result\":";
+#endif
+    if (fprintf(fp,
+                loss_format,
+                record->selected_index,
+                record->target_index,
+                (double)record->loss) < 0 ||
+        !trace_write_json_string(fp, verifier_result) ||
+        fputs(",\"verifier_cost\":", fp) == EOF || fputs(verifier_cost, fp) == EOF ||
+        fprintf(fp, ",\"seed\":%llu", (unsigned long long)record->seed) < 0) {
+        return 0;
+    }
+
+    if (record->extra_json != NULL && record->extra_json[0] != '\0') {
+        if (fputc(',', fp) == EOF || fputs(record->extra_json, fp) == EOF) {
+            return 0;
+        }
+    }
+
+    return fputs("}\n", fp) != EOF;
+}
+
+static const char *trace_find_key_value(const char *line, const char *key)
+{
+    if (line == NULL || key == NULL || key[0] == '\0') {
+        return NULL;
+    }
+
+    char pattern[96];
+    int written = snprintf(pattern, sizeof(pattern), "\"%s\":", key);
+    if (written <= 0 || (size_t)written >= sizeof(pattern)) {
+        return NULL;
+    }
+
+    const char *start = strstr(line, pattern);
+    if (start == NULL) {
+        return NULL;
+    }
+    return start + (size_t)written;
+}
+
+int nn_trace_json_get_string(const char *line,
+                             const char *key,
+                             char *out_value,
+                             size_t out_value_size)
+{
+    const char *start = trace_find_key_value(line, key);
+    if (start == NULL || out_value == NULL || out_value_size == 0 || *start != '"') {
+        return 0;
+    }
+    ++start;
+
+    size_t output = 0;
+    for (const char *p = start; *p != '\0'; ++p) {
+        unsigned char ch = (unsigned char)*p;
+        if (ch == '"') {
+            out_value[output] = '\0';
+            return 1;
+        }
+        if (ch == '\\') {
+            ++p;
+            if (*p == '\0') {
+                return 0;
+            }
+            switch (*p) {
+            case '"':
+            case '\\':
+            case '/':
+                ch = (unsigned char)*p;
+                break;
+            case 'n':
+                ch = '\n';
+                break;
+            case 'r':
+                ch = '\r';
+                break;
+            case 't':
+                ch = '\t';
+                break;
+            default:
+                return 0;
+            }
+        }
+
+        if (output + 1 >= out_value_size) {
+            return 0;
+        }
+        out_value[output++] = (char)ch;
+    }
+
+    return 0;
+}
+
+int nn_trace_json_get_u64(const char *line, const char *key, uint64_t *out_value)
+{
+    const char *start = trace_find_key_value(line, key);
+    if (start == NULL || out_value == NULL || *start == '-' || *start == '+') {
+        return 0;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    unsigned long long value = strtoull(start, &end, 10);
+    if (end == start || errno == ERANGE ||
+        (*end != ',' && *end != '}' && *end != ']' && *end != '\n' && *end != '\r' &&
+         *end != '\0')) {
+        return 0;
+    }
+    *out_value = (uint64_t)value;
+    return 1;
+}
+
+int nn_trace_json_get_real(const char *line, const char *key, nn_real *out_value)
+{
+    const char *start = trace_find_key_value(line, key);
+    if (start == NULL || out_value == NULL) {
+        return 0;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    double value = strtod(start, &end);
+    if (end == start || errno == ERANGE || !isfinite(value) ||
+        (*end != ',' && *end != '}' && *end != ']' && *end != '\n' && *end != '\r' &&
+         *end != '\0')) {
+        return 0;
+    }
+    *out_value = (nn_real)value;
+    return 1;
+}
+
+static int trace_parse_u32_array(const char *line,
+                                 const char *key,
+                                 uint32_t *values,
+                                 size_t expected_count)
+{
+    const char *p = trace_find_key_value(line, key);
+    if (p == NULL || values == NULL || *p != '[') {
+        return 0;
+    }
+    ++p;
+
+    for (size_t i = 0; i < expected_count; ++i) {
+        if (*p == '-' || *p == '+') {
+            return 0;
+        }
+        errno = 0;
+        char *end = NULL;
+        unsigned long value = strtoul(p, &end, 10);
+        if (end == p || errno == ERANGE || value > UINT32_MAX) {
+            return 0;
+        }
+        values[i] = (uint32_t)value;
+        p = end;
+        if (i + 1 < expected_count) {
+            if (*p != ',') {
+                return 0;
+            }
+            ++p;
+        }
+    }
+
+    return *p == ']';
+}
+
+static int trace_parse_real_array(const char *line,
+                                  const char *key,
+                                  nn_real *values,
+                                  size_t expected_count)
+{
+    const char *p = trace_find_key_value(line, key);
+    if (p == NULL || values == NULL || *p != '[') {
+        return 0;
+    }
+    ++p;
+
+    for (size_t i = 0; i < expected_count; ++i) {
+        errno = 0;
+        char *end = NULL;
+        double value = strtod(p, &end);
+        if (end == p || errno == ERANGE || !isfinite(value)) {
+            return 0;
+        }
+        values[i] = (nn_real)value;
+        p = end;
+        if (i + 1 < expected_count) {
+            if (*p != ',') {
+                return 0;
+            }
+            ++p;
+        }
+    }
+
+    return *p == ']';
+}
+
+static int trace_parse_hex_u64(const char *line, const char *key, uint64_t *out_value)
+{
+    char text[32];
+    if (!nn_trace_json_get_string(line, key, text, sizeof(text)) || strlen(text) != 16) {
+        return 0;
+    }
+
+    uint64_t value = 0;
+    for (size_t i = 0; i < 16; ++i) {
+        char ch = text[i];
+        uint64_t nibble;
+        if (ch >= '0' && ch <= '9') {
+            nibble = (uint64_t)(ch - '0');
+        } else if (ch >= 'a' && ch <= 'f') {
+            nibble = (uint64_t)(ch - 'a' + 10);
+        } else if (ch >= 'A' && ch <= 'F') {
+            nibble = (uint64_t)(ch - 'A' + 10);
+        } else {
+            return 0;
+        }
+        value = (value << 4) | nibble;
+    }
+
+    *out_value = value;
+    return 1;
+}
+
+int nn_trace_parse_jsonl(const char *line,
+                         NNParsedTraceRecord *out_record,
+                         uint32_t *action_ids,
+                         nn_real *scores,
+                         nn_real *probabilities,
+                         size_t candidate_capacity)
+{
+    if (line == NULL || out_record == NULL || action_ids == NULL || scores == NULL ||
+        probabilities == NULL || candidate_capacity == 0) {
+        return 0;
+    }
+
+    NNParsedTraceRecord parsed;
+    memset(&parsed, 0, sizeof(parsed));
+
+    uint64_t candidate_count = 0;
+    uint64_t selected_index = 0;
+    uint64_t target_index = 0;
+    uint64_t feature_encoder_version = 0;
+    nn_real loss = 0;
+
+    if (!nn_trace_json_get_string(line, "schema", parsed.schema, sizeof(parsed.schema)) ||
+        strcmp(parsed.schema, "crlp.trace.v1") != 0 ||
+        !nn_trace_json_get_string(line, "task", parsed.task_name, sizeof(parsed.task_name)) ||
+        !trace_parse_hex_u64(line, "state_hash", &parsed.state_hash) ||
+        !nn_trace_json_get_string(
+            line, "model_hash", parsed.model_hash_hex, sizeof(parsed.model_hash_hex)) ||
+        !nn_trace_json_get_u64(line, "feature_encoder_version", &feature_encoder_version) ||
+        feature_encoder_version > UINT32_MAX ||
+        !nn_trace_json_get_u64(line, "candidate_count", &candidate_count) ||
+        candidate_count == 0 || candidate_count > candidate_capacity ||
+        !nn_trace_json_get_u64(line, "selected_index", &selected_index) ||
+        !nn_trace_json_get_u64(line, "target_index", &target_index) ||
+        selected_index >= candidate_count || target_index >= candidate_count ||
+        !nn_trace_json_get_real(line, "loss", &loss) ||
+        !nn_trace_json_get_string(
+            line, "verifier_result", parsed.verifier_result, sizeof(parsed.verifier_result)) ||
+        !nn_trace_json_get_u64(line, "seed", &parsed.seed)) {
+        return 0;
+    }
+
+    parsed.feature_encoder_version = (uint32_t)feature_encoder_version;
+    parsed.candidate_count = (size_t)candidate_count;
+    parsed.selected_index = (size_t)selected_index;
+    parsed.target_index = (size_t)target_index;
+    parsed.loss = loss;
+
+    if (!trace_parse_u32_array(line, "action_ids", action_ids, parsed.candidate_count) ||
+        !trace_parse_real_array(line, "scores", scores, parsed.candidate_count) ||
+        !trace_parse_real_array(line, "probabilities", probabilities, parsed.candidate_count)) {
+        return 0;
+    }
+
+    nn_real probability_sum = 0;
+    for (size_t i = 0; i < parsed.candidate_count; ++i) {
+        if (probabilities[i] < (nn_real)0 || probabilities[i] > (nn_real)1) {
+            return 0;
+        }
+        probability_sum += probabilities[i];
+    }
+
+    if (fabs((double)probability_sum - 1.0) > 1e-3) {
+        return 0;
+    }
+
+    *out_record = parsed;
+    return 1;
 }

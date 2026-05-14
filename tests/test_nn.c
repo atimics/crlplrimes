@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -11,9 +12,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
 #endif
-#define PRIME_GAP_NO_MAIN
-#include "../examples/prime_gap.c"
-#undef PRIME_GAP_NO_MAIN
+#include "../src/nn_tasks_prime_gap.c"
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #elif defined(__GNUC__)
@@ -619,6 +618,441 @@ static int test_policy_regularized_cached_matches_policy_update(void)
     return ok;
 }
 
+static int files_match(const char *a_path, const char *b_path)
+{
+    FILE *a = fopen(a_path, "rb");
+    FILE *b = fopen(b_path, "rb");
+    int ok = 1;
+
+    if (a == NULL || b == NULL) {
+        if (a != NULL) {
+            fclose(a);
+        }
+        if (b != NULL) {
+            fclose(b);
+        }
+        return 0;
+    }
+
+    for (;;) {
+        unsigned char a_buffer[256];
+        unsigned char b_buffer[256];
+        size_t a_count = fread(a_buffer, 1, sizeof(a_buffer), a);
+        size_t b_count = fread(b_buffer, 1, sizeof(b_buffer), b);
+        if (a_count != b_count || memcmp(a_buffer, b_buffer, a_count) != 0) {
+            ok = 0;
+            break;
+        }
+        if (a_count < sizeof(a_buffer)) {
+            ok = feof(a) && feof(b) && !ferror(a) && !ferror(b);
+            break;
+        }
+    }
+
+    fclose(a);
+    fclose(b);
+    return ok;
+}
+
+static int hashes_equal(const char *a, const char *b)
+{
+    return strcmp(a, b) == 0;
+}
+
+static int test_action_scorer_api_scores_probabilities_and_ranking(void)
+{
+    const size_t layers[] = {3, 4, 1};
+    const nn_real candidate_inputs[] = {
+        0.10, 0.20, 0.30,
+        0.30, 0.10, 0.40,
+        0.80, 0.20, 0.10,
+    };
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = 3;
+    config.seed = 1122;
+    config.hidden_activation = NN_ACTIVATION_RELU;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+
+    NeuralNet *net = nn_create_config(&config);
+    nn_real scores[3];
+    nn_real probabilities[3];
+    size_t ranked[4];
+    nn_real tied_scores[] = {(nn_real)1, (nn_real)2, (nn_real)2, (nn_real)0};
+    int ok = 1;
+
+    if (net == NULL) {
+        return 0;
+    }
+
+    ok = ok && nn_score_action_rows(net, candidate_inputs, 3, scores, probabilities);
+    nn_real sum = probabilities[0] + probabilities[1] + probabilities[2];
+    ok = ok && nearly_equal(sum, (nn_real)1, (nn_real)1e-6, (nn_real)1e-6);
+    ok = ok && nn_rank_action_scores(tied_scores, 4, ranked);
+    ok = ok && ranked[0] == 1 && ranked[1] == 2 && ranked[2] == 0 && ranked[3] == 3;
+
+    nn_free(net);
+    return ok;
+}
+
+static int test_checkpoint_roundtrip_hash_and_invalid_files(void)
+{
+    const char *path_a = "/tmp/crlplrimes_test_a.nnckpt";
+    const char *path_b = "/tmp/crlplrimes_test_b.nnckpt";
+    const char *path_c = "/tmp/crlplrimes_test_c.nnckpt";
+    const char *path_bad = "/tmp/crlplrimes_test_bad.nnckpt";
+    const char *path_bad_size = "/tmp/crlplrimes_test_bad_size.nnckpt";
+    const size_t layers[] = {3, 5, 2};
+    const nn_real input[] = {(nn_real)0.2, (nn_real)0.4, (nn_real)0.6};
+    nn_real before[2];
+    nn_real after[2];
+    char hash_a[65];
+    char hash_b[65];
+    char hash_c[65];
+    char hash_d[65];
+    NNCheckpointMeta meta;
+    NNCheckpointMeta loaded_meta;
+    NNConfig config;
+    NeuralNet *net;
+    NeuralNet *loaded;
+    int ok = 1;
+
+    config.layer_sizes = layers;
+    config.layer_count = 3;
+    config.seed = 4242;
+    config.hidden_activation = NN_ACTIVATION_TANH;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+    net = nn_create_config(&config);
+    if (net == NULL) {
+        return 0;
+    }
+
+    memset(&meta, 0, sizeof(meta));
+    meta.checkpoint_version = 1;
+    meta.feature_encoder_version = 7;
+    strcpy(meta.parent_model_hash, "unknown");
+    strcpy(meta.training_trace_root, "trace-root");
+    strcpy(meta.benchmark_report_hash, "bench-root");
+    strcpy(meta.notes, "fixture checkpoint");
+
+    nn_forward(net, input, before);
+    ok = ok && nn_save_checkpoint(net, path_a, &meta);
+    ok = ok && nn_save_checkpoint(net, path_b, &meta);
+    ok = ok && files_match(path_a, path_b);
+    ok = ok && nn_hash_checkpoint_hex(path_a, hash_a);
+    ok = ok && nn_hash_checkpoint_hex(path_b, hash_b);
+    ok = ok && hashes_equal(hash_a, hash_b);
+
+    loaded = nn_load_checkpoint(path_a, &loaded_meta);
+    ok = ok && loaded != NULL;
+    if (loaded != NULL) {
+        nn_forward(loaded, input, after);
+        ok = ok && nearly_equal(before[0], after[0], (nn_real)1e-6, (nn_real)1e-6) &&
+             nearly_equal(before[1], after[1], (nn_real)1e-6, (nn_real)1e-6);
+        ok = ok && loaded_meta.checkpoint_version == 1 &&
+             loaded_meta.feature_encoder_version == 7 &&
+             strcmp(loaded_meta.training_trace_root, "trace-root") == 0;
+        nn_free(loaded);
+    }
+
+    nn_test_set_parameter(net, 0, nn_test_get_parameter(net, 0) + (nn_real)0.125);
+    ok = ok && nn_save_checkpoint(net, path_c, &meta);
+    ok = ok && nn_hash_checkpoint_hex(path_c, hash_c);
+    ok = ok && !hashes_equal(hash_a, hash_c);
+
+    strcpy(meta.notes, "metadata changed");
+    ok = ok && nn_save_checkpoint(net, path_b, &meta);
+    ok = ok && nn_hash_checkpoint_hex(path_b, hash_d);
+    ok = ok && !hashes_equal(hash_c, hash_d);
+
+    FILE *bad = fopen(path_bad, "wb");
+    if (bad != NULL) {
+        fputs("bad checkpoint", bad);
+        fclose(bad);
+    }
+    ok = ok && nn_load_checkpoint(path_bad, NULL) == NULL;
+
+    ok = ok && nn_save_checkpoint(net, path_bad_size, &meta);
+    FILE *bad_size = fopen(path_bad_size, "r+b");
+    if (bad_size != NULL) {
+        unsigned char zero_size[8] = {0};
+        fseek(bad_size, 24, SEEK_SET);
+        fwrite(zero_size, 1, sizeof(zero_size), bad_size);
+        fclose(bad_size);
+    }
+    ok = ok && nn_load_checkpoint(path_bad_size, NULL) == NULL;
+
+    remove(path_a);
+    remove(path_b);
+    remove(path_c);
+    remove(path_bad);
+    remove(path_bad_size);
+    nn_free(net);
+    return ok;
+}
+
+static int test_trace_writer_emits_parseable_jsonl(void)
+{
+    const char *path = "/tmp/crlplrimes_test_trace.jsonl";
+    const uint32_t action_ids[] = {10, 20};
+    const nn_real scores[] = {(nn_real)0.25, (nn_real)-0.25};
+    const nn_real probabilities[] = {(nn_real)0.62, (nn_real)0.38};
+    uint32_t parsed_action_ids[2];
+    nn_real parsed_scores[2];
+    nn_real parsed_probabilities[2];
+    NNParsedTraceRecord parsed;
+    NNTraceRecord record;
+    char line[1024];
+    int ok = 1;
+
+    memset(&record, 0, sizeof(record));
+    record.task_name = "unit";
+    record.model_hash_hex = "abc";
+    record.state_hash = 0x1234u;
+    record.feature_encoder_version = 3;
+    record.candidate_count = 2;
+    record.action_ids = action_ids;
+    record.scores = scores;
+    record.probabilities = probabilities;
+    record.selected_index = 0;
+    record.target_index = 1;
+    record.loss = (nn_real)0.7;
+    record.verifier_result = "corrected";
+    record.verifier_cost_json = "{\"steps\":2}";
+    record.seed = 99;
+    record.extra_json = "\"p\":11,\"true_gap\":2";
+
+    FILE *fp = fopen(path, "w");
+    if (fp == NULL) {
+        return 0;
+    }
+    ok = ok && nn_trace_write_jsonl(fp, &record);
+    fclose(fp);
+
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        return 0;
+    }
+    ok = ok && fgets(line, sizeof(line), fp) != NULL;
+    fclose(fp);
+    remove(path);
+
+    ok = ok && line[0] == '{' && strstr(line, "\"schema\":\"crlp.trace.v1\"") != NULL &&
+         strstr(line, "\"candidate_count\":2") != NULL &&
+         strstr(line, "\"action_ids\":[10,20]") != NULL &&
+         strstr(line, "\"verifier_cost\":{\"steps\":2}") != NULL &&
+         strstr(line, "\"p\":11") != NULL;
+    ok = ok && nn_trace_parse_jsonl(line,
+                                    &parsed,
+                                    parsed_action_ids,
+                                    parsed_scores,
+                                    parsed_probabilities,
+                                    2);
+    ok = ok && strcmp(parsed.schema, "crlp.trace.v1") == 0 &&
+         strcmp(parsed.task_name, "unit") == 0 &&
+         parsed.state_hash == 0x1234u &&
+         parsed.candidate_count == 2 &&
+         parsed.selected_index == 0 &&
+         parsed.target_index == 1 &&
+         parsed_action_ids[0] == 10 &&
+         parsed_action_ids[1] == 20 &&
+         nearly_equal(parsed_probabilities[0], probabilities[0], (nn_real)1e-6, (nn_real)1e-6);
+    return ok;
+}
+
+static int parse_action_fixture(const char *path,
+                                nn_real weights[2],
+                                nn_real *bias,
+                                nn_real inputs[6],
+                                nn_real expected_scores[3],
+                                nn_real expected_probabilities[3],
+                                size_t expected_ranking[3])
+{
+    FILE *fp = fopen(path, "r");
+    char line[256];
+    size_t input_row = 0;
+    int reading_inputs = 0;
+    int saw_weights = 0;
+    int saw_bias = 0;
+    int saw_scores = 0;
+    int saw_probabilities = 0;
+    int saw_ranking = 0;
+
+    if (fp == NULL) {
+        return 0;
+    }
+
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        if (line[0] == '#' || line[0] == '\n') {
+            continue;
+        }
+
+        if (reading_inputs && input_row < 3) {
+            double a = 0.0;
+            double b = 0.0;
+            if (sscanf(line, "%lf %lf", &a, &b) == 2) {
+                inputs[input_row * 2] = (nn_real)a;
+                inputs[input_row * 2 + 1] = (nn_real)b;
+                ++input_row;
+                if (input_row == 3) {
+                    reading_inputs = 0;
+                }
+                continue;
+            }
+        }
+
+        if (strncmp(line, "inputs", 6) == 0) {
+            reading_inputs = 1;
+            continue;
+        }
+
+        double a = 0.0;
+        double b = 0.0;
+        double c = 0.0;
+        size_t r0 = 0;
+        size_t r1 = 0;
+        size_t r2 = 0;
+        if (sscanf(line, "weights %lf %lf", &a, &b) == 2) {
+            weights[0] = (nn_real)a;
+            weights[1] = (nn_real)b;
+            saw_weights = 1;
+        } else if (sscanf(line, "bias %lf", &a) == 1) {
+            *bias = (nn_real)a;
+            saw_bias = 1;
+        } else if (sscanf(line, "expected_scores %lf %lf %lf", &a, &b, &c) == 3) {
+            expected_scores[0] = (nn_real)a;
+            expected_scores[1] = (nn_real)b;
+            expected_scores[2] = (nn_real)c;
+            saw_scores = 1;
+        } else if (sscanf(line, "expected_probabilities %lf %lf %lf", &a, &b, &c) == 3) {
+            expected_probabilities[0] = (nn_real)a;
+            expected_probabilities[1] = (nn_real)b;
+            expected_probabilities[2] = (nn_real)c;
+            saw_probabilities = 1;
+        } else if (sscanf(line, "expected_ranking %zu %zu %zu", &r0, &r1, &r2) == 3) {
+            expected_ranking[0] = r0;
+            expected_ranking[1] = r1;
+            expected_ranking[2] = r2;
+            saw_ranking = 1;
+        }
+    }
+
+    fclose(fp);
+    return input_row == 3 && saw_weights && saw_bias && saw_scores && saw_probabilities &&
+           saw_ranking;
+}
+
+static int test_fixture_checkpoint_load_and_scoring(void)
+{
+    const char *fixture_path = "tests/fixtures/action_scorer_fixture.txt";
+    const char *checkpoint_path = "/tmp/crlplrimes_fixture_checkpoint.nnckpt";
+    const size_t layers[] = {2, 1};
+    nn_real weights[2];
+    nn_real bias;
+    nn_real inputs[6];
+    nn_real expected_scores[3];
+    nn_real expected_probabilities[3];
+    size_t expected_ranking[3];
+    nn_real scores[3];
+    nn_real probabilities[3];
+    size_t ranking[3];
+    NNConfig config;
+    NeuralNet *net;
+    NeuralNet *loaded;
+    int ok = 1;
+
+    if (!parse_action_fixture(fixture_path,
+                              weights,
+                              &bias,
+                              inputs,
+                              expected_scores,
+                              expected_probabilities,
+                              expected_ranking)) {
+        return 0;
+    }
+
+    config.layer_sizes = layers;
+    config.layer_count = 2;
+    config.seed = 1;
+    config.hidden_activation = NN_ACTIVATION_LINEAR;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+    net = nn_create_config(&config);
+    if (net == NULL) {
+        return 0;
+    }
+
+    ok = ok && nn_test_set_parameter(net, 0, weights[0]) &&
+         nn_test_set_parameter(net, 1, weights[1]) &&
+         nn_test_set_parameter(net, 2, bias);
+    ok = ok && nn_save_checkpoint(net, checkpoint_path, NULL);
+    loaded = nn_load_checkpoint(checkpoint_path, NULL);
+    ok = ok && loaded != NULL;
+    if (loaded != NULL) {
+        ok = ok && nn_score_action_rows(loaded, inputs, 3, scores, probabilities) &&
+             nn_rank_action_scores(scores, 3, ranking);
+        for (size_t i = 0; i < 3; ++i) {
+            ok = ok && nearly_equal(scores[i],
+                                    expected_scores[i],
+                                    (nn_real)1e-6,
+                                    (nn_real)1e-6);
+            ok = ok && nearly_equal(probabilities[i],
+                                    expected_probabilities[i],
+                                    (nn_real)1e-6,
+                                    (nn_real)1e-6);
+            ok = ok && ranking[i] == expected_ranking[i];
+        }
+        nn_free(loaded);
+    }
+
+    remove(checkpoint_path);
+    nn_free(net);
+    return ok;
+}
+
+static int test_fixture_trace_parser(void)
+{
+    const char *fixture_path = "tests/fixtures/example_trace.jsonl";
+    FILE *fp = fopen(fixture_path, "r");
+    char line[1024];
+    NNParsedTraceRecord parsed;
+    uint32_t action_ids[3];
+    nn_real scores[3];
+    nn_real probabilities[3];
+    uint64_t p = 0;
+    int ok = 1;
+
+    if (fp == NULL) {
+        return 0;
+    }
+    ok = ok && fgets(line, sizeof(line), fp) != NULL;
+    fclose(fp);
+
+    ok = ok && nn_trace_parse_jsonl(line, &parsed, action_ids, scores, probabilities, 3);
+    ok = ok && strcmp(parsed.task_name, "fixture") == 0 &&
+         strcmp(parsed.model_hash_hex, "fixture-model") == 0 &&
+         parsed.state_hash == 0x1234u &&
+         parsed.candidate_count == 3 &&
+         parsed.selected_index == 0 &&
+         parsed.target_index == 2 &&
+         action_ids[0] == 10 &&
+         action_ids[2] == 30 &&
+         nn_trace_json_get_u64(line, "seed", &p) &&
+         p == 42;
+
+    const char *bad =
+        "{\"schema\":\"crlp.trace.v1\",\"task\":\"fixture\","
+        "\"state_hash\":\"0000000000001234\",\"model_hash\":\"fixture-model\","
+        "\"feature_encoder_version\":1,\"candidate_count\":2,\"action_ids\":[1,2],"
+        "\"scores\":[0,1],\"probabilities\":[0.7,0.7],"
+        "\"selected_index\":0,\"target_index\":1,\"loss\":0.1,"
+        "\"verifier_result\":\"corrected\",\"verifier_cost\":{},\"seed\":42}";
+    ok = ok && !nn_trace_parse_jsonl(bad, &parsed, action_ids, scores, probabilities, 3);
+    return ok;
+}
+
 static int test_prime_gap_rejects_negative_size_args(void)
 {
     char *argv[] = {"prime_gap", "-1"};
@@ -815,6 +1249,16 @@ int main(void)
           "softmax scorer cached update matches regular update");
     check(test_policy_regularized_cached_matches_policy_update(),
           "policy-regularized cached update matches policy update");
+    check(test_action_scorer_api_scores_probabilities_and_ranking(),
+          "action scorer scores probabilities and ranks deterministically");
+    check(test_checkpoint_roundtrip_hash_and_invalid_files(),
+          "checkpoint roundtrip hash and invalid files");
+    check(test_trace_writer_emits_parseable_jsonl(),
+          "trace writer emits parseable jsonl");
+    check(test_fixture_checkpoint_load_and_scoring(),
+          "fixture checkpoint load and scoring");
+    check(test_fixture_trace_parser(),
+          "fixture trace parser validates schema");
     check(test_prime_gap_rejects_negative_size_args(),
           "prime-gap parser rejects negative size args");
     check(test_prime_gap_rejects_invalid_regularization_args(),
