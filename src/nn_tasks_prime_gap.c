@@ -16,6 +16,8 @@ enum {
     ACTION_COUNT = EXACT_ACTION_COUNT + 1,
     FEATURE_MOD_COUNT = 10,
     FEATURE_COUNT = 3 + FEATURE_MOD_COUNT,
+    RESIDUE_SIGNATURE_COUNT = 1 << FEATURE_MOD_COUNT,
+    CONDITION_SIGNATURE_COUNT = RESIDUE_SIGNATURE_COUNT + 1,
     DEFAULT_TRAIN_LIMIT = 1000000,
     DEFAULT_TEST_LIMIT = 3000000,
     DEFAULT_SUPERVISED_EPOCHS = 2,
@@ -58,6 +60,11 @@ typedef struct {
     size_t capacity;
     size_t overflow_count;
 } GapDataset;
+
+typedef struct {
+    size_t *action_counts;
+    size_t condition_totals[CONDITION_SIGNATURE_COUNT];
+} ConditionedFrequencyPolicy;
 
 typedef struct {
     size_t candidates;
@@ -550,6 +557,23 @@ static void fill_candidate_features_masked(nn_real *inputs,
                              : (nn_real)0;
         }
     }
+}
+
+static size_t residue_signature(uint32_t p, size_t action)
+{
+    if (action_is_overflow(action)) {
+        return RESIDUE_SIGNATURE_COUNT;
+    }
+
+    uint32_t candidate = p + (uint32_t)action_gap(action);
+    size_t signature = 0;
+    for (size_t i = 0; i < FEATURE_MOD_COUNT; ++i) {
+        uint32_t mod = FEATURE_MODS[i];
+        if (candidate > mod && candidate % mod == 0) {
+            signature |= (size_t)1u << i;
+        }
+    }
+    return signature;
 }
 
 #if defined(NN_ENABLE_TEST_API)
@@ -1656,6 +1680,103 @@ static void build_frequency_policy(const GapDataset *dataset,
     rank_actions(scores, ranked);
 }
 
+static void free_conditioned_frequency_policy(ConditionedFrequencyPolicy *policy)
+{
+    if (policy == NULL) {
+        return;
+    }
+
+    free(policy->action_counts);
+    memset(policy, 0, sizeof(*policy));
+}
+
+static int build_conditioned_frequency_policy(ConditionedFrequencyPolicy *policy,
+                                              const GapDataset *dataset)
+{
+    memset(policy, 0, sizeof(*policy));
+    policy->action_counts = calloc((size_t)CONDITION_SIGNATURE_COUNT * ACTION_COUNT,
+                                   sizeof(*policy->action_counts));
+    if (policy->action_counts == NULL) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < dataset->count; ++i) {
+        size_t action = gap_to_action(dataset->gap[i]);
+        size_t signature = residue_signature(dataset->prime[i], action);
+        ++policy->action_counts[signature * ACTION_COUNT + action];
+        ++policy->condition_totals[signature];
+    }
+
+    return 1;
+}
+
+static void conditioned_frequency_scores(const ConditionedFrequencyPolicy *policy,
+                                         uint32_t p,
+                                         nn_real *scores,
+                                         nn_real *probabilities)
+{
+    double sum = 0.0;
+
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        size_t signature = residue_signature(p, action);
+        size_t count = policy->action_counts[signature * ACTION_COUNT + action];
+        size_t total = policy->condition_totals[signature];
+        double score = ((double)count + 1.0) / ((double)total + (double)ACTION_COUNT);
+        scores[action] = (nn_real)score;
+        probabilities[action] = (nn_real)score;
+        sum += score;
+    }
+
+    if (sum <= 0.0) {
+        nn_real uniform = (nn_real)(1.0 / (double)ACTION_COUNT);
+        for (size_t action = 0; action < ACTION_COUNT; ++action) {
+            probabilities[action] = uniform;
+        }
+        return;
+    }
+
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        probabilities[action] = (nn_real)((double)probabilities[action] / sum);
+    }
+}
+
+static EvalMetrics evaluate_conditioned_frequency_policy(
+    const ConditionedFrequencyPolicy *policy,
+    const Sieve *sieve,
+    const GapDataset *dataset,
+    size_t max_states,
+    int include_verifier,
+    nn_real *scores,
+    nn_real *probabilities)
+{
+    EvalMetrics metrics;
+    memset(&metrics, 0, sizeof(metrics));
+
+    size_t samples = dataset->count;
+    if (max_states != 0 && max_states < samples) {
+        samples = max_states;
+    }
+
+    size_t ranked[ACTION_COUNT];
+    for (size_t sample = 0; sample < samples; ++sample) {
+        size_t index = eval_sample_index(dataset, sample, samples);
+        conditioned_frequency_scores(policy, dataset->prime[index], scores, probabilities);
+        rank_actions(scores, ranked);
+        accumulate_eval_sample(&metrics,
+                               sieve,
+                               dataset,
+                               dataset->prime[index],
+                               dataset->gap[index],
+                               ranked,
+                               probabilities,
+                               include_verifier);
+    }
+
+    metrics.samples = samples;
+    finalize_eval_metrics(&metrics);
+    return metrics;
+}
+
 static int train_supervised(NeuralNet *net,
                             const char *label,
                             const GapDataset *dataset,
@@ -1682,10 +1803,10 @@ static int train_supervised(NeuralNet *net,
             size_t index = order[step];
             fill_candidate_features_masked(candidate_inputs, dataset->prime[index], log_scale, mask);
             nn_real step_loss = nn_train_action_scorer(net,
-                                                       candidate_inputs,
-                                                       ACTION_COUNT,
-                                                       gap_to_action(dataset->gap[index]),
-                                                       learning_rate);
+                                                        candidate_inputs,
+                                                        ACTION_COUNT,
+                                                        gap_to_action(dataset->gap[index]),
+                                                        learning_rate);
             if (isnan((double)step_loss)) {
                 return 0;
             }
@@ -1809,8 +1930,10 @@ static int train_regularized_verifier_rl(NeuralNet *net,
             size_t target = gap_to_action(dataset->gap[index]);
 
             fill_candidate_features_masked(candidate_inputs, dataset->prime[index], log_scale, mask);
-            if (!nn_score_action_rows(net, candidate_inputs, ACTION_COUNT, scores, probabilities) ||
-                !nn_score_action_rows(reference_net,
+            if (!nn_score_action_rows(net, candidate_inputs, ACTION_COUNT, scores, probabilities)) {
+                return 0;
+            }
+            if (!nn_score_action_rows(reference_net,
                                       candidate_inputs,
                                       ACTION_COUNT,
                                       reference_scores,
@@ -1914,6 +2037,90 @@ static int run_supervised_ablation(const char *label,
     return ok;
 }
 
+static int run_linear_scorer_baseline(const NNConfig *config,
+                                      const Sieve *sieve,
+                                      const GapDataset *train,
+                                      const GapDataset *validation,
+                                      const GapDataset *test,
+                                      size_t max_train_states,
+                                      size_t max_validation_states,
+                                      size_t max_test_states,
+                                      size_t supervised_epochs,
+                                      double log_scale,
+                                      nn_real *candidate_inputs,
+                                      nn_real *scores,
+                                      nn_real *probabilities,
+                                      size_t *order,
+                                      uint32_t *rng,
+                                      EvalMetrics *metrics_out,
+                                      EvalMetrics *temp_metrics_out,
+                                      double *temperature_out)
+{
+    NeuralNet *net = nn_create_config(config);
+    int ok;
+
+    if (net == NULL) {
+        return 0;
+    }
+
+    printf("\ntraining baseline linear-scorer (full features, no hidden layer)\n");
+    ok = train_supervised(net,
+                          "baseline linear-scorer",
+                          train,
+                          max_train_states,
+                          supervised_epochs,
+                          (nn_real)0.005,
+                          log_scale,
+                          &FEATURE_MASK_FULL,
+                          candidate_inputs,
+                          order,
+                          rng);
+    if (ok) {
+        double validation_nll = 0.0;
+        double temperature = fit_temperature(net,
+                                             validation,
+                                             max_validation_states,
+                                             log_scale,
+                                             &FEATURE_MASK_FULL,
+                                             candidate_inputs,
+                                             scores,
+                                             probabilities,
+                                             &validation_nll);
+        printf("baseline linear-scorer temperature=%.2f validation_nll=%.4f\n",
+               temperature,
+               validation_nll);
+
+        *metrics_out = evaluate_model(net,
+                                      sieve,
+                                      test,
+                                      max_test_states,
+                                      log_scale,
+                                      &FEATURE_MASK_FULL,
+                                      0,
+                                      1.0,
+                                      candidate_inputs,
+                                      scores,
+                                      probabilities);
+        *temp_metrics_out = evaluate_model(net,
+                                           sieve,
+                                           test,
+                                           max_test_states,
+                                           log_scale,
+                                           &FEATURE_MASK_FULL,
+                                           0,
+                                           temperature,
+                                           candidate_inputs,
+                                           scores,
+                                           probabilities);
+        *temperature_out = temperature;
+        print_metrics("baseline linear-scorer", *metrics_out);
+        print_metrics("baseline linear-scorer temp-scaled", *temp_metrics_out);
+    }
+
+    nn_free(net);
+    return ok;
+}
+
 int nn_prime_gap_main(int argc, char **argv)
 {
     PrimeGapRunConfig run_config;
@@ -2000,6 +2207,7 @@ int nn_prime_gap_main(int argc, char **argv)
     }
 
     const size_t layers[] = {FEATURE_COUNT, 32, 16, 1};
+    const size_t linear_layers[] = {FEATURE_COUNT, 1};
     NNConfig config;
     config.layer_sizes = layers;
     config.layer_count = sizeof(layers) / sizeof(layers[0]);
@@ -2007,10 +2215,16 @@ int nn_prime_gap_main(int argc, char **argv)
     config.hidden_activation = NN_ACTIVATION_RELU;
     config.output_activation = NN_ACTIVATION_LINEAR;
     config.loss = NN_LOSS_MSE;
+    NNConfig linear_config = config;
+    linear_config.layer_sizes = linear_layers;
+    linear_config.layer_count = sizeof(linear_layers) / sizeof(linear_layers[0]);
+    linear_config.hidden_activation = NN_ACTIVATION_LINEAR;
+    linear_config.seed = 4201;
 
     NeuralNet *net = nn_create_config(&config);
     NeuralNet *strict_net = NULL;
     NeuralNet *regularized_net = NULL;
+    ConditionedFrequencyPolicy conditioned_policy = {0};
     nn_real *candidate_inputs = calloc((size_t)ACTION_COUNT * FEATURE_COUNT, sizeof(*candidate_inputs));
     nn_real *scores = calloc(ACTION_COUNT, sizeof(*scores));
     nn_real *probabilities = calloc(ACTION_COUNT, sizeof(*probabilities));
@@ -2080,29 +2294,75 @@ int nn_prime_gap_main(int argc, char **argv)
 
     size_t frequency_ranked[ACTION_COUNT];
     nn_real frequency_probabilities[ACTION_COUNT];
+    EvalMetrics frequency_metrics;
+    EvalMetrics conditioned_metrics;
+    EvalMetrics model_before_metrics;
+    EvalMetrics linear_metrics;
+    EvalMetrics linear_temp_metrics;
+    double linear_temperature = 1.0;
 
     printf("\n=== Baselines ===\n");
     build_frequency_policy(&train, frequency_ranked, frequency_probabilities);
-    print_metrics("baseline empirical-gap",
-                  evaluate_static_policy(&sieve,
-                                         &test,
-                                         frequency_ranked,
-                                         frequency_probabilities,
-                                         run_config.max_test_states,
-                                         1));
+    frequency_metrics = evaluate_static_policy(&sieve,
+                                               &test,
+                                               frequency_ranked,
+                                               frequency_probabilities,
+                                               run_config.max_test_states,
+                                               1);
+    print_metrics("baseline empirical-gap", frequency_metrics);
 
-    print_metrics("model before",
-                  evaluate_model(net,
-                                 &sieve,
-                                 &test,
-                                 run_config.max_test_states,
-                                 log_scale,
-                                 &FEATURE_MASK_FULL,
-                                 1,
-                                 1.0,
-                                 candidate_inputs,
-                                 scores,
-                                 probabilities));
+    if (!build_conditioned_frequency_policy(&conditioned_policy, &train)) {
+        fputs("failed to build conditioned frequency policy\n", stderr);
+        ok = 0;
+        goto cleanup;
+    }
+    conditioned_metrics = evaluate_conditioned_frequency_policy(&conditioned_policy,
+                                                                &sieve,
+                                                                &test,
+                                                                run_config.max_test_states,
+                                                                1,
+                                                                scores,
+                                                                probabilities);
+    print_metrics("baseline residue-conditioned", conditioned_metrics);
+    free_conditioned_frequency_policy(&conditioned_policy);
+
+    uint32_t linear_rng = rng;
+    fill_order(order, train.count);
+    ok = run_linear_scorer_baseline(&linear_config,
+                                    &sieve,
+                                    &train,
+                                    &validation,
+                                    &test,
+                                    run_config.max_train_states,
+                                    max_validation_states,
+                                    run_config.max_test_states,
+                                    run_config.supervised_epochs,
+                                    log_scale,
+                                    candidate_inputs,
+                                    scores,
+                                    probabilities,
+                                    order,
+                                    &linear_rng,
+                                    &linear_metrics,
+                                    &linear_temp_metrics,
+                                    &linear_temperature);
+    if (!ok) {
+        goto cleanup;
+    }
+    fill_order(order, train.count);
+
+    model_before_metrics = evaluate_model(net,
+                                          &sieve,
+                                          &test,
+                                          run_config.max_test_states,
+                                          log_scale,
+                                          &FEATURE_MASK_FULL,
+                                          1,
+                                          1.0,
+                                          candidate_inputs,
+                                          scores,
+                                          probabilities);
+    print_metrics("model before", model_before_metrics);
 
     printf("\n=== Feature Ablations ===\n");
     printf("Supervised-only runs; verifier diagnostics skipped to keep these capability-focused.\n");
@@ -2367,6 +2627,10 @@ int nn_prime_gap_main(int argc, char **argv)
     }
 
     print_comparison_header();
+    print_comparison_row("empirical-gap", 1.0, frequency_metrics);
+    print_comparison_row("residue-conditioned", 1.0, conditioned_metrics);
+    print_comparison_row("linear-scorer", 1.0, linear_metrics);
+    print_comparison_row("linear-scorer temp-scaled", linear_temperature, linear_temp_metrics);
     print_comparison_row("supervised", 1.0, supervised_metrics);
     print_comparison_row("supervised temp-scaled",
                          supervised_temperature,
@@ -2405,6 +2669,7 @@ int nn_prime_gap_main(int argc, char **argv)
     }
 
 cleanup:
+    free_conditioned_frequency_policy(&conditioned_policy);
     free(order);
     free(reference_probabilities);
     free(reference_scores);

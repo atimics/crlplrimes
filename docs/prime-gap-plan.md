@@ -89,6 +89,13 @@ Verifier diagnostics are useful, but they are not the headline success criterion
 
 The learned policy is a strong ranker.
 
+The stronger baselines sharpen the claim. A residue-conditioned frequency table gets to 40.11%
+top-1 and 93.04% top-10 on the default held-out slice, which confirms that small-prime residue
+features carry most of the ranking signal. A linear full-feature softmax scorer is stronger still:
+after temperature scaling it reaches 45.12% top-1, 99.49% top-10, 1.5721 NLL, and 0.0660 ECE.
+The hidden full scorer still has the best top-10/NLL in the default supervised run, but the margin
+over the linear scorer is modest.
+
 The new ablation results separate ranking from calibrated probability estimation. Candidate residue
 features alone can rank well because they expose a learned soft sieve, but their probability estimates
 are poorly calibrated. The full feature set improves held-out negative log likelihood and true-action
@@ -121,10 +128,10 @@ Model-assisted exact verification currently does not beat wheel or block verific
    - expand the KL/entropy sweep across larger held-out ranges
    - compare validation-selected regularization weights across multiple seeds and held-out ranges
 
-2. Add stronger non-neural baselines.
-   - frequency conditioned on divisibility flags
+2. Add stronger verifier-aware baselines.
    - hand-coded wheel ranking
-   - linear/logistic scorer
+   - linear scorer with explicit wheel-survivor features
+   - conditioned frequency over larger residue signatures
 
 3. Expand ablations.
    - different small-prime feature sets

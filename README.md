@@ -2,7 +2,7 @@
 
 This repository is a compact C neural-network library and an exact-verifier research harness for learned proposal policies over prime gaps.
 
-The headline experiment asks whether a small dense network can learn a useful probability distribution over next-prime gap actions while a deterministic sieve remains the oracle for labels, rewards, and correctness. The current answer is: yes for proposal quality, no for replacing exact verification. On the default held-out test slice, the full model reaches `45.12%` top-1 and `99.77%` top-10 gap-action accuracy; KL/entropy-regularized verifier RL preserves that ranking while avoiding the probability blow-up produced by strict verifier RL.
+The headline experiment asks whether a small dense network can learn a useful probability distribution over next-prime gap actions while a deterministic sieve remains the oracle for labels, rewards, and correctness. The current answer is: yes for proposal quality, no for replacing exact verification. On the default held-out test slice, the full model reaches `45.12%` top-1 and `99.77%` top-10 gap-action accuracy; a linear scorer over the same features already reaches the same top-1 and `99.49%` top-10, so the hidden network's current gain is modest and mostly in top-10/NLL. KL/entropy-regularized verifier RL preserves ranking while avoiding the probability blow-up produced by strict verifier RL.
 
 ## Research Snapshot
 
@@ -26,6 +26,9 @@ Policy comparison from the current default run:
 | Method | Temp | Top-1 | Top-10 | NLL | ECE | Top-1 confidence |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Empirical gap baseline | 1.00 | 15.46% | 78.71% | 2.8585 | 0.0196 | 0.1743 |
+| Residue-conditioned frequency baseline | 1.00 | 40.11% | 93.04% | 2.8583 | 0.2769 | 0.1242 |
+| Linear full-feature scorer | 1.00 | 45.12% | 99.49% | 1.6236 | 0.1135 | 0.3417 |
+| Linear full-feature scorer, temp-scaled | 0.70 | 45.12% | 99.49% | 1.5721 | 0.0660 | 0.4543 |
 | Supervised full scorer | 1.00 | 45.12% | 99.77% | 1.5778 | 0.0743 | 0.4882 |
 | Supervised full scorer, temp-scaled | 1.20 | 45.12% | 99.77% | 1.5585 | 0.0694 | 0.4323 |
 | Strict verifier RL | 1.00 | 45.12% | 99.46% | 2.3612 | 0.3100 | 0.7613 |
@@ -35,8 +38,9 @@ Policy comparison from the current default run:
 
 Interpretation:
 
-- Candidate residue features expose a learned soft sieve: the model becomes a strong ranker over candidate gaps.
-- The full feature set improves probability quality over residue-only ranking, reducing held-out NLL while keeping top-k accuracy high.
+- Candidate residue features expose a soft sieve: even a count baseline conditioned on residue flags jumps from `15.46%` to `40.11%` top-1.
+- A linear full-feature scorer is a very strong baseline. It matches the hidden model's top-1 and gets close on top-10, so future claims should emphasize calibrated probability quality and residual ranking gains, not raw top-1.
+- The hidden full scorer improves probability quality over residue-only and linear ranking, reducing held-out NLL while keeping top-k accuracy high.
 - Strict verifier RL mostly inflates logits: ranking stays useful, but calibration degrades sharply.
 - KL/entropy regularization is the cleaner training-side fix: it keeps top-10 near `99.75%` while bringing unscaled ECE down from `0.3100` to `0.0821`.
 - Exact next-prime verification is still classical. Model-assisted verification does not beat wheel or block verification in the current setup because wrong proposals add proof obligations.
@@ -51,7 +55,8 @@ The prime-gap experiment is deliberately verifier-guided:
 4. Train a supervised warm start with softmax cross-entropy across candidate actions.
 5. Fit a scalar softmax temperature on a held-out validation slice.
 6. Clone the supervised checkpoint and compare strict verifier policy-gradient RL against KL/entropy-regularized verifier RL.
-7. Evaluate proposal capability, calibration, generalization by prime-size bucket, and exact verifier work diagnostics separately.
+7. Compare against empirical gap frequency, residue-conditioned frequency, and a linear full-feature softmax scorer.
+8. Evaluate proposal capability, calibration, generalization by prime-size bucket, and exact verifier work diagnostics separately.
 
 The important framing is that the verifier is the correctness mechanism. The neural network is judged by proposal quality, generalization, and calibrated uncertainty under perfect mathematical feedback.
 
@@ -210,7 +215,7 @@ score = f(input)
 policy = softmax(scores across candidate gaps 2..256 plus an overflow action)
 ```
 
-The example first evaluates an empirical gap-frequency baseline, then runs supervised feature ablations:
+The example first evaluates empirical gap frequency, residue-conditioned frequency, and linear full-feature baselines, then runs supervised feature ablations:
 
 ```text
 log-only
