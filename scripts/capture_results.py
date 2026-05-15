@@ -14,6 +14,7 @@ COMMANDS = (
     ("delayed_claim", ("delayed-claim-eval",)),
     ("grid_path", ("grid-path-eval",)),
     ("prime_rule_search", ("prime-rule-search",)),
+    ("prime_rule_search_baselines", ("prime-rule-search-baselines",)),
     ("prime_gap", ("prime-gap-eval",)),
 )
 
@@ -59,6 +60,9 @@ def dedupe_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
             row.get("task"),
             row.get("rule_set_hash"),
             row.get("grammar_version"),
+            row.get("max_rules"),
+            row.get("selection_strategy"),
+            row.get("selection_seed"),
             row.get("proposed_rules"),
             row.get("verified_rules"),
             row.get("accepted_rules"),
@@ -109,6 +113,8 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
         key = (
             row.get("rule_set_hash"),
             row.get("grammar_version"),
+            row.get("max_rules"),
+            row.get("selection_strategy"),
             row.get("accepted_rules"),
             row.get("accepted_candidate_rules"),
             row.get("accepted_gap_rules"),
@@ -231,6 +237,7 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                     str(row.get("rule_set_hash", "unknown"))[:12],
                     str(row.get("grammar_version", "")),
                     str(row.get("proposer_feature_set", "")),
+                    str(row.get("selection_strategy", "")),
                     str(row.get("max_rules", "")),
                     str(row.get("proposed_rules", "")),
                     str(row.get("verified_rules", "")),
@@ -252,6 +259,7 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                 "rule hash",
                 "grammar",
                 "features",
+                "strategy",
                 "budget",
                 "proposed",
                 "verified",

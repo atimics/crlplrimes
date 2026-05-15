@@ -5,7 +5,7 @@ This repository is a compact C neural-network library and an exact-verifier rese
 The repository develops three claims:
 
 1. **Hybrid wins under exact verification.** With residue-sieve features removed from the scorer input, the raw scorer reaches only **9.13%** top-1. Gating that same minimal-feature scorer with a fixed hand-wheel reaches **45.12%**, and gating it with the learned rule program reaches **68.31%** at 100% top-10, with ~4x lower model latency per sample on the canonical held-out benchmark. The gate contributes the bulk of the improvement; the scorer's role is to rank the residual after structurally impossible candidates have been pruned.
-2. **A certificate-gated proposer can discover sound symbolic gates.** A structural-only neural proposer over a compact rule grammar, paired with a soundness-certificate verifier, produces **52 accepted rules out of 4,692 verified candidates with 0 false rejections**, cutting exact verifier work from **7.20** probes to **1.47** without hand-coding the wheel. The proposer sees rule shape only (`m`, residues, zero indicators, gcd ratios, derived candidate residue), while empirical support is only the training target. The soundness guarantee is a property of the certificate, not of training. How much of the recovery is attributable to *learning* (rather than to enumerate-then-filter) is an open question — see Limitations.
+2. **Certificate-gated rule search can discover sound symbolic gates.** A structural-only neural proposer over a compact rule grammar, paired with a soundness-certificate verifier, produces **52 accepted rules out of 4,692 verified candidates with 0 false rejections**, cutting exact verifier work from **7.20** probes to **1.47** without hand-coding the wheel. The proposer sees rule shape only (`m`, residues, zero indicators, gcd ratios, derived candidate residue), while empirical support is only the training target. The soundness guarantee is a property of the certificate, not of training. New fixed-budget baselines show the current neural proposer is **not** essential: at a 16-rule budget, grammar order and a simple structural heuristic save **73.22%** of exact work versus **67.03%** for the neural proposer and **46.30%** for one random ordering.
 3. **KL-regularized verifier RL prevents calibration collapse on the prime-gap task.** Strict policy-gradient RL on exact rewards inflates logit scale rather than improving ranking (minimal-feature ECE 0.0704 -> 0.1271 with top-1 unchanged). Adding a KL term toward the supervised prior plus an entropy bonus restores calibration (ECE 0.0604) at the same top-k. Whether the same failure mode and fix transfer to `grid_path` and `delayed_claim` is planned work, not yet demonstrated.
 
 Prime gaps are used as **the experiment domain**, not the goal. They give us a compact, totally-ordered candidate space with a fast deterministic verifier, exact labels at all scales, and a known classical baseline (sieves) we cannot beat — which is precisely what makes them a clean substrate for studying learned proposal policies under perfect feedback. Two other exact-verifier tasks (`delayed_claim`, `grid_path`) are included to test which parts of the protocol generalize.
@@ -16,9 +16,9 @@ Canonical benchmark: `sample_count=30000` held-out states with `train_limit=1,00
 
 | Model / mode | Top-1 | Top-10 | NLL | ECE | Mean rank | Model ms/sample |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Minimal scorer, no gate | 9.13% | 78.01% | 2.9994 | 0.1076 | 7.1951 | 0.0366 |
-| Minimal scorer + hand-wheel gate | 45.12% | 99.77% | 1.5902 | 0.0834 | 2.2015 | 0.0377 |
-| **Minimal scorer + learned-rule gate** | **68.31%** | **100.00%** | **1.0172** | 0.1379 | **1.4653** | **0.0099** |
+| Minimal scorer, no gate | 9.13% | 78.01% | 2.9994 | 0.1076 | 7.1951 | 0.0345 |
+| Minimal scorer + hand-wheel gate | 45.12% | 99.77% | 1.5902 | 0.0834 | 2.2015 | 0.0356 |
+| **Minimal scorer + learned-rule gate** | **68.31%** | **100.00%** | **1.0172** | 0.1379 | **1.4653** | **0.0096** |
 
 The same network does the scoring in all three rows; only the gate changes. The scorer input is the clean minimal feature set `[log(p), normalized_gap, overflow_flag]`; precomputed residue divisibility flags are disabled by default. The fixed hand-wheel (small-prime divisibility filter) supplies the small-prime modular structure that the minimal scorer cannot recover from `p` and `g` alone. The learned-rule gate is loaded from the `prime_rule_search` expanded rule checkpoint and is produced by a structural-only proposer over rules of the form `reject candidate n when n > m and n % m == r`; each accepted rule has the algebraic certificate `gcd(m, r) > 1`. It adds another **23.2 percentage points** of top-1 on top of the hand-wheel. The old 45.12% raw-scorer headline is now treated as a leakage ablation: it came from handing the scorer precomputed small-prime divisibility flags.
 
@@ -49,7 +49,7 @@ The model proposes. The verifier decides. The trace remembers.
 Concretely, the pipeline at run time is:
 
 1. A symbolic task defines state, candidate actions, an exact verifier for the next state, and a certificate verifier for filter rules.
-2. A neural rule proposer ranks candidate rules in a fixed grammar; only rules with deterministic certificates are accepted (e.g. `gcd(m, r) > 1` for candidate-divisibility rules, or `(a + b) % m` sharing a non-trivial factor with `m` for conditional gap rules). Accepted rules cannot reject the true action.
+2. A rule proposer ranks candidate rules in a fixed grammar; only rules with deterministic certificates are accepted (e.g. `gcd(m, r) > 1` for candidate-divisibility rules, or `(a + b) % m` sharing a non-trivial factor with `m` for conditional gap rules). Accepted rules cannot reject the true action. The proposer can be neural or a baseline ordering.
 3. At inference, accepted rules deterministically prune the candidate set.
 4. A shared neural scorer assigns one logit to each surviving candidate; softmax produces proposal probabilities; deterministic ranking breaks score ties by original candidate order.
 5. The exact verifier supplies the correct action, reward, and cost. The model is not the oracle.
@@ -69,9 +69,9 @@ Same scorer, three gates, same benchmark:
 | Hand-wheel (small-prime divisibility) | 45.12% | 99.77% | 1.5902 |
 | **Learned rule program** (certificate-checked rules) | **68.31%** | **100.00%** | **1.0172** |
 
-The hand-wheel gate nearly saturates top-10 because almost every true next-prime gap survives small-prime filtering. The learned rule program adds ~23pp of top-1 on top of the hand-wheel because the structural proposer discovers more certified divisibility rules than the fixed small-prime feature wheel. The clean raw-to-learned delta is **9.13 -> 68.31** top-1; the former raw 45.12% figure is retained only as a full-sieve-feature leakage ablation.
+The hand-wheel gate nearly saturates top-10 because almost every true next-prime gap survives small-prime filtering. The learned-rule checkpoint adds ~23pp of top-1 on top of the hand-wheel because it contains more certified divisibility rules than the fixed small-prime feature wheel. The clean raw-to-learned delta is **9.13 -> 68.31** top-1; the former raw 45.12% figure is retained only as a full-sieve-feature leakage ablation.
 
-### Finding 2 — A certificate-gated proposer discovers sound symbolic gates
+### Finding 2 — Certificate-gated rule search discovers sound symbolic gates
 
 `prime_rule_search` runs the canonical neural proposer over unconditional candidate filters `reject candidate n when n > m and n % m == r` for `m=3..255`. The expanded grammar can also express conditional gap filters (`if p % m == a then reject gap % m == b`) under `prime-rule-search-conditional`, but that broader mode is not the load-bearing result. The certificate verifier only accepts rules with a deterministic soundness proof, so an accepted rule provably cannot reject the true next-prime gap.
 
@@ -89,7 +89,17 @@ saved:            79.64%
 
 The proposer is small (`crlp.rule_trace.v1` schema, scoring rule candidates with the same shared-scorer abstraction as gap actions). Its input feature set is structural-only: condition kind, moduli, residues, zero-residue indicators, gcd ratios, and derived candidate residue. It does not receive `train_rejects`, validation support, utility, or false-rejection counters as features; those counts are labels and verifier diagnostics. The discipline of the result is in the verifier, not the model: a rule is accepted only if a deterministic algebraic check certifies soundness, so zero false rejections is a property of the certificate, not of training.
 
-**What this evidence does and does not show.** It shows that *a certificate-gated structural proposer* over this grammar produces a sound, useful rule set without being handed empirical support. It does **not** yet show that the *neural* proposer is essential. The numbers above are consistent with the proposer learning enough structural regularity to rank useful rules, and they are also consistent with the verifier carrying the result on top of a near-random proposer. The defensible claim today is "certificate-gated structural rule discovery is sound and recovers most of the wheel"; the stronger "the learned proposer is essential" claim is open until the random-proposer-at-fixed-budget baseline runs. See Limitations.
+Matched-budget proposer baselines now run in `make prime-rule-search-baselines`. At a 16-rule budget over the same grammar, split, and certificate verifier:
+
+| Rule ordering | Exact probes | Work saved |
+| --- | ---: | ---: |
+| Neural structural proposer | 2.37 | 67.03% |
+| Random ordering, seed 20240511 | 3.86 | 46.30% |
+| Grammar order | 1.93 | 73.22% |
+| Structural heuristic | 1.93 | 73.22% |
+| Validation-count oracle | 1.93 | 73.22% |
+
+**What this evidence does and does not show.** It shows that certificate-gated structural rule discovery is sound and useful. It also shows the current neural proposer is not the reason this rule set works: at the fixed 16-rule budget, simple deterministic orderings beat it. The stronger neurosymbolic claim now has a concrete target: learn a proposer that beats grammar-order and structural-heuristic baselines under the same grammar and budget.
 
 ### Finding 3 — KL-regularized verifier RL prevents calibration collapse
 
@@ -179,7 +189,7 @@ The grid legality proposer accepts 3/5 certified rules under budget with 0 held-
 
 ## Limitations and Next Work
 
-- **Random-proposer baseline at fixed verifier-call budget.** Finding 2 currently shows that *a certificate-gated structural proposer* cuts exact verifier work by 79.64% without support-count feature leakage; it does not yet distinguish "the neural proposer found the rules" from "the certificate gate filtered a large enumeration." Running random and exhaustive rule proposers at the same budget is the missing experiment that elevates Finding 2 from "sound" to "the learned proposer is essential." This is two days of work and on the immediate roadmap.
+- **Proposer learning is not solved.** The fixed-budget baseline now shows grammar order and a simple structural heuristic outperform the current neural proposer at a 16-rule budget. Finding 2 should be read as a certificate-gated rule-search result, not as evidence that the neural proposer is essential. The next proposer experiment needs a richer grammar where ordering is non-trivial and random/grammar/heuristic baselines are hard to beat.
 - **Cross-task verifier-RL comparison.** Finding 3 (strict-vs-regularized RL on the prime-gap task) needs a matching run on `grid_path` and `delayed_claim` before it can be stated as a general property of sparse-exact-reward policy gradient. The pipeline supports it; the comparison is not in the canonical results yet.
 - **Richer non-prime gate grammars.** `grid_path` now has a budgeted certified legality gate, but that gate is intentionally shallow. The next cross-domain test should learn admissible dead-end or distance-bound pruning rules that reduce BFS verifier work without becoming a hand-coded solver.
 - **Statistical rigor.** The default `make prime-gap-experiments` config currently runs 1 seed; the harness supports more (`PRIME_GAP_EXPERIMENT_SEEDS=...`). The minimal-vs-leakage, strict-vs-regularized, and hand-wheel-vs-learned-rule deltas should be reported with confidence intervals across >=5 seeds.
@@ -319,7 +329,7 @@ The default `minimal` feature set intentionally omits precomputed residue divisi
 make prime-rule-search
 ```
 
-Runs the rule-grammar experiment that produces Finding 2. The default neural proposer scores unconditional candidate filters of the form `reject candidate n when n > m and n % m == r` over `m=3..255`; `make prime-rule-search-conditional` runs the broader conditional gap grammar. The proposer's feature set is structural-only and excludes support counts, utility, and false-rejection counters. The verifier accepts only rules with a deterministic algebraic certificate. The JSONL trace uses schema `crlp.rule_trace.v1` and records grammar version, proposer feature set, rule text, model score, verifier result, deterministic-certificate flag, accepted flag, support counts, and false-rejection counts.
+Runs the rule-grammar experiment that produces Finding 2. The default neural proposer scores unconditional candidate filters of the form `reject candidate n when n > m and n % m == r` over `m=3..255`; `make prime-rule-search-baselines` reruns the same grammar with neural, random, grammar-order, structural-heuristic, and validation-oracle orderings at a fixed 16-rule budget; `make prime-rule-search-conditional` runs the broader conditional gap grammar. The neural proposer's feature set is structural-only and excludes support counts, utility, and false-rejection counters. The verifier accepts only rules with a deterministic algebraic certificate. The JSONL trace uses schema `crlp.rule_trace.v1` and records grammar version, selection strategy, proposer feature set, rule text, model score, verifier result, deterministic-certificate flag, accepted flag, support counts, and false-rejection counts.
 
 CLI output of `make prime-gap` is split into sections:
 

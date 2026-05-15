@@ -1290,7 +1290,24 @@ static int test_rule_search_unconditional_range_builds_structural_program(void)
          config.include_candidate_filters == 1 &&
          config.include_gap_filters == 0 && config.mod_count == 3 &&
          config.moduli[0] == 3 && config.moduli[1] == 4 &&
-         config.moduli[2] == 5;
+         config.moduli[2] == 5 &&
+         config.proposer_mode == RULE_PROPOSER_NEURAL;
+
+    char *baseline_argv[] = {
+        "prime_rule_search",
+        "--candidate-only",
+        "--unconditional-only",
+        "--moduli-range",
+        "3:5",
+        "--proposer",
+        "random",
+        "--proposer-seed",
+        "17",
+    };
+    RuleSearchConfig baseline_config;
+    ok = ok && parse_rule_search_config(9, baseline_argv, &baseline_config) &&
+         baseline_config.proposer_mode == RULE_PROPOSER_RANDOM &&
+         baseline_config.proposer_seed == 17u;
 
     ok = ok && build_rule_search_grammar(&config, &grammar);
     ok = ok && grammar.state_count == 1 && grammar.filter_count == 12 &&

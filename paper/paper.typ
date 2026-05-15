@@ -65,9 +65,12 @@
     from the scorer input, the raw scorer reaches 9.13% top-1; a fixed hand-wheel gate raises
     this to 45.12%, and a learned rule gate reaches 68.31% at 100% top-10 with an
     $approx$4$times$ reduction in model latency. The symbolic gate itself
-    is produced by a structural-only neural proposer trained against a soundness-certificate verifier:
+    is produced by structural rule search against a soundness-certificate verifier:
     rule search proposes 32,637 candidates, certificate-verifies 4,692, and accepts 52 rules with
-    zero false rejections, recovering 79.64% of wheel-equivalent verifier work. Under sparse-exact-reward policy gradient on the
+    zero false rejections, recovering 79.64% of wheel-equivalent verifier work. A fixed 16-rule
+    budget baseline shows the current neural proposer is not essential: grammar order and a
+    simple structural heuristic save 73.22% of exact work versus 67.03% for the neural proposer.
+    Under sparse-exact-reward policy gradient on the
     same task, strict verifier RL inflates logit scale (ECE 0.070 $arrow.r$ 0.127) without
     improving ranking; a KL-toward-prior + entropy regularizer keeps ECE at 0.060 at the same
     top-k. Prime gaps are used as a substrate, not the goal; we argue the protocol is
@@ -87,7 +90,7 @@ candidate space contains many structurally impossible actions that the verifier 
 eliminate.
 
 Our thesis is the *certificate-gating loop*: a learned scorer should consume the *survivors* of
-a verifier-checked symbolic filter, and the filter itself can be produced by a neural proposer
+a verifier-checked symbolic filter, and the filter itself can be produced by a rule proposer
 gated by a soundness-certificate verifier. The scorer ranks the residual; the gate eliminates
 the rest; nothing the gate emits can violate correctness because every rule it accepts carries
 a deterministic proof.
@@ -99,11 +102,12 @@ We make three claims, each tied to a concrete experiment in the released artifac
   minimal-feature raw scorer reaches 9.13% top-1. The same scorer reaches 45.12% under a fixed
   hand-wheel gate and *68.31% top-1 under a learned rule gate* at 100% top-10. The dominating
   effect is the gate, not the depth of the scorer.
-+ *A certificate-gated proposer discovers sound symbolic gates.* A neural proposer over a small
-  rule grammar sees only structural fields, paired with a soundness-certificate verifier,
++ *Certificate-gated rule search discovers sound symbolic gates.* A structural neural proposer
+  over a small rule grammar, paired with a soundness-certificate verifier,
   proposes 32,637 rules, certificate-verifies 4,692, and produces 52 accepted rules with zero
   false rejections, recovering 79.64% of wheel-equivalent verifier work. The soundness guarantee
-  is a property of the certificate, not of training.
+  is a property of the certificate, not of training; fixed-budget baselines show the current
+  neural proposer does not beat grammar order.
 + *KL-regularized verifier RL prevents calibration collapse.* Strict policy gradient on sparse
   exact rewards inflates logit scale rather than improving ranking; a standard KL-to-prior +
   entropy term restores calibration at unchanged top-k.
@@ -181,7 +185,7 @@ The reusable architecture is:
     content((x_softmax / 2, y_bot - 1.45),
       text(size: 8.5pt, [exact verifier $arrow.r$ correct action / cost / JSONL trace]))
   }),
-  caption: [The certificate-gating loop. A learned rule proposer (top) produces candidate rules
+  caption: [The certificate-gating loop. A rule proposer (top) produces candidate rules
     that a soundness-certificate verifier accepts or rejects. Accepted rules deterministically
     prune the candidate set; a shared neural scorer ranks the survivors; the exact verifier
     supplies the correctness signal.],
@@ -272,9 +276,9 @@ Full metrics:
     columns: (auto, auto, auto, auto, auto, auto),
     align: (left, right, right, right, right, right),
     table.header[*Gate*][*Top-1*][*Top-10*][*NLL*][*ECE*][*ms/sample*],
-    [no gate], [9.13%], [78.01%], [2.9994], [0.1076], [0.0366],
-    [hand-wheel], [45.12%], [99.77%], [1.5902], [0.0834], [0.0377],
-    [*learned wheel*], [*68.31%*], [*100.00%*], [*1.0172*], [0.1379], [*0.0099*],
+    [no gate], [9.13%], [78.01%], [2.9994], [0.1076], [0.0345],
+    [hand-wheel], [45.12%], [99.77%], [1.5902], [0.0834], [0.0356],
+    [*learned wheel*], [*68.31%*], [*100.00%*], [*1.0172*], [0.1379], [*0.0096*],
   ),
   caption: [Gate ablation, minimal-feature scorer, identical weights across rows.],
 ) <tab:f1>
@@ -293,7 +297,7 @@ Full metrics:
     delta.
 ]
 
-= Finding 2: A certificate-gated proposer discovers sound symbolic gates
+= Finding 2: Certificate-gated rule search discovers sound symbolic gates
 
 The canonical rule grammar is `reject candidate n when n > m and n % m == r`; the certificate
 verifier accepts a rule iff $gcd(m, r) > 1$ (so $n$ is necessarily composite). The expanded
@@ -346,28 +350,39 @@ diagnostics, not proposer features.
     true next-prime gap. The accepted set recovers 79.64% of wheel-equivalent verifier work.],
 ) <fig:f2>
 
-*What this evidence supports.* "A certificate-gated structural proposer over this grammar
-produces a sound, useful rule set without support-count feature leakage." The soundness comes
-from the certificate; the coverage comes from the combination of structural proposer ranking
-and enumeration.
+#figure(
+  table(
+    columns: (auto, auto, auto, auto),
+    align: (left, right, right, right),
+    table.header[*Rule ordering*][*Budget*][*Exact probes*][*Saved*],
+    [neural structural], [16], [2.37], [67.03%],
+    [random, seed 20240511], [16], [3.86], [46.30%],
+    [grammar order], [16], [1.93], [73.22%],
+    [structural heuristic], [16], [1.93], [73.22%],
+    [validation-count oracle], [16], [1.93], [73.22%],
+  ),
+  caption: [Matched 16-rule-budget proposer baselines over the same grammar, split, and
+    certificate verifier. Lower exact probes is better.],
+) <tab:f2-baselines>
 
-*What this evidence does not yet support.* "The neural proposer, specifically, is essential."
-The numbers above are consistent with both "the proposer learned useful structural regularities"
-and "a near-random proposer + the same verifier reaches the same rule set." Distinguishing the
-two requires E2.1 below.
+*What this evidence supports.* "Certificate-gated structural rule discovery over this grammar
+produces a sound, useful rule set without support-count feature leakage." The soundness comes
+from the certificate; the coverage comes from the grammar plus accepted certified filters.
+
+*What this evidence does not support.* "The neural proposer, specifically, is essential."
+@tab:f2-baselines is a negative result for that stronger claim: simple deterministic orderings
+beat the neural structural proposer at the fixed 16-rule budget. The next neurosymbolic
+experiment must use a richer grammar and show that learned ordering beats grammar-order and
+structural-heuristic baselines under the same budget.
 
 #pblock[
   *Required to elevate C2 from "the verifier is doing useful work" to "the learned proposer is
-  essential":*
-  - *E2.1* \u{2014} Random-rule-proposer baseline at fixed verifier-call budget. Sample rules
-    uniformly from the grammar; run the same certificate verifier; report accepted rules and
-    verifier work saved as a function of budget. The learned proposer's claim is then "matches
-    the random baseline at $approx N$x lower budget" for some defensible $N$.
-  - *E2.2* \u{2014} Exhaustive enumerator at the same budget. For small enough $m$, exhaustive
-    enumeration is feasible and lower-bounds the achievable coverage.
-  - *E2.3* \u{2014} Generalize the grammar: extend to conjunctive rules
+  useful":*
+  - *E2.1* \u{2014} Repeat the fixed-budget proposer baseline across random seeds and rule
+    budgets, reporting confidence intervals.
+  - *E2.2* \u{2014} Generalize the grammar: extend to conjunctive rules
     (`if p % m == a and ... then reject ...`), report whether the proposer scales.
-  - *E2.4* \u{2014} Show one *worked example* of an accepted rule the hand-wheel does not
+  - *E2.3* \u{2014} Show one *worked example* of an accepted rule the hand-wheel does not
     capture and explain why it generalizes.
 ]
 
@@ -514,9 +529,9 @@ claims auditable. Three pieces matter and would be a brief methods section in a 
 = Limitations
 
 #set enum(numbering: "L1.")
-+ *Random-proposer baseline missing (Finding 2).* Until E2.1 lands, the load-bearing claim is
-  "certificate-gated structural rule discovery is sound and recovers most of the wheel," not
-  "the learned proposer is essential."
++ *Proposer learning not solved (Finding 2).* The fixed-budget baseline shows grammar order and
+  a simple structural heuristic beat the current neural proposer. The load-bearing claim is
+  certificate-gated rule discovery, not learned proposer superiority.
 + *Cross-task verifier-RL comparison missing (Finding 3).* The pipeline supports it; the
   comparison is not in canonical results yet.
 + *Limited cross-domain gate coverage (Finding 1).* `grid_path` now has a budgeted legality-gate
@@ -552,10 +567,9 @@ goal is that every #placeholder[...] marker in the body resolves to one of these
     [E1.2], [Extend `grid_path` beyond legality gate with admissible-heuristic pruning], [3-4d], [C1],
     [E1.3], [Investigate learned-wheel calibration tradeoff], [1d], [C1],
     [E1.4], [CIs across $gt.eq 5$ seeds for 45.12 $arrow.r$ 68.31 delta], [0.5d], [C1],
-    [E2.1], [Random-rule-proposer baseline at fixed budget], [2d], [C2],
-    [E2.2], [Exhaustive rule enumerator at same budget (where feasible)], [1d], [C2],
-    [E2.3], [Conjunctive rule grammar extension], [3-5d], [C2],
-    [E2.4], [Worked example of an accepted rule the hand-wheel misses], [0.5d], [C2],
+    [E2.1], [Fixed-budget proposer baselines across random seeds and budgets], [1d], [C2],
+    [E2.2], [Conjunctive rule grammar extension], [3-5d], [C2],
+    [E2.3], [Worked example of an accepted rule the hand-wheel misses], [0.5d], [C2],
     [E3.1], [Strict-vs-regularized RL on `grid_path` and `delayed_claim`], [2-3d], [C3],
     [E3.2], [KL/entropy Pareto sweep per task], [2d], [C3],
     [E3.3], [Reliability diagrams for strict-RL and KL-RL on prime-gap], [0.5d], [C3],
@@ -570,13 +584,13 @@ goal is that every #placeholder[...] marker in the body resolves to one of these
 
 #v(6pt)
 
-*Minimum viable submission.* E2.1, E1.3, E3.3, W1, W2. $approx$5 days. Leaves Findings 2 and 3
+*Minimum viable submission.* E2.1, E1.3, E3.3, W1, W2. $approx$4 days. Leaves Findings 2 and 3
 with qualified scope (prime-gap only) but every claim in the body has a defensible experiment
 behind it.
 
-*Strong submission.* Add E1.2, E2.4, E3.1, E1.4, E3.4. $approx$2 weeks. All three findings have
+*Strong submission.* Add E1.2, E2.3, E3.1, E1.4, E3.4. $approx$2 weeks. All three findings have
 either a cross-task replication or a baseline strong enough to rule out the obvious alternative
 explanation.
 
-*Full ideal paper.* Everything above. $approx$3 weeks. The grammar extension (E2.3) is the
+*Full ideal paper.* Everything above. $approx$3 weeks. The grammar extension (E2.2) is the
 optional ambition; if conjunctive rules generalize, the paper grows a fourth finding.

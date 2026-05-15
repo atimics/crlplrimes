@@ -187,12 +187,22 @@ typedef struct {
     size_t filter_count;
 } RuleSearchGrammar;
 
+typedef enum {
+    RULE_PROPOSER_NEURAL = 0,
+    RULE_PROPOSER_RANDOM = 1,
+    RULE_PROPOSER_GRAMMAR = 2,
+    RULE_PROPOSER_STRUCTURAL = 3,
+    RULE_PROPOSER_VALIDATION_ORACLE = 4,
+} RuleProposerMode;
+
 typedef struct {
     size_t train_limit;
     size_t test_limit;
     size_t max_train_states;
     size_t max_test_states;
     size_t max_rules;
+    RuleProposerMode proposer_mode;
+    uint64_t proposer_seed;
     uint32_t moduli[RULE_SEARCH_MAX_MODULI];
     size_t mod_count;
     int include_state_conditions;

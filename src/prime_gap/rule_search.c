@@ -11,6 +11,8 @@ static RuleSearchConfig default_rule_search_config(void)
     config.max_train_states = DEFAULT_MAX_TRAIN_STATES;
     config.max_test_states = DEFAULT_MAX_TEST_STATES;
     config.max_rules = 256;
+    config.proposer_mode = RULE_PROPOSER_NEURAL;
+    config.proposer_seed = 20240511u;
     config.include_state_conditions = 1;
     config.include_candidate_filters = 1;
     config.include_gap_filters = 1;
@@ -21,6 +23,65 @@ static RuleSearchConfig default_rule_search_config(void)
         config.moduli[i] = FEATURE_MODS[i];
     }
     return config;
+}
+
+static const char *rule_proposer_mode_name(RuleProposerMode mode)
+{
+    switch (mode) {
+    case RULE_PROPOSER_NEURAL:
+        return "neural_structural";
+    case RULE_PROPOSER_RANDOM:
+        return "random";
+    case RULE_PROPOSER_GRAMMAR:
+        return "grammar_order";
+    case RULE_PROPOSER_STRUCTURAL:
+        return "structural_heuristic";
+    case RULE_PROPOSER_VALIDATION_ORACLE:
+        return "validation_oracle";
+    }
+    return "unknown";
+}
+
+static const char *rule_proposer_feature_set_name(RuleProposerMode mode)
+{
+    switch (mode) {
+    case RULE_PROPOSER_NEURAL:
+        return "structural";
+    case RULE_PROPOSER_RANDOM:
+    case RULE_PROPOSER_GRAMMAR:
+        return "none";
+    case RULE_PROPOSER_STRUCTURAL:
+        return "structural_heuristic";
+    case RULE_PROPOSER_VALIDATION_ORACLE:
+        return "validation_counts";
+    }
+    return "unknown";
+}
+
+static int parse_rule_proposer_mode(const char *text, RuleProposerMode *mode)
+{
+    if (strcmp(text, "neural") == 0 || strcmp(text, "neural-structural") == 0) {
+        *mode = RULE_PROPOSER_NEURAL;
+        return 1;
+    }
+    if (strcmp(text, "random") == 0) {
+        *mode = RULE_PROPOSER_RANDOM;
+        return 1;
+    }
+    if (strcmp(text, "grammar") == 0 || strcmp(text, "grammar-order") == 0 ||
+        strcmp(text, "lexical") == 0) {
+        *mode = RULE_PROPOSER_GRAMMAR;
+        return 1;
+    }
+    if (strcmp(text, "structural") == 0 || strcmp(text, "structural-heuristic") == 0) {
+        *mode = RULE_PROPOSER_STRUCTURAL;
+        return 1;
+    }
+    if (strcmp(text, "validation-oracle") == 0 || strcmp(text, "oracle") == 0) {
+        *mode = RULE_PROPOSER_VALIDATION_ORACLE;
+        return 1;
+    }
+    return 0;
 }
 
 static int parse_rule_search_moduli(const char *text,
@@ -145,6 +206,16 @@ static int parse_rule_search_config(int argc, char **argv, RuleSearchConfig *con
             if (!parse_size_text(argv[++i], &config->max_rules)) {
                 return 0;
             }
+        } else if (strcmp(argv[i], "--proposer") == 0 && i + 1 < argc) {
+            if (!parse_rule_proposer_mode(argv[++i], &config->proposer_mode)) {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--proposer-seed") == 0 && i + 1 < argc) {
+            size_t seed = 0;
+            if (!parse_size_text(argv[++i], &seed)) {
+                return 0;
+            }
+            config->proposer_seed = (uint64_t)seed;
         } else if (strcmp(argv[i], "--moduli") == 0 && i + 1 < argc) {
             if (!parse_rule_search_moduli(argv[++i], config->moduli, &config->mod_count)) {
                 return 0;
@@ -184,6 +255,8 @@ static void print_rule_search_usage(FILE *stream)
 {
     fputs("usage: prime_rule_search [--train-limit n] [--test-limit n] "
           "[--max-train-states n] [--max-test-states n] [--max-rules n] "
+          "[--proposer neural|random|grammar|structural|validation-oracle] "
+          "[--proposer-seed n] "
           "[--gap-only|--candidate-only] [--unconditional-only] "
           "[--moduli 3,5,7,...] [--moduli-range 3:255] "
           "[--trace path] [--save path]\n",
@@ -481,6 +554,16 @@ static void fill_expanded_rule_features(const ExpandedRule *rule,
     features[12] = (nn_real)((double)candidate_common / (double)rule->filter_modulus);
 }
 
+static void set_expanded_rule_utilities(ExpandedRuleSet *rules)
+{
+    for (size_t i = 0; i < rules->count; ++i) {
+        ExpandedRule *rule = &rules->items[i];
+        rule->utility = rule->validation_false_rejections == 0
+                            ? (double)rule->validation_rejects
+                            : -(double)rule->validation_false_rejections;
+    }
+}
+
 static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
                                            const RuleSearchConfig *config,
                                            double *loss_out)
@@ -517,10 +600,8 @@ static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
         targets[i] = rule->train_false_rejections == 0
                          ? (nn_real)((double)rule->train_rejects / support_scale)
                          : (nn_real)0;
-        rule->utility = rule->validation_false_rejections == 0
-                            ? (double)rule->validation_rejects
-                            : -(double)rule->validation_false_rejections;
     }
+    set_expanded_rule_utilities(rules);
 
     const size_t layers[] = {RULE_SEARCH_FEATURE_COUNT, 20, 10, 1};
     NNConfig nn_config;
@@ -560,6 +641,97 @@ static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
     free(targets);
     free(scores);
     return 1;
+}
+
+static uint64_t mix_rule_hash_u64(uint64_t hash, uint64_t value)
+{
+    hash ^= value + UINT64_C(0x9e3779b97f4a7c15) + (hash << 6) + (hash >> 2);
+    hash *= UINT64_C(1099511628211);
+    return hash;
+}
+
+static uint64_t expanded_rule_key_hash(const ExpandedRule *rule, uint64_t seed)
+{
+    uint64_t hash = UINT64_C(1469598103934665603) ^ seed;
+    hash = mix_rule_hash_u64(hash, (uint64_t)rule->kind);
+    hash = mix_rule_hash_u64(hash, (uint64_t)rule->state_modulus);
+    hash = mix_rule_hash_u64(hash, (uint64_t)rule->state_residue);
+    hash = mix_rule_hash_u64(hash, (uint64_t)rule->filter_modulus);
+    hash = mix_rule_hash_u64(hash, (uint64_t)rule->filter_residue);
+    return hash;
+}
+
+static double random_score_from_hash(uint64_t hash)
+{
+    return (double)(hash >> 11) * (1.0 / 9007199254740992.0);
+}
+
+static double structural_rule_score(const ExpandedRule *rule)
+{
+    uint32_t candidate_residue = expanded_rule_structural_candidate_residue(rule);
+    uint32_t candidate_common = gcd_u32(rule->filter_modulus, candidate_residue);
+    double modulus = (double)rule->filter_modulus;
+    double gcd_ratio = modulus == 0.0 ? 0.0 : (double)candidate_common / modulus;
+    double support_prior = modulus == 0.0 ? 0.0 : 1.0 / modulus;
+    double score = 0.0;
+
+    if (expanded_rule_has_deterministic_certificate(rule)) {
+        score += 4.0;
+    }
+    if (!expanded_rule_is_conditional(rule)) {
+        score += 1.0;
+    }
+    if (rule->kind == RULE_FILTER_CANDIDATE_MOD) {
+        score += 0.5;
+    }
+    if (candidate_residue == 0u) {
+        score += 0.25;
+    }
+    score += gcd_ratio;
+    score += support_prior;
+    return score;
+}
+
+static int score_expanded_rules_without_model(ExpandedRuleSet *rules,
+                                              const RuleSearchConfig *config,
+                                              double *loss_out)
+{
+    set_expanded_rule_utilities(rules);
+    for (size_t i = 0; i < rules->count; ++i) {
+        ExpandedRule *rule = &rules->items[i];
+        switch (config->proposer_mode) {
+        case RULE_PROPOSER_RANDOM:
+            rule->model_score =
+                (nn_real)random_score_from_hash(expanded_rule_key_hash(rule,
+                                                                       config->proposer_seed));
+            break;
+        case RULE_PROPOSER_GRAMMAR:
+            rule->model_score = (nn_real)(rules->count - i);
+            break;
+        case RULE_PROPOSER_STRUCTURAL:
+            rule->model_score = (nn_real)structural_rule_score(rule);
+            break;
+        case RULE_PROPOSER_VALIDATION_ORACLE:
+            rule->model_score = (nn_real)rule->utility;
+            break;
+        case RULE_PROPOSER_NEURAL:
+            return 0;
+        }
+    }
+    if (loss_out != NULL) {
+        *loss_out = 0.0;
+    }
+    return 1;
+}
+
+static int score_expanded_rules(ExpandedRuleSet *rules,
+                                const RuleSearchConfig *config,
+                                double *loss_out)
+{
+    if (config->proposer_mode == RULE_PROPOSER_NEURAL) {
+        return score_expanded_rules_with_model(rules, config, loss_out);
+    }
+    return score_expanded_rules_without_model(rules, config, loss_out);
 }
 
 static int compare_expanded_rules_model(const void *left, const void *right)
@@ -874,6 +1046,29 @@ static int save_expanded_rule_checkpoint(const ExpandedRuleSet *rules,
     return 1;
 }
 
+static void hash_expanded_rule_set_hex(const ExpandedRuleSet *rules,
+                                       const RuleSearchConfig *config,
+                                       const RuleSearchMetrics *metrics,
+                                       char out_hash[65])
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+    hash = mix_rule_hash_u64(hash, (uint64_t)RULE_SEARCH_GRAMMAR_VERSION);
+    hash = mix_rule_hash_u64(hash, (uint64_t)config->include_state_conditions);
+    hash = mix_rule_hash_u64(hash, (uint64_t)config->include_candidate_filters);
+    hash = mix_rule_hash_u64(hash, (uint64_t)config->include_gap_filters);
+    hash = mix_rule_hash_u64(hash, (uint64_t)config->max_rules);
+    hash = mix_rule_hash_u64(hash, (uint64_t)config->proposer_mode);
+    hash = mix_rule_hash_u64(hash, config->proposer_seed);
+    hash = mix_rule_hash_u64(hash, (uint64_t)metrics->accepted_rules);
+    for (size_t i = 0; i < config->mod_count; ++i) {
+        hash = mix_rule_hash_u64(hash, (uint64_t)config->moduli[i]);
+    }
+    for (size_t i = 0; i < rules->count; ++i) {
+        hash = mix_rule_hash_u64(hash, expanded_rule_key_hash(&rules->items[i], 0u));
+    }
+    snprintf(out_hash, 65, "ruleset-%016llx", (unsigned long long)hash);
+}
+
 static void strip_line_ending(char *line)
 {
     size_t length = strlen(line);
@@ -1072,7 +1267,8 @@ static int write_expanded_rule_trace(const char *path,
                      "\"filter_modulus\":%u,\"filter_residue\":%u,"
                      "\"conditional\":%s,\"derived_divisibility\":%s,"
                      "\"deterministic_certificate\":%s,"
-                     "\"proposer_feature_set\":\"structural\","
+                     "\"selection_strategy\":\"%s\","
+                     "\"proposer_feature_set\":\"%s\","
                      "\"state_conditions_enabled\":%s,"
                      "\"train_limit\":%zu,\"test_limit\":%zu,"
                      "\"train_rejects\":%zu,\"train_false_rejections\":%zu,"
@@ -1091,6 +1287,8 @@ static int write_expanded_rule_trace(const char *path,
                      expanded_rule_is_conditional(rule) ? "true" : "false",
                      expanded_rule_is_derived_divisibility(rule) ? "true" : "false",
                      expanded_rule_has_deterministic_certificate(rule) ? "true" : "false",
+                     rule_proposer_mode_name(config->proposer_mode),
+                     rule_proposer_feature_set_name(config->proposer_mode),
                      config->include_state_conditions ? "true" : "false",
                      config->train_limit,
                      config->test_limit,
@@ -1132,12 +1330,14 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            "\"train_limit\":%zu,\"test_limit\":%zu,\"sample_count\":%zu,"
            "\"include_state_conditions\":%s,"
            "\"include_candidate_filters\":%s,\"include_gap_filters\":%s,"
+           "\"max_rules\":%zu,\"selection_strategy\":\"%s\","
+           "\"selection_seed\":%llu,"
            "\"proposed_rules\":%zu,\"verified_rules\":%zu,"
            "\"unsafe_rules\":%zu,\"no_support_rules\":%zu,"
            "\"uncertified_rules\":%zu,"
            "\"accepted_rules\":%zu,\"accepted_conditional_rules\":%zu,"
            "\"accepted_candidate_rules\":%zu,\"accepted_gap_rules\":%zu,"
-           "\"false_rejections\":%zu,\"proposer_feature_set\":\"structural\","
+           "\"false_rejections\":%zu,\"proposer_feature_set\":\"%s\","
            "\"proposer_loss\":%.8f,"
            "\"direct_exact\":%.8f,\"hand_wheel_exact\":%.8f,"
            "\"expanded_exact\":%.8f,\"expanded_mod\":%.8f,"
@@ -1150,6 +1350,9 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            config->include_state_conditions ? "true" : "false",
            config->include_candidate_filters ? "true" : "false",
            config->include_gap_filters ? "true" : "false",
+           config->max_rules,
+           rule_proposer_mode_name(config->proposer_mode),
+           (unsigned long long)config->proposer_seed,
            metrics->proposed_rules,
            metrics->verified_rules,
            metrics->unsafe_rules,
@@ -1160,6 +1363,7 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            metrics->accepted_candidate_rules,
            metrics->accepted_gap_rules,
            metrics->false_rejections,
+           rule_proposer_feature_set_name(config->proposer_mode),
            metrics->proposer_loss,
            metrics->direct_exact_tests,
            metrics->hand_wheel_exact_tests,
@@ -1178,6 +1382,10 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            config->include_candidate_filters && config->include_gap_filters ? " + " : "",
            config->include_gap_filters ? "gap" : "",
            config->include_state_conditions ? "with optional" : "without");
+    printf("  selection_strategy=%s max_rules=%zu seed=%llu\n",
+           rule_proposer_mode_name(config->proposer_mode),
+           config->max_rules,
+           (unsigned long long)config->proposer_seed);
     printf("  proposed=%zu verified=%zu unsafe=%zu no_support=%zu uncertified=%zu accepted=%zu\n",
            metrics->proposed_rules,
            metrics->verified_rules,
@@ -1189,9 +1397,15 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            metrics->accepted_conditional_rules,
            metrics->accepted_gap_rules,
            metrics->accepted_candidate_rules);
-    printf("  neural_rule_scorer_epochs=%u feature_set=structural final_mse=%.6f\n",
-           (uint32_t)RULE_SEARCH_SCORER_EPOCHS,
-           metrics->proposer_loss);
+    if (config->proposer_mode == RULE_PROPOSER_NEURAL) {
+        printf("  neural_rule_scorer_epochs=%u feature_set=%s final_mse=%.6f\n",
+               (uint32_t)RULE_SEARCH_SCORER_EPOCHS,
+               rule_proposer_feature_set_name(config->proposer_mode),
+               metrics->proposer_loss);
+    } else {
+        printf("  trained_rule_scorer=none feature_set=%s\n",
+               rule_proposer_feature_set_name(config->proposer_mode));
+    }
     printf("  verifier diagnostics samples=%zu false_rejections=%zu\n",
            metrics->samples,
            metrics->false_rejections);
@@ -1264,7 +1478,7 @@ int nn_prime_rule_search_main(int argc, char **argv)
                                        &validation,
                                        config.max_train_states,
                                        1);
-        ok = score_expanded_rules_with_model(&candidates, &config, &metrics.proposer_loss) &&
+        ok = score_expanded_rules(&candidates, &config, &metrics.proposer_loss) &&
              select_expanded_rules(&candidates, config.max_rules, &accepted, &metrics);
     }
 
@@ -1281,6 +1495,8 @@ int nn_prime_rule_search_main(int argc, char **argv)
                                                &metrics,
                                                config.save_path,
                                                rule_hash);
+        } else {
+            hash_expanded_rule_set_hex(&accepted, &config, &metrics, rule_hash);
         }
     }
     if (ok && config.trace_path != NULL) {
