@@ -2,6 +2,30 @@
 
 #include "internal.h"
 
+static const NNExperimentSpec PRIME_GAP_EXPERIMENT_SPEC = {
+    "prime_gap",
+    "compact arithmetic action-ranking benchmark for certified gate discovery",
+    "prime p below the task split limit",
+    "deterministic prime stream split into train, validation, and held-out ranges",
+    "even candidate gaps 2..256 plus overflow",
+    "enumerate every gap action before gating; no verifier pruning in enumeration",
+    "minimal default [log(p), normalized_gap, overflow_flag]; residue flags are leakage ablations",
+    "exact divisibility and next-prime facts may be labels, rewards, certificates, or gates, but not default scorer inputs",
+    "shared MLP scores one state/action row and softmax ranks surviving candidates",
+    "segmented sieve returns the true next-prime gap and exact verifier work",
+    "target gap, top-k correctness, ranking loss, exact probes, calibration bins",
+    "modular rejection predicates over candidate residues and optional state-conditioned residues",
+    "algebraic certificate such as gcd(modulus, residue) > 1 proves rejected candidate is composite",
+    "accepted predicates reject impossible gaps before neural residual scoring",
+    "structural rule descriptors only: kind, moduli, residues, zero indicators, gcd ratios",
+    "empirical support and verifier utility predicted from train/validation labels, never used as proposer features",
+    "neural, random, grammar-order, structural heuristic, validation oracle",
+    "train on smaller prime ranges; test on larger prime ranges and larger gap coverage",
+    NN_TRACE_SCHEMA,
+    "stable action-id JSONL traces train replay successors with parent checkpoint hashes",
+    "supervised scorer, strict verifier policy gradient, and KL/entropy-regularized verifier policy gradient",
+};
+
 int nn_prime_gap_main(int argc, char **argv)
 {
     PrimeGapRunConfig run_config;
@@ -14,6 +38,12 @@ int nn_prime_gap_main(int argc, char **argv)
     char model_hash[65] = "unknown";
     char rule_hash[65] = "unknown";
     int rules_loaded_from_checkpoint = 0;
+
+    if (argc == 2 && strcmp(argv[1], "--schema") == 0) {
+        return nn_experiment_write_schema_json(stdout, &PRIME_GAP_EXPERIMENT_SPEC)
+                   ? EXIT_SUCCESS
+                   : EXIT_FAILURE;
+    }
 
     if (!parse_run_config(argc, argv, &run_config) || !run_config_is_valid(&run_config)) {
         print_usage(stderr);

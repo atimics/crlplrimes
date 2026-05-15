@@ -31,6 +31,30 @@ enum {
     GP_INF = 1000000,
 };
 
+static const NNExperimentSpec GRID_PATH_EXPERIMENT_SPEC = {
+    "grid_path",
+    "spatial shortest-path action-ranking benchmark for certified pruning outside arithmetic",
+    "7x7 obstacle grid with start and goal coordinates",
+    "deterministic grid generator split by train, validation, and held-out seed ranges",
+    "four moves: up, right, down, left",
+    "enumerate all four moves, including blocked and out-of-bounds moves, before gating",
+    "start/goal coordinates, candidate displacement, obstacle map, and action one-hot",
+    "explicit legality flags and BFS distances are verifier labels/costs, not scorer inputs",
+    "shared MLP scores one grid/action row and softmax ranks surviving moves",
+    "BFS identifies shortest-path successors and verifier node cost",
+    "target move, correctness, utility, candidate count, BFS nodes, calibration bins",
+    "legality and admissible-pruning predicates over grid boundary, blocked cells, and distance bounds",
+    "finite validation/exhaustive geometry checks prove a rule never rejects an optimal move",
+    "accepted predicates remove impossible or certified non-optimal moves before neural scoring",
+    "structural rule descriptors: rule kind, direction, boundary relation, cell relation, distance relation",
+    "reject support and verifier-cost savings predicted from train/validation labels",
+    "neural, random, grammar-order, structural heuristic, validation oracle",
+    "train on generated grids and test shifted obstacle densities, start/goal distances, and grid seeds",
+    NN_TRACE_SCHEMA,
+    "stable action-id JSONL traces train replay successors with parent checkpoint hashes",
+    "supervised scorer, strict verifier policy gradient, and KL/entropy-regularized verifier policy gradient",
+};
+
 typedef struct {
     uint8_t blocked[GP_CELLS];
     int sx;
@@ -1451,12 +1475,18 @@ static void print_usage(FILE *stream)
           "[--trace-train] [--trace-seed seed] [--trace-samples count]\n"
           "       grid_path --replay trace.jsonl --out model.nnckpt [--epochs count]\n"
           "       grid_path --rule-search\n"
-          "       grid_path --compare model_a.nnckpt model_b.nnckpt [...]\n",
+          "       grid_path --compare model_a.nnckpt model_b.nnckpt [...]\n"
+          "       grid_path --schema\n",
           stream);
 }
 
 int main(int argc, char **argv)
 {
+    if (argc == 2 && strcmp(argv[1], "--schema") == 0) {
+        return nn_experiment_write_schema_json(stdout, &GRID_PATH_EXPERIMENT_SPEC)
+                   ? EXIT_SUCCESS
+                   : EXIT_FAILURE;
+    }
     if (argc >= 2 && strcmp(argv[1], "--replay") == 0) {
         const char *trace_path = argc >= 3 ? argv[2] : NULL;
         const char *out_path = NULL;

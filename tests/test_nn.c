@@ -68,6 +68,51 @@ static void fill_targets(nn_real *targets, size_t count)
     }
 }
 
+static int test_experiment_schema_json_contract(void)
+{
+    NNExperimentSpec spec = {
+        "toy_task",
+        "unit test task",
+        "toy states",
+        "fixed seeds",
+        "two actions",
+        "enumerate all actions",
+        "state plus action one-hot",
+        "no labels as inputs",
+        "shared action scorer",
+        "exact checker",
+        "target and cost",
+        "toy predicates",
+        "exhaustive finite check",
+        "predicate gate",
+        "structural predicate features",
+        "support labels",
+        "neural, random, grammar-order",
+        "seed shift",
+        NN_TRACE_SCHEMA,
+        "stable action-id replay",
+        "supervised and verifier RL",
+    };
+    FILE *fp = tmpfile();
+    char buffer[2048];
+    if (fp == NULL || !nn_experiment_spec_is_valid(&spec) ||
+        !nn_experiment_write_schema_json(fp, &spec)) {
+        if (fp != NULL) {
+            fclose(fp);
+        }
+        return 0;
+    }
+
+    fflush(fp);
+    rewind(fp);
+    size_t read = fread(buffer, 1, sizeof(buffer) - 1, fp);
+    buffer[read] = '\0';
+    fclose(fp);
+    return strstr(buffer, "\"schema\":\"crlp.experiment_schema.v1\"") != NULL &&
+           strstr(buffer, "\"task\":\"toy_task\"") != NULL &&
+           strstr(buffer, "\"leakage_policy\":\"no labels as inputs\"") != NULL;
+}
+
 static nn_real average_loss(NeuralNet *net,
                             const nn_real *inputs,
                             const nn_real *targets,
@@ -1792,6 +1837,8 @@ int main(void)
           "checkpoint roundtrip hash and invalid files");
     check(test_trace_writer_emits_parseable_jsonl(),
           "trace writer emits parseable jsonl");
+    check(test_experiment_schema_json_contract(),
+          "experiment schema emits parseable task contract");
     check(test_fixture_checkpoint_load_and_scoring(),
           "fixture checkpoint load and scoring");
     check(test_fixture_trace_parser(),

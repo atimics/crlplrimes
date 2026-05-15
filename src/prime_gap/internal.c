@@ -301,6 +301,7 @@ void print_usage(FILE *stream)
           "[--trace path] [--save path] [--model checkpoint] "
           "[--save-rules path] [--rules path] [--save-learned-model path] "
           "[--feature-set minimal|full|log-only|gap-only|residue-only] "
-          "[--no-residue-features] [--full-features]\n",
+          "[--no-residue-features] [--full-features]\n"
+          "       prime_gap --schema\n",
           stream);
 }

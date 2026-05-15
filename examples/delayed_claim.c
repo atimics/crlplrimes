@@ -18,6 +18,30 @@ enum {
     DC_CALIBRATION_BINS = 10,
 };
 
+static const NNExperimentSpec DELAYED_CLAIM_EXPERIMENT_SPEC = {
+    "delayed_claim",
+    "finite delayed-feedback decision task for trace replay and verifier-RL calibration",
+    "six observable claim/evidence features generated from a deterministic simulator",
+    "fixed train/test seed ranges over the same hidden-rule generator",
+    "trust, ignore, request_more_evidence, act_cautiously",
+    "enumerate all four actions for every claim state",
+    "observable claim features plus action one-hot; hidden outcome and utilities are excluded",
+    "hidden truth resolution and action utilities may be verifier labels/rewards only",
+    "shared MLP scores one claim/action row and softmax ranks actions",
+    "deterministic hidden rule computes action utilities and the best action",
+    "target action, utility, proposal steps, calibration bins, replay loss",
+    "threshold, dominance, and evidence-sufficiency predicates over observable features",
+    "exhaustive finite-generator check proves a rule never rejects any optimal action on the certified support",
+    "accepted predicates remove dominated or unsafe actions before neural residual scoring",
+    "structural predicate descriptors: feature index, threshold bucket, action id, polarity",
+    "empirical utility/support and false-rejection diagnostics predicted from verifier labels",
+    "neural, random, grammar-order, structural heuristic, validation oracle",
+    "train on one seed band and evaluate shifted seed bands plus harder uncertainty bands",
+    NN_TRACE_SCHEMA,
+    "stable action-id JSONL traces train replay successors with soft and hard target weights",
+    "supervised scorer, strict verifier policy gradient, and KL/entropy-regularized verifier policy gradient",
+};
+
 static const nn_real DC_REPLAY_LEARNING_RATE = (nn_real)0.008;
 static const nn_real DC_REPLAY_HARD_WEIGHT = (nn_real)1.0;
 static const nn_real DC_REPLAY_SOFT_WEIGHT = (nn_real)0.35;
@@ -823,12 +847,18 @@ static void print_usage(FILE *stream)
           "[--trace-train] [--trace-seed seed] [--trace-samples count]\n"
           "       delayed_claim --replay trace.jsonl --out model.nnckpt "
           "[--epochs count] [--hard-weight value] [--soft-weight value]\n"
-          "       delayed_claim --compare model_a.nnckpt model_b.nnckpt [...]\n",
+          "       delayed_claim --compare model_a.nnckpt model_b.nnckpt [...]\n"
+          "       delayed_claim --schema\n",
           stream);
 }
 
 int main(int argc, char **argv)
 {
+    if (argc == 2 && strcmp(argv[1], "--schema") == 0) {
+        return nn_experiment_write_schema_json(stdout, &DELAYED_CLAIM_EXPERIMENT_SPEC)
+                   ? EXIT_SUCCESS
+                   : EXIT_FAILURE;
+    }
     if (argc == 2 && strcmp(argv[1], "--self-test-reordered-trace") == 0) {
         return delayed_claim_reordered_trace_self_test() ? EXIT_SUCCESS : EXIT_FAILURE;
     }

@@ -59,22 +59,20 @@
     #set text(size: 10pt)
     *Abstract.*
     When an exact verifier is available, the right architecture for action scoring is not an
-    end-to-end neural policy. We study a hybrid pipeline in which a deterministic
-    certificate-checked gate prunes structurally impossible candidates before a small learned
-    scorer ranks the residual. On a prime-gap benchmark with residue-sieve features removed
-    from the scorer input, the raw scorer reaches 9.13% top-1; a fixed hand-wheel gate raises
-    this to 45.12%, and a learned rule gate reaches 68.31% at 100% top-10 with an
-    $approx$4$times$ reduction in model latency. The symbolic gate itself
-    is produced by structural rule search against a soundness-certificate verifier:
-    rule search proposes 32,637 candidates, certificate-verifies 4,692, and accepts 52 rules with
-    zero false rejections, recovering 79.64% of wheel-equivalent verifier work. A fixed 16-rule
-    budget baseline shows the current neural proposer is not essential: grammar order and a
-    simple structural heuristic save 73.22% of exact work versus 67.03% for the neural proposer.
-    Under sparse-exact-reward policy gradient on the
-    same task, strict verifier RL inflates logit scale (ECE 0.070 $arrow.r$ 0.127) without
-    improving ranking; a KL-toward-prior + entropy regularizer keeps ECE at 0.060 at the same
-    top-k. Prime gaps are used as a substrate, not the goal; we argue the protocol is
-    transferable to any exact-verifier domain.
+    end-to-end neural policy. We specify one reusable verifier-gated action task schema:
+    complete candidate enumeration, observable state/action features, a neural residual scorer,
+    an exact verifier, a symbolic rule grammar, a certificate checker, a rule proposer, and a
+    trace/replay/RL protocol. We instantiate this schema on three tasks: prime gaps, grid paths,
+    and delayed claims. Prime gaps currently provide the strongest gate ablation: with
+    residue-sieve features removed from the scorer input, the raw scorer reaches 9.13% top-1; a
+    fixed hand-wheel gate raises this to 45.12%, and a learned rule gate reaches 68.31% at 100%
+    top-10 with an $approx$4$times$ reduction in model latency. Grid paths show the same
+    certified-gate pattern outside arithmetic at smaller scope: a budgeted legality gate raises
+    parent accuracy from 75.80% to 89.60%. Delayed claims currently exercise trace replay and
+    calibration, not gate learning. The prime rule-search negative result is load-bearing:
+    grammar order and a simple structural heuristic beat the current neural proposer at a fixed
+    16-rule budget. The contribution is therefore the generalized protocol and audit discipline,
+    not an improved prime algorithm.
   ]
 ]
 
@@ -95,28 +93,26 @@ gated by a soundness-certificate verifier. The scorer ranks the residual; the ga
 the rest; nothing the gate emits can violate correctness because every rule it accepts carries
 a deterministic proof.
 
-We make three claims, each tied to a concrete experiment in the released artifact:
+We make three protocol claims, each of which must be instantiated across tasks before being
+treated as general:
 
 #set enum(numbering: "(C1)", spacing: 6pt)
-+ *Certificate-gating dominates raw scoring.* On the canonical prime-gap benchmark, the
-  minimal-feature raw scorer reaches 9.13% top-1. The same scorer reaches 45.12% under a fixed
-  hand-wheel gate and *68.31% top-1 under a learned rule gate* at 100% top-10. The dominating
-  effect is the gate, not the depth of the scorer.
-+ *Certificate-gated rule search discovers sound symbolic gates.* A structural neural proposer
-  over a small rule grammar, paired with a soundness-certificate verifier,
-  proposes 32,637 rules, certificate-verifies 4,692, and produces 52 accepted rules with zero
-  false rejections, recovering 79.64% of wheel-equivalent verifier work. The soundness guarantee
-  is a property of the certificate, not of training; fixed-budget baselines show the current
-  neural proposer does not beat grammar order.
-+ *KL-regularized verifier RL prevents calibration collapse.* Strict policy gradient on sparse
-  exact rewards inflates logit scale rather than improving ranking; a standard KL-to-prior +
-  entropy term restores calibration at unchanged top-k.
++ *Certified gates reduce the residual action space.* The complete prime-gap result and the
+  smaller grid-path legality result support this. Delayed-claim gate learning remains to be
+  implemented.
++ *Rule search must beat fixed-budget symbolic baselines.* The current prime result is negative
+  for neural proposer learning: grammar order beats the neural proposer. This turns proposer
+  learning into a concrete cross-task benchmark rather than a tautology.
++ *Verifier RL must preserve calibration across tasks.* Strict policy gradient on sparse exact
+  rewards inflates logit scale on prime gaps; a standard KL-to-prior + entropy term restores
+  calibration at unchanged top-k. The same run is still needed on grid paths and delayed claims.
 
 #set enum(numbering: "1.", spacing: auto)
 
-We use prime gaps as the experiment domain because they offer a fast deterministic verifier at
-all scales, a compact totally-ordered candidate space, an exhausted classical literature, and
-rich algebraic structure for the rule grammar. *We are not claiming improved prime generation.*
+The artifact now emits `crlp.experiment_schema.v1` rows for every task with `make
+experiment-schemas`. The paper should be read against that schema: task-specific verifiers and
+grammars change, but candidate enumeration, leakage discipline, proposer baselines, trace replay,
+and verifier-RL comparisons are shared.
 
 = Related Work
 
@@ -129,8 +125,8 @@ rich algebraic structure for the rule grammar. *We are not claiming improved pri
   - AlphaProof / AlphaGeometry symbolic-neural search (Trinh et al., 2024): our rule synthesis
     is structurally similar but verifier-grounded by certificate rather than by proof
     completion.
-  - RLHF KL-regularized policy gradient (Stiennon et al., 2020; Ouyang et al., 2022): our
-    Finding 3 is this objective applied to exact-verifier rewards.
+  - RLHF KL-regularized policy gradient (Stiennon et al., 2020; Ouyang et al., 2022): Axis 3
+    applies this objective to exact-verifier rewards.
   - Neural-symbolic program synthesis (NeSy literature).
 ]
 
@@ -196,6 +192,46 @@ $r$ is accepted only if a deterministic algebraic check certifies that $r$ canno
 true action on any state in the support set, so soundness does not depend on the proposer being
 well-trained.
 
+== Generalized Task Schema
+
+Every experiment in the artifact emits the same schema row:
+
+```text
+Task T = {
+  state distribution S_T,
+  candidate enumerator A_T(s),
+  observable features x_T(s, a),
+  neural residual scorer f_theta(x_T),
+  exact verifier V_T(s, a),
+  symbolic grammar G_T,
+  certificate checker C_T(rule),
+  rule proposer q_phi(rule | structural(rule)),
+  gate executor R_T(rule, s, a),
+  trace/replay/RL protocol
+}
+```
+
+#figure(
+  table(
+    columns: (auto, auto, auto, auto),
+    align: left,
+    table.header[*Task*][*Actions*][*Verifier*][*Certificate*],
+    [`prime_gap`], [candidate gaps], [segmented sieve next-prime verifier],
+      [algebraic divisibility proof],
+    [`grid_path`], [four moves], [BFS shortest-path successor],
+      [cannot reject an optimal move],
+    [`delayed_claim`], [trust / ignore / request / cautious],
+      [deterministic hidden-outcome simulator],
+      [finite-generator safety check],
+  ),
+  caption: [The three task instantiations share the same verifier-gated action-scoring
+    contract.],
+) <tab:schema>
+
+The leakage rule is shared: verifier outputs may be labels, rewards, certificates, diagnostics,
+or executed gates, but they are not default scorer inputs. Proposer inputs are structural rule
+descriptors; support counts and false-rejection diagnostics are targets, not features.
+
 == Trace and Checkpoint Contract
 
 Every step writes a JSONL row with schema `crlp.trace.v1`, including a stable per-action
@@ -206,7 +242,7 @@ semantics. Checkpoints carry SHA-256 model identity, a `parent_model_hash`, a
 `feature_encoder_version`, and a `feature_set`; comparison reports (`crlp.compare.v1`) carry
 both hashes, the evaluated `feature_set`, and machine-readable reliability bins.
 
-= Experiment Domain: Prime Gaps
+= Task Instantiation: Prime Gaps
 
 == Setup
 
@@ -229,10 +265,10 @@ states unless stated otherwise.
   to "what does the learned component contribute under perfect feedback?"
 - Rich algebraic structure for the rule grammar (residue classes, divisibility certificates).
 
-= Finding 1: Certificate-gating dominates raw scoring
+= Axis 1: Certified gates reduce the residual action space
 
-The same trained scorer is evaluated under three gate conditions on the canonical 30,000-sample
-held-out benchmark. Top-1 results:
+The same trained prime-gap scorer is evaluated under three gate conditions on the canonical
+30,000-sample held-out benchmark. Top-1 results:
 
 #figure(
   cetz.canvas({
@@ -276,9 +312,9 @@ Full metrics:
     columns: (auto, auto, auto, auto, auto, auto),
     align: (left, right, right, right, right, right),
     table.header[*Gate*][*Top-1*][*Top-10*][*NLL*][*ECE*][*ms/sample*],
-    [no gate], [9.13%], [78.01%], [2.9994], [0.1076], [0.0345],
-    [hand-wheel], [45.12%], [99.77%], [1.5902], [0.0834], [0.0356],
-    [*learned wheel*], [*68.31%*], [*100.00%*], [*1.0172*], [0.1379], [*0.0096*],
+    [no gate], [9.13%], [78.01%], [2.9994], [0.1076], [0.0372],
+    [hand-wheel], [45.12%], [99.77%], [1.5902], [0.0834], [0.0386],
+    [*learned wheel*], [*68.31%*], [*100.00%*], [*1.0172*], [0.1379], [*0.0098*],
   ),
   caption: [Gate ablation, minimal-feature scorer, identical weights across rows.],
 ) <tab:f1>
@@ -297,7 +333,7 @@ Full metrics:
     delta.
 ]
 
-= Finding 2: Certificate-gated rule search discovers sound symbolic gates
+= Axis 2: Rule search must beat fixed-budget symbolic baselines
 
 The canonical rule grammar is `reject candidate n when n > m and n % m == r`; the certificate
 verifier accepts a rule iff $gcd(m, r) > 1$ (so $n$ is necessarily composite). The expanded
@@ -386,7 +422,7 @@ structural-heuristic baselines under the same budget.
     capture and explain why it generalizes.
 ]
 
-= Finding 3: KL-regularized verifier RL prevents calibration collapse
+= Axis 3: Verifier RL must preserve calibration
 
 Starting from a single supervised checkpoint, we clone two RL branches: strict policy gradient
 on exact rewards, and the same gradient regularized with KL-to-supervised-prior + entropy.
@@ -529,13 +565,13 @@ claims auditable. Three pieces matter and would be a brief methods section in a 
 = Limitations
 
 #set enum(numbering: "L1.")
-+ *Proposer learning not solved (Finding 2).* The fixed-budget baseline shows grammar order and
++ *Proposer learning not solved (Axis 2).* The fixed-budget baseline shows grammar order and
   a simple structural heuristic beat the current neural proposer. The load-bearing claim is
   certificate-gated rule discovery, not learned proposer superiority.
-+ *Cross-task verifier-RL comparison missing (Finding 3).* The pipeline supports it; the
++ *Cross-task verifier-RL comparison missing (Axis 3).* The pipeline supports it; the
   comparison is not in canonical results yet.
-+ *Limited cross-domain gate coverage (Finding 1).* `grid_path` now has a budgeted legality-gate
-  sanity check, but the headline hybrid-wins table is still prime-gap only.
++ *Limited cross-domain gate coverage (Axis 1).* `grid_path` now has a budgeted legality-gate
+  sanity check, but `delayed_claim` still lacks its certified gate implementation.
 + *Statistical rigor.* Default `make prime-gap-experiments` runs 1 seed; the
   harness supports more. Deltas need confidence intervals across $gt.eq 5$ seeds.
 + *Learned-wheel calibration tradeoff* needs a reliability-diagram pass.
@@ -584,11 +620,11 @@ goal is that every #placeholder[...] marker in the body resolves to one of these
 
 #v(6pt)
 
-*Minimum viable submission.* E2.1, E1.3, E3.3, W1, W2. $approx$4 days. Leaves Findings 2 and 3
-with qualified scope (prime-gap only) but every claim in the body has a defensible experiment
+*Minimum viable submission.* E2.1, E1.3, E3.3, W1, W2. $approx$4 days. Leaves Axes 2 and 3
+with qualified scope but every claim in the body has a defensible experiment
 behind it.
 
-*Strong submission.* Add E1.2, E2.3, E3.1, E1.4, E3.4. $approx$2 weeks. All three findings have
+*Strong submission.* Add E1.2, E2.3, E3.1, E1.4, E3.4. $approx$2 weeks. All three axes have
 either a cross-task replication or a baseline strong enough to rule out the obvious alternative
 explanation.
 
