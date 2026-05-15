@@ -2,28 +2,56 @@
 
 #include "internal.h"
 
+static const NNFeatureSchema PRIME_GAP_SCORER_FEATURES[] = {
+    {"log_p", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"normalized_gap", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"overflow_flag", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"candidate_divisible_by_configured_mod_0", NN_FEATURE_STRUCTURAL_PRIOR, 0},
+    {"candidate_divisible_by_configured_mod_1", NN_FEATURE_STRUCTURAL_PRIOR, 0},
+    {"candidate_divisible_by_configured_mod_2", NN_FEATURE_STRUCTURAL_PRIOR, 0},
+    {"candidate_divisible_by_configured_mod_3", NN_FEATURE_STRUCTURAL_PRIOR, 0},
+    {"candidate_divisible_by_configured_mod_4", NN_FEATURE_STRUCTURAL_PRIOR, 0},
+    {"candidate_divisible_by_configured_mod_5", NN_FEATURE_STRUCTURAL_PRIOR, 0},
+    {"candidate_divisible_by_configured_mod_6", NN_FEATURE_STRUCTURAL_PRIOR, 0},
+    {"candidate_divisible_by_configured_mod_7", NN_FEATURE_STRUCTURAL_PRIOR, 0},
+    {"candidate_divisible_by_configured_mod_8", NN_FEATURE_STRUCTURAL_PRIOR, 0},
+    {"candidate_divisible_by_configured_mod_9", NN_FEATURE_STRUCTURAL_PRIOR, 0},
+};
+_Static_assert(sizeof(PRIME_GAP_SCORER_FEATURES) / sizeof(PRIME_GAP_SCORER_FEATURES[0]) ==
+                   FEATURE_COUNT,
+               "prime-gap feature schema must match scorer feature count");
+
 static const NNExperimentSpec PRIME_GAP_EXPERIMENT_SPEC = {
-    "prime_gap",
-    "compact arithmetic action-ranking benchmark for certified gate discovery",
-    "prime p below the task split limit",
-    "deterministic prime stream split into train, validation, and held-out ranges",
-    "even candidate gaps 2..256 plus overflow",
-    "enumerate every gap action before gating; no verifier pruning in enumeration",
-    "minimal default [log(p), normalized_gap, overflow_flag]; residue flags are leakage ablations",
-    "exact divisibility and next-prime facts may be labels, rewards, certificates, or gates, but not default scorer inputs",
-    "shared MLP scores one state/action row and softmax ranks surviving candidates",
-    "segmented sieve returns the true next-prime gap and exact verifier work",
-    "target gap, top-k correctness, ranking loss, exact probes, calibration bins",
-    "modular rejection predicates over candidate residues and optional state-conditioned residues",
-    "algebraic certificate such as gcd(modulus, residue) > 1 proves rejected candidate is composite",
-    "accepted predicates reject impossible gaps before neural residual scoring",
-    "structural rule descriptors only: kind, moduli, residues, zero indicators, gcd ratios",
-    "empirical support and verifier utility predicted from train/validation labels, never used as proposer features",
-    "neural, random, grammar-order, structural heuristic, validation oracle",
-    "train on smaller prime ranges; test on larger prime ranges and larger gap coverage",
-    NN_TRACE_SCHEMA,
-    "stable action-id JSONL traces train replay successors with parent checkpoint hashes",
-    "supervised scorer, strict verifier policy gradient, and KL/entropy-regularized verifier policy gradient",
+    .task_name = "prime_gap",
+    .role = "compact arithmetic action-ranking benchmark for certified gate discovery",
+    .state_space = "prime p below the task split limit",
+    .state_distribution =
+        "deterministic prime stream split into train, validation, and held-out ranges",
+    .action_space = "even candidate gaps 2..256 plus overflow",
+    .candidate_enumerator =
+        "enumerate every gap action before gating; no verifier pruning in enumeration",
+    .observable_features =
+        "minimal default [log(p), normalized_gap, overflow_flag]; residue flags are disabled leakage ablations",
+    .leakage_policy = NN_LEAKAGE_FORBIDDEN,
+    .neural_scorer = "shared MLP scores one state/action row and softmax ranks surviving candidates",
+    .exact_verifier = "segmented sieve returns the true next-prime gap and exact verifier work",
+    .verifier_feedback = "target gap, top-k correctness, ranking loss, exact probes, calibration bins",
+    .rule_grammar = "modular rejection predicates over candidate residues and optional state-conditioned residues",
+    .certificate_checker =
+        "algebraic certificate such as gcd(modulus, residue) > 1 proves rejected candidate is composite",
+    .gate_executor = "accepted predicates reject impossible gaps before neural residual scoring",
+    .proposer_inputs = "structural rule descriptors only: kind, moduli, residues, zero indicators, gcd ratios",
+    .proposer_targets =
+        "empirical support and verifier utility predicted from train/validation labels, never used as proposer features",
+    .proposer_mode = NN_PROPOSER_SELECTION,
+    .baseline_orderings = "neural, random, grammar-order, structural heuristic, validation oracle",
+    .generalization_axis = "train on smaller prime ranges; test on larger prime ranges and larger gap coverage",
+    .trace_schema = NN_TRACE_SCHEMA,
+    .replay_protocol = "stable action-id JSONL traces train replay successors with parent checkpoint hashes",
+    .rl_protocol =
+        "supervised scorer, strict verifier policy gradient, and KL/entropy-regularized verifier policy gradient",
+    .features = PRIME_GAP_SCORER_FEATURES,
+    .feature_count = sizeof(PRIME_GAP_SCORER_FEATURES) / sizeof(PRIME_GAP_SCORER_FEATURES[0]),
 };
 
 int nn_prime_gap_main(int argc, char **argv)

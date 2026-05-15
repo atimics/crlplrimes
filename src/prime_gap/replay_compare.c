@@ -470,6 +470,17 @@ static void print_eval_reliability_bins_json(const EvalMetrics *metrics)
     fputc(']', stdout);
 }
 
+static const char *prime_feature_set_leakage_policy_name(const char *feature_set)
+{
+    if (feature_set == NULL || feature_set[0] == '\0' || strcmp(feature_set, "unknown") == 0) {
+        return nn_leakage_policy_name(NN_LEAKAGE_LEGACY);
+    }
+    if (strcmp(feature_set, "full") == 0 || strcmp(feature_set, "residue-only") == 0) {
+        return nn_leakage_policy_name(NN_LEAKAGE_LEGACY);
+    }
+    return nn_leakage_policy_name(NN_LEAKAGE_FORBIDDEN);
+}
+
 static void print_report_json(const char *model_hash,
                               const NNCheckpointMeta *meta,
                               uint32_t seed,
@@ -481,7 +492,8 @@ static void print_report_json(const char *model_hash,
     double samples = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
     printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"prime_gap\","
            "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
-           "\"feature_set\":\"%s\",\"evaluation_mode\":\"%s\",\"rule_set_hash\":\"%s\","
+           "\"feature_set\":\"%s\",\"leakage_policy\":\"%s\","
+           "\"evaluation_mode\":\"%s\",\"rule_set_hash\":\"%s\","
            "\"feature_encoder_version\":%u,"
            "\"benchmark_seed\":%u,\"sample_count\":%zu,"
            "\"top1\":%.8f,\"top5\":%.8f,\"top10\":%.8f,"
@@ -493,6 +505,7 @@ static void print_report_json(const char *model_hash,
            model_hash,
            meta->parent_model_hash[0] == '\0' ? "unknown" : meta->parent_model_hash,
            feature_set == NULL ? "unknown" : feature_set,
+           prime_feature_set_leakage_policy_name(feature_set),
            evaluation_mode == NULL ? "raw" : evaluation_mode,
            rule_hash == NULL ? "unknown" : rule_hash,
            meta->feature_encoder_version,
@@ -526,12 +539,14 @@ static void print_symbolic_compare_json(const char *rule_hash,
 {
     printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"prime_gap\","
            "\"model_hash\":\"none\",\"parent_hash\":\"unknown\","
+           "\"leakage_policy\":\"%s\","
            "\"evaluation_mode\":\"learned_wheel_rules\","
            "\"rule_set_hash\":\"%s\",\"feature_encoder_version\":1,"
            "\"benchmark_seed\":%u,\"sample_count\":%zu,"
            "\"accepted_rules\":%zu,\"false_rejections\":%zu,"
            "\"direct_exact\":%.8f,\"hand_wheel_exact\":%.8f,"
            "\"learned_wheel_exact\":%.8f,\"learned_wheel_mod\":%.8f}\n",
+           nn_leakage_policy_name(NN_LEAKAGE_FORBIDDEN),
            rule_hash == NULL ? "unknown" : rule_hash,
            seed,
            metrics.samples,
@@ -549,6 +564,7 @@ static void print_expanded_compare_json(const char *rule_hash,
 {
     printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"prime_gap\","
            "\"model_hash\":\"none\",\"parent_hash\":\"unknown\","
+           "\"leakage_policy\":\"%s\","
            "\"evaluation_mode\":\"expanded_rules\","
            "\"rule_set_hash\":\"%s\",\"feature_encoder_version\":1,"
            "\"benchmark_seed\":%u,\"sample_count\":%zu,"
@@ -557,6 +573,7 @@ static void print_expanded_compare_json(const char *rule_hash,
            "\"false_rejections\":%zu,"
            "\"direct_exact\":%.8f,\"hand_wheel_exact\":%.8f,"
            "\"expanded_exact\":%.8f,\"expanded_mod\":%.8f}\n",
+           nn_leakage_policy_name(NN_LEAKAGE_FORBIDDEN),
            rule_hash == NULL ? "unknown" : rule_hash,
            seed,
            metrics.samples,

@@ -18,28 +18,51 @@ enum {
     DC_CALIBRATION_BINS = 10,
 };
 
+static const NNFeatureSchema DELAYED_CLAIM_SCORER_FEATURES[] = {
+    {"claim_reliability", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"claim_evidence", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"claim_contradiction", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"claim_age", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"claim_history", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"claim_noise", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"action_trust", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"action_ignore", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"action_request_more_evidence", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"action_act_cautiously", NN_FEATURE_STATE_OBSERVATION, 1},
+};
+_Static_assert(sizeof(DELAYED_CLAIM_SCORER_FEATURES) / sizeof(DELAYED_CLAIM_SCORER_FEATURES[0]) ==
+                   DC_FEATURE_COUNT,
+               "delayed-claim feature schema must match scorer feature count");
+
 static const NNExperimentSpec DELAYED_CLAIM_EXPERIMENT_SPEC = {
-    "delayed_claim",
-    "finite delayed-feedback decision task for trace replay and verifier-RL calibration",
-    "six observable claim/evidence features generated from a deterministic simulator",
-    "fixed train/test seed ranges over the same hidden-rule generator",
-    "trust, ignore, request_more_evidence, act_cautiously",
-    "enumerate all four actions for every claim state",
-    "observable claim features plus action one-hot; hidden outcome and utilities are excluded",
-    "hidden truth resolution and action utilities may be verifier labels/rewards only",
-    "shared MLP scores one claim/action row and softmax ranks actions",
-    "deterministic hidden rule computes action utilities and the best action",
-    "target action, utility, proposal steps, calibration bins, replay loss",
-    "threshold, dominance, and evidence-sufficiency predicates over observable features",
-    "exhaustive finite-generator check proves a rule never rejects any optimal action on the certified support",
-    "accepted predicates remove dominated or unsafe actions before neural residual scoring",
-    "structural predicate descriptors: feature index, threshold bucket, action id, polarity",
-    "empirical utility/support and false-rejection diagnostics predicted from verifier labels",
-    "neural, random, grammar-order, structural heuristic, validation oracle",
-    "train on one seed band and evaluate shifted seed bands plus harder uncertainty bands",
-    NN_TRACE_SCHEMA,
-    "stable action-id JSONL traces train replay successors with soft and hard target weights",
-    "supervised scorer, strict verifier policy gradient, and KL/entropy-regularized verifier policy gradient",
+    .task_name = "delayed_claim",
+    .role = "finite delayed-feedback decision task for trace replay and verifier-RL calibration",
+    .state_space = "six observable claim/evidence features generated from a deterministic simulator",
+    .state_distribution = "fixed train/test seed ranges over the same hidden-rule generator",
+    .action_space = "trust, ignore, request_more_evidence, act_cautiously",
+    .candidate_enumerator = "enumerate all four actions for every claim state",
+    .observable_features =
+        "observable claim features plus action one-hot; hidden outcome and utilities are excluded",
+    .leakage_policy = NN_LEAKAGE_FORBIDDEN,
+    .neural_scorer = "shared MLP scores one claim/action row and softmax ranks actions",
+    .exact_verifier = "deterministic hidden rule computes action utilities and the best action",
+    .verifier_feedback = "target action, utility, proposal steps, calibration bins, replay loss",
+    .rule_grammar = "threshold, dominance, and evidence-sufficiency predicates over observable features",
+    .certificate_checker =
+        "exhaustive finite-generator check proves a rule never rejects any optimal action on the certified support",
+    .gate_executor = "accepted predicates remove dominated or unsafe actions before neural residual scoring",
+    .proposer_inputs = "structural predicate descriptors: feature index, threshold bucket, action id, polarity",
+    .proposer_targets = "empirical utility/support and false-rejection diagnostics predicted from verifier labels",
+    .proposer_mode = NN_PROPOSER_SELECTION,
+    .baseline_orderings = "neural, random, grammar-order, structural heuristic, validation oracle",
+    .generalization_axis = "train on one seed band and evaluate shifted seed bands plus harder uncertainty bands",
+    .trace_schema = NN_TRACE_SCHEMA,
+    .replay_protocol = "stable action-id JSONL traces train replay successors with soft and hard target weights",
+    .rl_protocol =
+        "supervised scorer, strict verifier policy gradient, and KL/entropy-regularized verifier policy gradient",
+    .features = DELAYED_CLAIM_SCORER_FEATURES,
+    .feature_count =
+        sizeof(DELAYED_CLAIM_SCORER_FEATURES) / sizeof(DELAYED_CLAIM_SCORER_FEATURES[0]),
 };
 
 static const nn_real DC_REPLAY_LEARNING_RATE = (nn_real)0.008;
@@ -811,12 +834,14 @@ static int compare_claim_models(int argc, char **argv)
                                                     scores,
                                                     probabilities);
         printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"delayed_claim\","
+               "\"leakage_policy\":\"%s\","
                "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
                "\"feature_encoder_version\":%u,"
                "\"benchmark_seed\":%u,\"sample_count\":%zu,"
                "\"accuracy\":%.8f,\"nll\":%.8f,\"ece\":%.8f,"
                "\"decision_utility\":%.8f,\"proposal_steps\":%.8f,"
                "\"baseline_steps\":%.8f,\"search_saved\":%.8f",
+               nn_leakage_policy_name(DELAYED_CLAIM_EXPERIMENT_SPEC.leakage_policy),
                hash,
                meta.parent_model_hash[0] == '\0' ? "unknown" : meta.parent_model_hash,
                meta.feature_encoder_version,

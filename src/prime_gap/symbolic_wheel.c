@@ -95,6 +95,34 @@ static void fill_symbolic_rule_features(const SymbolicRejectRule *rule,
     features[3] = (nn_real)((double)common / modulus);
 }
 
+typedef struct {
+    nn_real values[SYMBOLIC_RULE_FEATURE_COUNT];
+} SymbolicRuleProposerInputs;
+
+typedef struct {
+    size_t train_rejects;
+    int domain_valid;
+    nn_real support_target;
+} SymbolicRuleProposerTargets;
+
+typedef struct {
+    SymbolicRuleProposerInputs inputs;
+    SymbolicRuleProposerTargets targets;
+} SymbolicRuleProposerSample;
+
+static void fill_symbolic_rule_proposer_sample(const SymbolicRejectRule *rule,
+                                               double support_scale,
+                                               SymbolicRuleProposerSample *sample)
+{
+    memset(sample, 0, sizeof(*sample));
+    fill_symbolic_rule_features(rule, sample->inputs.values);
+    sample->targets.train_rejects = rule->train_rejects;
+    sample->targets.domain_valid = rule->domain_valid;
+    sample->targets.support_target =
+        rule->domain_valid ? (nn_real)((double)rule->train_rejects / support_scale)
+                           : (nn_real)0;
+}
+
 static int score_symbolic_rules_with_model(SymbolicRejectRule *rules,
                                            size_t count,
                                            double *loss_out)
@@ -106,10 +134,12 @@ static int score_symbolic_rules_with_model(SymbolicRejectRule *rules,
         }
     }
 
+    SymbolicRuleProposerSample *samples = calloc(count, sizeof(*samples));
     nn_real *inputs = calloc(count * SYMBOLIC_RULE_FEATURE_COUNT, sizeof(*inputs));
     nn_real *targets = calloc(count, sizeof(*targets));
     nn_real *scores = calloc(count, sizeof(*scores));
-    if (inputs == NULL || targets == NULL || scores == NULL) {
+    if (samples == NULL || inputs == NULL || targets == NULL || scores == NULL) {
+        free(samples);
         free(inputs);
         free(targets);
         free(scores);
@@ -118,10 +148,11 @@ static int score_symbolic_rules_with_model(SymbolicRejectRule *rules,
 
     double support_scale = max_train_rejects == 0 ? 1.0 : (double)max_train_rejects;
     for (size_t i = 0; i < count; ++i) {
-        fill_symbolic_rule_features(&rules[i], &inputs[i * SYMBOLIC_RULE_FEATURE_COUNT]);
-        targets[i] = rules[i].domain_valid
-                         ? (nn_real)((double)rules[i].train_rejects / support_scale)
-                         : (nn_real)0;
+        fill_symbolic_rule_proposer_sample(&rules[i], support_scale, &samples[i]);
+        memcpy(&inputs[i * SYMBOLIC_RULE_FEATURE_COUNT],
+               samples[i].inputs.values,
+               SYMBOLIC_RULE_FEATURE_COUNT * sizeof(*inputs));
+        targets[i] = samples[i].targets.support_target;
     }
 
     const size_t layers[] = {SYMBOLIC_RULE_FEATURE_COUNT, 16, 8, 1};
@@ -135,6 +166,7 @@ static int score_symbolic_rules_with_model(SymbolicRejectRule *rules,
 
     NeuralNet *net = nn_create_config(&config);
     if (net == NULL) {
+        free(samples);
         free(inputs);
         free(targets);
         free(scores);
@@ -158,6 +190,7 @@ static int score_symbolic_rules_with_model(SymbolicRejectRule *rules,
     }
 
     nn_free(net);
+    free(samples);
     free(inputs);
     free(targets);
     free(scores);

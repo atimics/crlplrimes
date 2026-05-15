@@ -564,6 +564,36 @@ static void set_expanded_rule_utilities(ExpandedRuleSet *rules)
     }
 }
 
+typedef struct {
+    nn_real values[RULE_SEARCH_FEATURE_COUNT];
+} RuleProposerInputs;
+
+typedef struct {
+    size_t train_rejects;
+    size_t train_false_rejections;
+    nn_real support_target;
+} RuleProposerTargets;
+
+typedef struct {
+    RuleProposerInputs inputs;
+    RuleProposerTargets targets;
+} RuleProposerSample;
+
+static void fill_rule_proposer_sample(const ExpandedRule *rule,
+                                      uint32_t max_modulus,
+                                      double support_scale,
+                                      RuleProposerSample *sample)
+{
+    memset(sample, 0, sizeof(*sample));
+    fill_expanded_rule_features(rule, max_modulus, sample->inputs.values);
+    sample->targets.train_rejects = rule->train_rejects;
+    sample->targets.train_false_rejections = rule->train_false_rejections;
+    sample->targets.support_target =
+        rule->train_false_rejections == 0
+            ? (nn_real)((double)rule->train_rejects / support_scale)
+            : (nn_real)0;
+}
+
 static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
                                            const RuleSearchConfig *config,
                                            double *loss_out)
@@ -581,10 +611,12 @@ static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
         }
     }
 
+    RuleProposerSample *samples = calloc(rules->count, sizeof(*samples));
     nn_real *inputs = calloc(rules->count * RULE_SEARCH_FEATURE_COUNT, sizeof(*inputs));
     nn_real *targets = calloc(rules->count, sizeof(*targets));
     nn_real *scores = calloc(rules->count, sizeof(*scores));
-    if (inputs == NULL || targets == NULL || scores == NULL) {
+    if (samples == NULL || inputs == NULL || targets == NULL || scores == NULL) {
+        free(samples);
         free(inputs);
         free(targets);
         free(scores);
@@ -593,13 +625,11 @@ static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
 
     double support_scale = max_train_rejects == 0 ? 1.0 : (double)max_train_rejects;
     for (size_t i = 0; i < rules->count; ++i) {
-        ExpandedRule *rule = &rules->items[i];
-        fill_expanded_rule_features(rule,
-                                    max_modulus,
-                                    &inputs[i * RULE_SEARCH_FEATURE_COUNT]);
-        targets[i] = rule->train_false_rejections == 0
-                         ? (nn_real)((double)rule->train_rejects / support_scale)
-                         : (nn_real)0;
+        fill_rule_proposer_sample(&rules->items[i], max_modulus, support_scale, &samples[i]);
+        memcpy(&inputs[i * RULE_SEARCH_FEATURE_COUNT],
+               samples[i].inputs.values,
+               RULE_SEARCH_FEATURE_COUNT * sizeof(*inputs));
+        targets[i] = samples[i].targets.support_target;
     }
     set_expanded_rule_utilities(rules);
 
@@ -614,6 +644,7 @@ static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
 
     NeuralNet *net = nn_create_config(&nn_config);
     if (net == NULL) {
+        free(samples);
         free(inputs);
         free(targets);
         free(scores);
@@ -637,6 +668,7 @@ static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
     }
 
     nn_free(net);
+    free(samples);
     free(inputs);
     free(targets);
     free(scores);

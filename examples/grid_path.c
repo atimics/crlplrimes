@@ -31,28 +31,107 @@ enum {
     GP_INF = 1000000,
 };
 
+static const NNFeatureSchema GRID_PATH_SCORER_FEATURES[] = {
+    {"start_x", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"start_y", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"goal_x", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"goal_y", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"candidate_dx_to_goal", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"candidate_dy_to_goal", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"candidate_manhattan_to_goal", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"candidate_manhattan_delta", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"action_dx", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"action_dy", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_00", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_01", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_02", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_03", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_04", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_05", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_06", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_07", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_08", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_09", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_10", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_11", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_12", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_13", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_14", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_15", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_16", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_17", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_18", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_19", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_20", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_21", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_22", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_23", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_24", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_25", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_26", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_27", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_28", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_29", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_30", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_31", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_32", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_33", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_34", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_35", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_36", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_37", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_38", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_39", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_40", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_41", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_42", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_43", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_44", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_45", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_46", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_47", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"blocked_cell_48", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"action_up", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"action_right", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"action_down", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"action_left", NN_FEATURE_STATE_OBSERVATION, 1},
+};
+_Static_assert(sizeof(GRID_PATH_SCORER_FEATURES) / sizeof(GRID_PATH_SCORER_FEATURES[0]) ==
+                   GP_FEATURE_COUNT,
+               "grid-path feature schema must match scorer feature count");
+
 static const NNExperimentSpec GRID_PATH_EXPERIMENT_SPEC = {
-    "grid_path",
-    "spatial shortest-path action-ranking benchmark for certified pruning outside arithmetic",
-    "7x7 obstacle grid with start and goal coordinates",
-    "deterministic grid generator split by train, validation, and held-out seed ranges",
-    "four moves: up, right, down, left",
-    "enumerate all four moves, including blocked and out-of-bounds moves, before gating",
-    "start/goal coordinates, candidate displacement, obstacle map, and action one-hot",
-    "explicit legality flags and BFS distances are verifier labels/costs, not scorer inputs",
-    "shared MLP scores one grid/action row and softmax ranks surviving moves",
-    "BFS identifies shortest-path successors and verifier node cost",
-    "target move, correctness, utility, candidate count, BFS nodes, calibration bins",
-    "legality and admissible-pruning predicates over grid boundary, blocked cells, and distance bounds",
-    "finite validation/exhaustive geometry checks prove a rule never rejects an optimal move",
-    "accepted predicates remove impossible or certified non-optimal moves before neural scoring",
-    "structural rule descriptors: rule kind, direction, boundary relation, cell relation, distance relation",
-    "reject support and verifier-cost savings predicted from train/validation labels",
-    "neural, random, grammar-order, structural heuristic, validation oracle",
-    "train on generated grids and test shifted obstacle densities, start/goal distances, and grid seeds",
-    NN_TRACE_SCHEMA,
-    "stable action-id JSONL traces train replay successors with parent checkpoint hashes",
-    "supervised scorer, strict verifier policy gradient, and KL/entropy-regularized verifier policy gradient",
+    .task_name = "grid_path",
+    .role = "spatial shortest-path action-ranking benchmark for certified pruning outside arithmetic",
+    .state_space = "7x7 obstacle grid with start and goal coordinates",
+    .state_distribution =
+        "deterministic grid generator split by train, validation, and held-out seed ranges",
+    .action_space = "four moves: up, right, down, left",
+    .candidate_enumerator =
+        "enumerate all four moves, including blocked and out-of-bounds moves, before gating",
+    .observable_features =
+        "start/goal coordinates, candidate displacement, obstacle map, action one-hot, and Manhattan structural priors",
+    .leakage_policy = NN_LEAKAGE_PRIORS_ALLOWED,
+    .neural_scorer = "shared MLP scores one grid/action row and softmax ranks surviving moves",
+    .exact_verifier = "BFS identifies shortest-path successors and verifier node cost",
+    .verifier_feedback = "target move, correctness, utility, candidate count, BFS nodes, calibration bins",
+    .rule_grammar = "legality and admissible-pruning predicates over grid boundary, blocked cells, and distance bounds",
+    .certificate_checker =
+        "finite validation/exhaustive geometry checks prove a rule never rejects an optimal move",
+    .gate_executor = "accepted predicates remove impossible or certified non-optimal moves before neural scoring",
+    .proposer_inputs =
+        "structural rule descriptors: rule kind, direction, boundary relation, cell relation, distance relation",
+    .proposer_targets = "reject support and verifier-cost savings predicted from train/validation labels",
+    .proposer_mode = NN_PROPOSER_SELECTION,
+    .baseline_orderings = "neural, random, grammar-order, structural heuristic, validation oracle",
+    .generalization_axis =
+        "train on generated grids and test shifted obstacle densities, start/goal distances, and grid seeds",
+    .trace_schema = NN_TRACE_SCHEMA,
+    .replay_protocol = "stable action-id JSONL traces train replay successors with parent checkpoint hashes",
+    .rl_protocol =
+        "supervised scorer, strict verifier policy gradient, and KL/entropy-regularized verifier policy gradient",
+    .features = GRID_PATH_SCORER_FEATURES,
+    .feature_count = sizeof(GRID_PATH_SCORER_FEATURES) / sizeof(GRID_PATH_SCORER_FEATURES[0]),
 };
 
 typedef struct {
@@ -1389,6 +1468,7 @@ static int compare_grid_models(int argc, char **argv)
                                                   probabilities);
         double samples = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
         printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"grid_path\","
+               "\"leakage_policy\":\"%s\","
                "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
                "\"evaluation_mode\":\"raw\",\"rule_set_hash\":\"none\","
                "\"feature_encoder_version\":%u,"
@@ -1398,6 +1478,7 @@ static int compare_grid_models(int argc, char **argv)
                "\"decision_utility\":%.8f,\"proposal_steps\":%.8f,"
                "\"baseline_steps\":%.8f,\"verifier_nodes\":%.8f,"
                "\"baseline_nodes\":%.8f,\"search_saved\":%.8f",
+               nn_leakage_policy_name(GRID_PATH_EXPERIMENT_SPEC.leakage_policy),
                hash,
                meta.parent_model_hash[0] == '\0' ? "unknown" : meta.parent_model_hash,
                meta.feature_encoder_version,
@@ -1428,6 +1509,7 @@ static int compare_grid_models(int argc, char **argv)
                                                                    probabilities);
         samples = gated_metrics.samples == 0 ? 1.0 : (double)gated_metrics.samples;
         printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"grid_path\","
+               "\"leakage_policy\":\"%s\","
                "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
                "\"evaluation_mode\":\"budgeted_legality_gate_model\","
                "\"rule_set_hash\":\"grid-legality-budget-v2\","
@@ -1439,6 +1521,7 @@ static int compare_grid_models(int argc, char **argv)
                "\"decision_utility\":%.8f,\"proposal_steps\":%.8f,"
                "\"baseline_steps\":%.8f,\"verifier_nodes\":%.8f,"
                "\"baseline_nodes\":%.8f,\"search_saved\":%.8f",
+               nn_leakage_policy_name(GRID_PATH_EXPERIMENT_SPEC.leakage_policy),
                hash,
                meta.parent_model_hash[0] == '\0' ? "unknown" : meta.parent_model_hash,
                gate_rules.accepted_rules,

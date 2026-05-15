@@ -154,14 +154,30 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
             [
                 [
                     str(row.get("task", "")),
+                    str(row.get("leakage_policy", "")),
                     str(row.get("action_space", "")),
                     str(row.get("exact_verifier", "")),
                     str(row.get("rule_grammar", "")),
                     str(row.get("certificate_checker", "")),
+                    str(row.get("proposer_mode", "")),
+                    (
+                        str(row.get("feature_audit", {}).get("enabled_structural_prior_features", ""))
+                        if isinstance(row.get("feature_audit"), dict)
+                        else ""
+                    ),
                 ]
                 for row in schemas
             ],
-            ["task", "actions", "verifier", "rule grammar", "certificate"],
+            [
+                "task",
+                "leakage",
+                "actions",
+                "verifier",
+                "rule grammar",
+                "certificate",
+                "proposer mode",
+                "enabled priors",
+            ],
         )
         if schemas
         else "_No experiment schema rows captured._"
@@ -179,6 +195,7 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                 [
                     str(row.get("model_hash", "unknown"))[:12],
                     str(row.get("parent_hash", "unknown"))[:12],
+                    str(row.get("leakage_policy", "")),
                     fmt_percent(row, "accuracy"),
                     fmt_number(row, "nll"),
                     fmt_number(row, "ece"),
@@ -188,7 +205,7 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                 ]
                 for row in delayed
             ],
-            ["model", "parent", "accuracy", "nll", "ece", "utility", "steps", "baseline"],
+            ["model", "parent", "leakage", "accuracy", "nll", "ece", "utility", "steps", "baseline"],
         )
         if delayed
         else "_No delayed-claim rows captured._"
@@ -201,6 +218,7 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                     str(row.get("task", "")),
                     str(row.get("model_hash", "unknown"))[:12],
                     str(row.get("parent_hash", "unknown"))[:12],
+                    str(row.get("leakage_policy", "")),
                     str(row.get("evaluation_mode", "raw")),
                     fmt_percent(row, "accuracy"),
                     fmt_number(row, "nll"),
@@ -216,6 +234,7 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                 "task",
                 "model",
                 "parent",
+                "leakage",
                 "mode",
                 "accuracy",
                 "nll",
@@ -237,6 +256,7 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                     str(row.get("model_hash", "unknown"))[:12],
                     str(row.get("evaluation_mode", "raw")),
                     str(row.get("feature_set", "")),
+                    str(row.get("leakage_policy", "")),
                     fmt_percent(row, "top1"),
                     fmt_percent(row, "top10"),
                     fmt_number(row, "nll"),
@@ -251,6 +271,7 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                 "model",
                 "mode",
                 "features",
+                "leakage",
                 "top1",
                 "top10",
                 "nll",

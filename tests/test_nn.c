@@ -70,32 +70,42 @@ static void fill_targets(nn_real *targets, size_t count)
 
 static int test_experiment_schema_json_contract(void)
 {
-    NNExperimentSpec spec = {
-        "toy_task",
-        "unit test task",
-        "toy states",
-        "fixed seeds",
-        "two actions",
-        "enumerate all actions",
-        "state plus action one-hot",
-        "no labels as inputs",
-        "shared action scorer",
-        "exact checker",
-        "target and cost",
-        "toy predicates",
-        "exhaustive finite check",
-        "predicate gate",
-        "structural predicate features",
-        "support labels",
-        "neural, random, grammar-order",
-        "seed shift",
-        NN_TRACE_SCHEMA,
-        "stable action-id replay",
-        "supervised and verifier RL",
+    const NNFeatureSchema features[] = {
+        {"state", NN_FEATURE_STATE_OBSERVATION, 1},
+        {"heuristic", NN_FEATURE_STRUCTURAL_PRIOR, 0},
     };
+    NNExperimentSpec spec = {
+        .task_name = "toy_task",
+        .role = "unit test task",
+        .state_space = "toy states",
+        .state_distribution = "fixed seeds",
+        .action_space = "two actions",
+        .candidate_enumerator = "enumerate all actions",
+        .observable_features = "state plus action one-hot",
+        .leakage_policy = NN_LEAKAGE_FORBIDDEN,
+        .neural_scorer = "shared action scorer",
+        .exact_verifier = "exact checker",
+        .verifier_feedback = "target and cost",
+        .rule_grammar = "toy predicates",
+        .certificate_checker = "exhaustive finite check",
+        .gate_executor = "predicate gate",
+        .proposer_inputs = "structural predicate features",
+        .proposer_targets = "support labels",
+        .proposer_mode = NN_PROPOSER_SELECTION,
+        .baseline_orderings = "neural, random, grammar-order",
+        .generalization_axis = "seed shift",
+        .trace_schema = NN_TRACE_SCHEMA,
+        .replay_protocol = "stable action-id replay",
+        .rl_protocol = "supervised and verifier RL",
+        .features = features,
+        .feature_count = sizeof(features) / sizeof(features[0]),
+    };
+    NNFeatureAudit audit = nn_experiment_feature_audit(&spec);
     FILE *fp = tmpfile();
     char buffer[2048];
-    if (fp == NULL || !nn_experiment_spec_is_valid(&spec) ||
+    if (fp == NULL || !audit.scorer_input_is_policy_compliant ||
+        audit.structural_prior_features != 1 || audit.enabled_structural_prior_features != 0 ||
+        !nn_experiment_spec_is_valid(&spec) ||
         !nn_experiment_write_schema_json(fp, &spec)) {
         if (fp != NULL) {
             fclose(fp);
@@ -110,7 +120,9 @@ static int test_experiment_schema_json_contract(void)
     fclose(fp);
     return strstr(buffer, "\"schema\":\"crlp.experiment_schema.v1\"") != NULL &&
            strstr(buffer, "\"task\":\"toy_task\"") != NULL &&
-           strstr(buffer, "\"leakage_policy\":\"no labels as inputs\"") != NULL;
+           strstr(buffer, "\"leakage_policy\":\"forbidden\"") != NULL &&
+           strstr(buffer, "\"feature_schema\"") != NULL &&
+           strstr(buffer, "\"provenance\":\"structural_prior\"") != NULL;
 }
 
 static nn_real average_loss(NeuralNet *net,

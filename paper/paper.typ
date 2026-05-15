@@ -230,7 +230,11 @@ Task T = {
 
 The leakage rule is shared: verifier outputs may be labels, rewards, certificates, diagnostics,
 or executed gates, but they are not default scorer inputs. Proposer inputs are structural rule
-descriptors; support counts and false-rejection diagnostics are targets, not features.
+descriptors; support counts and false-rejection diagnostics are targets, not features. In the
+artifact this is a typed contract, not just prose: every scorer feature declares provenance
+(`state_observation`, `structural_prior`, `verifier_derived`, or `derived_from_gate`), every
+task declares a leakage policy (`forbidden`, `priors_allowed`, or `legacy`), and schema emission
+fails if enabled scorer features violate that policy.
 
 == Trace and Checkpoint Contract
 
@@ -312,9 +316,9 @@ Full metrics:
     columns: (auto, auto, auto, auto, auto, auto),
     align: (left, right, right, right, right, right),
     table.header[*Gate*][*Top-1*][*Top-10*][*NLL*][*ECE*][*ms/sample*],
-    [no gate], [9.13%], [78.01%], [2.9994], [0.1076], [0.0372],
-    [hand-wheel], [45.12%], [99.77%], [1.5902], [0.0834], [0.0386],
-    [*learned wheel*], [*68.31%*], [*100.00%*], [*1.0172*], [0.1379], [*0.0098*],
+    [no gate], [9.13%], [78.01%], [2.9994], [0.1076], [0.0365],
+    [hand-wheel], [45.12%], [99.77%], [1.5902], [0.0834], [0.0375],
+    [*learned wheel*], [*68.31%*], [*100.00%*], [*1.0172*], [0.1379], [*0.0099*],
   ),
   caption: [Gate ablation, minimal-feature scorer, identical weights across rows.],
 ) <tab:f1>

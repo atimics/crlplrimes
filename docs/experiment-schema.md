@@ -32,6 +32,34 @@ make experiment-schemas
 The C API lives in `include/nn_experiment.h`; the implementation is
 `src/nn_experiment.c`.
 
+## Enforced Schema Fields
+
+The schema is no longer only strings. Each task also declares:
+
+- `NNFeatureSchema[]`: one row per scorer input feature, with a typed
+  `NNFeatureProvenance`.
+- `NNLeakagePolicy`: `forbidden`, `priors_allowed`, or `legacy`.
+- `NNProposerMode`: `selection` or `discovery`.
+- `NNFeatureAudit`: emitted automatically in `crlp.experiment_schema.v1`.
+
+Feature provenance is one of:
+
+```c
+NN_FEATURE_STATE_OBSERVATION
+NN_FEATURE_STRUCTURAL_PRIOR
+NN_FEATURE_VERIFIER_DERIVED
+NN_FEATURE_DERIVED_FROM_GATE
+```
+
+`NN_LEAKAGE_FORBIDDEN` allows only enabled state/action observations in the
+scorer. `NN_LEAKAGE_PRIORS_ALLOWED` allows enabled structural priors but still
+forbids verifier-derived and gate-derived scorer inputs. `NN_LEAKAGE_LEGACY`
+marks runs that are not directly comparable to clean rows.
+
+The schema writer refuses to emit a task whose enabled features violate its
+declared leakage policy. Comparison rows also carry `leakage_policy`, so mixed
+policy tables are visible in `results/latest`.
+
 ## Invariants
 
 1. Candidate enumeration is complete before gating.
@@ -53,6 +81,14 @@ The C API lives in `include/nn_experiment.h`; the implementation is
 | `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | modular rejection predicates | algebraic divisibility proof |
 | `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality and admissible-pruning predicates | cannot reject an optimal move |
 | `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold/dominance/evidence predicates | finite-generator safety check |
+
+Leakage status today:
+
+| Task | Leakage policy | Feature audit |
+| --- | --- | --- |
+| `prime_gap` | `forbidden` | 3 enabled observations; 10 disabled structural-prior residue columns retained only for ablations |
+| `grid_path` | `priors_allowed` | 61 observations plus 2 enabled Manhattan structural priors |
+| `delayed_claim` | `forbidden` | 10 enabled observations |
 
 ## Evidence Status
 
@@ -79,3 +115,7 @@ schema but not yet implemented as a learned certified gate.
 6. Report one cross-task table keyed by the shared schema:
    no gate, spec gate, learned gate, random gate, grammar-order gate,
    structural-heuristic gate, oracle gate, replay successor, strict RL, KL RL.
+7. Add metric-provenance rows for random ranking, strongest non-neural
+   heuristic, and oracle ranking on the same gated candidate set.
+8. Report random-normalized and gate-marginal skill in cross-task tables; keep
+   raw top-1 in task-specific sections.

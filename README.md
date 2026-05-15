@@ -14,7 +14,7 @@ Every experiment now publishes the same machine-readable task contract with:
 make experiment-schemas
 ```
 
-The schema is `crlp.experiment_schema.v1` and defines the state distribution, candidate enumerator, observable features, leakage policy, scorer, verifier, rule grammar, certificate checker, proposer inputs, baselines, trace protocol, replay protocol, and verifier-RL protocol. The public C contract lives in `include/nn_experiment.h`.
+The schema is `crlp.experiment_schema.v1` and defines the state distribution, candidate enumerator, typed feature provenance, leakage policy, scorer, verifier, rule grammar, certificate checker, proposer inputs, proposer mode, baselines, trace protocol, replay protocol, and verifier-RL protocol. The public C contract lives in `include/nn_experiment.h`.
 The working design note is [docs/experiment-schema.md](docs/experiment-schema.md).
 
 ## Generalized Experiment Schema
@@ -59,11 +59,20 @@ The model proposes. The verifier decides. The trace remembers.
 The task-independent rules are:
 
 1. Candidate enumeration is complete before gating; the verifier is not allowed to prune the candidate set silently.
-2. The scorer receives only observable state/action features. Verifier-derived facts can be labels, rewards, certificates, or executed gates, but not default scorer inputs.
-3. The proposer receives structural rule descriptors only. Empirical support, utility, and false-rejection counts are targets or diagnostics, not features.
-4. A rule can enter the gate only through the task's certificate checker.
-5. Every task is evaluated against neural, random, grammar-order, structural-heuristic, and oracle proposer orderings at matched budgets.
-6. JSONL traces use stable action ids so replay cannot silently change semantics when candidates are reordered.
+2. Every scorer input feature has typed provenance: `state_observation`, `structural_prior`, `verifier_derived`, or `derived_from_gate`.
+3. The scorer's enabled features must satisfy the task's `forbidden`, `priors_allowed`, or `legacy` leakage policy before the schema writer will emit the task.
+4. The proposer receives structural rule descriptors only. Empirical support, utility, and false-rejection counts are targets or diagnostics, not features.
+5. A rule can enter the gate only through the task's certificate checker.
+6. Every task is evaluated against neural, random, grammar-order, structural-heuristic, and oracle proposer orderings at matched budgets.
+7. JSONL traces use stable action ids so replay cannot silently change semantics when candidates are reordered.
+
+Current leakage audit:
+
+| Task | Leakage policy | Enabled structural priors |
+| --- | --- | ---: |
+| `prime_gap` | `forbidden` | 0 |
+| `grid_path` | `priors_allowed` | 2 |
+| `delayed_claim` | `forbidden` | 0 |
 
 ## Current Evidence
 
