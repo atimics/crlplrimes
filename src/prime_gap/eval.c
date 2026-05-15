@@ -1035,6 +1035,7 @@ int save_prime_checkpoint_with_meta(NeuralNet *net,
                                     const char *notes,
                                     const char *parent_hash,
                                     const char *rule_hash,
+                                    const char *feature_set,
                                     char out_hash[65])
 {
     NNCheckpointMeta meta;
@@ -1052,6 +1053,10 @@ int save_prime_checkpoint_with_meta(NeuralNet *net,
              sizeof(meta.notes),
              "%s",
              notes == NULL ? "prime_gap action scorer" : notes);
+    snprintf(meta.feature_set,
+             sizeof(meta.feature_set),
+             "%s",
+             feature_set == NULL ? "unknown" : feature_set);
 
     if (!nn_save_checkpoint(net, path, &meta) || !nn_hash_checkpoint_hex(path, out_hash)) {
         return 0;
@@ -1067,6 +1072,7 @@ int save_prime_checkpoint(NeuralNet *net, const char *path, char out_hash[65])
                                            "prime_gap action scorer",
                                            "unknown",
                                            NULL,
+                                           FEATURE_MASK_MINIMAL.name,
                                            out_hash);
 }
 

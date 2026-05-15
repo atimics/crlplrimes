@@ -135,7 +135,7 @@ Ordered roughly by priority for the writeup.
 3. **Reliability diagrams.** `crlp.compare.v1` already carries `reliability_bins`; render them.
 4. **Calibration sweep over larger held-out ranges.** Expand the KL/entropy grid; check whether the validation-selected weights are stable across prime-size buckets.
 5. **Stronger verifier-aware baselines.** Hand-coded wheel ranking, linear scorer with explicit wheel-survivor features, conditioned frequency over larger residue signatures.
-6. **Richer grid_path gate baseline.** The current `grid_path` legality gate rejects out-of-bounds and blocked moves with 0 false rejections, but it is only a protocol sanity check. Add admissible dead-end or distance-bound pruning rules that reduce BFS work without becoming a hand-coded shortest-path solver.
+6. **Richer grid_path gate baseline.** The current `grid_path` gate is a budgeted legality sanity check: a structural proposer ranks five certified edge/block rules, accepts the top three using train+validation only, and reports test false rejections separately. The raw scorer no longer receives explicit legality flags. Add admissible dead-end or distance-bound pruning rules that reduce BFS work without becoming a hand-coded shortest-path solver.
 7. **Expanded ablations.** Different small-prime feature sets, remove overflow action, train on wheel survivors only.
 8. **RL-only experiments.** No supervised warm start, strict-only, entropy-only, baseline/advantage variants. Useful for triangulating the calibration-collapse story.
 9. **Capability-oriented task variants.** Find any prime after `p`, rank prime candidates in a fixed interval, rank wheel-surviving candidates only, predict overflow probability for larger gaps.

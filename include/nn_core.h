@@ -64,6 +64,7 @@ typedef struct {
     char training_trace_root[65];
     char benchmark_report_hash[65];
     char notes[256];
+    char feature_set[32];
 } NNCheckpointMeta;
 
 typedef struct {

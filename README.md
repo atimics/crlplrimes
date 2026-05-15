@@ -16,9 +16,9 @@ Canonical benchmark: `sample_count=30000` held-out states with `train_limit=1,00
 
 | Model / mode | Top-1 | Top-10 | NLL | ECE | Mean rank | Model ms/sample |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Minimal scorer, no gate | 9.13% | 78.01% | 2.9994 | 0.1076 | 7.1951 | 0.0350 |
-| Minimal scorer + hand-wheel gate | 45.12% | 99.77% | 1.5902 | 0.0834 | 2.2015 | 0.0365 |
-| **Minimal scorer + learned-rule gate** | **68.31%** | **100.00%** | **1.0172** | 0.1379 | **1.4653** | **0.0098** |
+| Minimal scorer, no gate | 9.13% | 78.01% | 2.9994 | 0.1076 | 7.1951 | 0.0366 |
+| Minimal scorer + hand-wheel gate | 45.12% | 99.77% | 1.5902 | 0.0834 | 2.2015 | 0.0377 |
+| **Minimal scorer + learned-rule gate** | **68.31%** | **100.00%** | **1.0172** | 0.1379 | **1.4653** | **0.0099** |
 
 The same network does the scoring in all three rows; only the gate changes. The scorer input is the clean minimal feature set `[log(p), normalized_gap, overflow_flag]`; precomputed residue divisibility flags are disabled by default. The fixed hand-wheel (small-prime divisibility filter) supplies the small-prime modular structure that the minimal scorer cannot recover from `p` and `g` alone. The learned-rule gate is loaded from the `prime_rule_search` expanded rule checkpoint and is produced by a structural-only proposer over rules of the form `reject candidate n when n > m and n % m == r`; each accepted rule has the algebraic certificate `gcd(m, r) > 1`. It adds another **23.2 percentage points** of top-1 on top of the hand-wheel. The old 45.12% raw-scorer headline is now treated as a leakage ablation: it came from handing the scorer precomputed small-prime divisibility flags.
 
@@ -164,24 +164,24 @@ The interpretation is now sharper. Among raw-action-space scorers without residu
 | Trained parent | 93.50% | 0.1580 | 0.0363 | 1.0432 | 1.065 |
 | Trace-replay successor | 94.80% | 0.1188 | 0.0166 | 1.0704 | 1.052 |
 
-`grid_path` is a shortest-path task with an exact BFS verifier owning correctness. Candidate actions are all four moves, including out-of-bounds and blocked moves. The neural model sees start/goal coordinates, the obstacle map, local invalid-move indicators, and an action one-hot; BFS supplies labels and verification cost, not a pruned candidate set.
+`grid_path` is a shortest-path task with an exact BFS verifier owning correctness. Candidate actions are all four moves, including out-of-bounds and blocked moves. The neural model sees start/goal coordinates, candidate displacement, the obstacle map, and an action one-hot; it no longer receives explicit `out_of_bounds` or `blocked_next` legality flags. BFS supplies labels and verification cost, not a pruned candidate set.
 
-A small structural rule proposer now runs on this task too. Its grammar is the certified legality gate: reject edge moves that leave the grid, and reject moves into blocked cells. This is intentionally not a pathfinding solver; it is a cross-domain sanity check that certificate-gated pruning can be represented and evaluated outside prime residues.
+A small structural rule proposer now runs on this task too. Its grammar is the certified legality gate: reject edge moves that leave the grid, and reject moves into blocked cells. The proposer scores five certified rules from structural features, selection uses train+validation only, and a fixed budget accepts the top three before test evaluation. This is intentionally not a pathfinding solver; it is a cross-domain sanity check that certificate-gated pruning can be represented and evaluated outside prime residues.
 
 | Model / mode | Accuracy | NLL | ECE | Candidates | Decision utility | Steps | Nodes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Trained parent, raw | 89.40% | 0.3684 | 0.0416 | 4.00 | 0.8675 | 1.118 | 21.45 |
-| Trained parent, legality gate | 89.40% | 0.3680 | 0.0415 | 2.85 | 0.8675 | 1.118 | 21.45 |
-| Trace-replay successor, raw | 90.10% | 0.3480 | 0.0353 | 4.00 | 0.8762 | 1.114 | 21.29 |
-| Trace-replay successor, legality gate | 90.10% | 0.3477 | 0.0343 | 2.85 | 0.8762 | 1.114 | 21.29 |
+| Trained parent, raw | 75.80% | 0.7154 | 0.0712 | 4.00 | 0.6975 | 1.327 | 21.46 |
+| Trained parent, budgeted legality gate | 89.60% | 0.3732 | 0.1033 | 3.13 | 0.8700 | 1.116 | 21.25 |
+| Trace-replay successor, raw | 74.00% | 0.7274 | 0.0602 | 4.00 | 0.6750 | 1.335 | 21.75 |
+| Trace-replay successor, budgeted legality gate | 87.60% | 0.3851 | 0.0928 | 3.13 | 0.8450 | 1.137 | 21.55 |
 
-The grid legality proposer accepts 5/5 certified rules with 0 false rejections, rejecting 1.16 impossible moves per held-out state on average. Accuracy is unchanged because the model already learned to avoid most illegal moves; the useful signal here is that the gate protocol transfers, not that legality pruning solves shortest-path ranking.
+The grid legality proposer accepts 3/5 certified rules under budget with 0 held-out false rejections, rejecting 0.87 impossible moves per held-out state on average. The raw scorer now has to infer legality from coordinates and the map; the useful signal is that a verifier-certified symbolic gate transfers outside prime residues, not that legality pruning solves shortest-path ranking.
 
 ## Limitations and Next Work
 
 - **Random-proposer baseline at fixed verifier-call budget.** Finding 2 currently shows that *a certificate-gated structural proposer* cuts exact verifier work by 79.64% without support-count feature leakage; it does not yet distinguish "the neural proposer found the rules" from "the certificate gate filtered a large enumeration." Running random and exhaustive rule proposers at the same budget is the missing experiment that elevates Finding 2 from "sound" to "the learned proposer is essential." This is two days of work and on the immediate roadmap.
 - **Cross-task verifier-RL comparison.** Finding 3 (strict-vs-regularized RL on the prime-gap task) needs a matching run on `grid_path` and `delayed_claim` before it can be stated as a general property of sparse-exact-reward policy gradient. The pipeline supports it; the comparison is not in the canonical results yet.
-- **Richer non-prime gate grammars.** `grid_path` now has a certified legality gate, but that gate is intentionally shallow. The next cross-domain test should learn admissible dead-end or distance-bound pruning rules that reduce BFS verifier work without becoming a hand-coded solver.
+- **Richer non-prime gate grammars.** `grid_path` now has a budgeted certified legality gate, but that gate is intentionally shallow. The next cross-domain test should learn admissible dead-end or distance-bound pruning rules that reduce BFS verifier work without becoming a hand-coded solver.
 - **Statistical rigor.** The default `make prime-gap-experiments` config currently runs 1 seed; the harness supports more (`PRIME_GAP_EXPERIMENT_SEEDS=...`). The minimal-vs-leakage, strict-vs-regularized, and hand-wheel-vs-learned-rule deltas should be reported with confidence intervals across >=5 seeds.
 - **Reliability diagrams.** The comparison schema stores `reliability_bins`; the README currently reports only ECE. Calibration claims would be stronger with a small reliability plot.
 - **Learned-rule calibration.** The learned rule program improves ranking sharply, but its ECE is worse than the raw minimal and hand-wheel rows in the default run. That calibration tradeoff deserves a focused reliability-diagram pass.
@@ -191,7 +191,7 @@ The grid legality proposer accepts 5/5 certified rules with 0 false rejections, 
 The hybrid architecture is the contribution; the substrate is the discipline that makes it auditable. Three pieces matter:
 
 - **Stable action IDs and trace contract.** Trace rows carry `schema: "crlp.trace.v1"`, `trace_version: 1`, and `action_id_contract: "stable_unique_action_ids"`. Replay resolves `target_index` to the trace row's `action_id`, then maps that stable id back into the regenerated candidate row. Reordering action ids cannot silently change replay semantics; the prime replay regression test exercises that.
-- **Checkpoint identity.** Checkpoints carry a `parent_model_hash`, a `training_trace_root`, and a `feature_encoder_version` in metadata; the model hash is SHA-256 over the exact checkpoint bytes. Successor models declare their parent. Comparison reports (`crlp.compare.v1`) carry `model_hash`, `parent_hash`, `feature_set`, and a machine-readable `reliability_bins` array.
+- **Checkpoint identity.** Checkpoints carry a `parent_model_hash`, a `training_trace_root`, a `feature_encoder_version`, and a `feature_set` in metadata; the model hash is SHA-256 over the exact checkpoint bytes. Successor models declare their parent. Comparison reports (`crlp.compare.v1`) carry `model_hash`, `parent_hash`, `feature_set`, and a machine-readable `reliability_bins` array.
 - **Pure C, no third-party deps.** The neural library is dense layers, sigmoid/ReLU/tanh/linear, MSE and softmax cross-entropy, SGD, batched 4-by-4 tiled forward/backward, cloned networks, action scoring, pairwise ranking loss, cached policy-gradient updates with optional KL/entropy regularization, deterministic checkpoint save/load, SHA-256 hashing, JSONL trace writing. The core is ~3k lines; the prime-gap task is split into focused modules under `src/prime_gap/`.
 
 End-to-end quick path:
@@ -480,7 +480,7 @@ metadata block length
 metadata block
 ```
 
-Metadata stores `parent_model_hash`, `training_trace_root`, `feature_encoder_version`, `benchmark_report_hash`, and `notes`.
+Metadata stores `parent_model_hash`, `training_trace_root`, `feature_encoder_version`, `feature_set`, `benchmark_report_hash`, and `notes`.
 
 ```c
 NNCheckpointMeta meta = {0};
@@ -538,7 +538,7 @@ make delayed-claim-eval
 
 ## Grid-Path Task
 
-`grid_path` is a second exact-verifier task. A deterministic generator creates a small obstructed grid, start, and goal. Candidate actions are all four moves. The neural model ranks moves from observable map and move features, while an exact BFS verifier owns correctness by identifying the shortest-path successor. `grid_path --rule-search` runs the cross-task legality-gate experiment: a structural proposer ranks five certified rules that reject out-of-bounds and blocked-cell moves.
+`grid_path` is a second exact-verifier task. A deterministic generator creates a small obstructed grid, start, and goal. Candidate actions are all four moves. The neural model ranks moves from observable map and move features, while an exact BFS verifier owns correctness by identifying the shortest-path successor. `grid_path --rule-search` runs the cross-task budgeted legality-gate experiment: a structural proposer ranks five certified rules that reject out-of-bounds and blocked-cell moves, then accepts the top three under a fixed rule budget.
 
 The task reports accuracy, NLL, calibration error, decision utility, proposal steps, fixed-order baseline steps, exact verifier nodes, baseline verifier nodes, and candidate counts before/after the legality gate. Trace replay stores stable move action IDs, then maps them back into the regenerated four-row candidate set before training a successor model.
 

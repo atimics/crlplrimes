@@ -63,11 +63,11 @@
     certificate-checked gate prunes structurally impossible candidates before a small learned
     scorer ranks the residual. On a prime-gap benchmark with residue-sieve features removed
     from the scorer input, the raw scorer reaches 9.13% top-1; a fixed hand-wheel gate raises
-    this to 45.12%, and a learned rule gate reaches 67.19% at 100% top-10 with an
-    $approx$6$times$ reduction in model latency. The symbolic gate itself
-    is produced by a structural-only neural proposer trained against a soundness-certificate verifier, which
-    accepts 148 rules with zero false rejections out of 25,122 proposed candidates and recovers
-    69.40% of wheel-equivalent verifier work. Under sparse-exact-reward policy gradient on the
+    this to 45.12%, and a learned rule gate reaches 68.31% at 100% top-10 with an
+    $approx$4$times$ reduction in model latency. The symbolic gate itself
+    is produced by a structural-only neural proposer trained against a soundness-certificate verifier:
+    rule search proposes 32,637 candidates, certificate-verifies 4,692, and accepts 52 rules with
+    zero false rejections, recovering 79.64% of wheel-equivalent verifier work. Under sparse-exact-reward policy gradient on the
     same task, strict verifier RL inflates logit scale (ECE 0.070 $arrow.r$ 0.127) without
     improving ranking; a KL-toward-prior + entropy regularizer keeps ECE at 0.060 at the same
     top-k. Prime gaps are used as a substrate, not the goal; we argue the protocol is
@@ -97,12 +97,13 @@ We make three claims, each tied to a concrete experiment in the released artifac
 #set enum(numbering: "(C1)", spacing: 6pt)
 + *Certificate-gating dominates raw scoring.* On the canonical prime-gap benchmark, the
   minimal-feature raw scorer reaches 9.13% top-1. The same scorer reaches 45.12% under a fixed
-  hand-wheel gate and *67.19% top-1 under a learned rule gate* at 100% top-10. The dominating
+  hand-wheel gate and *68.31% top-1 under a learned rule gate* at 100% top-10. The dominating
   effect is the gate, not the depth of the scorer.
 + *A certificate-gated proposer discovers sound symbolic gates.* A neural proposer over a small
   rule grammar sees only structural fields, paired with a soundness-certificate verifier,
-  produces 148 sound rules with zero false rejections, recovering 69.40% of wheel-equivalent
-  verifier work. The soundness guarantee is a property of the certificate, not of training.
+  proposes 32,637 rules, certificate-verifies 4,692, and produces 52 accepted rules with zero
+  false rejections, recovering 79.64% of wheel-equivalent verifier work. The soundness guarantee
+  is a property of the certificate, not of training.
 + *KL-regularized verifier RL prevents calibration collapse.* Strict policy gradient on sparse
   exact rewards inflates logit scale rather than improving ranking; a standard KL-to-prior +
   entropy term restores calibration at unchanged top-k.
@@ -197,9 +198,9 @@ Every step writes a JSONL row with schema `crlp.trace.v1`, including a stable pe
 identifier, the candidate scores and probabilities, the selected and target indices, the
 verifier result, and verifier cost. Replay resolves `target_index` $arrow.r$ stable `action_id`
 $arrow.r$ regenerated candidate row, so reordering action ids cannot silently change replay
-semantics. Checkpoints carry SHA-256 model identity, a `parent_model_hash`, and a
-`feature_encoder_version`; comparison reports (`crlp.compare.v1`) carry both hashes, the
-evaluated `feature_set`, and machine-readable reliability bins.
+semantics. Checkpoints carry SHA-256 model identity, a `parent_model_hash`, a
+`feature_encoder_version`, and a `feature_set`; comparison reports (`crlp.compare.v1`) carry
+both hashes, the evaluated `feature_set`, and machine-readable reliability bins.
 
 = Experiment Domain: Prime Gaps
 
@@ -235,7 +236,7 @@ held-out benchmark. Top-1 results:
     let bars = (
       (label: "no gate", value: 9.13, color: rgb("#a0a0a0")),
       (label: "hand-wheel", value: 45.12, color: rgb("#5b8def")),
-      (label: "learned wheel", value: 67.19, color: rgb("#2ca02c")),
+      (label: "learned wheel", value: 68.31, color: rgb("#2ca02c")),
     )
     plot.plot(
       size: (9, 4.2),
@@ -259,8 +260,8 @@ held-out benchmark. Top-1 results:
     )
   }),
   caption: [Top-1 accuracy by gate on the canonical 30,000-sample held-out benchmark. The
-    clean raw-to-learned delta is *9.13 $arrow.r$ 67.19*. The fixed-hand-wheel-to-learned
-    delta is *45.12 $arrow.r$ 67.19* (+22.1pp). The former 45.12% raw-scorer result is now a
+    clean raw-to-learned delta is *9.13 $arrow.r$ 68.31*. The fixed-hand-wheel-to-learned
+    delta is *45.12 $arrow.r$ 68.31* (+23.2pp). The former 45.12% raw-scorer result is now a
     full-sieve-feature leakage ablation, not the headline.],
 ) <fig:f1>
 
@@ -271,9 +272,9 @@ Full metrics:
     columns: (auto, auto, auto, auto, auto, auto),
     align: (left, right, right, right, right, right),
     table.header[*Gate*][*Top-1*][*Top-10*][*NLL*][*ECE*][*ms/sample*],
-    [no gate], [9.13%], [78.01%], [2.9994], [0.1076], [0.0364],
-    [hand-wheel], [45.12%], [99.77%], [1.5902], [0.0834], [0.0376],
-    [*learned wheel*], [*67.19%*], [*100.00%*], [*1.0457*], [0.1335], [*0.0061*],
+    [no gate], [9.13%], [78.01%], [2.9994], [0.1076], [0.0366],
+    [hand-wheel], [45.12%], [99.77%], [1.5902], [0.0834], [0.0377],
+    [*learned wheel*], [*68.31%*], [*100.00%*], [*1.0172*], [0.1379], [*0.0099*],
   ),
   caption: [Gate ablation, minimal-feature scorer, identical weights across rows.],
 ) <tab:f1>
@@ -283,31 +284,32 @@ Full metrics:
   - *E1.1* \u{2014} Random-rule gate at matched verifier-call budget: replace the learned rule
     set with $k$ random sound rules and report the top-1 / top-10 / NLL curve as $k$ varies.
     Resolves whether the *content* of the learned rules matters or only their count.
-  - *E1.2* \u{2014} Replicate on a second domain. `grid_path` admits a natural certificate gate
-    (legality + admissible-heuristic pruning). Same scorer + three gates + same table.
+  - *E1.2* \u{2014} Extend the second-domain `grid_path` check beyond the current budgeted
+    legality gate to admissible-heuristic pruning. Same scorer + three gates + same table.
   - *E1.3* \u{2014} Investigate the learned-wheel calibration tradeoff. The learned wheel
     improves ranking sharply but has higher ECE than raw minimal and hand-wheel rows in the
     default run.
-  - *E1.4* \u{2014} Confidence intervals across $gt.eq 5$ seeds for the 45.12 $arrow.r$ 67.19
+  - *E1.4* \u{2014} Confidence intervals across $gt.eq 5$ seeds for the 45.12 $arrow.r$ 68.31
     delta.
 ]
 
 = Finding 2: A certificate-gated proposer discovers sound symbolic gates
 
-The rule grammar is `if p % m == a then reject gap % m == b`; the certificate verifier accepts
-a rule iff $gcd(a + b, m) > 1$ (so $p + g$ is necessarily composite) and the support count
-exceeds a threshold. Zero false rejections is a structural property of the certificate.
-The proposer input is structural-only: condition kind, moduli, residues, zero-residue
-indicators, gcd ratios, and derived candidate residue. Empirical support, utility, and
-false-rejection counts are labels or diagnostics, not proposer features.
+The canonical rule grammar is `reject candidate n when n > m and n % m == r`; the certificate
+verifier accepts a rule iff $gcd(m, r) > 1$ (so $n$ is necessarily composite). The expanded
+grammar can also express conditional gap filters, but that mode is not the canonical result.
+Zero false rejections is a structural property of the certificate. The proposer input is
+structural-only: condition kind, moduli, residues, zero-residue indicators, gcd ratios, and
+derived candidate residue. Empirical support, utility, and false-rejection counts are labels or
+diagnostics, not proposer features.
 
 #figure(
   cetz.canvas(length: 1cm, {
     import cetz.draw: *
     let stages = (
-      (label: "proposed",         value: 25122, color: rgb("#a0a0a0")),
-      (label: "verified",         value: 934,   color: rgb("#88b0e8")),
-      (label: "accepted",         value: 148,   color: rgb("#2ca02c")),
+      (label: "proposed",         value: 32637, color: rgb("#a0a0a0")),
+      (label: "verified",         value: 4692,  color: rgb("#88b0e8")),
+      (label: "accepted",         value: 52,    color: rgb("#2ca02c")),
       (label: "false\nrejections", value: 0,    color: rgb("#d62728")),
     )
     let plot_w = 12.0
@@ -315,7 +317,7 @@ false-rejection counts are labels or diagnostics, not proposer features.
     let x_origin = 0.0
     let y_origin = 0.0
     let col_w = plot_w / stages.len()
-    let max_log = calc.log(25122, base: 10)
+    let max_log = calc.log(32637, base: 10)
     let scale(v) = if v <= 0 { 0.0 } else {
       calc.max(0.0, calc.log(v, base: 10)) / max_log * plot_h
     }
@@ -339,9 +341,9 @@ false-rejection counts are labels or diagnostics, not proposer features.
       content((cx, y_origin - 0.45), text(size: 9pt, s.label))
     }
   }),
-  caption: [Rule-search acceptance funnel. Of 25,122 proposed rules, 934 pass the soundness
-    certificate, 148 survive support and false-rejection screens, and *zero* falsely reject the
-    true next-prime gap. The accepted set recovers 69.40% of wheel-equivalent verifier work.],
+  caption: [Rule-search acceptance funnel. Of 32,637 proposed rules, 4,692 pass the soundness
+    certificate, 52 survive support and false-rejection screens, and *zero* falsely reject the
+    true next-prime gap. The accepted set recovers 79.64% of wheel-equivalent verifier work.],
 ) <fig:f2>
 
 *What this evidence supports.* "A certificate-gated structural proposer over this grammar
@@ -500,9 +502,9 @@ claims auditable. Three pieces matter and would be a brief methods section in a 
 - *Stable action IDs.* Trace rows carry `schema: "crlp.trace.v1"`, `trace_version: 1`, and
   `action_id_contract: "stable_unique_action_ids"`. Replay resolves `target_index` to the
   trace row's `action_id`, then maps that stable id back into the regenerated candidate row.
-- *Checkpoint identity.* SHA-256 over the exact checkpoint bytes, plus `parent_model_hash` and
-  `feature_encoder_version` in metadata. Successor models declare their parent; comparison
-  reports carry both hashes and the evaluated `feature_set`.
+- *Checkpoint identity.* SHA-256 over the exact checkpoint bytes, plus `parent_model_hash`,
+  `feature_encoder_version`, and `feature_set` in metadata. Successor models declare their
+  parent; comparison reports carry both hashes and the evaluated `feature_set`.
 - *Pure C, no third-party deps.* The neural library is dense layers, sigmoid/ReLU/tanh/linear,
   MSE and softmax cross-entropy, SGD, batched 4-by-4 tiled forward/backward, cloned networks,
   action scoring, pairwise ranking loss, and cached policy-gradient updates with optional
@@ -517,7 +519,8 @@ claims auditable. Three pieces matter and would be a brief methods section in a 
   "the learned proposer is essential."
 + *Cross-task verifier-RL comparison missing (Finding 3).* The pipeline supports it; the
   comparison is not in canonical results yet.
-+ *Single-domain headline (Finding 1).* Hybrid-wins is demonstrated on prime gaps only.
++ *Limited cross-domain gate coverage (Finding 1).* `grid_path` now has a budgeted legality-gate
+  sanity check, but the headline hybrid-wins table is still prime-gap only.
 + *Statistical rigor.* Default `make prime-gap-experiments` runs 1 seed; the
   harness supports more. Deltas need confidence intervals across $gt.eq 5$ seeds.
 + *Learned-wheel calibration tradeoff* needs a reliability-diagram pass.
@@ -546,9 +549,9 @@ goal is that every #placeholder[...] marker in the body resolves to one of these
     align: (left, left, center, center),
     table.header[*ID*][*Experiment*][*Effort*][*Defends*],
     [E1.1], [Random-rule gate at matched verifier-call budget], [2d], [C1],
-    [E1.2], [Replicate Finding 1 on `grid_path` with admissible-heuristic gate], [3-4d], [C1],
+    [E1.2], [Extend `grid_path` beyond legality gate with admissible-heuristic pruning], [3-4d], [C1],
     [E1.3], [Investigate learned-wheel calibration tradeoff], [1d], [C1],
-    [E1.4], [CIs across $gt.eq 5$ seeds for 45.12 $arrow.r$ 67.19 delta], [0.5d], [C1],
+    [E1.4], [CIs across $gt.eq 5$ seeds for 45.12 $arrow.r$ 68.31 delta], [0.5d], [C1],
     [E2.1], [Random-rule-proposer baseline at fixed budget], [2d], [C2],
     [E2.2], [Exhaustive rule enumerator at same budget (where feasible)], [1d], [C2],
     [E2.3], [Conjunctive rule grammar extension], [3-5d], [C2],

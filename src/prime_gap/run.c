@@ -158,13 +158,25 @@ int nn_prime_gap_main(int argc, char **argv)
 
         nn_free(net);
         net = loaded_net;
+        if (loaded_meta.feature_set[0] != '\0' &&
+            strcmp(loaded_meta.feature_set, "unknown") != 0 &&
+            strcmp(loaded_meta.feature_set, primary_mask->name) != 0) {
+            fprintf(stderr,
+                    "checkpoint feature_set mismatch: checkpoint=%s requested=%s\n",
+                    loaded_meta.feature_set,
+                    primary_mask->name);
+            ok = 0;
+            goto cleanup;
+        }
         if (!nn_hash_checkpoint_hex(run_config.load_model_path, model_hash)) {
             strcpy(model_hash, "unknown");
         }
-        printf("loaded checkpoint: %s hash=%s feature_encoder_version=%u parent=%s\n",
+        printf("loaded checkpoint: %s hash=%s feature_encoder_version=%u "
+               "feature_set=%s parent=%s\n",
                run_config.load_model_path,
                model_hash,
                loaded_meta.feature_encoder_version,
+               loaded_meta.feature_set[0] == '\0' ? "unknown" : loaded_meta.feature_set,
                loaded_meta.parent_model_hash[0] == '\0' ? "unknown"
                                                          : loaded_meta.parent_model_hash);
         print_metrics("loaded model",
@@ -796,6 +808,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                              checkpoint_notes,
                                              "unknown",
                                              NULL,
+                                             primary_mask->name,
                                              model_hash)) {
             fputs("failed to save checkpoint\n", stderr);
             ok = 0;
@@ -815,6 +828,7 @@ int nn_prime_gap_main(int argc, char **argv)
                                              learned_notes,
                                              "unknown",
                                              rule_hash,
+                                             primary_mask->name,
                                              learned_model_hash)) {
             fputs("failed to save learned-wheel checkpoint\n", stderr);
             ok = 0;

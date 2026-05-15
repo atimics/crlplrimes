@@ -333,6 +333,7 @@ static int save_claim_checkpoint(NeuralNet *net,
     strcpy(meta.parent_model_hash, parent_hash == NULL ? "unknown" : parent_hash);
     strcpy(meta.training_trace_root, "delayed_claim");
     strcpy(meta.notes, notes);
+    strcpy(meta.feature_set, "claim-state-action-v1");
     return nn_save_checkpoint(net, path, &meta) && nn_hash_checkpoint_hex(path, out_hash);
 }
 

@@ -421,6 +421,7 @@ int nn_prime_replay_main(int argc, char **argv)
                        ? "prime_gap successor trained from learned-wheel trace replay"
                        : "prime_gap successor trained from trace replay",
              trace_mask->name);
+    snprintf(meta.feature_set, sizeof(meta.feature_set), "%s", trace_mask->name);
 
     char hash[65];
     int ok = nn_save_checkpoint(net, out_path, &meta) &&
@@ -729,6 +730,18 @@ int nn_prime_compare_main(int argc, char **argv)
             continue;
         }
         nn_hash_checkpoint_hex(argv[i], hash);
+        if (meta.feature_set[0] != '\0' &&
+            strcmp(meta.feature_set, "unknown") != 0 &&
+            strcmp(meta.feature_set, feature_mask->name) != 0) {
+            fprintf(stderr,
+                    "checkpoint feature_set mismatch for %s: checkpoint=%s requested=%s\n",
+                    argv[i],
+                    meta.feature_set,
+                    feature_mask->name);
+            nn_free(net);
+            ok = 0;
+            continue;
+        }
         EvalMetrics metrics = evaluate_model(net,
                                              &sieve,
                                              &test,

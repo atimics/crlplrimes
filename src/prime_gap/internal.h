@@ -476,6 +476,7 @@ int save_prime_checkpoint_with_meta(NeuralNet *net,
                                     const char *notes,
                                     const char *parent_hash,
                                     const char *rule_hash,
+                                    const char *feature_set,
                                     char out_hash[65]);
 int save_prime_checkpoint(NeuralNet *net, const char *path, char out_hash[65]);
 int emit_prime_gap_trace(NeuralNet *net,

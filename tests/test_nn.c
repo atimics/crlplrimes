@@ -789,6 +789,7 @@ static int test_checkpoint_roundtrip_hash_and_invalid_files(void)
     strcpy(meta.training_trace_root, "trace-root");
     strcpy(meta.benchmark_report_hash, "bench-root");
     strcpy(meta.notes, "fixture checkpoint");
+    strcpy(meta.feature_set, "fixture-features");
 
     nn_forward(net, input, before);
     ok = ok && nn_save_checkpoint(net, path_a, &meta);
@@ -806,7 +807,8 @@ static int test_checkpoint_roundtrip_hash_and_invalid_files(void)
              nearly_equal(before[1], after[1], (nn_real)1e-6, (nn_real)1e-6);
         ok = ok && loaded_meta.checkpoint_version == 1 &&
              loaded_meta.feature_encoder_version == 7 &&
-             strcmp(loaded_meta.training_trace_root, "trace-root") == 0;
+             strcmp(loaded_meta.training_trace_root, "trace-root") == 0 &&
+             strcmp(loaded_meta.feature_set, "fixture-features") == 0;
         nn_free(loaded);
     }
 

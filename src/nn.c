@@ -2019,9 +2019,14 @@ nn_real nn_train_batched(NeuralNet *net,
     return epoch_loss;
 }
 
-static size_t checkpoint_metadata_size(void)
+static size_t checkpoint_metadata_v1_size(void)
 {
     return sizeof(uint32_t) + 65u + 65u + 65u + 256u;
+}
+
+static size_t checkpoint_metadata_size(void)
+{
+    return checkpoint_metadata_v1_size() + 32u;
 }
 
 static int write_checkpoint_metadata(FILE *fp, const NNCheckpointMeta *meta)
@@ -2039,12 +2044,14 @@ static int write_checkpoint_metadata(FILE *fp, const NNCheckpointMeta *meta)
     local.training_trace_root[sizeof(local.training_trace_root) - 1] = '\0';
     local.benchmark_report_hash[sizeof(local.benchmark_report_hash) - 1] = '\0';
     local.notes[sizeof(local.notes) - 1] = '\0';
+    local.feature_set[sizeof(local.feature_set) - 1] = '\0';
 
     return write_u32_le(fp, local.feature_encoder_version) &&
            write_all(fp, local.parent_model_hash, sizeof(local.parent_model_hash)) &&
            write_all(fp, local.training_trace_root, sizeof(local.training_trace_root)) &&
            write_all(fp, local.benchmark_report_hash, sizeof(local.benchmark_report_hash)) &&
-           write_all(fp, local.notes, sizeof(local.notes));
+           write_all(fp, local.notes, sizeof(local.notes)) &&
+           write_all(fp, local.feature_set, sizeof(local.feature_set));
 }
 
 static int read_checkpoint_metadata(FILE *fp,
@@ -2056,7 +2063,8 @@ static int read_checkpoint_metadata(FILE *fp,
     memset(&local, 0, sizeof(local));
     local.checkpoint_version = checkpoint_version;
 
-    if (metadata_size != (uint64_t)checkpoint_metadata_size()) {
+    if (metadata_size != (uint64_t)checkpoint_metadata_v1_size() &&
+        metadata_size != (uint64_t)checkpoint_metadata_size()) {
         return 0;
     }
 
@@ -2067,11 +2075,16 @@ static int read_checkpoint_metadata(FILE *fp,
         !read_all(fp, local.notes, sizeof(local.notes))) {
         return 0;
     }
+    if (metadata_size == (uint64_t)checkpoint_metadata_size() &&
+        !read_all(fp, local.feature_set, sizeof(local.feature_set))) {
+        return 0;
+    }
 
     local.parent_model_hash[sizeof(local.parent_model_hash) - 1] = '\0';
     local.training_trace_root[sizeof(local.training_trace_root) - 1] = '\0';
     local.benchmark_report_hash[sizeof(local.benchmark_report_hash) - 1] = '\0';
     local.notes[sizeof(local.notes) - 1] = '\0';
+    local.feature_set[sizeof(local.feature_set) - 1] = '\0';
 
     if (out_meta != NULL) {
         *out_meta = local;

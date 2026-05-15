@@ -48,6 +48,28 @@ def write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
             fp.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
 
 
+def dedupe_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    deduped: list[dict[str, object]] = []
+    seen_rule_search: set[tuple[object, ...]] = set()
+    for row in rows:
+        if row.get("schema") != "crlp.rule_search.summary.v1":
+            deduped.append(row)
+            continue
+        key = (
+            row.get("task"),
+            row.get("rule_set_hash"),
+            row.get("grammar_version"),
+            row.get("proposed_rules"),
+            row.get("verified_rules"),
+            row.get("accepted_rules"),
+        )
+        if key in seen_rule_search:
+            continue
+        seen_rule_search.add(key)
+        deduped.append(row)
+    return deduped
+
+
 def fmt_percent(row: dict[str, object], key: str) -> str:
     value = row.get(key)
     if not isinstance(value, (int, float)):
@@ -209,11 +231,13 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                     str(row.get("rule_set_hash", "unknown"))[:12],
                     str(row.get("grammar_version", "")),
                     str(row.get("proposer_feature_set", "")),
+                    str(row.get("max_rules", "")),
                     str(row.get("proposed_rules", "")),
                     str(row.get("verified_rules", "")),
                     str(row.get("accepted_rules", "")),
                     str(row.get("false_rejections", "")),
                     str(row.get("train_rejects", "")),
+                    str(row.get("validation_rejects", "")),
                     str(row.get("test_rejects", "")),
                     fmt_number(row, "direct_exact", 3),
                     fmt_number(row, "expanded_exact", 3),
@@ -228,11 +252,13 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                 "rule hash",
                 "grammar",
                 "features",
+                "budget",
                 "proposed",
                 "verified",
                 "accepted",
                 "false rejects",
                 "train rejects",
+                "val rejects",
                 "test rejects",
                 "direct",
                 "gated",
@@ -269,6 +295,7 @@ def main(argv: list[str]) -> int:
             commands.append(f"make REAL={args.real} {target}")
             all_rows.extend(run_make(repo, args.real, target, output_dir / "logs" / f"{name}.log"))
 
+    all_rows = dedupe_rows(all_rows)
     write_jsonl(output_dir / "comparison.jsonl", all_rows)
     write_summary(output_dir / "summary.md", all_rows, args.real)
     (output_dir / "commands.txt").write_text("\n".join(commands) + "\n", encoding="utf-8")
