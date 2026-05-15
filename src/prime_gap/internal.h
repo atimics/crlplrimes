@@ -137,8 +137,9 @@ typedef struct {
 enum {
     RULE_SEARCH_GRAMMAR_VERSION = 2,
     RULE_SEARCH_MAX_MODULI = 256,
-    RULE_SEARCH_FEATURE_COUNT = 13,
-    RULE_SEARCH_SCORER_EPOCHS = 24,
+    RULE_SEARCH_FEATURE_COUNT = 15,
+    RULE_SEARCH_MARGINAL_MAX_STATES = 4096,
+    RULE_SEARCH_SCORER_EPOCHS = 64,
 };
 
 typedef enum {
@@ -167,6 +168,8 @@ typedef struct {
     size_t train_false_rejections;
     size_t validation_rejects;
     size_t validation_false_rejections;
+    double train_marginal_utility;
+    double validation_marginal_utility;
     nn_real model_score;
     double utility;
     int accepted;
@@ -200,6 +203,7 @@ typedef struct {
     size_t test_limit;
     size_t max_train_states;
     size_t max_test_states;
+    size_t max_marginal_states;
     size_t max_rules;
     RuleProposerMode proposer_mode;
     uint64_t proposer_seed;
@@ -222,6 +226,10 @@ typedef struct {
     size_t unsafe_rules;
     size_t no_support_rules;
     size_t uncertified_rules;
+    size_t train_marginal_samples;
+    size_t validation_marginal_samples;
+    size_t train_marginal_events;
+    size_t validation_marginal_events;
     size_t samples;
     size_t false_rejections;
     double proposer_loss;

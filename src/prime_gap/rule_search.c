@@ -10,6 +10,7 @@ static RuleSearchConfig default_rule_search_config(void)
     config.test_limit = DEFAULT_TEST_LIMIT;
     config.max_train_states = DEFAULT_MAX_TRAIN_STATES;
     config.max_test_states = DEFAULT_MAX_TEST_STATES;
+    config.max_marginal_states = (size_t)RULE_SEARCH_MARGINAL_MAX_STATES;
     config.max_rules = 256;
     config.proposer_mode = RULE_PROPOSER_NEURAL;
     config.proposer_seed = 20240511u;
@@ -54,6 +55,21 @@ static const char *rule_proposer_feature_set_name(RuleProposerMode mode)
         return "structural_heuristic";
     case RULE_PROPOSER_VALIDATION_ORACLE:
         return "validation_counts";
+    }
+    return "unknown";
+}
+
+static const char *rule_proposer_target_name(RuleProposerMode mode)
+{
+    switch (mode) {
+    case RULE_PROPOSER_NEURAL:
+        return "train_marginal_utility";
+    case RULE_PROPOSER_VALIDATION_ORACLE:
+        return "validation_marginal_utility";
+    case RULE_PROPOSER_RANDOM:
+    case RULE_PROPOSER_GRAMMAR:
+    case RULE_PROPOSER_STRUCTURAL:
+        return "none";
     }
     return "unknown";
 }
@@ -202,6 +218,10 @@ static int parse_rule_search_config(int argc, char **argv, RuleSearchConfig *con
             if (!parse_size_text(argv[++i], &config->max_test_states)) {
                 return 0;
             }
+        } else if (strcmp(argv[i], "--max-marginal-states") == 0 && i + 1 < argc) {
+            if (!parse_size_text(argv[++i], &config->max_marginal_states)) {
+                return 0;
+            }
         } else if (strcmp(argv[i], "--max-rules") == 0 && i + 1 < argc) {
             if (!parse_size_text(argv[++i], &config->max_rules)) {
                 return 0;
@@ -246,6 +266,7 @@ static int parse_rule_search_config(int argc, char **argv, RuleSearchConfig *con
     return config->test_limit > config->train_limit &&
            config->train_limit >= 16 &&
            config->test_limit <= (size_t)UINT32_MAX - (size_t)G_MAX &&
+           config->max_marginal_states > 0 &&
            config->max_rules > 0 &&
            config->mod_count > 0 &&
            (config->include_candidate_filters || config->include_gap_filters);
@@ -254,7 +275,8 @@ static int parse_rule_search_config(int argc, char **argv, RuleSearchConfig *con
 static void print_rule_search_usage(FILE *stream)
 {
     fputs("usage: prime_rule_search [--train-limit n] [--test-limit n] "
-          "[--max-train-states n] [--max-test-states n] [--max-rules n] "
+          "[--max-train-states n] [--max-test-states n] "
+          "[--max-marginal-states n] [--max-rules n] "
           "[--proposer neural|random|grammar|structural|validation-oracle] "
           "[--proposer-seed n] "
           "[--gap-only|--candidate-only] [--unconditional-only] "
@@ -516,6 +538,244 @@ static void accumulate_expanded_rule_stats(ExpandedRuleSet *rules,
     }
 }
 
+typedef struct {
+    uint64_t *bits;
+    size_t rule_count;
+    size_t event_count;
+    size_t word_count;
+} RuleCoverage;
+
+static void free_rule_coverage(RuleCoverage *coverage)
+{
+    free(coverage->bits);
+    memset(coverage, 0, sizeof(*coverage));
+}
+
+static size_t rule_search_sample_count(const GapDataset *dataset, size_t max_states)
+{
+    size_t samples = dataset->count;
+    if (max_states != 0 && max_states < samples) {
+        samples = max_states;
+    }
+    return samples;
+}
+
+static size_t rule_search_marginal_state_limit(const RuleSearchConfig *config)
+{
+    if (config->max_train_states != 0 &&
+        config->max_train_states < config->max_marginal_states) {
+        return config->max_train_states;
+    }
+    return config->max_marginal_states;
+}
+
+static size_t count_negative_gap_events(const GapDataset *dataset, size_t max_states)
+{
+    size_t samples = rule_search_sample_count(dataset, max_states);
+    size_t events = 0;
+    for (size_t sample = 0; sample < samples; ++sample) {
+        size_t index = eval_sample_index(dataset, sample, samples);
+        uint32_t true_gap = dataset->gap[index];
+        if (true_gap > 2u) {
+            events += (size_t)(true_gap / 2u - 1u);
+        }
+    }
+    return events;
+}
+
+static void mark_matching_rule_coverage(RuleCoverage *coverage,
+                                        const RuleSearchConfig *config,
+                                        const RuleSearchGrammar *grammar,
+                                        uint32_t p,
+                                        uint32_t gap,
+                                        size_t event_index)
+{
+    size_t state_indices[RULE_SEARCH_MAX_MODULI + 1u];
+    size_t filter_indices[RULE_SEARCH_MAX_MODULI * 2u];
+    size_t state_count = 1;
+    size_t filter_count = 0;
+    size_t word = event_index / 64u;
+    uint64_t mask = UINT64_C(1) << (event_index % 64u);
+    uint32_t candidate = p + gap;
+
+    state_indices[0] = 0;
+    for (size_t i = 0; i < config->mod_count; ++i) {
+        uint32_t modulus = config->moduli[i];
+        if (grammar->state_offsets[i] != (size_t)-1) {
+            state_indices[state_count++] = grammar->state_offsets[i] + (p % modulus);
+        }
+        if (candidate > modulus) {
+            if (grammar->candidate_offsets[i] != (size_t)-1) {
+                filter_indices[filter_count++] =
+                    grammar->candidate_offsets[i] + (candidate % modulus);
+            }
+            if (grammar->gap_offsets[i] != (size_t)-1) {
+                filter_indices[filter_count++] = grammar->gap_offsets[i] + (gap % modulus);
+            }
+        }
+    }
+
+    for (size_t state = 0; state < state_count; ++state) {
+        size_t base = state_indices[state] * grammar->filter_count;
+        for (size_t filter = 0; filter < filter_count; ++filter) {
+            size_t rule_index = base + filter_indices[filter];
+            coverage->bits[rule_index * coverage->word_count + word] |= mask;
+        }
+    }
+}
+
+static int build_rule_coverage(const RuleSearchConfig *config,
+                               const RuleSearchGrammar *grammar,
+                               const ExpandedRuleSet *rules,
+                               const GapDataset *dataset,
+                               size_t max_states,
+                               RuleCoverage *coverage,
+                               size_t *samples_out)
+{
+    memset(coverage, 0, sizeof(*coverage));
+    size_t samples = rule_search_sample_count(dataset, max_states);
+    size_t events = count_negative_gap_events(dataset, max_states);
+    size_t word_count = (events + 63u) / 64u;
+    if (samples_out != NULL) {
+        *samples_out = samples;
+    }
+    coverage->rule_count = rules->count;
+    coverage->event_count = events;
+    coverage->word_count = word_count;
+    if (events == 0 || rules->count == 0) {
+        return 1;
+    }
+    if (word_count > SIZE_MAX / rules->count ||
+        rules->count * word_count > SIZE_MAX / sizeof(*coverage->bits)) {
+        return 0;
+    }
+    coverage->bits = calloc(rules->count * word_count, sizeof(*coverage->bits));
+    if (coverage->bits == NULL) {
+        return 0;
+    }
+
+    size_t event_index = 0;
+    for (size_t sample = 0; sample < samples; ++sample) {
+        size_t index = eval_sample_index(dataset, sample, samples);
+        uint32_t p = dataset->prime[index];
+        uint32_t true_gap = dataset->gap[index];
+        for (uint32_t gap = 2; gap < true_gap; gap += 2) {
+            mark_matching_rule_coverage(coverage,
+                                        config,
+                                        grammar,
+                                        p,
+                                        gap,
+                                        event_index++);
+        }
+    }
+    if (event_index != events) {
+        free_rule_coverage(coverage);
+        return 0;
+    }
+    return 1;
+}
+
+static size_t popcount_rule_gain(const uint64_t *rule_bits,
+                                 const uint64_t *covered,
+                                 size_t word_count)
+{
+    size_t gain = 0;
+    for (size_t word = 0; word < word_count; ++word) {
+        uint64_t newly_covered = rule_bits[word] & ~covered[word];
+        gain += (size_t)__builtin_popcountll((unsigned long long)newly_covered);
+    }
+    return gain;
+}
+
+static int rule_is_marginal_candidate(const ExpandedRule *rule, int validation)
+{
+    if (!expanded_rule_has_deterministic_certificate(rule)) {
+        return 0;
+    }
+    if (validation) {
+        return rule->validation_false_rejections == 0 && rule->validation_rejects != 0;
+    }
+    return rule->train_false_rejections == 0 && rule->train_rejects != 0;
+}
+
+static int compute_marginal_rule_utilities(ExpandedRuleSet *rules,
+                                           const RuleSearchConfig *config,
+                                           const RuleSearchGrammar *grammar,
+                                           const GapDataset *dataset,
+                                           size_t max_states,
+                                           int validation,
+                                           size_t *samples_out,
+                                           size_t *events_out)
+{
+    RuleCoverage coverage;
+    size_t samples = 0;
+    if (!build_rule_coverage(config, grammar, rules, dataset, max_states, &coverage, &samples)) {
+        return 0;
+    }
+
+    if (samples_out != NULL) {
+        *samples_out = samples;
+    }
+    if (events_out != NULL) {
+        *events_out = coverage.event_count;
+    }
+    for (size_t i = 0; i < rules->count; ++i) {
+        if (validation) {
+            rules->items[i].validation_marginal_utility = 0.0;
+        } else {
+            rules->items[i].train_marginal_utility = 0.0;
+        }
+    }
+    if (coverage.event_count == 0 || coverage.word_count == 0) {
+        free_rule_coverage(&coverage);
+        return 1;
+    }
+
+    uint8_t *selected = calloc(rules->count, sizeof(*selected));
+    uint64_t *covered = calloc(coverage.word_count, sizeof(*covered));
+    if (selected == NULL || covered == NULL) {
+        free(selected);
+        free(covered);
+        free_rule_coverage(&coverage);
+        return 0;
+    }
+
+    for (size_t rank = 0; rank < config->max_rules; ++rank) {
+        size_t best_index = (size_t)-1;
+        size_t best_gain = 0;
+        for (size_t i = 0; i < rules->count; ++i) {
+            if (selected[i] || !rule_is_marginal_candidate(&rules->items[i], validation)) {
+                continue;
+            }
+            const uint64_t *rule_bits = &coverage.bits[i * coverage.word_count];
+            size_t gain = popcount_rule_gain(rule_bits, covered, coverage.word_count);
+            if (gain > best_gain) {
+                best_gain = gain;
+                best_index = i;
+            }
+        }
+        if (best_index == (size_t)-1 || best_gain == 0) {
+            break;
+        }
+
+        selected[best_index] = 1;
+        if (validation) {
+            rules->items[best_index].validation_marginal_utility = (double)best_gain;
+        } else {
+            rules->items[best_index].train_marginal_utility = (double)best_gain;
+        }
+        uint64_t *best_bits = &coverage.bits[best_index * coverage.word_count];
+        for (size_t word = 0; word < coverage.word_count; ++word) {
+            covered[word] |= best_bits[word];
+        }
+    }
+
+    free(selected);
+    free(covered);
+    free_rule_coverage(&coverage);
+    return 1;
+}
+
 static void fill_expanded_rule_features(const ExpandedRule *rule,
                                         uint32_t max_modulus,
                                         nn_real *features)
@@ -552,6 +812,10 @@ static void fill_expanded_rule_features(const ExpandedRule *rule,
     features[11] = (nn_real)((double)candidate_residue /
                              (double)rule->filter_modulus);
     features[12] = (nn_real)((double)candidate_common / (double)rule->filter_modulus);
+    features[13] = (nn_real)(1.0 / (double)rule->filter_modulus);
+    features[14] = expanded_rule_is_conditional(rule)
+                       ? (nn_real)(1.0 / (double)rule->state_modulus)
+                       : (nn_real)0;
 }
 
 static void set_expanded_rule_utilities(ExpandedRuleSet *rules)
@@ -559,7 +823,7 @@ static void set_expanded_rule_utilities(ExpandedRuleSet *rules)
     for (size_t i = 0; i < rules->count; ++i) {
         ExpandedRule *rule = &rules->items[i];
         rule->utility = rule->validation_false_rejections == 0
-                            ? (double)rule->validation_rejects
+                            ? rule->validation_marginal_utility
                             : -(double)rule->validation_false_rejections;
     }
 }
@@ -571,7 +835,8 @@ typedef struct {
 typedef struct {
     size_t train_rejects;
     size_t train_false_rejections;
-    nn_real support_target;
+    double train_marginal_utility;
+    nn_real marginal_target;
 } RuleProposerTargets;
 
 typedef struct {
@@ -581,16 +846,17 @@ typedef struct {
 
 static void fill_rule_proposer_sample(const ExpandedRule *rule,
                                       uint32_t max_modulus,
-                                      double support_scale,
+                                      double target_scale,
                                       RuleProposerSample *sample)
 {
     memset(sample, 0, sizeof(*sample));
     fill_expanded_rule_features(rule, max_modulus, sample->inputs.values);
     sample->targets.train_rejects = rule->train_rejects;
     sample->targets.train_false_rejections = rule->train_false_rejections;
-    sample->targets.support_target =
+    sample->targets.train_marginal_utility = rule->train_marginal_utility;
+    sample->targets.marginal_target =
         rule->train_false_rejections == 0
-            ? (nn_real)((double)rule->train_rejects / support_scale)
+            ? (nn_real)(rule->train_marginal_utility / target_scale)
             : (nn_real)0;
 }
 
@@ -598,7 +864,7 @@ static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
                                            const RuleSearchConfig *config,
                                            double *loss_out)
 {
-    size_t max_train_rejects = 0;
+    double max_train_marginal_utility = 0.0;
     uint32_t max_modulus = 0;
     for (size_t i = 0; i < config->mod_count; ++i) {
         if (config->moduli[i] > max_modulus) {
@@ -606,30 +872,79 @@ static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
         }
     }
     for (size_t i = 0; i < rules->count; ++i) {
-        if (rules->items[i].train_rejects > max_train_rejects) {
-            max_train_rejects = rules->items[i].train_rejects;
+        if (rules->items[i].train_marginal_utility > max_train_marginal_utility) {
+            max_train_marginal_utility = rules->items[i].train_marginal_utility;
         }
     }
 
     RuleProposerSample *samples = calloc(rules->count, sizeof(*samples));
-    nn_real *inputs = calloc(rules->count * RULE_SEARCH_FEATURE_COUNT, sizeof(*inputs));
-    nn_real *targets = calloc(rules->count, sizeof(*targets));
+    nn_real *all_inputs = calloc(rules->count * RULE_SEARCH_FEATURE_COUNT, sizeof(*all_inputs));
+    nn_real *train_inputs = calloc(rules->count * RULE_SEARCH_FEATURE_COUNT, sizeof(*train_inputs));
+    nn_real *train_targets = calloc(rules->count, sizeof(*train_targets));
     nn_real *scores = calloc(rules->count, sizeof(*scores));
-    if (samples == NULL || inputs == NULL || targets == NULL || scores == NULL) {
+    if (samples == NULL || all_inputs == NULL || train_inputs == NULL ||
+        train_targets == NULL || scores == NULL) {
         free(samples);
-        free(inputs);
-        free(targets);
+        free(all_inputs);
+        free(train_inputs);
+        free(train_targets);
         free(scores);
         return 0;
     }
 
-    double support_scale = max_train_rejects == 0 ? 1.0 : (double)max_train_rejects;
+    double target_scale = max_train_marginal_utility <= 0.0
+                              ? 1.0
+                              : max_train_marginal_utility;
+    size_t positive_count = 0;
+    size_t zero_eligible_count = 0;
     for (size_t i = 0; i < rules->count; ++i) {
-        fill_rule_proposer_sample(&rules->items[i], max_modulus, support_scale, &samples[i]);
-        memcpy(&inputs[i * RULE_SEARCH_FEATURE_COUNT],
+        fill_rule_proposer_sample(&rules->items[i], max_modulus, target_scale, &samples[i]);
+        memcpy(&all_inputs[i * RULE_SEARCH_FEATURE_COUNT],
                samples[i].inputs.values,
-               RULE_SEARCH_FEATURE_COUNT * sizeof(*inputs));
-        targets[i] = samples[i].targets.support_target;
+               RULE_SEARCH_FEATURE_COUNT * sizeof(*all_inputs));
+        if (samples[i].targets.marginal_target > (nn_real)0) {
+            ++positive_count;
+        } else if (rule_is_marginal_candidate(&rules->items[i], 0)) {
+            ++zero_eligible_count;
+        }
+    }
+
+    size_t negative_limit = positive_count == 0 ? zero_eligible_count : positive_count * 8u;
+    if (negative_limit > zero_eligible_count) {
+        negative_limit = zero_eligible_count;
+    }
+    size_t zero_seen = 0;
+    size_t zero_kept = 0;
+    size_t train_count = 0;
+    for (size_t i = 0; i < rules->count; ++i) {
+        int keep = samples[i].targets.marginal_target > (nn_real)0;
+        if (!keep && rule_is_marginal_candidate(&rules->items[i], 0) &&
+            negative_limit != 0 && zero_eligible_count != 0) {
+            size_t before = zero_seen * negative_limit / zero_eligible_count;
+            ++zero_seen;
+            size_t after = zero_seen * negative_limit / zero_eligible_count;
+            keep = after > before && zero_kept < negative_limit;
+            if (keep) {
+                ++zero_kept;
+            }
+        }
+        if (!keep) {
+            continue;
+        }
+        memcpy(&train_inputs[train_count * RULE_SEARCH_FEATURE_COUNT],
+               samples[i].inputs.values,
+               RULE_SEARCH_FEATURE_COUNT * sizeof(*train_inputs));
+        train_targets[train_count] = samples[i].targets.marginal_target;
+        ++train_count;
+    }
+    if (train_count == 0) {
+        for (size_t i = 0; i < rules->count; ++i) {
+            memcpy(&train_inputs[i * RULE_SEARCH_FEATURE_COUNT],
+                   samples[i].inputs.values,
+                   RULE_SEARCH_FEATURE_COUNT * sizeof(*train_inputs));
+            train_targets[i] = samples[i].targets.marginal_target;
+        }
+        train_count = rules->count;
     }
     set_expanded_rule_utilities(rules);
 
@@ -645,21 +960,22 @@ static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
     NeuralNet *net = nn_create_config(&nn_config);
     if (net == NULL) {
         free(samples);
-        free(inputs);
-        free(targets);
+        free(all_inputs);
+        free(train_inputs);
+        free(train_targets);
         free(scores);
         return 0;
     }
 
     nn_real loss = nn_train_batched(net,
-                                    inputs,
-                                    targets,
-                                    rules->count,
+                                    train_inputs,
+                                    train_targets,
+                                    train_count,
                                     256,
                                     (nn_real)0.02,
                                     RULE_SEARCH_SCORER_EPOCHS,
                                     1);
-    nn_forward_batch(net, inputs, scores, rules->count);
+    nn_forward_batch(net, all_inputs, scores, rules->count);
     for (size_t i = 0; i < rules->count; ++i) {
         rules->items[i].model_score = scores[i];
     }
@@ -669,8 +985,9 @@ static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
 
     nn_free(net);
     free(samples);
-    free(inputs);
-    free(targets);
+    free(all_inputs);
+    free(train_inputs);
+    free(train_targets);
     free(scores);
     return 1;
 }
@@ -1301,11 +1618,14 @@ static int write_expanded_rule_trace(const char *path,
                      "\"deterministic_certificate\":%s,"
                      "\"selection_strategy\":\"%s\","
                      "\"proposer_feature_set\":\"%s\","
+                     "\"proposer_target\":\"%s\","
                      "\"state_conditions_enabled\":%s,"
                      "\"train_limit\":%zu,\"test_limit\":%zu,"
                      "\"train_rejects\":%zu,\"train_false_rejections\":%zu,"
                      "\"validation_rejects\":%zu,"
                      "\"validation_false_rejections\":%zu,"
+                     "\"train_marginal_utility\":%.9g,"
+                     "\"validation_marginal_utility\":%.9g,"
                      "\"model_score\":%.9g,\"utility\":%.9g,"
                      "\"accepted\":%s,\"verifier_result\":\"%s\","
                      "\"rule_text\":\"",
@@ -1321,6 +1641,7 @@ static int write_expanded_rule_trace(const char *path,
                      expanded_rule_has_deterministic_certificate(rule) ? "true" : "false",
                      rule_proposer_mode_name(config->proposer_mode),
                      rule_proposer_feature_set_name(config->proposer_mode),
+                     rule_proposer_target_name(config->proposer_mode),
                      config->include_state_conditions ? "true" : "false",
                      config->train_limit,
                      config->test_limit,
@@ -1328,6 +1649,8 @@ static int write_expanded_rule_trace(const char *path,
                      rule->train_false_rejections,
                      rule->validation_rejects,
                      rule->validation_false_rejections,
+                     rule->train_marginal_utility,
+                     rule->validation_marginal_utility,
                      (double)rule->model_score,
                      rule->utility,
                      rule->accepted ? "true" : "false",
@@ -1362,7 +1685,8 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            "\"train_limit\":%zu,\"test_limit\":%zu,\"sample_count\":%zu,"
            "\"include_state_conditions\":%s,"
            "\"include_candidate_filters\":%s,\"include_gap_filters\":%s,"
-           "\"max_rules\":%zu,\"selection_strategy\":\"%s\","
+           "\"max_rules\":%zu,\"max_marginal_states\":%zu,"
+           "\"selection_strategy\":\"%s\","
            "\"selection_seed\":%llu,"
            "\"proposed_rules\":%zu,\"verified_rules\":%zu,"
            "\"unsafe_rules\":%zu,\"no_support_rules\":%zu,"
@@ -1370,6 +1694,11 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            "\"accepted_rules\":%zu,\"accepted_conditional_rules\":%zu,"
            "\"accepted_candidate_rules\":%zu,\"accepted_gap_rules\":%zu,"
            "\"false_rejections\":%zu,\"proposer_feature_set\":\"%s\","
+           "\"proposer_target\":\"%s\","
+           "\"train_marginal_samples\":%zu,"
+           "\"validation_marginal_samples\":%zu,"
+           "\"train_marginal_events\":%zu,"
+           "\"validation_marginal_events\":%zu,"
            "\"proposer_loss\":%.8f,"
            "\"direct_exact\":%.8f,\"hand_wheel_exact\":%.8f,"
            "\"expanded_exact\":%.8f,\"expanded_mod\":%.8f,"
@@ -1383,6 +1712,7 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            config->include_candidate_filters ? "true" : "false",
            config->include_gap_filters ? "true" : "false",
            config->max_rules,
+           config->max_marginal_states,
            rule_proposer_mode_name(config->proposer_mode),
            (unsigned long long)config->proposer_seed,
            metrics->proposed_rules,
@@ -1396,6 +1726,11 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            metrics->accepted_gap_rules,
            metrics->false_rejections,
            rule_proposer_feature_set_name(config->proposer_mode),
+           rule_proposer_target_name(config->proposer_mode),
+           metrics->train_marginal_samples,
+           metrics->validation_marginal_samples,
+           metrics->train_marginal_events,
+           metrics->validation_marginal_events,
            metrics->proposer_loss,
            metrics->direct_exact_tests,
            metrics->hand_wheel_exact_tests,
@@ -1414,10 +1749,17 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            config->include_candidate_filters && config->include_gap_filters ? " + " : "",
            config->include_gap_filters ? "gap" : "",
            config->include_state_conditions ? "with optional" : "without");
-    printf("  selection_strategy=%s max_rules=%zu seed=%llu\n",
+    printf("  selection_strategy=%s max_rules=%zu max_marginal_states=%zu seed=%llu\n",
            rule_proposer_mode_name(config->proposer_mode),
            config->max_rules,
+           config->max_marginal_states,
            (unsigned long long)config->proposer_seed);
+    printf("  proposer_target=%s marginal_samples train=%zu validation=%zu events train=%zu validation=%zu\n",
+           rule_proposer_target_name(config->proposer_mode),
+           metrics->train_marginal_samples,
+           metrics->validation_marginal_samples,
+           metrics->train_marginal_events,
+           metrics->validation_marginal_events);
     printf("  proposed=%zu verified=%zu unsafe=%zu no_support=%zu uncertified=%zu accepted=%zu\n",
            metrics->proposed_rules,
            metrics->verified_rules,
@@ -1510,7 +1852,24 @@ int nn_prime_rule_search_main(int argc, char **argv)
                                        &validation,
                                        config.max_train_states,
                                        1);
-        ok = score_expanded_rules(&candidates, &config, &metrics.proposer_loss) &&
+        size_t marginal_state_limit = rule_search_marginal_state_limit(&config);
+        ok = compute_marginal_rule_utilities(&candidates,
+                                             &config,
+                                             &grammar,
+                                             &train,
+                                             marginal_state_limit,
+                                             0,
+                                             &metrics.train_marginal_samples,
+                                             &metrics.train_marginal_events) &&
+             compute_marginal_rule_utilities(&candidates,
+                                             &config,
+                                             &grammar,
+                                             &validation,
+                                             marginal_state_limit,
+                                             1,
+                                             &metrics.validation_marginal_samples,
+                                             &metrics.validation_marginal_events) &&
+             score_expanded_rules(&candidates, &config, &metrics.proposer_loss) &&
              select_expanded_rules(&candidates, config.max_rules, &accepted, &metrics);
     }
 

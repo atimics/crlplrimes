@@ -1327,6 +1327,33 @@ static int test_rule_proposer_features_are_structural(void)
     return ok;
 }
 
+static int test_rule_proposer_target_uses_marginal_utility(void)
+{
+    ExpandedRule rule;
+    memset(&rule, 0, sizeof(rule));
+    rule.kind = RULE_FILTER_CANDIDATE_MOD;
+    rule.state_modulus = 1;
+    rule.state_residue = 0;
+    rule.filter_modulus = 7;
+    rule.filter_residue = 0;
+    rule.train_rejects = 1000;
+    rule.train_false_rejections = 0;
+    rule.train_marginal_utility = 25.0;
+
+    RuleProposerSample sample;
+    fill_rule_proposer_sample(&rule, 23, 100.0, &sample);
+    int ok = sample.targets.train_rejects == 1000 &&
+             sample.targets.train_marginal_utility == 25.0 &&
+             nearly_equal(sample.targets.marginal_target,
+                          (nn_real)0.25,
+                          TEST_ABS_TOL,
+                          TEST_REL_TOL);
+
+    rule.train_false_rejections = 1;
+    fill_rule_proposer_sample(&rule, 23, 100.0, &sample);
+    return ok && sample.targets.marginal_target == (nn_real)0;
+}
+
 static int test_rule_search_unconditional_range_builds_structural_program(void)
 {
     char *argv[] = {
@@ -1348,6 +1375,7 @@ static int test_rule_search_unconditional_range_builds_structural_program(void)
          config.include_gap_filters == 0 && config.mod_count == 3 &&
          config.moduli[0] == 3 && config.moduli[1] == 4 &&
          config.moduli[2] == 5 &&
+         config.max_marginal_states == (size_t)RULE_SEARCH_MARGINAL_MAX_STATES &&
          config.proposer_mode == RULE_PROPOSER_NEURAL;
 
     char *baseline_argv[] = {
@@ -1360,11 +1388,14 @@ static int test_rule_search_unconditional_range_builds_structural_program(void)
         "random",
         "--proposer-seed",
         "17",
+        "--max-marginal-states",
+        "64",
     };
     RuleSearchConfig baseline_config;
-    ok = ok && parse_rule_search_config(9, baseline_argv, &baseline_config) &&
+    ok = ok && parse_rule_search_config(11, baseline_argv, &baseline_config) &&
          baseline_config.proposer_mode == RULE_PROPOSER_RANDOM &&
-         baseline_config.proposer_seed == 17u;
+         baseline_config.proposer_seed == 17u &&
+         baseline_config.max_marginal_states == 64u;
 
     ok = ok && build_rule_search_grammar(&config, &grammar);
     ok = ok && grammar.state_count == 1 && grammar.filter_count == 12 &&
@@ -1866,6 +1897,8 @@ int main(void)
           "prime-gap features are divisibility flags");
     check(test_rule_proposer_features_are_structural(),
           "rule proposer features are structural");
+    check(test_rule_proposer_target_uses_marginal_utility(),
+          "rule proposer target uses marginal utility");
     check(test_rule_search_unconditional_range_builds_structural_program(),
           "rule search unconditional range builds structural program");
     check(test_expanded_rule_survivor_mask_rejects_candidate_filters(),

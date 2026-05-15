@@ -65,7 +65,7 @@
     trace/replay/RL protocol. We instantiate this schema on three tasks: prime gaps, grid paths,
     and delayed claims. Prime gaps currently provide the strongest gate ablation: with
     residue-sieve features removed from the scorer input, the raw scorer reaches 9.13% top-1; a
-    fixed hand-wheel gate raises this to 45.12%, and a learned rule gate reaches 68.31% at 100%
+    fixed hand-wheel gate raises this to 45.12%, and a learned rule gate reaches 68.87% at 100%
     top-10 with an $approx$4$times$ reduction in model latency. Grid paths show the same
     certified-gate pattern outside arithmetic at smaller scope: a budgeted legality gate raises
     parent accuracy from 75.80% to 89.60%. Delayed claims currently exercise trace replay and
@@ -230,7 +230,8 @@ Task T = {
 
 The leakage rule is shared: verifier outputs may be labels, rewards, certificates, diagnostics,
 or executed gates, but they are not default scorer inputs. Proposer inputs are structural rule
-descriptors; support counts and false-rejection diagnostics are targets, not features. In the
+descriptors; support-derived marginal utility labels and false-rejection diagnostics are targets,
+not features. In the
 artifact this is a typed contract, not just prose: every scorer feature declares provenance
 (`state_observation`, `structural_prior`, `verifier_derived`, or `derived_from_gate`), every
 task declares a leakage policy (`forbidden`, `priors_allowed`, or `legacy`), and schema emission
@@ -280,7 +281,7 @@ The same trained prime-gap scorer is evaluated under three gate conditions on th
     let bars = (
       (label: "no gate", value: 9.13, color: rgb("#a0a0a0")),
       (label: "hand-wheel", value: 45.12, color: rgb("#5b8def")),
-      (label: "learned wheel", value: 68.31, color: rgb("#2ca02c")),
+      (label: "learned wheel", value: 68.87, color: rgb("#2ca02c")),
     )
     plot.plot(
       size: (9, 4.2),
@@ -304,8 +305,8 @@ The same trained prime-gap scorer is evaluated under three gate conditions on th
     )
   }),
   caption: [Top-1 accuracy by gate on the canonical 30,000-sample held-out benchmark. The
-    clean raw-to-learned delta is *9.13 $arrow.r$ 68.31*. The fixed-hand-wheel-to-learned
-    delta is *45.12 $arrow.r$ 68.31* (+23.2pp). The former 45.12% raw-scorer result is now a
+    clean raw-to-learned delta is *9.13 $arrow.r$ 68.87*. The fixed-hand-wheel-to-learned
+    delta is *45.12 $arrow.r$ 68.87* (+23.8pp). The former 45.12% raw-scorer result is now a
     full-sieve-feature leakage ablation, not the headline.],
 ) <fig:f1>
 
@@ -318,7 +319,7 @@ Full metrics:
     table.header[*Gate*][*Top-1*][*Top-10*][*NLL*][*ECE*][*ms/sample*],
     [no gate], [9.13%], [78.01%], [2.9994], [0.1076], [0.0365],
     [hand-wheel], [45.12%], [99.77%], [1.5902], [0.0834], [0.0375],
-    [*learned wheel*], [*68.31%*], [*100.00%*], [*1.0172*], [0.1379], [*0.0099*],
+    [*learned wheel*], [*68.87%*], [*100.00%*], [*1.0056*], [0.1402], [*0.0060*],
   ),
   caption: [Gate ablation, minimal-feature scorer, identical weights across rows.],
 ) <tab:f1>
@@ -333,7 +334,7 @@ Full metrics:
   - *E1.3* \u{2014} Investigate the learned-wheel calibration tradeoff. The learned wheel
     improves ranking sharply but has higher ECE than raw minimal and hand-wheel rows in the
     default run.
-  - *E1.4* \u{2014} Confidence intervals across $gt.eq 5$ seeds for the 45.12 $arrow.r$ 68.31
+  - *E1.4* \u{2014} Confidence intervals across $gt.eq 5$ seeds for the 45.12 $arrow.r$ 68.87
     delta.
 ]
 
@@ -343,9 +344,9 @@ The canonical rule grammar is `reject candidate n when n > m and n % m == r`; th
 verifier accepts a rule iff $gcd(m, r) > 1$ (so $n$ is necessarily composite). The expanded
 grammar can also express conditional gap filters, but that mode is not the canonical result.
 Zero false rejections is a structural property of the certificate. The proposer input is
-structural-only: condition kind, moduli, residues, zero-residue indicators, gcd ratios, and
-derived candidate residue. Empirical support, utility, and false-rejection counts are labels or
-diagnostics, not proposer features.
+structural-only: condition kind, moduli, reciprocal scales, residues, zero-residue indicators,
+gcd ratios, and derived candidate residue. Empirical support and false-rejection counts are
+diagnostics, and budgeted marginal utility is the neural target, not a proposer feature.
 
 #figure(
   cetz.canvas(length: 1cm, {
@@ -353,7 +354,7 @@ diagnostics, not proposer features.
     let stages = (
       (label: "proposed",         value: 32637, color: rgb("#a0a0a0")),
       (label: "verified",         value: 4692,  color: rgb("#88b0e8")),
-      (label: "accepted",         value: 52,    color: rgb("#2ca02c")),
+      (label: "accepted",         value: 53,    color: rgb("#2ca02c")),
       (label: "false\nrejections", value: 0,    color: rgb("#d62728")),
     )
     let plot_w = 12.0
@@ -386,8 +387,8 @@ diagnostics, not proposer features.
     }
   }),
   caption: [Rule-search acceptance funnel. Of 32,637 proposed rules, 4,692 pass the soundness
-    certificate, 52 survive support and false-rejection screens, and *zero* falsely reject the
-    true next-prime gap. The accepted set recovers 79.64% of wheel-equivalent verifier work.],
+    certificate, 53 survive support and false-rejection screens, and *zero* falsely reject the
+    true next-prime gap. The accepted set recovers 79.79% of wheel-equivalent verifier work.],
 ) <fig:f2>
 
 #figure(
@@ -395,11 +396,11 @@ diagnostics, not proposer features.
     columns: (auto, auto, auto, auto),
     align: (left, right, right, right),
     table.header[*Rule ordering*][*Budget*][*Exact probes*][*Saved*],
-    [neural structural], [16], [2.37], [67.03%],
+    [neural structural], [16], [1.98], [72.49%],
     [random, seed 20240511], [16], [3.86], [46.30%],
     [grammar order], [16], [1.93], [73.22%],
     [structural heuristic], [16], [1.93], [73.22%],
-    [validation-count oracle], [16], [1.93], [73.22%],
+    [validation-marginal oracle], [16], [1.93], [73.22%],
   ),
   caption: [Matched 16-rule-budget proposer baselines over the same grammar, split, and
     certificate verifier. Lower exact probes is better.],
@@ -606,7 +607,7 @@ goal is that every #placeholder[...] marker in the body resolves to one of these
     [E1.1], [Random-rule gate at matched verifier-call budget], [2d], [C1],
     [E1.2], [Extend `grid_path` beyond legality gate with admissible-heuristic pruning], [3-4d], [C1],
     [E1.3], [Investigate learned-wheel calibration tradeoff], [1d], [C1],
-    [E1.4], [CIs across $gt.eq 5$ seeds for 45.12 $arrow.r$ 68.31 delta], [0.5d], [C1],
+    [E1.4], [CIs across $gt.eq 5$ seeds for 45.12 $arrow.r$ 68.87 delta], [0.5d], [C1],
     [E2.1], [Fixed-budget proposer baselines across random seeds and budgets], [1d], [C2],
     [E2.2], [Conjunctive rule grammar extension], [3-5d], [C2],
     [E2.3], [Worked example of an accepted rule the hand-wheel misses], [0.5d], [C2],

@@ -40,9 +40,10 @@ static const NNExperimentSpec PRIME_GAP_EXPERIMENT_SPEC = {
     .certificate_checker =
         "algebraic certificate such as gcd(modulus, residue) > 1 proves rejected candidate is composite",
     .gate_executor = "accepted predicates reject impossible gaps before neural residual scoring",
-    .proposer_inputs = "structural rule descriptors only: kind, moduli, residues, zero indicators, gcd ratios",
+    .proposer_inputs =
+        "structural rule descriptors only: kind, moduli, residues, reciprocal scales, zero indicators, gcd ratios",
     .proposer_targets =
-        "empirical support and verifier utility predicted from train/validation labels, never used as proposer features",
+        "budgeted marginal verifier utility labels; support and false-rejection counts are diagnostics, never inputs",
     .proposer_mode = NN_PROPOSER_SELECTION,
     .baseline_orderings = "neural, random, grammar-order, structural heuristic, validation oracle",
     .generalization_axis = "train on smaller prime ranges; test on larger prime ranges and larger gap coverage",

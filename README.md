@@ -76,9 +76,9 @@ Current leakage audit:
 
 ## Current Evidence
 
-The canonical result is still strongest on `prime_gap`, but it is now presented as one task row rather than the project goal. With residue-sieve features removed from the scorer input, the raw prime scorer reaches **9.13%** top-1; a fixed hand gate reaches **45.12%**; and a certified learned-rule gate reaches **68.31%** at 100% top-10. On `grid_path`, a budgeted certified legality gate improves parent accuracy from **75.80%** to **89.60%**. On `delayed_claim`, the current load-bearing result is trace replay and calibration, not gate learning: the replay successor reaches **94.80%** accuracy versus **93.50%** for the trained parent.
+The canonical result is still strongest on `prime_gap`, but it is now presented as one task row rather than the project goal. With residue-sieve features removed from the scorer input, the raw prime scorer reaches **9.13%** top-1; a fixed hand gate reaches **45.12%**; and a certified learned-rule gate reaches **68.87%** at 100% top-10. On `grid_path`, a budgeted certified legality gate improves parent accuracy from **75.80%** to **89.60%**. On `delayed_claim`, the current load-bearing result is trace replay and calibration, not gate learning: the replay successor reaches **94.80%** accuracy versus **93.50%** for the trained parent.
 
-The negative result is equally important: the current prime rule proposer is not a neural success story. At a 16-rule budget, grammar order and a simple structural heuristic save **73.22%** of exact work, versus **67.03%** for the neural proposer and **46.30%** for one random ordering. The next neurosymbolic benchmark must make proposer learning non-trivial across all three task schemas.
+The negative result is equally important: the current prime rule proposer is not yet a neural success story. At a 16-rule budget, grammar order and a simple structural heuristic save **73.22%** of exact work, versus **72.49%** for the neural proposer and **46.30%** for one random ordering. The next neurosymbolic benchmark must make proposer learning non-trivial across all three task schemas.
 
 ## Protocol Axes and Current Results
 
@@ -90,7 +90,7 @@ Each task should report the same gate ablation: no gate, hand/spec gate, learned
 | --- | ---: | ---: | ---: |
 | None (raw candidate space) | 9.13% | 78.01% | 2.9994 |
 | Hand-wheel (small-prime divisibility) | 45.12% | 99.77% | 1.5902 |
-| **Learned rule program** (certificate-checked rules) | **68.31%** | **100.00%** | **1.0172** |
+| **Learned rule program** (certificate-checked rules) | **68.87%** | **100.00%** | **1.0056** |
 
 The same protocol is partially implemented on `grid_path`: raw parent accuracy is **75.80%** and budgeted legality-gate accuracy is **89.60%**. `delayed_claim` still needs its certified gate grammar implemented; until then it is a trace/replay and verifier-RL task, not evidence for gate learning. The former raw 45.12% prime figure is retained only as a full-sieve-feature leakage ablation.
 
@@ -103,24 +103,24 @@ Rule-search run from `results/latest/comparison.jsonl`:
 ```text
 proposed:        32,637
 verified:         4,692   ← rules that survive verifier screens
-accepted:            52   ← all unconditional candidate filters
+accepted:            53   ← all unconditional candidate filters
 false rejections:     0
 direct exact:      7.20   ← average exact-verifier work without rules
-expanded exact:    1.47   ← average exact-verifier work after accepted rules
-saved:            79.64%
+expanded exact:    1.45   ← average exact-verifier work after accepted rules
+saved:            79.79%
 ```
 
-The proposer is small (`crlp.rule_trace.v1` schema, scoring rule candidates with the same shared-scorer abstraction as gap actions). Its input feature set is structural-only: condition kind, moduli, residues, zero-residue indicators, gcd ratios, and derived candidate residue. It does not receive `train_rejects`, validation support, utility, or false-rejection counters as features; those counts are labels and verifier diagnostics. The discipline of the result is in the verifier, not the model: a rule is accepted only if a deterministic algebraic check certifies soundness, so zero false rejections is a property of the certificate, not of training.
+The proposer is small (`crlp.rule_trace.v1` schema, scoring rule candidates with the same shared-scorer abstraction as gap actions). Its input feature set is structural-only: condition kind, moduli, reciprocal scales, residues, zero-residue indicators, gcd ratios, and derived candidate residue. It does not receive `train_rejects`, validation support, utility, or false-rejection counters as features; those counts are labels and verifier diagnostics. The neural target is budgeted train-set marginal utility, not raw support. The discipline of the result is in the verifier, not the model: a rule is accepted only if a deterministic algebraic check certifies soundness, so zero false rejections is a property of the certificate, not of training.
 
 Matched-budget proposer baselines now run in `make prime-rule-search-baselines`. At a 16-rule budget over the same grammar, split, and certificate verifier:
 
 | Rule ordering | Exact probes | Work saved |
 | --- | ---: | ---: |
-| Neural structural proposer | 2.37 | 67.03% |
+| Neural structural proposer | 1.98 | 72.49% |
 | Random ordering, seed 20240511 | 3.86 | 46.30% |
 | Grammar order | 1.93 | 73.22% |
 | Structural heuristic | 1.93 | 73.22% |
-| Validation-count oracle | 1.93 | 73.22% |
+| Validation-marginal oracle | 1.93 | 73.22% |
 
 **What this evidence does and does not show.** It shows that certificate-gated structural rule discovery is sound and useful on one task. It also shows the current neural proposer is not the reason this rule set works: at the fixed 16-rule budget, simple deterministic orderings beat it. The stronger neurosymbolic claim now has a concrete target: implement the same proposer-baseline grid for `grid_path` and `delayed_claim`, then learn a proposer that beats grammar-order and structural-heuristic baselines under the same grammar and budget.
 
@@ -181,8 +181,8 @@ Detailed baselines:
 | Supervised minimal, temp-scaled | 1.20 | 9.13% | 78.01% | 2.8991 | 0.0459 | 0.1372 |
 | Full-sieve-feature ablation (leakage) | 1.00 | 45.12% | 99.77% | 1.5778 | 0.0743 | 0.4882 |
 | Supervised minimal + hand-wheel | 1.00 | 45.12% | 99.77% | 1.5902 | 0.0834 | 0.5075 |
-| **Supervised minimal + learned-rule gate** | **1.00** | **68.31%** | **100.00%** | **1.0172** | 0.1379 | 0.6254 |
-| Learned-rule survivor replay | 1.00 | 68.31% | 100.00% | 1.0307 | 0.1306 | 0.6689 |
+| **Supervised minimal + learned-rule gate** | **1.00** | **68.87%** | **100.00%** | **1.0056** | 0.1402 | 0.6276 |
+| Learned-rule survivor replay | 1.00 | 68.87% | 100.00% | 1.0196 | 0.1323 | 0.6736 |
 | Strict verifier RL | 1.00 | 9.13% | 78.01% | 3.0611 | 0.1271 | 0.2184 |
 | KL/entropy-regularized verifier RL | 1.00 | 9.13% | 78.01% | 2.9056 | 0.0604 | 0.1517 |
 
@@ -354,7 +354,7 @@ The default `minimal` feature set intentionally omits precomputed residue divisi
 make prime-rule-search
 ```
 
-Runs the prime-gap rule-grammar instantiation of Axis 2. The default neural proposer scores unconditional candidate filters of the form `reject candidate n when n > m and n % m == r` over `m=3..255`; `make prime-rule-search-baselines` reruns the same grammar with neural, random, grammar-order, structural-heuristic, and validation-oracle orderings at a fixed 16-rule budget; `make prime-rule-search-conditional` runs the broader conditional gap grammar. The neural proposer's feature set is structural-only and excludes support counts, utility, and false-rejection counters. The verifier accepts only rules with a deterministic algebraic certificate. The JSONL trace uses schema `crlp.rule_trace.v1` and records grammar version, selection strategy, proposer feature set, rule text, model score, verifier result, deterministic-certificate flag, accepted flag, support counts, and false-rejection counts.
+Runs the prime-gap rule-grammar instantiation of Axis 2. The default neural proposer scores unconditional candidate filters of the form `reject candidate n when n > m and n % m == r` over `m=3..255`; `make prime-rule-search-baselines` reruns the same grammar with neural, random, grammar-order, structural-heuristic, and validation-oracle orderings at a fixed 16-rule budget; `make prime-rule-search-conditional` runs the broader conditional gap grammar. The neural proposer's feature set is structural-only and excludes support counts, utility, and false-rejection counters. It trains on a budgeted marginal-utility target computed from verifier labels; `--max-marginal-states` controls the sample cap for that target and defaults to 4096. The verifier accepts only rules with a deterministic algebraic certificate. The JSONL trace uses schema `crlp.rule_trace.v1` and records grammar version, selection strategy, proposer feature set, proposer target, rule text, model score, verifier result, deterministic-certificate flag, accepted flag, support counts, marginal utility, and false-rejection counts.
 
 CLI output of `make prime-gap` is split into sections:
 
