@@ -138,6 +138,8 @@ enum {
     RULE_SEARCH_GRAMMAR_VERSION = 2,
     RULE_SEARCH_MAX_MODULI = 256,
     RULE_SEARCH_FEATURE_COUNT = 15,
+    RULE_DISCOVERY_FEATURE_COUNT = RULE_SEARCH_FEATURE_COUNT + 10,
+    RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP = 4096,
     RULE_SEARCH_MARGINAL_MAX_STATES = 4096,
     RULE_SEARCH_SCORER_EPOCHS = 64,
 };
@@ -196,6 +198,7 @@ typedef enum {
     RULE_PROPOSER_GRAMMAR = 2,
     RULE_PROPOSER_STRUCTURAL = 3,
     RULE_PROPOSER_VALIDATION_ORACLE = 4,
+    RULE_PROPOSER_CLOSED_LOOP = 5,
 } RuleProposerMode;
 
 typedef struct {
@@ -226,6 +229,8 @@ typedef struct {
     size_t unsafe_rules;
     size_t no_support_rules;
     size_t uncertified_rules;
+    size_t proposer_calls;
+    size_t residual_train_samples;
     size_t train_marginal_samples;
     size_t validation_marginal_samples;
     size_t train_marginal_events;

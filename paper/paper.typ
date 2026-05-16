@@ -62,8 +62,8 @@
     end-to-end neural policy. We specify one reusable verifier-gated action task schema:
     complete candidate enumeration, observable state/action features, a neural residual scorer,
     an exact verifier, a symbolic rule grammar, a certificate checker, a rule proposer, and a
-    trace/replay/RL protocol. We instantiate this schema on three tasks: prime gaps, grid paths,
-    and delayed claims. Prime gaps currently provide the strongest gate ablation: with
+    trace/replay/RL protocol. We instantiate this schema on three certified tasks: prime gaps,
+    grid paths, and delayed claims. Prime gaps currently provide the strongest gate ablation: with
     residue-sieve features removed from the scorer input, the raw scorer reaches 9.13% top-1; a
     fixed hand-wheel gate raises this to 45.12%, and a learned rule gate reaches 68.87% at 100%
     top-10 with an $approx$4$times$ reduction in model latency. Grid paths show the same
@@ -73,8 +73,10 @@
     claims currently exercise trace replay and calibration, not gate learning. The prime
     rule-search negative result is load-bearing: grammar order and a simple structural heuristic
     beat the current neural proposer at a fixed 16-rule budget, and the conditional gap grammar
-    exposes a larger failure. The contribution is therefore the generalized protocol and audit
-    discipline, not an improved prime algorithm.
+    exposes a larger failure. A separate shared-envelope smoke test adds one harder ARC-AGI-1
+    cell-color sample, but it is not yet counted as certified verifier-gated evidence. The
+    contribution is therefore the generalized protocol and audit discipline, not an improved
+    prime algorithm.
   ]
 ]
 
@@ -112,7 +114,7 @@ treated as general:
 
 #set enum(numbering: "1.", spacing: auto)
 
-The artifact now emits `crlp.experiment_schema.v1` rows for every task with `make
+The artifact now emits `crlp.experiment_schema.v1` rows for every certified task with `make
 experiment-schemas`. The paper should be read against that schema: task-specific verifiers and
 grammars change, but candidate enumeration, leakage discipline, proposer baselines, trace replay,
 and verifier-RL comparisons are shared.
@@ -197,7 +199,7 @@ well-trained.
 
 == Generalized Task Schema
 
-Every experiment in the artifact emits the same schema row:
+Every certified experiment in the artifact emits the same schema row:
 
 ```text
 Task T = {
@@ -227,8 +229,8 @@ Task T = {
       [deterministic hidden-outcome simulator],
       [finite-generator safety check],
   ),
-  caption: [The three task instantiations share the same verifier-gated action-scoring
-    contract.],
+  caption: [The three certified task instantiations share the same verifier-gated
+    action-scoring contract.],
 ) <tab:schema>
 
 The leakage rule is shared: verifier outputs may be labels, rewards, certificates, diagnostics,

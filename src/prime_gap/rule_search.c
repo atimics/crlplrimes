@@ -39,6 +39,8 @@ static const char *rule_proposer_mode_name(RuleProposerMode mode)
         return "structural_heuristic";
     case RULE_PROPOSER_VALIDATION_ORACLE:
         return "validation_oracle";
+    case RULE_PROPOSER_CLOSED_LOOP:
+        return "closed_loop_neural";
     }
     return "unknown";
 }
@@ -55,6 +57,8 @@ static const char *rule_proposer_feature_set_name(RuleProposerMode mode)
         return "structural_heuristic";
     case RULE_PROPOSER_VALIDATION_ORACLE:
         return "validation_counts";
+    case RULE_PROPOSER_CLOSED_LOOP:
+        return "structural_residual_set";
     }
     return "unknown";
 }
@@ -64,6 +68,8 @@ static const char *rule_proposer_target_name(RuleProposerMode mode)
     switch (mode) {
     case RULE_PROPOSER_NEURAL:
         return "train_marginal_utility";
+    case RULE_PROPOSER_CLOSED_LOOP:
+        return "residual_marginal_utility";
     case RULE_PROPOSER_VALIDATION_ORACLE:
         return "validation_marginal_utility";
     case RULE_PROPOSER_RANDOM:
@@ -95,6 +101,11 @@ static int parse_rule_proposer_mode(const char *text, RuleProposerMode *mode)
     }
     if (strcmp(text, "validation-oracle") == 0 || strcmp(text, "oracle") == 0) {
         *mode = RULE_PROPOSER_VALIDATION_ORACLE;
+        return 1;
+    }
+    if (strcmp(text, "closed-loop") == 0 || strcmp(text, "residual") == 0 ||
+        strcmp(text, "neural-closed-loop") == 0) {
+        *mode = RULE_PROPOSER_CLOSED_LOOP;
         return 1;
     }
     return 0;
@@ -277,7 +288,7 @@ static void print_rule_search_usage(FILE *stream)
     fputs("usage: prime_rule_search [--train-limit n] [--test-limit n] "
           "[--max-train-states n] [--max-test-states n] "
           "[--max-marginal-states n] [--max-rules n] "
-          "[--proposer neural|random|grammar|structural|validation-oracle] "
+          "[--proposer neural|closed-loop|random|grammar|structural|validation-oracle] "
           "[--proposer-seed n] "
           "[--gap-only|--candidate-only] [--unconditional-only] "
           "[--moduli 3,5,7,...] [--moduli-range 3:255] "
@@ -1064,6 +1075,7 @@ static int score_expanded_rules_without_model(ExpandedRuleSet *rules,
             rule->model_score = (nn_real)rule->utility;
             break;
         case RULE_PROPOSER_NEURAL:
+        case RULE_PROPOSER_CLOSED_LOOP:
             return 0;
         }
     }
@@ -1160,6 +1172,520 @@ static void expanded_rule_remove_subsets(ExpandedRuleSet *accepted,
     accepted->count = write;
 }
 
+static int expanded_rule_is_selectable(const ExpandedRule *rule)
+{
+    return rule->train_false_rejections == 0 &&
+           rule->validation_false_rejections == 0 &&
+           (rule->train_rejects != 0 || rule->validation_rejects != 0) &&
+           expanded_rule_has_deterministic_certificate(rule);
+}
+
+static void summarize_expanded_rule_candidates(const ExpandedRuleSet *rules,
+                                               RuleSearchMetrics *metrics)
+{
+    metrics->proposed_rules = rules->count;
+    for (size_t i = 0; i < rules->count; ++i) {
+        const ExpandedRule *rule = &rules->items[i];
+        if (rule->train_false_rejections != 0 || rule->validation_false_rejections != 0) {
+            ++metrics->unsafe_rules;
+            continue;
+        }
+        if (rule->train_rejects == 0 && rule->validation_rejects == 0) {
+            ++metrics->no_support_rules;
+            continue;
+        }
+        ++metrics->verified_rules;
+        if (!expanded_rule_has_deterministic_certificate(rule)) {
+            ++metrics->uncertified_rules;
+        }
+    }
+}
+
+static void mark_expanded_rule_acceptance(ExpandedRuleSet *rules,
+                                          const ExpandedRuleSet *accepted,
+                                          RuleSearchMetrics *metrics)
+{
+    metrics->accepted_rules = accepted->count;
+    metrics->accepted_conditional_rules = 0;
+    metrics->accepted_gap_rules = 0;
+    metrics->accepted_candidate_rules = 0;
+    for (size_t i = 0; i < rules->count; ++i) {
+        rules->items[i].accepted = 0;
+    }
+    for (size_t i = 0; i < accepted->count; ++i) {
+        if (expanded_rule_is_conditional(&accepted->items[i])) {
+            ++metrics->accepted_conditional_rules;
+        }
+        if (accepted->items[i].kind == RULE_FILTER_GAP_MOD) {
+            ++metrics->accepted_gap_rules;
+        } else {
+            ++metrics->accepted_candidate_rules;
+        }
+        for (size_t candidate = 0; candidate < rules->count; ++candidate) {
+            if (expanded_rule_same_key(&rules->items[candidate], &accepted->items[i])) {
+                rules->items[candidate].accepted = 1;
+                break;
+            }
+        }
+    }
+}
+
+static size_t covered_event_count(const uint64_t *covered, size_t word_count)
+{
+    size_t count = 0;
+    for (size_t word = 0; word < word_count; ++word) {
+        count += (size_t)__builtin_popcountll((unsigned long long)covered[word]);
+    }
+    return count;
+}
+
+static void add_rule_coverage_to_residual(const RuleCoverage *coverage,
+                                          size_t rule_index,
+                                          uint64_t *covered)
+{
+    const uint64_t *rule_bits = &coverage->bits[rule_index * coverage->word_count];
+    for (size_t word = 0; word < coverage->word_count; ++word) {
+        covered[word] |= rule_bits[word];
+    }
+}
+
+typedef struct {
+    const ExpandedRuleSet *accepted;
+    size_t accepted_candidate_rules;
+    size_t accepted_gap_rules;
+    size_t accepted_conditional_rules;
+    size_t event_count;
+    size_t covered_events;
+    size_t max_rules;
+} RuleDiscoveryState;
+
+static RuleDiscoveryState build_rule_discovery_state(const ExpandedRuleSet *accepted,
+                                                     const RuleCoverage *coverage,
+                                                     const uint64_t *covered,
+                                                     size_t max_rules)
+{
+    RuleDiscoveryState state;
+    memset(&state, 0, sizeof(state));
+    state.accepted = accepted;
+    state.event_count = coverage->event_count;
+    state.covered_events = covered_event_count(covered, coverage->word_count);
+    state.max_rules = max_rules;
+    for (size_t i = 0; i < accepted->count; ++i) {
+        if (expanded_rule_is_conditional(&accepted->items[i])) {
+            ++state.accepted_conditional_rules;
+        }
+        if (accepted->items[i].kind == RULE_FILTER_GAP_MOD) {
+            ++state.accepted_gap_rules;
+        } else {
+            ++state.accepted_candidate_rules;
+        }
+    }
+    return state;
+}
+
+static void fill_rule_discovery_features(const ExpandedRule *rule,
+                                         uint32_t max_modulus,
+                                         const RuleDiscoveryState *state,
+                                         nn_real *features)
+{
+    fill_expanded_rule_features(rule, max_modulus, features);
+
+    double max_rules = state->max_rules == 0 ? 1.0 : (double)state->max_rules;
+    double accepted_count = state->accepted == NULL ? 0.0 : (double)state->accepted->count;
+    double accepted_scale = accepted_count <= 0.0 ? 1.0 : accepted_count;
+    double residual_events = state->event_count <= state->covered_events
+                                 ? 0.0
+                                 : (double)(state->event_count - state->covered_events);
+    double residual_fraction = state->event_count == 0
+                                   ? 0.0
+                                   : residual_events / (double)state->event_count;
+    uint32_t candidate_residue = expanded_rule_structural_candidate_residue(rule);
+    size_t same_kind = 0;
+    size_t same_filter_modulus = 0;
+    size_t same_state_modulus = 0;
+    size_t same_candidate_residue = 0;
+
+    if (state->accepted != NULL) {
+        for (size_t i = 0; i < state->accepted->count; ++i) {
+            const ExpandedRule *accepted = &state->accepted->items[i];
+            if (accepted->kind == rule->kind) {
+                ++same_kind;
+            }
+            if (accepted->filter_modulus == rule->filter_modulus) {
+                ++same_filter_modulus;
+            }
+            if (accepted->state_modulus == rule->state_modulus) {
+                ++same_state_modulus;
+            }
+            if (expanded_rule_structural_candidate_residue(accepted) == candidate_residue) {
+                ++same_candidate_residue;
+            }
+        }
+    }
+
+    features[RULE_SEARCH_FEATURE_COUNT + 0] = (nn_real)(accepted_count / max_rules);
+    features[RULE_SEARCH_FEATURE_COUNT + 1] = (nn_real)residual_fraction;
+    features[RULE_SEARCH_FEATURE_COUNT + 2] =
+        (nn_real)((double)state->accepted_candidate_rules / max_rules);
+    features[RULE_SEARCH_FEATURE_COUNT + 3] =
+        (nn_real)((double)state->accepted_gap_rules / max_rules);
+    features[RULE_SEARCH_FEATURE_COUNT + 4] =
+        (nn_real)((double)state->accepted_conditional_rules / max_rules);
+    features[RULE_SEARCH_FEATURE_COUNT + 5] = (nn_real)((double)same_kind / accepted_scale);
+    features[RULE_SEARCH_FEATURE_COUNT + 6] =
+        (nn_real)((double)same_filter_modulus / accepted_scale);
+    features[RULE_SEARCH_FEATURE_COUNT + 7] =
+        (nn_real)((double)same_state_modulus / accepted_scale);
+    features[RULE_SEARCH_FEATURE_COUNT + 8] =
+        (nn_real)((double)same_candidate_residue / accepted_scale);
+    features[RULE_SEARCH_FEATURE_COUNT + 9] =
+        state->accepted != NULL && expanded_rule_is_covered(state->accepted, rule)
+            ? (nn_real)1
+            : (nn_real)0;
+}
+
+static uint32_t max_rule_search_modulus(const RuleSearchConfig *config)
+{
+    uint32_t max_modulus = 0;
+    for (size_t i = 0; i < config->mod_count; ++i) {
+        if (config->moduli[i] > max_modulus) {
+            max_modulus = config->moduli[i];
+        }
+    }
+    return max_modulus;
+}
+
+static int append_rule_discovery_training_sample(nn_real *inputs,
+                                                 nn_real *targets,
+                                                 size_t capacity,
+                                                 size_t *sample_count,
+                                                 const ExpandedRule *rule,
+                                                 uint32_t max_modulus,
+                                                 const RuleDiscoveryState *state,
+                                                 nn_real target)
+{
+    if (*sample_count >= capacity) {
+        return 0;
+    }
+    fill_rule_discovery_features(rule,
+                                 max_modulus,
+                                 state,
+                                 &inputs[*sample_count * RULE_DISCOVERY_FEATURE_COUNT]);
+    targets[*sample_count] = target;
+    ++*sample_count;
+    return 1;
+}
+
+static int train_closed_loop_rule_policy(const ExpandedRuleSet *rules,
+                                         const RuleSearchConfig *config,
+                                         const RuleCoverage *coverage,
+                                         NeuralNet **net_out,
+                                         double *loss_out,
+                                         size_t *sample_count_out)
+{
+    *net_out = NULL;
+    if (loss_out != NULL) {
+        *loss_out = 0.0;
+    }
+    if (sample_count_out != NULL) {
+        *sample_count_out = 0;
+    }
+
+    size_t eligible_count = 0;
+    for (size_t i = 0; i < rules->count; ++i) {
+        if (expanded_rule_is_selectable(&rules->items[i])) {
+            ++eligible_count;
+        }
+    }
+    if (eligible_count == 0 || coverage->event_count == 0 || coverage->word_count == 0) {
+        return 0;
+    }
+
+    size_t max_steps = config->max_rules < eligible_count ? config->max_rules : eligible_count;
+    size_t per_step_limit = eligible_count < (size_t)RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP
+                                ? eligible_count
+                                : (size_t)RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP;
+    if (max_steps == 0 || per_step_limit == 0 ||
+        max_steps > SIZE_MAX / per_step_limit) {
+        return 0;
+    }
+    size_t capacity = max_steps * per_step_limit;
+    if (capacity > SIZE_MAX / RULE_DISCOVERY_FEATURE_COUNT ||
+        capacity * RULE_DISCOVERY_FEATURE_COUNT > SIZE_MAX / sizeof(nn_real)) {
+        return 0;
+    }
+
+    nn_real *inputs = calloc(capacity * RULE_DISCOVERY_FEATURE_COUNT, sizeof(*inputs));
+    nn_real *targets = calloc(capacity, sizeof(*targets));
+    uint8_t *selected = calloc(rules->count, sizeof(*selected));
+    uint64_t *covered = calloc(coverage->word_count, sizeof(*covered));
+    size_t *gains = calloc(rules->count, sizeof(*gains));
+    ExpandedRuleSet greedy_accepted;
+    memset(&greedy_accepted, 0, sizeof(greedy_accepted));
+    greedy_accepted.items = calloc(max_steps, sizeof(*greedy_accepted.items));
+    if (inputs == NULL || targets == NULL || selected == NULL || covered == NULL ||
+        gains == NULL || greedy_accepted.items == NULL) {
+        free(inputs);
+        free(targets);
+        free(selected);
+        free(covered);
+        free(gains);
+        free(greedy_accepted.items);
+        return 0;
+    }
+
+    uint32_t max_modulus = max_rule_search_modulus(config);
+    size_t sample_count = 0;
+    for (size_t step = 0; step < max_steps; ++step) {
+        RuleDiscoveryState state =
+            build_rule_discovery_state(&greedy_accepted, coverage, covered, config->max_rules);
+        size_t best_index = (size_t)-1;
+        size_t best_gain = 0;
+        memset(gains, 0, rules->count * sizeof(*gains));
+
+        for (size_t i = 0; i < rules->count; ++i) {
+            if (selected[i] || !expanded_rule_is_selectable(&rules->items[i]) ||
+                expanded_rule_is_covered(&greedy_accepted, &rules->items[i])) {
+                continue;
+            }
+            const uint64_t *rule_bits = &coverage->bits[i * coverage->word_count];
+            size_t gain = popcount_rule_gain(rule_bits, covered, coverage->word_count);
+            gains[i] = gain;
+            if (gain > best_gain) {
+                best_gain = gain;
+                best_index = i;
+            }
+        }
+        if (best_index == (size_t)-1 || best_gain == 0) {
+            break;
+        }
+
+        size_t kept = 0;
+        if (!append_rule_discovery_training_sample(inputs,
+                                                   targets,
+                                                   capacity,
+                                                   &sample_count,
+                                                   &rules->items[best_index],
+                                                   max_modulus,
+                                                   &state,
+                                                   (nn_real)1)) {
+            break;
+        }
+        ++kept;
+
+        for (size_t i = 0; i < rules->count && kept < per_step_limit; ++i) {
+            if (i == best_index || gains[i] == 0 || selected[i] ||
+                !expanded_rule_is_selectable(&rules->items[i]) ||
+                expanded_rule_is_covered(&greedy_accepted, &rules->items[i])) {
+                continue;
+            }
+            nn_real target = (nn_real)((double)gains[i] / (double)best_gain);
+            if (!append_rule_discovery_training_sample(inputs,
+                                                       targets,
+                                                       capacity,
+                                                       &sample_count,
+                                                       &rules->items[i],
+                                                       max_modulus,
+                                                       &state,
+                                                       target)) {
+                break;
+            }
+            ++kept;
+        }
+
+        for (size_t i = 0; i < rules->count && kept < per_step_limit; ++i) {
+            if (i == best_index || gains[i] != 0 || selected[i] ||
+                !expanded_rule_is_selectable(&rules->items[i]) ||
+                expanded_rule_is_covered(&greedy_accepted, &rules->items[i])) {
+                continue;
+            }
+            uint64_t hash = expanded_rule_key_hash(&rules->items[i],
+                                                   config->proposer_seed + step + 1u);
+            if ((hash % 17u) != 0u && kept + 1u < per_step_limit) {
+                continue;
+            }
+            if (!append_rule_discovery_training_sample(inputs,
+                                                       targets,
+                                                       capacity,
+                                                       &sample_count,
+                                                       &rules->items[i],
+                                                       max_modulus,
+                                                       &state,
+                                                       (nn_real)0)) {
+                break;
+            }
+            ++kept;
+        }
+
+        selected[best_index] = 1;
+        expanded_rule_remove_subsets(&greedy_accepted, &rules->items[best_index]);
+        if (greedy_accepted.count < max_steps) {
+            greedy_accepted.items[greedy_accepted.count++] = rules->items[best_index];
+        }
+        add_rule_coverage_to_residual(coverage, best_index, covered);
+    }
+
+    if (sample_count == 0) {
+        free(inputs);
+        free(targets);
+        free(selected);
+        free(covered);
+        free(gains);
+        free(greedy_accepted.items);
+        return 0;
+    }
+
+    const size_t layers[] = {RULE_DISCOVERY_FEATURE_COUNT, 32, 16, 1};
+    NNConfig nn_config;
+    nn_config.layer_sizes = layers;
+    nn_config.layer_count = sizeof(layers) / sizeof(layers[0]);
+    nn_config.seed = 119417u;
+    nn_config.hidden_activation = NN_ACTIVATION_RELU;
+    nn_config.output_activation = NN_ACTIVATION_LINEAR;
+    nn_config.loss = NN_LOSS_MSE;
+
+    NeuralNet *net = nn_create_config(&nn_config);
+    if (net == NULL) {
+        free(inputs);
+        free(targets);
+        free(selected);
+        free(covered);
+        free(gains);
+        free(greedy_accepted.items);
+        return 0;
+    }
+
+    nn_real loss = nn_train_batched(net,
+                                    inputs,
+                                    targets,
+                                    sample_count,
+                                    256,
+                                    (nn_real)0.02,
+                                    RULE_SEARCH_SCORER_EPOCHS,
+                                    1);
+    if (isnan((double)loss)) {
+        nn_free(net);
+        free(inputs);
+        free(targets);
+        free(selected);
+        free(covered);
+        free(gains);
+        free(greedy_accepted.items);
+        return 0;
+    }
+
+    *net_out = net;
+    if (loss_out != NULL) {
+        *loss_out = (double)loss;
+    }
+    if (sample_count_out != NULL) {
+        *sample_count_out = sample_count;
+    }
+
+    free(inputs);
+    free(targets);
+    free(selected);
+    free(covered);
+    free(gains);
+    free(greedy_accepted.items);
+    return 1;
+}
+
+static int select_expanded_rules_closed_loop(ExpandedRuleSet *rules,
+                                             const RuleSearchConfig *config,
+                                             const RuleSearchGrammar *grammar,
+                                             const GapDataset *dataset,
+                                             size_t max_states,
+                                             ExpandedRuleSet *accepted,
+                                             RuleSearchMetrics *metrics)
+{
+    memset(accepted, 0, sizeof(*accepted));
+    accepted->items = calloc(config->max_rules, sizeof(*accepted->items));
+    if (accepted->items == NULL) {
+        return 0;
+    }
+
+    summarize_expanded_rule_candidates(rules, metrics);
+
+    RuleCoverage coverage;
+    size_t samples = 0;
+    if (!build_rule_coverage(config, grammar, rules, dataset, max_states, &coverage, &samples)) {
+        return 0;
+    }
+
+    NeuralNet *net = NULL;
+    int ok = train_closed_loop_rule_policy(rules,
+                                           config,
+                                           &coverage,
+                                           &net,
+                                           &metrics->proposer_loss,
+                                           &metrics->residual_train_samples);
+    if (!ok) {
+        free_rule_coverage(&coverage);
+        return 0;
+    }
+
+    uint8_t *selected = calloc(rules->count, sizeof(*selected));
+    uint64_t *covered = calloc(coverage.word_count, sizeof(*covered));
+    nn_real features[RULE_DISCOVERY_FEATURE_COUNT];
+    nn_real output[1];
+    uint32_t max_modulus = max_rule_search_modulus(config);
+    if (selected == NULL || covered == NULL) {
+        free(selected);
+        free(covered);
+        nn_free(net);
+        free_rule_coverage(&coverage);
+        return 0;
+    }
+
+    for (size_t call = 0; call < config->max_rules; ++call) {
+        RuleDiscoveryState state =
+            build_rule_discovery_state(accepted, &coverage, covered, config->max_rules);
+        size_t best_index = (size_t)-1;
+        nn_real best_score = (nn_real)-INFINITY;
+
+        for (size_t i = 0; i < rules->count; ++i) {
+            if (selected[i] || !expanded_rule_is_selectable(&rules->items[i]) ||
+                expanded_rule_is_covered(accepted, &rules->items[i])) {
+                continue;
+            }
+            fill_rule_discovery_features(&rules->items[i], max_modulus, &state, features);
+            nn_forward(net, features, output);
+            rules->items[i].model_score = output[0];
+            if (best_index == (size_t)-1 || output[0] > best_score) {
+                best_score = output[0];
+                best_index = i;
+            }
+        }
+        if (best_index == (size_t)-1) {
+            break;
+        }
+
+        selected[best_index] = 1;
+        ++metrics->proposer_calls;
+        const uint64_t *rule_bits = &coverage.bits[best_index * coverage.word_count];
+        size_t gain = popcount_rule_gain(rule_bits, covered, coverage.word_count);
+        if (gain == 0) {
+            continue;
+        }
+
+        expanded_rule_remove_subsets(accepted, &rules->items[best_index]);
+        if (accepted->count < config->max_rules) {
+            rules->items[best_index].accepted = 1;
+            accepted->items[accepted->count++] = rules->items[best_index];
+        }
+        add_rule_coverage_to_residual(&coverage, best_index, covered);
+    }
+
+    mark_expanded_rule_acceptance(rules, accepted, metrics);
+
+    free(selected);
+    free(covered);
+    nn_free(net);
+    free_rule_coverage(&coverage);
+    return 1;
+}
+
 static int select_expanded_rules(ExpandedRuleSet *rules,
                                  size_t max_rules,
                                  ExpandedRuleSet *accepted,
@@ -1174,6 +1700,7 @@ static int select_expanded_rules(ExpandedRuleSet *rules,
     qsort(rules->items, rules->count, sizeof(*rules->items), compare_expanded_rules_model);
 
     metrics->proposed_rules = rules->count;
+    metrics->proposer_calls = rules->count;
     for (size_t i = 0; i < rules->count; ++i) {
         ExpandedRule *rule = &rules->items[i];
         if (rule->train_false_rejections != 0 || rule->validation_false_rejections != 0) {
@@ -1688,13 +2215,15 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            "\"max_rules\":%zu,\"max_marginal_states\":%zu,"
            "\"selection_strategy\":\"%s\","
            "\"selection_seed\":%llu,"
-           "\"proposed_rules\":%zu,\"verified_rules\":%zu,"
+           "\"proposed_rules\":%zu,\"proposer_calls\":%zu,"
+           "\"verified_rules\":%zu,"
            "\"unsafe_rules\":%zu,\"no_support_rules\":%zu,"
            "\"uncertified_rules\":%zu,"
            "\"accepted_rules\":%zu,\"accepted_conditional_rules\":%zu,"
            "\"accepted_candidate_rules\":%zu,\"accepted_gap_rules\":%zu,"
            "\"false_rejections\":%zu,\"proposer_feature_set\":\"%s\","
            "\"proposer_target\":\"%s\","
+           "\"residual_train_samples\":%zu,"
            "\"train_marginal_samples\":%zu,"
            "\"validation_marginal_samples\":%zu,"
            "\"train_marginal_events\":%zu,"
@@ -1716,6 +2245,7 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            rule_proposer_mode_name(config->proposer_mode),
            (unsigned long long)config->proposer_seed,
            metrics->proposed_rules,
+           metrics->proposer_calls,
            metrics->verified_rules,
            metrics->unsafe_rules,
            metrics->no_support_rules,
@@ -1727,6 +2257,7 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            metrics->false_rejections,
            rule_proposer_feature_set_name(config->proposer_mode),
            rule_proposer_target_name(config->proposer_mode),
+           metrics->residual_train_samples,
            metrics->train_marginal_samples,
            metrics->validation_marginal_samples,
            metrics->train_marginal_events,
@@ -1760,8 +2291,9 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            metrics->validation_marginal_samples,
            metrics->train_marginal_events,
            metrics->validation_marginal_events);
-    printf("  proposed=%zu verified=%zu unsafe=%zu no_support=%zu uncertified=%zu accepted=%zu\n",
+    printf("  proposed=%zu calls=%zu verified=%zu unsafe=%zu no_support=%zu uncertified=%zu accepted=%zu\n",
            metrics->proposed_rules,
+           metrics->proposer_calls,
            metrics->verified_rules,
            metrics->unsafe_rules,
            metrics->no_support_rules,
@@ -1771,11 +2303,13 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            metrics->accepted_conditional_rules,
            metrics->accepted_gap_rules,
            metrics->accepted_candidate_rules);
-    if (config->proposer_mode == RULE_PROPOSER_NEURAL) {
-        printf("  neural_rule_scorer_epochs=%u feature_set=%s final_mse=%.6f\n",
+    if (config->proposer_mode == RULE_PROPOSER_NEURAL ||
+        config->proposer_mode == RULE_PROPOSER_CLOSED_LOOP) {
+        printf("  neural_rule_scorer_epochs=%u feature_set=%s final_mse=%.6f residual_samples=%zu\n",
                (uint32_t)RULE_SEARCH_SCORER_EPOCHS,
                rule_proposer_feature_set_name(config->proposer_mode),
-               metrics->proposer_loss);
+               metrics->proposer_loss,
+               metrics->residual_train_samples);
     } else {
         printf("  trained_rule_scorer=none feature_set=%s\n",
                rule_proposer_feature_set_name(config->proposer_mode));
@@ -1868,9 +2402,20 @@ int nn_prime_rule_search_main(int argc, char **argv)
                                              marginal_state_limit,
                                              1,
                                              &metrics.validation_marginal_samples,
-                                             &metrics.validation_marginal_events) &&
-             score_expanded_rules(&candidates, &config, &metrics.proposer_loss) &&
-             select_expanded_rules(&candidates, config.max_rules, &accepted, &metrics);
+                                             &metrics.validation_marginal_events);
+        if (ok && config.proposer_mode == RULE_PROPOSER_CLOSED_LOOP) {
+            set_expanded_rule_utilities(&candidates);
+            ok = select_expanded_rules_closed_loop(&candidates,
+                                                   &config,
+                                                   &grammar,
+                                                   &train,
+                                                   marginal_state_limit,
+                                                   &accepted,
+                                                   &metrics);
+        } else if (ok) {
+            ok = score_expanded_rules(&candidates, &config, &metrics.proposer_loss) &&
+                 select_expanded_rules(&candidates, config.max_rules, &accepted, &metrics);
+        }
     }
 
     char rule_hash[65] = "unknown";

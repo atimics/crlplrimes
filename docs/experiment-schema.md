@@ -1,8 +1,14 @@
 # Generalized Experiment Schema
 
-The project is one verifier-gated action-scoring architecture with three task
-instantiations. Prime gaps, grid paths, and delayed claims must all be described
-with the same contract before they are used as evidence.
+The project is one verifier-gated action-scoring architecture with three
+certified task instantiations. Prime gaps, grid paths, and delayed claims must
+all be described with the same contract before they are used as certified
+evidence.
+
+There is also a separate shared-envelope multitask probe that includes one
+ARC-AGI-1 sample. That probe is useful for testing whether the core C scorer can
+train across heterogeneous action domains, but it is not yet part of the
+certified rule/verifier evidence table.
 
 ## Contract
 
@@ -76,11 +82,19 @@ policy tables are visible in `results/latest`.
 
 ## Current Instantiations
 
+Certified verifier-backed tasks:
+
 | Task | State | Actions | Verifier | Grammar | Certificate |
 | --- | --- | --- | --- | --- | --- |
 | `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | modular rejection predicates | algebraic divisibility proof |
 | `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality and admissible-pruning predicates | cannot reject an optimal move |
 | `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold/dominance/evidence predicates | finite-generator safety check |
+
+Shared-envelope integration task:
+
+| Task | State | Actions | Label source | Status |
+| --- | --- | --- | --- | --- |
+| `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | supervised cell-color scorer; no certificate grammar yet |
 
 Leakage status today:
 
@@ -89,6 +103,35 @@ Leakage status today:
 | `prime_gap` | `forbidden` | 3 enabled observations; 10 disabled structural-prior residue columns retained only for ablations |
 | `grid_path` | `priors_allowed` | 61 observations plus 2 enabled Manhattan structural priors |
 | `delayed_claim` | `forbidden` | 10 enabled observations |
+
+`arc_agi` is omitted from the leakage table until it has a task schema and a
+certificate checker. In the current multitask binary it uses the fixed 96-wide
+action-row envelope documented in [multitask-domain.md](multitask-domain.md).
+
+## Shared Multitask Summary Rows
+
+`examples/multitask_domain.c` emits `crlp.multitask.summary.v1` rows. These rows
+are not substitutes for `crlp.experiment_schema.v1`; they summarize one shared
+scorer evaluated across one or more domains.
+
+Fields:
+
+| Field | Meaning |
+| --- | --- |
+| `domain` | evaluated domain, such as `prime_gap`, `grid_path`, `delayed_claim`, or `arc_agi` |
+| `task_set` | domains used for training, with `all` meaning every configured domain |
+| `eval_task_set` | domains requested for evaluation |
+| `model_kind` | current model family, usually `shared_action_scorer` |
+| `training_order` | sampling schedule, currently `shuffled` |
+| `feature_envelope` | shared row layout, currently `task_tagged_action_rows_v1` or `untagged_action_rows_v1` |
+| `train_updates` | number of SGD updates received from this domain |
+| `epochs`, `steps_per_epoch`, `learning_rate`, `seed` | training configuration |
+| `sample_count`, `candidate_count` | evaluation size and mean action count |
+| `top1`, `top5`, `top10`, `nll`, `mean_rank` | ranking metrics |
+| `decision_utility`, `baseline_steps` | task-specific utility/probe fields when available |
+
+The removed `prime_features` key should not reappear in multitask outputs.
+Prime residue predicates are intentionally outside the shared multitask envelope.
 
 ## Evidence Status
 
@@ -113,7 +156,7 @@ schema but not yet implemented as a learned certified gate.
 2. Implement the delayed-claim certified gate grammar.
 3. Extend grid-path gates beyond simple legality to admissible pruning rules.
 4. Run proposer baselines for every task at matched rule budgets.
-5. Run strict versus KL/entropy verifier RL on all three tasks.
+5. Run strict versus KL/entropy verifier RL on the certified tasks.
 6. Report one cross-task table keyed by the shared schema:
    no gate, spec gate, learned gate, random gate, grammar-order gate,
    structural-heuristic gate, oracle gate, replay successor, strict RL, KL RL.
@@ -121,3 +164,6 @@ schema but not yet implemented as a learned certified gate.
    heuristic, and oracle ranking on the same gated candidate set.
 8. Report random-normalized and gate-marginal skill in cross-task tables; keep
    raw top-1 in task-specific sections.
+9. Promote ARC from one fixed cell-color sample to a loader over many ARC tasks,
+   then add certifiable symbolic ARC transformations before treating ARC as
+   verifier-gated evidence.

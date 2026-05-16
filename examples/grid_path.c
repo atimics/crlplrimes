@@ -246,6 +246,20 @@ typedef struct {
     double proposer_loss;
 } GridGateRuleSet;
 
+typedef enum {
+    GP_RULE_PROPOSER_NEURAL = 0,
+    GP_RULE_PROPOSER_RANDOM = 1,
+    GP_RULE_PROPOSER_GRAMMAR = 2,
+    GP_RULE_PROPOSER_STRUCTURAL = 3,
+    GP_RULE_PROPOSER_VALIDATION_ORACLE = 4,
+} GridRuleProposerMode;
+
+typedef struct {
+    size_t max_rules;
+    GridRuleProposerMode proposer_mode;
+    uint64_t proposer_seed;
+} GridRuleSearchConfig;
+
 static const int ACTION_DX[GP_ACTION_COUNT] = {0, 1, 0, -1};
 static const int ACTION_DY[GP_ACTION_COUNT] = {-1, 0, 1, 0};
 
@@ -548,6 +562,88 @@ static const char *grid_rule_name(GridGateRuleKind kind)
     return "unknown";
 }
 
+static GridRuleSearchConfig default_grid_rule_search_config(void)
+{
+    GridRuleSearchConfig config;
+    config.max_rules = GP_RULE_MAX_ACCEPTED;
+    config.proposer_mode = GP_RULE_PROPOSER_NEURAL;
+    config.proposer_seed = 20240511u;
+    return config;
+}
+
+static const char *grid_rule_proposer_mode_name(GridRuleProposerMode mode)
+{
+    switch (mode) {
+    case GP_RULE_PROPOSER_NEURAL:
+        return "neural_structural";
+    case GP_RULE_PROPOSER_RANDOM:
+        return "random";
+    case GP_RULE_PROPOSER_GRAMMAR:
+        return "grammar_order";
+    case GP_RULE_PROPOSER_STRUCTURAL:
+        return "structural_heuristic";
+    case GP_RULE_PROPOSER_VALIDATION_ORACLE:
+        return "validation_oracle";
+    }
+    return "unknown";
+}
+
+static const char *grid_rule_proposer_feature_set_name(GridRuleProposerMode mode)
+{
+    switch (mode) {
+    case GP_RULE_PROPOSER_NEURAL:
+        return "structural";
+    case GP_RULE_PROPOSER_RANDOM:
+    case GP_RULE_PROPOSER_GRAMMAR:
+        return "none";
+    case GP_RULE_PROPOSER_STRUCTURAL:
+        return "structural_heuristic";
+    case GP_RULE_PROPOSER_VALIDATION_ORACLE:
+        return "validation_counts";
+    }
+    return "unknown";
+}
+
+static const char *grid_rule_proposer_target_name(GridRuleProposerMode mode)
+{
+    switch (mode) {
+    case GP_RULE_PROPOSER_NEURAL:
+        return "reject_support";
+    case GP_RULE_PROPOSER_VALIDATION_ORACLE:
+        return "validation_reject_support";
+    case GP_RULE_PROPOSER_RANDOM:
+    case GP_RULE_PROPOSER_GRAMMAR:
+    case GP_RULE_PROPOSER_STRUCTURAL:
+        return "none";
+    }
+    return "unknown";
+}
+
+static int parse_grid_rule_proposer_mode(const char *text, GridRuleProposerMode *mode)
+{
+    if (strcmp(text, "neural") == 0 || strcmp(text, "neural-structural") == 0) {
+        *mode = GP_RULE_PROPOSER_NEURAL;
+        return 1;
+    }
+    if (strcmp(text, "random") == 0) {
+        *mode = GP_RULE_PROPOSER_RANDOM;
+        return 1;
+    }
+    if (strcmp(text, "grammar") == 0 || strcmp(text, "grammar-order") == 0) {
+        *mode = GP_RULE_PROPOSER_GRAMMAR;
+        return 1;
+    }
+    if (strcmp(text, "structural") == 0 || strcmp(text, "structural-heuristic") == 0) {
+        *mode = GP_RULE_PROPOSER_STRUCTURAL;
+        return 1;
+    }
+    if (strcmp(text, "validation-oracle") == 0 || strcmp(text, "oracle") == 0) {
+        *mode = GP_RULE_PROPOSER_VALIDATION_ORACLE;
+        return 1;
+    }
+    return 0;
+}
+
 static void init_grid_gate_rules(GridGateRuleSet *rules)
 {
     memset(rules, 0, sizeof(*rules));
@@ -763,12 +859,61 @@ static int compare_grid_gate_rules(const void *left, const void *right)
     return (int)a->kind - (int)b->kind;
 }
 
-static int score_grid_gate_rules(GridGateRuleSet *rules)
+static uint64_t grid_rule_hash(const GridGateRule *rule, uint64_t seed)
+{
+    uint64_t hash = 1469598103934665603ull ^ seed;
+    hash ^= (uint64_t)rule->kind + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+    hash *= 1099511628211ull;
+    return hash;
+}
+
+static double grid_rule_structural_score(const GridGateRule *rule)
+{
+    double score = grid_gate_rule_has_certificate(rule) ? 4.0 : 0.0;
+    if (rule->train_false_rejections == 0 && rule->validation_false_rejections == 0) {
+        score += 2.0;
+    }
+    if (rule->kind == GP_RULE_BLOCKED_NEXT) {
+        score += 0.5;
+    }
+    score += (double)rule->train_rejects * 0.001;
+    return score;
+}
+
+static int score_grid_gate_rules(GridGateRuleSet *rules, const GridRuleSearchConfig *config)
 {
     nn_real inputs[(size_t)GP_RULE_COUNT * GP_RULE_FEATURE_COUNT];
     nn_real targets[GP_RULE_COUNT];
     nn_real outputs[GP_RULE_COUNT];
     size_t max_rejects = 1;
+
+    if (config->proposer_mode != GP_RULE_PROPOSER_NEURAL) {
+        rules->proposer_loss = 0.0;
+        for (size_t i = 0; i < rules->count; ++i) {
+            GridGateRule *rule = &rules->items[i];
+            switch (config->proposer_mode) {
+            case GP_RULE_PROPOSER_RANDOM:
+                rule->model_score =
+                    (nn_real)((grid_rule_hash(rule, config->proposer_seed) >> 11) *
+                              (1.0 / 9007199254740992.0));
+                break;
+            case GP_RULE_PROPOSER_GRAMMAR:
+                rule->model_score = (nn_real)(rules->count - i);
+                break;
+            case GP_RULE_PROPOSER_STRUCTURAL:
+                rule->model_score = (nn_real)grid_rule_structural_score(rule);
+                break;
+            case GP_RULE_PROPOSER_VALIDATION_ORACLE:
+                rule->model_score = rule->validation_false_rejections == 0
+                                        ? (nn_real)rule->validation_rejects
+                                        : (nn_real)0;
+                break;
+            case GP_RULE_PROPOSER_NEURAL:
+                break;
+            }
+        }
+        return 1;
+    }
 
     for (size_t i = 0; i < rules->count; ++i) {
         if (rules->items[i].train_rejects > max_rejects) {
@@ -782,14 +927,14 @@ static int score_grid_gate_rules(GridGateRuleSet *rules)
     }
 
     const size_t layers[] = {GP_RULE_FEATURE_COUNT, 8, 1};
-    NNConfig config;
-    config.layer_sizes = layers;
-    config.layer_count = sizeof(layers) / sizeof(layers[0]);
-    config.seed = 31415;
-    config.hidden_activation = NN_ACTIVATION_RELU;
-    config.output_activation = NN_ACTIVATION_LINEAR;
-    config.loss = NN_LOSS_MSE;
-    NeuralNet *net = nn_create_config(&config);
+    NNConfig nn_config;
+    nn_config.layer_sizes = layers;
+    nn_config.layer_count = sizeof(layers) / sizeof(layers[0]);
+    nn_config.seed = 31415;
+    nn_config.hidden_activation = NN_ACTIVATION_RELU;
+    nn_config.output_activation = NN_ACTIVATION_LINEAR;
+    nn_config.loss = NN_LOSS_MSE;
+    NeuralNet *net = nn_create_config(&nn_config);
     if (net == NULL) {
         return 0;
     }
@@ -834,7 +979,7 @@ static void summarize_grid_gate_rules(GridGateRuleSet *rules)
     }
 }
 
-static int discover_grid_gate_rules(GridGateRuleSet *rules)
+static int discover_grid_gate_rules(GridGateRuleSet *rules, const GridRuleSearchConfig *config)
 {
     init_grid_gate_rules(rules);
     accumulate_grid_rule_stats(rules,
@@ -845,18 +990,19 @@ static int discover_grid_gate_rules(GridGateRuleSet *rules)
                                GP_VALIDATION_SEED_START,
                                GP_VALIDATION_SAMPLES,
                                GP_RULE_SPLIT_VALIDATION);
-    if (!score_grid_gate_rules(rules)) {
+    if (!score_grid_gate_rules(rules, config)) {
         return 0;
     }
     qsort(rules->items, rules->count, sizeof(*rules->items), compare_grid_gate_rules);
 
+    size_t max_rules = config->max_rules < rules->count ? config->max_rules : rules->count;
     for (size_t i = 0; i < rules->count; ++i) {
         GridGateRule *rule = &rules->items[i];
         rule->accepted = grid_gate_rule_has_certificate(rule) &&
                          rule->train_rejects != 0 &&
                          rule->train_false_rejections == 0 &&
                          rule->validation_false_rejections == 0 &&
-                         rules->accepted_rules < GP_RULE_MAX_ACCEPTED;
+                         rules->accepted_rules < max_rules;
         rules->accepted_rules += rule->accepted ? 1u : 0u;
     }
     accumulate_grid_rule_stats(rules,
@@ -867,13 +1013,15 @@ static int discover_grid_gate_rules(GridGateRuleSet *rules)
     return 1;
 }
 
-static void print_grid_rule_search_json(const GridGateRuleSet *rules)
+static void print_grid_rule_search_json(const GridGateRuleSet *rules,
+                                        const GridRuleSearchConfig *config)
 {
     printf("{\"schema\":\"crlp.rule_search.summary.v1\",\"task\":\"grid_path\","
            "\"grammar_version\":%u,\"rule_set_hash\":\"grid-legality-budget-v2\","
-           "\"proposer_feature_set\":\"structural\","
-           "\"proposer_target\":\"reject_support_and_cost_savings\","
-           "\"selection_strategy\":\"neural_structural\","
+           "\"proposer_feature_set\":\"%s\","
+           "\"proposer_target\":\"%s\","
+           "\"selection_strategy\":\"%s\","
+           "\"selection_seed\":%llu,"
            "\"proposed_rules\":%zu,\"verified_rules\":%zu,\"max_rules\":%u,"
            "\"accepted_rules\":%zu,\"false_rejections\":%zu,"
            "\"train_rejects\":%zu,\"validation_rejects\":%zu,"
@@ -883,9 +1031,13 @@ static void print_grid_rule_search_json(const GridGateRuleSet *rules)
            "\"test_false_rejections\":%zu,"
            "\"proposer_loss\":%.8f}\n",
            (unsigned int)GP_RULE_SEARCH_GRAMMAR_VERSION,
+           grid_rule_proposer_feature_set_name(config->proposer_mode),
+           grid_rule_proposer_target_name(config->proposer_mode),
+           grid_rule_proposer_mode_name(config->proposer_mode),
+           (unsigned long long)config->proposer_seed,
            rules->count,
            rules->count,
-           (unsigned int)GP_RULE_MAX_ACCEPTED,
+           (unsigned int)config->max_rules,
            rules->accepted_rules,
            rules->test_false_rejections,
            rules->train_rejects,
@@ -897,18 +1049,21 @@ static void print_grid_rule_search_json(const GridGateRuleSet *rules)
            rules->proposer_loss);
 }
 
-static void print_grid_rule_search_report(const GridGateRuleSet *rules)
+static void print_grid_rule_search_report(const GridGateRuleSet *rules,
+                                          const GridRuleSearchConfig *config)
 {
     printf("[grid_path legality rule search]\n"
-           "  grammar_version=%u proposed=%zu max_rules=%u accepted=%zu "
+           "  grammar_version=%u strategy=%s proposed=%zu max_rules=%zu accepted=%zu "
            "test_false_rejections=%zu\n"
-           "  proposer_feature_set=structural final_mse=%.6f\n"
+           "  proposer_feature_set=%s final_mse=%.6f\n"
            "  accepted rules:",
            (unsigned int)GP_RULE_SEARCH_GRAMMAR_VERSION,
+           grid_rule_proposer_mode_name(config->proposer_mode),
            rules->count,
-           (unsigned int)GP_RULE_MAX_ACCEPTED,
+           config->max_rules,
            rules->accepted_rules,
            rules->test_false_rejections,
+           grid_rule_proposer_feature_set_name(config->proposer_mode),
            rules->proposer_loss);
     int first = 1;
     for (size_t i = 0; i < rules->count; ++i) {
@@ -1543,12 +1698,13 @@ static void print_grid_compare_json(const NNCheckpointMeta *meta,
 static int compare_grid_models(int argc, char **argv)
 {
     GridGateRuleSet gate_rules;
-    if (!discover_grid_gate_rules(&gate_rules)) {
+    GridRuleSearchConfig rule_config = default_grid_rule_search_config();
+    if (!discover_grid_gate_rules(&gate_rules, &rule_config)) {
         fputs("failed to discover grid_path gate rules\n", stderr);
         return 0;
     }
-    print_grid_rule_search_json(&gate_rules);
-    print_grid_rule_search_report(&gate_rules);
+    print_grid_rule_search_json(&gate_rules, &rule_config);
+    print_grid_rule_search_report(&gate_rules, &rule_config);
 
     nn_real *candidate_inputs = calloc((size_t)GP_ACTION_COUNT * GP_FEATURE_COUNT,
                                        sizeof(*candidate_inputs));
@@ -1691,7 +1847,9 @@ static void print_usage(FILE *stream)
           "[--feature-set with-priors|no-priors] "
           "[--trace-train] [--trace-seed seed] [--trace-samples count]\n"
           "       grid_path --replay trace.jsonl --out model.nnckpt [--epochs count]\n"
-          "       grid_path --rule-search\n"
+          "       grid_path --rule-search [--max-rules count] "
+          "[--proposer neural|random|grammar|structural|validation-oracle] "
+          "[--proposer-seed seed]\n"
           "       grid_path --compare model_a.nnckpt model_b.nnckpt [...]\n"
           "       grid_path --schema\n",
           stream);
@@ -1736,17 +1894,37 @@ int main(int argc, char **argv)
         return compare_grid_models(argc, argv) ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (argc >= 2 && strcmp(argv[1], "--rule-search") == 0) {
-        if (argc != 2) {
-            print_usage(stderr);
-            return EXIT_FAILURE;
+        GridRuleSearchConfig rule_config = default_grid_rule_search_config();
+        for (int i = 2; i < argc; ++i) {
+            if (strcmp(argv[i], "--max-rules") == 0 && i + 1 < argc) {
+                if (!parse_size_text(argv[++i], &rule_config.max_rules) ||
+                    rule_config.max_rules == 0 ||
+                    rule_config.max_rules > GP_RULE_COUNT) {
+                    print_usage(stderr);
+                    return EXIT_FAILURE;
+                }
+            } else if (strcmp(argv[i], "--proposer") == 0 && i + 1 < argc) {
+                if (!parse_grid_rule_proposer_mode(argv[++i], &rule_config.proposer_mode)) {
+                    print_usage(stderr);
+                    return EXIT_FAILURE;
+                }
+            } else if (strcmp(argv[i], "--proposer-seed") == 0 && i + 1 < argc) {
+                if (!parse_u64_text(argv[++i], &rule_config.proposer_seed)) {
+                    print_usage(stderr);
+                    return EXIT_FAILURE;
+                }
+            } else {
+                print_usage(stderr);
+                return EXIT_FAILURE;
+            }
         }
         GridGateRuleSet rules;
-        if (!discover_grid_gate_rules(&rules)) {
+        if (!discover_grid_gate_rules(&rules, &rule_config)) {
             fputs("failed to discover grid_path gate rules\n", stderr);
             return EXIT_FAILURE;
         }
-        print_grid_rule_search_json(&rules);
-        print_grid_rule_search_report(&rules);
+        print_grid_rule_search_json(&rules, &rule_config);
+        print_grid_rule_search_report(&rules, &rule_config);
         return EXIT_SUCCESS;
     }
 

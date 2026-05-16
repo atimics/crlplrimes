@@ -35,6 +35,7 @@ PRIME_COMPARE := $(BUILD_DIR)/prime_compare
 PRIME_RULE_SEARCH := $(BUILD_DIR)/prime_rule_search
 DELAYED_CLAIM := $(BUILD_DIR)/delayed_claim
 GRID_PATH := $(BUILD_DIR)/grid_path
+MULTITASK_DOMAIN := $(BUILD_DIR)/multitask_domain
 BENCHMARK := $(BUILD_DIR)/benchmark
 TEST_RUNNER := $(BUILD_DIR)/test_nn
 SANITIZE_TEST_RUNNER := $(BUILD_DIR)/test_nn_sanitize
@@ -47,10 +48,11 @@ PRIME_GAP_EXPERIMENT_GRID ?= 0.00:0.00,0.40:0.04,0.80:0.08,1.20:0.12
 PRIME_GAP_EXPERIMENT_MAX_TRAIN ?= 15000
 PRIME_GAP_EXPERIMENT_MAX_TEST ?= 15000
 RESULTS_DIR ?= results/latest
+TUNING_DIR ?= build/$(REAL)/neurosymbolic_tuning
 
-.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-trace grid-path-replay grid-path-eval results benchmark test sanitize check clean
+.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-trace grid-path-replay grid-path-eval multitask-domain results neurosymbolic-tune benchmark test sanitize check clean
 
-all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(BENCHMARK)
+all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(BENCHMARK)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -101,6 +103,9 @@ $(DELAYED_CLAIM): examples/delayed_claim.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DI
 $(GRID_PATH): examples/grid_path.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/grid_path.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
+$(MULTITASK_DOMAIN): examples/multitask_domain.c $(NN_OBJS) $(PRIME_GAP_TASK_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/multitask_domain.c $(NN_OBJS) $(PRIME_GAP_TASK_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
 $(BENCHMARK): benchmarks/benchmark.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) benchmarks/benchmark.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
@@ -140,11 +145,13 @@ prime-rule-search: $(PRIME_RULE_SEARCH)
 
 prime-rule-search-baselines: $(PRIME_RULE_SEARCH)
 	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer neural
+	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer closed-loop
 	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer random --proposer-seed 20240511
 	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer grammar
 	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer structural
 	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer validation-oracle
 	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer neural
+	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer closed-loop
 	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer random --proposer-seed 20240511
 	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer grammar
 	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer structural
@@ -215,8 +222,14 @@ grid-path-no-priors: $(GRID_PATH)
 grid-path-eval: $(GRID_PATH) grid-path-replay grid-path-no-priors
 	./$(GRID_PATH) --compare $(BUILD_DIR)/grid_path_v1.nnckpt $(BUILD_DIR)/grid_path_v2.nnckpt $(BUILD_DIR)/grid_path_no_priors.nnckpt
 
+multitask-domain: $(MULTITASK_DOMAIN)
+	./$(MULTITASK_DOMAIN)
+
 results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH)
 	$(PYTHON) scripts/capture_results.py --output-dir $(RESULTS_DIR) --real $(REAL)
+
+neurosymbolic-tune: all
+	$(PYTHON) scripts/neurosymbolic_tuning.py --output-dir $(TUNING_DIR) --real $(REAL) --skip-build
 
 test: $(TEST_RUNNER)
 	./$(TEST_RUNNER)

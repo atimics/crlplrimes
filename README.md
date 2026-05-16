@@ -1,6 +1,6 @@
 # CRLPLRIMES: Certificate-Gated Neural Proposers for Verifier-Grounded Action Scoring
 
-This repository is a compact C neural-network library and an exact-verifier research harness for **certified neural-symbolic action scoring**. The project is not a prime-gap solver. It is one architecture instantiated on three verifier-backed action tasks:
+This repository is a compact C neural-network library and an exact-verifier research harness for **certified neural-symbolic action scoring**. The project is not a prime-gap solver. The certified core is one architecture instantiated on three verifier-backed action tasks, with a separate shared-envelope multitask probe that now adds one harder ARC-AGI-1 sample:
 
 | Task | State | Actions | Exact verifier | Gate grammar | Certificate |
 | --- | --- | --- | --- | --- | --- |
@@ -8,14 +8,14 @@ This repository is a compact C neural-network library and an exact-verifier rese
 | `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality and admissible-pruning predicates | cannot reject an optimal move |
 | `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold/dominance/evidence predicates | finite-generator safety check |
 
-Every experiment now publishes the same machine-readable task contract with:
+Every certified experiment publishes the same machine-readable task contract with:
 
 ```sh
 make experiment-schemas
 ```
 
 The schema is `crlp.experiment_schema.v1` and defines the state distribution, candidate enumerator, typed feature provenance, leakage policy, scorer, verifier, rule grammar, certificate checker, proposer inputs, proposer mode, baselines, trace protocol, replay protocol, and verifier-RL protocol. The public C contract lives in `include/nn_experiment.h`.
-The working design note is [docs/experiment-schema.md](docs/experiment-schema.md).
+The working design note is [docs/experiment-schema.md](docs/experiment-schema.md). The shared-model multitask matrix is documented separately in [docs/multitask-domain.md](docs/multitask-domain.md).
 
 ## Generalized Experiment Schema
 
@@ -74,11 +74,13 @@ Current leakage audit:
 | `grid_path` | `priors_allowed` | 2 |
 | `delayed_claim` | `forbidden` | 0 |
 
+The `arc_agi` row used by the shared multitask binary is intentionally outside this certificate table for now. It is a supervised cell-color action task from ARC-AGI-1, useful for testing whether one fixed-width scorer can train across domains, not a certified ARC solver claim.
+
 ## Current Evidence
 
 The canonical result is still strongest on `prime_gap`, but it is now presented as one task row rather than the project goal. With residue-sieve features removed from the scorer input, the raw prime scorer reaches **9.13%** top-1; a fixed hand gate reaches **45.12%**; and a certified learned-rule gate reaches **68.87%** at 100% top-10. On `grid_path`, the clean no-Manhattan-prior scorer reaches **70.80%** raw accuracy and **84.90%** with the budgeted legality gate; the priors-allowed checkpoint is retained as an explicit ablation at **75.80%** raw and **89.60%** gated. On `delayed_claim`, the current load-bearing result is trace replay and calibration, not gate learning: the replay successor reaches **94.80%** accuracy versus **93.50%** for the trained parent.
 
-The negative result is equally important: the current prime rule proposer is not yet a neural success story. On unconditional candidate filters, grammar order and a simple structural heuristic save **73.22%** of exact work, versus **72.49%** for the neural proposer and **46.30%** for one random ordering. On the conditional gap grammar, the neural proposer falls to **2.15%** work saved while grammar order saves **55.57%** and the validation oracle saves **56.83%**. The next neurosymbolic benchmark must make proposer learning non-trivial across all three task schemas and then beat these fixed symbolic baselines.
+The negative result is equally important: the first prime rule proposer was not yet a neural success story. On unconditional candidate filters, grammar order and a simple structural heuristic save **73.22%** of exact work, versus **72.49%** for the static neural proposer and **46.30%** for one random ordering. On the conditional gap grammar, the static neural proposer falls to **2.15%** work saved while grammar order saves **55.57%** and the validation oracle saves **56.83%**. The harness now includes a closed-loop residual-aware proposer (`--proposer closed-loop`) so this failure can be attacked directly: the policy scores the next rule conditional on accepted rules and residual coverage, then consumes a verifier-call budget one proposal at a time.
 
 ## Protocol Axes and Current Results
 
@@ -96,7 +98,7 @@ The same protocol is partially implemented on `grid_path`: with Manhattan priors
 
 ### Axis 2 — Rule search must beat fixed-budget symbolic baselines
 
-`prime_rule_search` runs the canonical neural proposer over unconditional candidate filters `reject candidate n when n > m and n % m == r` for `m=3..255`. The expanded grammar can also express conditional gap filters (`if p % m == a then reject gap % m == b`), and `make prime-rule-search-baselines` now reports both families at the same 16-rule budget. The certificate verifier only accepts rules with a deterministic soundness proof, so an accepted rule provably cannot reject the true next-prime gap.
+`prime_rule_search` runs the canonical neural proposer over unconditional candidate filters `reject candidate n when n > m and n % m == r` for `m=3..255`. The expanded grammar can also express conditional gap filters (`if p % m == a then reject gap % m == b`), and `make prime-rule-search-baselines` now reports both families at the same 16-rule budget. The new `--proposer closed-loop` mode trains a residual-aware policy on greedy coverage trajectories and then proposes rules sequentially against the current accepted set. The certificate verifier only accepts rules with a deterministic soundness proof, so an accepted rule provably cannot reject the true next-prime gap.
 
 Rule-search run from `results/latest/comparison.jsonl`:
 
@@ -112,7 +114,7 @@ saved:            79.79%
 
 The proposer is small (`crlp.rule_trace.v1` schema, scoring rule candidates with the same shared-scorer abstraction as gap actions). Its input feature set is structural-only: condition kind, moduli, reciprocal scales, residues, zero-residue indicators, gcd ratios, and derived candidate residue. It does not receive `train_rejects`, validation support, utility, or false-rejection counters as features; those counts are labels and verifier diagnostics. The neural target is budgeted train-set marginal utility, not raw support. The discipline of the result is in the verifier, not the model: a rule is accepted only if a deterministic algebraic check certifies soundness, so zero false rejections is a property of the certificate, not of training.
 
-Matched-budget proposer baselines now run in `make prime-rule-search-baselines`. At a 16-rule budget over the same split and certificate verifier:
+Matched-budget proposer baselines now run in `make prime-rule-search-baselines`. At a 16-rule budget over the same split and certificate verifier, the historical static proposer rows were:
 
 | Grammar | Rule ordering | Exact probes | Work saved |
 | --- | --- | ---: | ---: |
@@ -127,7 +129,7 @@ Matched-budget proposer baselines now run in `make prime-rule-search-baselines`.
 | Conditional gap | Structural heuristic | 3.20 | 55.57% |
 | Conditional gap | Validation-marginal oracle | 3.11 | 56.83% |
 
-**What this evidence does and does not show.** It shows that certificate-gated structural rule discovery is sound and useful on one task. It also shows the current neural proposer is not the reason this rule set works: at the fixed 16-rule budget, simple deterministic orderings beat it on both reported grammars, and the conditional gap grammar exposes a larger failure. The stronger neurosymbolic claim now has a concrete target: implement the same proposer-baseline grid for `grid_path` and `delayed_claim`, then learn a proposer that beats grammar-order and structural-heuristic baselines under the same grammar and budget.
+**What this evidence does and does not show.** It shows that certificate-gated structural rule discovery is sound and useful on one task. It also shows the static neural proposer was not the reason this rule set worked: at the fixed 16-rule budget, simple deterministic orderings beat it on both reported grammars, and the conditional gap grammar exposed a larger failure. The closed-loop proposer is the next test: it trains on greedy residual trajectories, encodes the accepted rule set, proposes one rule at a time, receives verifier feedback, and updates residual coverage before the next proposal. The stronger neurosymbolic claim remains concrete: beat grammar-order and structural-heuristic baselines under the same grammar and budget, then port the same loop to `grid_path` and `delayed_claim`.
 
 ### Axis 3 — Verifier RL must preserve calibration across tasks
 
@@ -221,9 +223,10 @@ The grid legality proposer accepts 3/5 certified rules under budget with 0 held-
 
 ## Limitations and Next Work
 
-- **Proposer learning is not solved.** The fixed-budget baseline now shows grammar order and a simple structural heuristic outperform the current neural proposer at a 16-rule budget on both unconditional candidate rules and conditional gap rules. Axis 2 should be read as a benchmark requirement, not as evidence that the neural proposer is essential. The next proposer experiment needs richer grammars across all three tasks where ordering is non-trivial and random/grammar/heuristic baselines are hard to beat.
+- **Proposer learning is not solved.** The fixed-budget baseline now shows grammar order and a simple structural heuristic outperform the current neural proposer at a 16-rule budget on both unconditional candidate rules and conditional gap rules. Axis 2 should be read as a benchmark requirement, not as evidence that the neural proposer is essential. The next proposer experiment needs richer grammars across the certified tasks where ordering is non-trivial and random/grammar/heuristic baselines are hard to beat.
 - **Cross-task verifier-RL comparison.** Axis 3 (strict-vs-regularized RL on the prime-gap task) needs a matching run on `grid_path` and `delayed_claim` before it can be stated as a general property of sparse-exact-reward policy gradient. The pipeline supports it; the comparison is not in the canonical results yet.
 - **Richer non-prime gate grammars.** `grid_path` now has a budgeted certified legality gate, but that gate is intentionally shallow. The next cross-domain test should learn admissible dead-end or distance-bound pruning rules that reduce BFS verifier work without becoming a hand-coded solver.
+- **ARC is only a smoke test.** The current `arc_agi` domain is one fixed ARC-AGI-1 task reduced to balanced output-cell color scoring. It does not parse the full dataset, induce transformations, or certify rules yet.
 - **Statistical rigor.** The default `make prime-gap-experiments` config currently runs 1 seed; the harness supports more (`PRIME_GAP_EXPERIMENT_SEEDS=...`). The minimal-vs-leakage, strict-vs-regularized, and hand-wheel-vs-learned-rule deltas should be reported with confidence intervals across >=5 seeds.
 - **Reliability diagrams.** The comparison schema stores `reliability_bins`; the README currently reports only ECE. Calibration claims would be stronger with a small reliability plot.
 - **Learned-rule calibration.** The learned rule program improves ranking sharply, but its ECE is worse than the raw minimal and hand-wheel rows in the default run. That calibration tradeoff deserves a focused reliability-diagram pass.
@@ -249,10 +252,38 @@ make prime-gap-eval
 make prime-rule-search
 make delayed-claim
 make grid-path
+make multitask-domain
+python3 scripts/multitask_ablation_matrix.py
 make results
 ```
 
 `prime-gap-trace` writes `build/float/prime_v1.nnckpt` and `build/float/traces/prime_gap.jsonl`. `prime-gap-replay` trains `build/float/prime_v2.nnckpt` from that trace. `prime-gap-eval` compares both checkpoints on the same frozen benchmark. `prime-rule-search` writes `build/float/prime_rules_v2.crlprule` and `build/float/traces/prime_rule_search.jsonl`. `make results` writes `results/latest/summary.md`, `results/latest/comparison.jsonl`, and `results/latest/commands.txt`; bulky logs stay under ignored `results/**/logs/`.
+
+Cross-task tuning uses a separate noisy workspace so canonical result snapshots stay stable:
+
+```sh
+make neurosymbolic-tune
+```
+
+This runs `scripts/neurosymbolic_tuning.py` over the prime rule-search grammars, grid legality rule search, delayed-claim replay, and grid replay under one profile. It writes raw task rows to `build/float/neurosymbolic_tuning/raw.jsonl`, a cross-task score table to `normalized.csv`, and a compact `summary.md`. Grid replay tuning defaults to `with-priors`, because that is the feature set currently supported by the trace/replay path. Use `scripts/neurosymbolic_tuning.py --profile full` for larger budgets and sample counts.
+
+The shared-model smoke test trains one action scorer across all configured domains in shuffled order:
+
+```sh
+make multitask-domain
+```
+
+`examples/multitask_domain.c` wraps prime-gap, grid-path, delayed-claim, and one ARC-AGI-1 sample into one fixed-width action-row envelope. The ARC sample is training task `0520fde7`, represented as a balanced cell-color action task: given a train/test input grid and an output-cell coordinate, choose the output color from actions `0..9`. ARC rows expose the flattened input grid, the output coordinate, and the candidate action, but not the direct overlap/intersection rule. This is a useful integration test for grid-to-grid symbolic tasks, not a full ARC solver claim.
+
+Use `--tasks prime,grid,claim,arc|all` for combination ablations and `--eval-tasks all` to evaluate held-out domains after training on a subset. A matched per-domain update comparison can scale `--steps-per-epoch` by the number of active domains, for example `--tasks prime --steps-per-epoch 3000`, `--tasks prime,grid --steps-per-epoch 6000`, and `--tasks all --steps-per-epoch 12000`. The remaining feature ablation is explicit: `--no-task-tags` removes the task one-hot fields. Prime residue flags were removed from this shared multitask envelope so the prime row no longer receives hand-coded modular predicates.
+
+For the repeatable multi-seed matrix:
+
+```sh
+python3 scripts/multitask_ablation_matrix.py
+```
+
+The default matrix enumerates all non-empty task combinations across three seeds, evaluating all domains every time. It writes `build/float/multitask_ablation_matrix/raw.jsonl`, `trained_summary.csv`, `heldout_summary.csv`, and `summary.md`. In the current harder 4-domain, 3-seed run without prime residue features, the all-domain tagged model averaged 11.77% prime top-1, 90.37% grid top-1, 95.50% claim top-1, and 26.13% ARC cell-color top-1. Removing task tags reached 14.07%, 90.00%, 95.97%, and 30.90%. The honest interpretation is now cleaner: the shared scorer trains across all domains, the prime task is weak without symbolic modular predicates, and the harder ARC row is intentionally no longer saturated.
 
 ## C Neural Network Library
 
@@ -363,7 +394,7 @@ The default `minimal` feature set intentionally omits precomputed residue divisi
 make prime-rule-search
 ```
 
-Runs the prime-gap rule-grammar instantiation of Axis 2. The default neural proposer scores unconditional candidate filters of the form `reject candidate n when n > m and n % m == r` over `m=3..255`; `make prime-rule-search-baselines` now reruns both that grammar and the conditional gap grammar with neural, random, grammar-order, structural-heuristic, and validation-oracle orderings at a fixed 16-rule budget. `make prime-rule-search-conditional` emits a trace/checkpoint for the broader conditional gap grammar. The neural proposer's feature set is structural-only and excludes support counts, utility, and false-rejection counters. It trains on a budgeted marginal-utility target computed from verifier labels; `--max-marginal-states` controls the sample cap for that target and defaults to 4096. The verifier accepts only rules with a deterministic algebraic certificate. The JSONL trace uses schema `crlp.rule_trace.v1` and records grammar version, selection strategy, proposer feature set, proposer target, rule text, model score, verifier result, deterministic-certificate flag, accepted flag, support counts, marginal utility, and false-rejection counts.
+Runs the prime-gap rule-grammar instantiation of Axis 2. The default neural proposer scores unconditional candidate filters of the form `reject candidate n when n > m and n % m == r` over `m=3..255`; `make prime-rule-search-baselines` now reruns both that grammar and the conditional gap grammar with neural, closed-loop, random, grammar-order, structural-heuristic, and validation-oracle orderings at a fixed 16-rule budget. `make prime-rule-search-conditional` emits a trace/checkpoint for the broader conditional gap grammar. The static neural proposer's feature set is structural-only and excludes support counts, utility, and false-rejection counters. It trains on a budgeted marginal-utility target computed from verifier labels; `--proposer closed-loop` instead trains on residual coverage trajectories and scores each next rule against the accepted set and current residual state. `--max-marginal-states` controls the sample cap for those targets and defaults to 4096. The verifier accepts only rules with a deterministic algebraic certificate. The JSONL trace uses schema `crlp.rule_trace.v1` and records grammar version, selection strategy, proposer feature set, proposer target, rule text, model score, verifier result, deterministic-certificate flag, accepted flag, support counts, marginal utility, and false-rejection counts.
 
 CLI output of `make prime-gap` is split into sections:
 
@@ -593,3 +624,23 @@ make grid-path-trace
 make grid-path-replay
 make grid-path-eval
 ```
+
+## Shared Multitask / ARC-AGI Sample
+
+`multitask_domain` is the current generalization smoke test for the core scorer API. It trains one scalar action scorer over a fixed 96-feature row envelope while shuffling samples from `prime_gap`, `grid_path`, `delayed_claim`, and `arc_agi`.
+
+```sh
+make multitask-domain
+python3 scripts/multitask_ablation_matrix.py
+```
+
+The ARC row is ARC-AGI-1 task `0520fde7`, reduced to output-cell color prediction over actions `0..9`. The model sees the flattened input grid, target output coordinate, candidate color, and optional task tag; it does not receive a direct overlap/intersection feature. The matrix script enumerates every non-empty task combination, evaluates all domains each time, and writes JSONL/CSV/Markdown summaries under `build/float/multitask_ablation_matrix/`.
+
+Current all-domain top-1 means over three seeds:
+
+| Variant | Prime | Grid | Claim | ARC |
+| --- | ---: | ---: | ---: | ---: |
+| Task tags | 11.77% | 90.37% | 95.50% | 26.13% |
+| No task tags | 14.07% | 90.00% | 95.97% | 30.90% |
+
+Prime residue features were removed from this shared envelope, so the weak prime row is expected. The useful signal is that one C scorer can train across all four action-row domains without task-specific code in the network itself.
