@@ -28,22 +28,27 @@ enum {
     ARC_MAX_GRID_WIDTH = 30,
     ARC_MAX_GRID_HEIGHT = 30,
     ARC_MAX_GRID_CELLS = ARC_MAX_GRID_WIDTH * ARC_MAX_GRID_HEIGHT,
+    ARC_MAX_SCENE_OBJECTS = 64,
+    ARC_MAX_SCENE_RELATION_PAIRS = ARC_MAX_SCENE_OBJECTS * (ARC_MAX_SCENE_OBJECTS - 1) / 2,
     ARC_MAX_PAIRS = 16,
     ARC_MAX_TASK_ID = 64,
     ARC_MAX_TASK_FILES = 4096,
     ARC_MAX_TASK_PATH = 1024,
     ARC_ACCEPTED_RULES_BYTES = 2048,
     ARC_TRANSFORM_NAME_BYTES = 128,
-    ARC_RULE_CANDIDATE_COUNT = 1536,
-    ARC_GRAMMAR_VERSION = 5,
+    ARC_RULE_CANDIDATE_COUNT = 2048,
+    ARC_GRAMMAR_VERSION = 6,
     ARC_LEARNED_COMPOSE_TOP = 16,
     ARC_LEARNED_COMPOSE_LIMIT = 256,
     ARC_PROGRAM_PROPOSER_BUDGET = 64,
     ARC_PROGRAM_BUDGET_GRID_COUNT = 4,
-    ARC_PROGRAM_TASK_FEATURE_COUNT = 24,
+    ARC_PROGRAM_TASK_FEATURE_COUNT = 32,
     ARC_PROGRAM_FEATURE_COUNT = NN_PROGRAM_FEATURE_COUNT + ARC_PROGRAM_TASK_FEATURE_COUNT,
     ARC_PROGRAM_TRAIN_EPOCHS = 5,
     ARC_PROGRAM_STRATEGY_COUNT = 5,
+    ARC_OBJECT_CONNECT_HORIZONTAL = 0,
+    ARC_OBJECT_CONNECT_VERTICAL = 1,
+    ARC_OBJECT_CONNECT_BOTH = 2,
 };
 
 static const size_t ARC_PROGRAM_BUDGET_GRID[ARC_PROGRAM_BUDGET_GRID_COUNT] = {
@@ -81,6 +86,8 @@ typedef enum {
     ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR = 24,
     ARC_RULE_OBJECT_MASK_LARGEST = 25,
     ARC_RULE_COMPOSED = 26,
+    ARC_RULE_OBJECT_TRANSLATE = 27,
+    ARC_RULE_OBJECT_CONNECT_ALIGNED = 28,
 } ARCTransformRule;
 
 /* ARC-AGI-1 training task 0520fde7, reduced to balanced output-cell color scoring. */
@@ -192,13 +199,14 @@ static const NNExperimentSpec ARC_AGI_EXPERIMENT_SPEC = {
     .rule_grammar =
         "copy_left, copy_right, mask_intersection, mask_union, object_select_overlap, "
         "color_map, same_grid_color_map, crop, rotate, flip, transpose, scale, bbox, translate, "
-        "connected_component_largest, learned_scale_composition",
+        "connected_component_largest, object_scene_translate, object_scene_connect_aligned, "
+        "learned_scale_composition",
     .certificate_checker =
         "train-pair consistency plus unique grammar-consistent test prediction, reported against compiled test output",
     .gate_executor = "certified transform gate emits exact color candidates when the grammar prediction is unique",
     .proposer_inputs =
         "typed NNProgram transform descriptors encoded by nn_program_encode_features, "
-        "plus ARC train-pair shape/color/object descriptors",
+        "plus ARC train-pair shape/color/object-scene relation descriptors",
     .proposer_targets =
         "train-split exact transform success for learned ranking; held-out exact-cell agreement remains diagnostic",
     .proposer_mode = NN_PROPOSER_SELECTION,
@@ -257,6 +265,29 @@ typedef struct {
     size_t max_y;
     uint8_t mask[ARC_MAX_GRID_CELLS];
 } ARCComponent;
+
+typedef struct {
+    size_t id;
+    uint8_t color;
+    size_t count;
+    size_t min_x;
+    size_t min_y;
+    size_t max_x;
+    size_t max_y;
+    double centroid_x;
+    double centroid_y;
+    uint64_t shape_hash;
+    uint8_t touches_border;
+} ARCObject;
+
+typedef struct {
+    uint8_t background_color;
+    size_t object_count;
+    size_t repeated_shape_pairs;
+    size_t aligned_pairs;
+    size_t adjacent_pairs;
+    ARCObject objects[ARC_MAX_SCENE_OBJECTS];
+} ARCScene;
 
 typedef struct {
     ARCTransformRule op;
@@ -388,9 +419,17 @@ typedef struct {
     double component_delta;
     double color_delta;
     double foreground_delta;
+    double input_object_count;
+    double output_object_count;
+    double input_repeated_shape_pairs;
+    double output_repeated_shape_pairs;
+    double input_aligned_pairs;
+    double output_aligned_pairs;
+    double input_adjacent_pairs;
+    double output_adjacent_pairs;
 } ARCProgramTaskFeatures;
 
-_Static_assert(ARC_PROGRAM_TASK_FEATURE_COUNT == 24,
+_Static_assert(ARC_PROGRAM_TASK_FEATURE_COUNT == 32,
                "ARC program task feature writer must match the feature count");
 
 typedef struct {
@@ -414,6 +453,11 @@ typedef struct {
     size_t test_cells;
     size_t test_correct_cells;
 } ARCLoaderSummary;
+
+static int arc_extract_scene(const ARCGrid *grid, uint8_t background, ARCScene *scene);
+static int arc_scene_unique_color_object(const ARCScene *scene,
+                                         uint8_t color,
+                                         ARCObject *object_out);
 
 static int parse_size_text(const char *text, size_t *out_value)
 {
@@ -579,6 +623,8 @@ static int arc_rule_can_end_composition(ARCTransformRule op)
     case ARC_RULE_OBJECT_CROP_LARGEST:
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
+    case ARC_RULE_OBJECT_TRANSLATE:
+    case ARC_RULE_OBJECT_CONNECT_ALIGNED:
         return 1;
     case ARC_RULE_COPY_LEFT:
     case ARC_RULE_COPY_RIGHT:
@@ -671,6 +717,200 @@ static int arc_build_observed_color_map_candidate(const ARCTask *task,
         }
     }
     return mapped_any;
+}
+
+static int arc_objects_same_shape(const ARCObject *lhs, const ARCObject *rhs)
+{
+    size_t lhs_width = lhs->max_x - lhs->min_x + 1u;
+    size_t lhs_height = lhs->max_y - lhs->min_y + 1u;
+    size_t rhs_width = rhs->max_x - rhs->min_x + 1u;
+    size_t rhs_height = rhs->max_y - rhs->min_y + 1u;
+    return lhs->count == rhs->count &&
+           lhs_width == rhs_width &&
+           lhs_height == rhs_height &&
+           lhs->shape_hash == rhs->shape_hash;
+}
+
+static int arc_build_object_translation_candidate(const ARCTask *task,
+                                                  uint8_t background,
+                                                  uint8_t color,
+                                                  ARCTransformCandidate *candidate)
+{
+    int have_offset = 0;
+    int dx = 0;
+    int dy = 0;
+    for (size_t pair = 0; pair < task->train_count; ++pair) {
+        if (!task->train[pair].has_output ||
+            !arc_grid_same_shape(&task->train[pair].input, &task->train[pair].output)) {
+            return 0;
+        }
+        ARCScene input_scene;
+        ARCScene output_scene;
+        ARCObject input_object;
+        ARCObject output_object;
+        if (!arc_extract_scene(&task->train[pair].input, background, &input_scene) ||
+            !arc_extract_scene(&task->train[pair].output, background, &output_scene) ||
+            !arc_scene_unique_color_object(&input_scene, color, &input_object) ||
+            !arc_scene_unique_color_object(&output_scene, color, &output_object) ||
+            !arc_objects_same_shape(&input_object, &output_object)) {
+            return 0;
+        }
+        int pair_dx = (int)output_object.min_x - (int)input_object.min_x;
+        int pair_dy = (int)output_object.min_y - (int)input_object.min_y;
+        if (pair_dx == 0 && pair_dy == 0) {
+            return 0;
+        }
+        if (!have_offset) {
+            dx = pair_dx;
+            dy = pair_dy;
+            have_offset = 1;
+        } else if (dx != pair_dx || dy != pair_dy) {
+            return 0;
+        }
+    }
+    if (!have_offset) {
+        return 0;
+    }
+
+    arc_init_candidate(candidate, ARC_RULE_OBJECT_TRANSLATE, "");
+    candidate->input_color = color;
+    candidate->output_color = color;
+    candidate->background_color = background;
+    candidate->dx = dx;
+    candidate->dy = dy;
+    snprintf(candidate->name,
+             sizeof(candidate->name),
+             "object_translate_color_%u_%+d_%+d",
+             (unsigned)color,
+             dx,
+             dy);
+    return 1;
+}
+
+static int arc_scene_has_aligned_color_pair(const ARCScene *scene, uint8_t color, int mode)
+{
+    for (size_t i = 0; i < scene->object_count; ++i) {
+        const ARCObject *lhs = &scene->objects[i];
+        if (lhs->color != color) {
+            continue;
+        }
+        for (size_t j = i + 1u; j < scene->object_count; ++j) {
+            const ARCObject *rhs = &scene->objects[j];
+            if (rhs->color != color) {
+                continue;
+            }
+            int horizontal = fabs(lhs->centroid_y - rhs->centroid_y) < 1e-9;
+            int vertical = fabs(lhs->centroid_x - rhs->centroid_x) < 1e-9;
+            if ((mode == ARC_OBJECT_CONNECT_HORIZONTAL && horizontal) ||
+                (mode == ARC_OBJECT_CONNECT_VERTICAL && vertical) ||
+                (mode == ARC_OBJECT_CONNECT_BOTH && (horizontal || vertical))) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static int arc_apply_object_connect_candidate(const ARCTransformCandidate *candidate,
+                                              const ARCGrid *input,
+                                              ARCGrid *output)
+{
+    ARCScene scene;
+    if (!arc_extract_scene(input, candidate->background_color, &scene) ||
+        !arc_scene_has_aligned_color_pair(&scene, candidate->input_color, candidate->dx)) {
+        return 0;
+    }
+
+    *output = *input;
+    if (candidate->dx == ARC_OBJECT_CONNECT_HORIZONTAL ||
+        candidate->dx == ARC_OBJECT_CONNECT_BOTH) {
+        for (size_t y = 0; y < input->height; ++y) {
+            int found = 0;
+            size_t min_x = input->width;
+            size_t max_x = 0;
+            for (size_t x = 0; x < input->width; ++x) {
+                if (input->cells[y * input->width + x] != candidate->input_color) {
+                    continue;
+                }
+                if (!found || x < min_x) {
+                    min_x = x;
+                }
+                if (!found || x > max_x) {
+                    max_x = x;
+                }
+                found = 1;
+            }
+            if (!found || min_x == max_x) {
+                continue;
+            }
+            for (size_t x = min_x; x <= max_x; ++x) {
+                output->cells[y * output->width + x] = candidate->output_color;
+            }
+        }
+    }
+    if (candidate->dx == ARC_OBJECT_CONNECT_VERTICAL ||
+        candidate->dx == ARC_OBJECT_CONNECT_BOTH) {
+        for (size_t x = 0; x < input->width; ++x) {
+            int found = 0;
+            size_t min_y = input->height;
+            size_t max_y = 0;
+            for (size_t y = 0; y < input->height; ++y) {
+                if (input->cells[y * input->width + x] != candidate->input_color) {
+                    continue;
+                }
+                if (!found || y < min_y) {
+                    min_y = y;
+                }
+                if (!found || y > max_y) {
+                    max_y = y;
+                }
+                found = 1;
+            }
+            if (!found || min_y == max_y) {
+                continue;
+            }
+            for (size_t y = min_y; y <= max_y; ++y) {
+                output->cells[y * output->width + x] = candidate->output_color;
+            }
+        }
+    }
+    return 1;
+}
+
+static int arc_build_object_connect_candidate(const ARCTask *task,
+                                              uint8_t background,
+                                              uint8_t color,
+                                              int mode,
+                                              ARCTransformCandidate *candidate)
+{
+    const char *mode_name = mode == ARC_OBJECT_CONNECT_HORIZONTAL
+                                ? "horizontal"
+                                : mode == ARC_OBJECT_CONNECT_VERTICAL ? "vertical" : "both";
+    arc_init_candidate(candidate, ARC_RULE_OBJECT_CONNECT_ALIGNED, "");
+    candidate->input_color = color;
+    candidate->output_color = color;
+    candidate->background_color = background;
+    candidate->dx = mode;
+    snprintf(candidate->name,
+             sizeof(candidate->name),
+             "object_connect_color_%u_%s",
+             (unsigned)color,
+             mode_name);
+
+    int changed_any = 0;
+    for (size_t pair = 0; pair < task->train_count; ++pair) {
+        ARCGrid produced;
+        if (!task->train[pair].has_output ||
+            !arc_grid_same_shape(&task->train[pair].input, &task->train[pair].output) ||
+            !arc_apply_object_connect_candidate(candidate,
+                                                &task->train[pair].input,
+                                                &produced) ||
+            !arc_grid_equal(&produced, &task->train[pair].output)) {
+            return 0;
+        }
+        changed_any = changed_any || !arc_grid_equal(&task->train[pair].input, &produced);
+    }
+    return changed_any;
 }
 
 static size_t arc_build_candidates(const ARCTask *task,
@@ -825,6 +1065,19 @@ static size_t arc_build_candidates(const ARCTask *task,
                      (unsigned)input_color,
                      (unsigned)output_color);
             arc_add_candidate(candidates, capacity, &count, &candidate);
+        }
+    }
+
+    for (uint8_t color = 1; color < ARC_COLOR_COUNT; ++color) {
+        if (arc_build_object_translation_candidate(task, 0, color, &candidate)) {
+            arc_add_candidate(candidates, capacity, &count, &candidate);
+        }
+        for (int mode = ARC_OBJECT_CONNECT_HORIZONTAL;
+             mode <= ARC_OBJECT_CONNECT_BOTH;
+             ++mode) {
+            if (arc_build_object_connect_candidate(task, 0, color, mode, &candidate)) {
+                arc_add_candidate(candidates, capacity, &count, &candidate);
+            }
         }
     }
 
@@ -1002,6 +1255,212 @@ static int arc_find_largest_component(const ARCGrid *grid,
     return component->count > 0;
 }
 
+static uint64_t arc_scene_hash_mix(uint64_t hash, uint64_t value)
+{
+    hash ^= value + UINT64_C(0x9e3779b97f4a7c15) + (hash << 6) + (hash >> 2);
+    return hash;
+}
+
+static uint64_t arc_shape_hash_from_mask(const ARCGrid *grid,
+                                         const uint8_t *mask,
+                                         size_t min_x,
+                                         size_t min_y,
+                                         size_t max_x,
+                                         size_t max_y,
+                                         size_t count)
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+    size_t width = max_x >= min_x ? max_x - min_x + 1u : 0u;
+    size_t height = max_y >= min_y ? max_y - min_y + 1u : 0u;
+    hash = arc_scene_hash_mix(hash, width);
+    hash = arc_scene_hash_mix(hash, height);
+    hash = arc_scene_hash_mix(hash, count);
+    for (size_t y = min_y; y <= max_y && y < grid->height; ++y) {
+        for (size_t x = min_x; x <= max_x && x < grid->width; ++x) {
+            size_t cell = y * grid->width + x;
+            hash = arc_scene_hash_mix(hash, mask[cell] ? 1u : 0u);
+        }
+    }
+    return hash;
+}
+
+static void arc_scene_clear(ARCScene *scene, uint8_t background)
+{
+    memset(scene, 0, sizeof(*scene));
+    scene->background_color = background;
+}
+
+static int arc_ranges_overlap(size_t lhs_min,
+                              size_t lhs_max,
+                              size_t rhs_min,
+                              size_t rhs_max)
+{
+    return lhs_min <= rhs_max && rhs_min <= lhs_max;
+}
+
+static int arc_objects_adjacent(const ARCObject *lhs, const ARCObject *rhs)
+{
+    int horizontal_touch =
+        (lhs->max_x + 1u == rhs->min_x || rhs->max_x + 1u == lhs->min_x) &&
+        arc_ranges_overlap(lhs->min_y, lhs->max_y, rhs->min_y, rhs->max_y);
+    int vertical_touch =
+        (lhs->max_y + 1u == rhs->min_y || rhs->max_y + 1u == lhs->min_y) &&
+        arc_ranges_overlap(lhs->min_x, lhs->max_x, rhs->min_x, rhs->max_x);
+    return horizontal_touch || vertical_touch;
+}
+
+static int arc_objects_aligned(const ARCObject *lhs, const ARCObject *rhs)
+{
+    return lhs->min_x == rhs->min_x ||
+           lhs->max_x == rhs->max_x ||
+           lhs->min_y == rhs->min_y ||
+           lhs->max_y == rhs->max_y ||
+           fabs(lhs->centroid_x - rhs->centroid_x) < 1e-9 ||
+           fabs(lhs->centroid_y - rhs->centroid_y) < 1e-9;
+}
+
+static void arc_scene_add_relation_evidence(ARCScene *scene)
+{
+    for (size_t i = 0; i < scene->object_count; ++i) {
+        for (size_t j = i + 1u; j < scene->object_count; ++j) {
+            const ARCObject *lhs = &scene->objects[i];
+            const ARCObject *rhs = &scene->objects[j];
+            if (lhs->count == rhs->count &&
+                lhs->shape_hash == rhs->shape_hash) {
+                ++scene->repeated_shape_pairs;
+            }
+            if (arc_objects_aligned(lhs, rhs)) {
+                ++scene->aligned_pairs;
+            }
+            if (arc_objects_adjacent(lhs, rhs)) {
+                ++scene->adjacent_pairs;
+            }
+        }
+    }
+}
+
+static int arc_extract_scene(const ARCGrid *grid, uint8_t background, ARCScene *scene)
+{
+    uint8_t visited[ARC_MAX_GRID_CELLS];
+    uint8_t current_mask[ARC_MAX_GRID_CELLS];
+    size_t queue[ARC_MAX_GRID_CELLS];
+    memset(visited, 0, sizeof(visited));
+    arc_scene_clear(scene, background);
+
+    size_t cells = arc_grid_cells(grid);
+    for (size_t start = 0; start < cells; ++start) {
+        uint8_t color = grid->cells[start];
+        if (visited[start] || color == background) {
+            continue;
+        }
+        if (scene->object_count >= ARC_MAX_SCENE_OBJECTS) {
+            return 0;
+        }
+
+        memset(current_mask, 0, sizeof(current_mask));
+        size_t head = 0;
+        size_t tail = 0;
+        size_t count = 0;
+        size_t min_x = grid->width;
+        size_t min_y = grid->height;
+        size_t max_x = 0;
+        size_t max_y = 0;
+        double sum_x = 0.0;
+        double sum_y = 0.0;
+
+        visited[start] = 1;
+        queue[tail++] = start;
+        while (head < tail) {
+            size_t cell = queue[head++];
+            size_t x = cell % grid->width;
+            size_t y = cell / grid->width;
+            current_mask[cell] = 1;
+            ++count;
+            sum_x += (double)x;
+            sum_y += (double)y;
+            if (x < min_x) {
+                min_x = x;
+            }
+            if (y < min_y) {
+                min_y = y;
+            }
+            if (x > max_x) {
+                max_x = x;
+            }
+            if (y > max_y) {
+                max_y = y;
+            }
+
+            const int offsets[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+            for (size_t i = 0; i < sizeof(offsets) / sizeof(offsets[0]); ++i) {
+                int nx = (int)x + offsets[i][0];
+                int ny = (int)y + offsets[i][1];
+                if (nx < 0 || ny < 0 ||
+                    nx >= (int)grid->width || ny >= (int)grid->height) {
+                    continue;
+                }
+                size_t next = (size_t)ny * grid->width + (size_t)nx;
+                if (visited[next] || grid->cells[next] != color) {
+                    continue;
+                }
+                visited[next] = 1;
+                queue[tail++] = next;
+            }
+        }
+
+        ARCObject *object = &scene->objects[scene->object_count];
+        object->id = scene->object_count;
+        object->color = color;
+        object->count = count;
+        object->min_x = min_x;
+        object->min_y = min_y;
+        object->max_x = max_x;
+        object->max_y = max_y;
+        object->centroid_x = count == 0 ? 0.0 : sum_x / (double)count;
+        object->centroid_y = count == 0 ? 0.0 : sum_y / (double)count;
+        object->shape_hash = arc_shape_hash_from_mask(grid,
+                                                       current_mask,
+                                                       min_x,
+                                                       min_y,
+                                                       max_x,
+                                                       max_y,
+                                                       count);
+        object->touches_border = min_x == 0 || min_y == 0 ||
+                                 max_x + 1u == grid->width ||
+                                 max_y + 1u == grid->height;
+        ++scene->object_count;
+    }
+
+    arc_scene_add_relation_evidence(scene);
+    return 1;
+}
+
+static int arc_scene_unique_color_object(const ARCScene *scene,
+                                         uint8_t color,
+                                         ARCObject *object_out)
+{
+    int found = 0;
+    ARCObject object;
+    memset(&object, 0, sizeof(object));
+    for (size_t i = 0; i < scene->object_count; ++i) {
+        if (scene->objects[i].color != color) {
+            continue;
+        }
+        if (found) {
+            return 0;
+        }
+        object = scene->objects[i];
+        found = 1;
+    }
+    if (!found) {
+        return 0;
+    }
+    if (object_out != NULL) {
+        *object_out = object;
+    }
+    return 1;
+}
+
 static size_t arc_count_components(const ARCGrid *grid, uint8_t background)
 {
     uint8_t visited[ARC_MAX_GRID_CELLS];
@@ -1106,6 +1565,10 @@ static void arc_program_task_features_add_grid_pair(ARCProgramTaskFeatures *feat
     double in_bbox_height = in_bbox ? (double)(in_max_y - in_min_y + 1u) : 0.0;
     double out_bbox_width = out_bbox ? (double)(out_max_x - out_min_x + 1u) : 0.0;
     double out_bbox_height = out_bbox ? (double)(out_max_y - out_min_y + 1u) : 0.0;
+    ARCScene input_scene;
+    ARCScene output_scene;
+    int have_input_scene = arc_extract_scene(input, 0, &input_scene);
+    int have_output_scene = arc_extract_scene(output, 0, &output_scene);
 
     features->input_width += (double)input->width / (double)ARC_MAX_GRID_WIDTH;
     features->input_height += (double)input->height / (double)ARC_MAX_GRID_HEIGHT;
@@ -1143,6 +1606,26 @@ static void arc_program_task_features_add_grid_pair(ARCProgramTaskFeatures *feat
     features->foreground_delta +=
         arc_safe_ratio((double)arc_count_non_background(output, 0), output_cells) -
         arc_safe_ratio((double)arc_count_non_background(input, 0), input_cells);
+    if (have_input_scene) {
+        features->input_object_count +=
+            (double)input_scene.object_count / (double)ARC_MAX_SCENE_OBJECTS;
+        features->input_repeated_shape_pairs +=
+            (double)input_scene.repeated_shape_pairs / (double)ARC_MAX_SCENE_RELATION_PAIRS;
+        features->input_aligned_pairs +=
+            (double)input_scene.aligned_pairs / (double)ARC_MAX_SCENE_RELATION_PAIRS;
+        features->input_adjacent_pairs +=
+            (double)input_scene.adjacent_pairs / (double)ARC_MAX_SCENE_RELATION_PAIRS;
+    }
+    if (have_output_scene) {
+        features->output_object_count +=
+            (double)output_scene.object_count / (double)ARC_MAX_SCENE_OBJECTS;
+        features->output_repeated_shape_pairs +=
+            (double)output_scene.repeated_shape_pairs / (double)ARC_MAX_SCENE_RELATION_PAIRS;
+        features->output_aligned_pairs +=
+            (double)output_scene.aligned_pairs / (double)ARC_MAX_SCENE_RELATION_PAIRS;
+        features->output_adjacent_pairs +=
+            (double)output_scene.adjacent_pairs / (double)ARC_MAX_SCENE_RELATION_PAIRS;
+    }
 }
 
 static void arc_program_task_features_normalize(ARCProgramTaskFeatures *features, double count)
@@ -1176,6 +1659,14 @@ static void arc_program_task_features_normalize(ARCProgramTaskFeatures *features
     ARC_NORMALIZE_TASK_FEATURE(component_delta);
     ARC_NORMALIZE_TASK_FEATURE(color_delta);
     ARC_NORMALIZE_TASK_FEATURE(foreground_delta);
+    ARC_NORMALIZE_TASK_FEATURE(input_object_count);
+    ARC_NORMALIZE_TASK_FEATURE(output_object_count);
+    ARC_NORMALIZE_TASK_FEATURE(input_repeated_shape_pairs);
+    ARC_NORMALIZE_TASK_FEATURE(output_repeated_shape_pairs);
+    ARC_NORMALIZE_TASK_FEATURE(input_aligned_pairs);
+    ARC_NORMALIZE_TASK_FEATURE(output_aligned_pairs);
+    ARC_NORMALIZE_TASK_FEATURE(input_adjacent_pairs);
+    ARC_NORMALIZE_TASK_FEATURE(output_adjacent_pairs);
 #undef ARC_NORMALIZE_TASK_FEATURE
 }
 
@@ -1217,6 +1708,14 @@ static void arc_program_task_features_write(const ARCProgramTaskFeatures *featur
     out[21] = (nn_real)features->component_delta;
     out[22] = (nn_real)features->color_delta;
     out[23] = (nn_real)features->foreground_delta;
+    out[24] = (nn_real)features->input_object_count;
+    out[25] = (nn_real)features->output_object_count;
+    out[26] = (nn_real)features->input_repeated_shape_pairs;
+    out[27] = (nn_real)features->output_repeated_shape_pairs;
+    out[28] = (nn_real)features->input_aligned_pairs;
+    out[29] = (nn_real)features->output_aligned_pairs;
+    out[30] = (nn_real)features->input_adjacent_pairs;
+    out[31] = (nn_real)features->output_adjacent_pairs;
 }
 
 static int arc_apply_largest_component_candidate(const ARCTransformCandidate *candidate,
@@ -1370,6 +1869,40 @@ static int arc_apply_crop_color(const ARCTransformCandidate *candidate,
     return 1;
 }
 
+static int arc_apply_object_translate_candidate(const ARCTransformCandidate *candidate,
+                                                const ARCGrid *input,
+                                                ARCGrid *output)
+{
+    ARCScene scene;
+    ARCObject object;
+    if (!arc_extract_scene(input, candidate->background_color, &scene) ||
+        !arc_scene_unique_color_object(&scene, candidate->input_color, &object)) {
+        return 0;
+    }
+
+    arc_init_grid(output, input->width, input->height);
+    for (size_t cell = 0; cell < arc_grid_cells(output); ++cell) {
+        output->cells[cell] = candidate->background_color;
+    }
+    for (size_t y = object.min_y; y <= object.max_y; ++y) {
+        for (size_t x = object.min_x; x <= object.max_x; ++x) {
+            size_t cell = y * input->width + x;
+            if (input->cells[cell] != candidate->input_color) {
+                continue;
+            }
+            int out_x = (int)x + candidate->dx;
+            int out_y = (int)y + candidate->dy;
+            if (out_x < 0 || out_y < 0 ||
+                out_x >= (int)input->width || out_y >= (int)input->height) {
+                return 0;
+            }
+            output->cells[(size_t)out_y * output->width + (size_t)out_x] =
+                candidate->output_color;
+        }
+    }
+    return 1;
+}
+
 static int arc_apply_candidate(const ARCTransformCandidate *candidate,
                                const ARCGrid *input,
                                ARCGrid *output)
@@ -1420,6 +1953,10 @@ static int arc_apply_candidate(const ARCTransformCandidate *candidate,
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
         return arc_apply_largest_component_candidate(candidate, input, output);
+    case ARC_RULE_OBJECT_TRANSLATE:
+        return arc_apply_object_translate_candidate(candidate, input, output);
+    case ARC_RULE_OBJECT_CONNECT_ALIGNED:
+        return arc_apply_object_connect_candidate(candidate, input, output);
     case ARC_RULE_ROTATE90:
         if (input->height > ARC_MAX_GRID_WIDTH || input->width > ARC_MAX_GRID_HEIGHT) {
             return 0;
@@ -1671,7 +2208,9 @@ static int arc_candidate_is_object_program(const ARCTransformCandidate *candidat
     }
     return candidate->op == ARC_RULE_OBJECT_CROP_LARGEST ||
            candidate->op == ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR ||
-           candidate->op == ARC_RULE_OBJECT_MASK_LARGEST;
+           candidate->op == ARC_RULE_OBJECT_MASK_LARGEST ||
+           candidate->op == ARC_RULE_OBJECT_TRANSLATE ||
+           candidate->op == ARC_RULE_OBJECT_CONNECT_ALIGNED;
 }
 
 static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
@@ -1698,6 +2237,10 @@ static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
         return 5;
+    case ARC_RULE_OBJECT_TRANSLATE:
+        return 12;
+    case ARC_RULE_OBJECT_CONNECT_ALIGNED:
+        return 13;
     case ARC_RULE_COPY_LEFT:
     case ARC_RULE_COPY_RIGHT:
     case ARC_RULE_INTERSECTION:
@@ -1748,6 +2291,10 @@ static double arc_structural_program_score(const ARCTransformCandidate *candidat
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
         return 96.0;
+    case ARC_RULE_OBJECT_TRANSLATE:
+        return 98.0 - (double)(abs(candidate->dx) + abs(candidate->dy));
+    case ARC_RULE_OBJECT_CONNECT_ALIGNED:
+        return 99.0 - (double)candidate->dx;
     case ARC_RULE_CROP_BACKGROUND_RECOLOR:
     case ARC_RULE_CROP_COLOR_MASK:
         return 84.0;
@@ -1801,6 +2348,99 @@ static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
                              "second_family",
                              (double)arc_candidate_family(&second_candidate),
                              (int64_t)arc_candidate_family(&second_candidate));
+    } else if (candidate->op == ARC_RULE_OBJECT_TRANSLATE) {
+        NNProgram scene;
+        NNProgram selector;
+        NNProgram mover;
+        NNProgram renderer;
+        NNProgram selected;
+        NNProgram moved;
+        nn_program_init(&scene,
+                        "arc_agi",
+                        "object_scene",
+                        NN_PROGRAM_KIND_TRANSFORM,
+                        NN_PROGRAM_VALUE_GRID,
+                        NN_PROGRAM_VALUE_OBJECT_SET,
+                        110);
+        nn_program_add_param(&scene,
+                             "background",
+                             (double)candidate->background_color,
+                             candidate->background_color);
+        nn_program_init(&selector,
+                        "arc_agi",
+                        "select_unique_color_object",
+                        NN_PROGRAM_KIND_SELECTOR,
+                        NN_PROGRAM_VALUE_OBJECT_SET,
+                        NN_PROGRAM_VALUE_OBJECT,
+                        111);
+        nn_program_add_param(&selector,
+                             "color",
+                             (double)candidate->input_color,
+                             candidate->input_color);
+        nn_program_init(&mover,
+                        "arc_agi",
+                        "translate_object",
+                        NN_PROGRAM_KIND_TRANSFORM,
+                        NN_PROGRAM_VALUE_OBJECT,
+                        NN_PROGRAM_VALUE_OBJECT,
+                        112);
+        nn_program_add_param(&mover, "dx", (double)candidate->dx, candidate->dx);
+        nn_program_add_param(&mover, "dy", (double)candidate->dy, candidate->dy);
+        nn_program_init(&renderer,
+                        "arc_agi",
+                        "render_object_grid",
+                        NN_PROGRAM_KIND_TRANSFORM,
+                        NN_PROGRAM_VALUE_OBJECT,
+                        NN_PROGRAM_VALUE_GRID,
+                        113);
+        nn_program_add_param(&renderer,
+                             "background",
+                             (double)candidate->background_color,
+                             candidate->background_color);
+        nn_program_add_param(&renderer,
+                             "output_color",
+                             (double)candidate->output_color,
+                             candidate->output_color);
+        if (!nn_program_compose(&selected,
+                                &scene,
+                                &selector,
+                                "object_scene_then_select_color") ||
+            !nn_program_compose(&moved,
+                                &selected,
+                                &mover,
+                                "object_scene_select_then_translate") ||
+            !nn_program_compose(program, &moved, &renderer, candidate->name)) {
+            return 0;
+        }
+    } else if (candidate->op == ARC_RULE_OBJECT_CONNECT_ALIGNED) {
+        NNProgram scene;
+        NNProgram connector;
+        nn_program_init(&scene,
+                        "arc_agi",
+                        "object_scene",
+                        NN_PROGRAM_KIND_TRANSFORM,
+                        NN_PROGRAM_VALUE_GRID,
+                        NN_PROGRAM_VALUE_OBJECT_SET,
+                        110);
+        nn_program_add_param(&scene,
+                             "background",
+                             (double)candidate->background_color,
+                             candidate->background_color);
+        nn_program_init(&connector,
+                        "arc_agi",
+                        "connect_aligned_color_objects",
+                        NN_PROGRAM_KIND_TRANSFORM,
+                        NN_PROGRAM_VALUE_OBJECT_SET,
+                        NN_PROGRAM_VALUE_GRID,
+                        114);
+        nn_program_add_param(&connector,
+                             "color",
+                             (double)candidate->input_color,
+                             candidate->input_color);
+        nn_program_add_param(&connector, "mode", (double)candidate->dx, candidate->dx);
+        if (!nn_program_compose(program, &scene, &connector, candidate->name)) {
+            return 0;
+        }
     } else if (arc_candidate_is_object_program(candidate)) {
         NNProgram components;
         NNProgram largest;
@@ -3693,9 +4333,9 @@ static int run_arc_task_loader(const ARCConfig *config)
             if (transform.certified) {
                 ARCMetrics transform_metrics = arc_transform_to_metrics(&task, &transform);
                 print_arc_metrics_json(task.id,
-                                       "symbolic-transform-v5",
+                                       "symbolic-transform-v6",
                                        "certified_transform_gate",
-                                       "arc-transform-gate-v5",
+                                       "arc-transform-gate-v6",
                                        &transform_metrics);
             }
         }
@@ -3848,11 +4488,11 @@ int main(int argc, char **argv)
     print_arc_transform_json("0520fde7", &transform);
     ARCMetrics transform_metrics = arc_transform_to_metrics(&builtin_task, &transform);
     print_arc_metrics_json("0520fde7",
-                           "symbolic-transform-v5",
+                           "symbolic-transform-v6",
                            "certified_transform_gate",
-                           "arc-transform-gate-v5",
+                           "arc-transform-gate-v6",
                            &transform_metrics);
-    print_arc_metrics_line("symbolic-transform-v5",
+    print_arc_metrics_line("symbolic-transform-v6",
                            "certified_transform_gate",
                            &transform_metrics);
     arc_emit_builtin_program_summaries(&builtin_task, &config);

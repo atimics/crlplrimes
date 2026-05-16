@@ -15,17 +15,19 @@ git clone --depth 1 https://github.com/fchollet/ARC-AGI.git /private/tmp/ARC-AGI
 
 | Split | Files | Loaded | Parse errors | Train pairs | Test pairs | Max rules | Unique predictions | Test exact | Certified | Unsupported | Correct cells | Test cells | Cell accuracy |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| training | 400 | 400 | 0 | 1302 | 416 | 794 | 21 | 20 | 20 | 47 | 581 | 56672 | 1.0252% |
-| evaluation | 400 | 400 | 0 | 1363 | 419 | 796 | 4 | 4 | 4 | 44 | 187 | 98515 | 0.1898% |
+| training | 400 | 400 | 0 | 1302 | 416 | 794 | 22 | 21 | 21 | 47 | 681 | 56672 | 1.2017% |
+| evaluation | 400 | 400 | 0 | 1363 | 419 | 793 | 4 | 4 | 4 | 44 | 187 | 98515 | 0.1898% |
 
 ## Program-Proposer Summary
 
-Grammar v5 maps ARC transforms into `NNProgram` rows, adds a connected-component
-largest-object primitive, and lets a trained proposer append verifier-checked
-two-step scale compositions from its top primitive candidates. The learned
-proposer uses the shared `nn_program_encode_features()` program encoder plus ARC
-shape/color/object descriptors. The evaluation rows below pretrain that proposer
-on the public training split before scoring the public evaluation split.
+Grammar v6 maps ARC transforms into `NNProgram` rows, adds deterministic
+object-scene evidence, includes connected-component largest-object and
+aligned-object connection primitives, and lets a trained proposer append
+verifier-checked two-step scale compositions from its top primitive candidates.
+The learned proposer uses the shared `nn_program_encode_features()` program
+encoder plus ARC shape/color/object-relation descriptors. The evaluation rows
+below pretrain that proposer on the public training split before scoring the
+public evaluation split.
 
 | Split | Strategy | Budget | Proposed | Certified programs | Accepted programs | Covered cells | Event cells | Utility |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -33,22 +35,22 @@ on the public training split before scoring the public evaluation split.
 | training | structural heuristic | 8 | 3200 | 13 | 13 | 228 | 56672 | 0.4023% |
 | training | random | 8 | 3200 | 0 | 0 | 0 | 56672 | 0.0000% |
 | training | learned program scorer | 8 | 3200 | 14 | 14 | 328 | 56672 | 0.5788% |
-| training | oracle | 8 | 3200 | 33 | 33 | 581 | 56672 | 1.0252% |
+| training | oracle | 8 | 3200 | 36 | 36 | 681 | 56672 | 1.2017% |
 | training | grammar-order | 16 | 6400 | 0 | 0 | 0 | 56672 | 0.0000% |
 | training | structural heuristic | 16 | 6400 | 13 | 13 | 228 | 56672 | 0.4023% |
 | training | random | 16 | 6400 | 0 | 0 | 0 | 56672 | 0.0000% |
 | training | learned program scorer | 16 | 6400 | 15 | 15 | 409 | 56672 | 0.7217% |
-| training | oracle | 16 | 6400 | 34 | 34 | 581 | 56672 | 1.0252% |
+| training | oracle | 16 | 6400 | 37 | 37 | 681 | 56672 | 1.2017% |
 | training | grammar-order | 32 | 12800 | 1 | 1 | 9 | 56672 | 0.0159% |
 | training | structural heuristic | 32 | 12800 | 14 | 14 | 228 | 56672 | 0.4023% |
 | training | random | 32 | 12800 | 1 | 1 | 100 | 56672 | 0.1765% |
 | training | learned program scorer | 32 | 12800 | 16 | 16 | 409 | 56672 | 0.7217% |
-| training | oracle | 32 | 12800 | 34 | 34 | 581 | 56672 | 1.0252% |
+| training | oracle | 32 | 12800 | 37 | 37 | 681 | 56672 | 1.2017% |
 | training | grammar-order | 64 | 25600 | 17 | 17 | 433 | 56672 | 0.7640% |
 | training | structural heuristic | 64 | 25600 | 16 | 16 | 409 | 56672 | 0.7217% |
 | training | random | 64 | 25600 | 1 | 1 | 100 | 56672 | 0.1765% |
 | training | learned program scorer | 64 | 25600 | 17 | 17 | 433 | 56672 | 0.7640% |
-| training | oracle | 64 | 25600 | 34 | 34 | 581 | 56672 | 1.0252% |
+| training | oracle | 64 | 25600 | 37 | 37 | 681 | 56672 | 1.2017% |
 | evaluation | grammar-order | 8 | 3200 | 0 | 0 | 0 | 98515 | 0.0000% |
 | evaluation | structural heuristic | 8 | 3200 | 0 | 0 | 0 | 98515 | 0.0000% |
 | evaluation | random | 8 | 3200 | 0 | 0 | 0 | 98515 | 0.0000% |
@@ -81,32 +83,37 @@ on the public training split before scoring the public evaluation split.
 | training | `25ff71a9` | 718 | 1 | 2 | 18/18 | `translate_nonzero_+0_+1` |
 | training | `3c9b0459` | 740 | 1 | 1 | 9/9 | `rotate180` |
 | training | `6150a2bd` | 740 | 1 | 1 | 9/9 | `rotate180` |
-| training | `67a3c6ac` | 743 | 1 | 1 | 9/9 | `flip_horizontal` |
+| training | `67a3c6ac` | 731 | 1 | 1 | 9/9 | `flip_horizontal` |
 | training | `68b16354` | 759 | 1 | 1 | 49/49 | `flip_vertical` |
-| training | `6f8cd79b` | 743 | 9 | 1 | 42/42 | `bbox_outline_*_to_8` |
+| training | `6f8cd79b` | 731 | 9 | 1 | 42/42 | `bbox_outline_*_to_8` |
 | training | `74dd1130` | 740 | 1 | 1 | 9/9 | `transpose` |
 | training | `9172f3a0` | 762 | 1 | 1 | 81/81 | `scale_3x` |
 | training | `9dfd6313` | 757 | 1 | 1 | 36/36 | `transpose` |
-| training | `b1948b0a` | 762 | 1 | 1 | 16/16 | `grid_color_map_same_shape` |
-| training | `be94b721` | 730 | 1 | 1 | 12/12 | `object_crop_largest_non_background_0` |
-| training | `c59eb873` | 769 | 3 | 1 | 100/100 | `scale_2x`, `compose_scale_2x_then_crop_non_background_0`, `compose_crop_non_background_0_then_scale_2x` |
-| training | `c8f0f002` | 774 | 1 | 1 | 15/15 | `grid_color_map_same_shape` |
+| training | `b1948b0a` | 768 | 1 | 1 | 16/16 | `grid_color_map_same_shape` |
+| training | `be94b721` | 733 | 1 | 1 | 12/12 | `object_crop_largest_non_background_0` |
+| training | `c59eb873` | 775 | 5 | 1 | 100/100 | `scale_2x`, `compose_scale_2x_then_crop_non_background_0`, `compose_scale_2x_then_crop_non_background_2`, `compose_crop_non_background_0_then_scale_2x`, `compose_crop_non_background_2_then_scale_2x` |
+| training | `c8f0f002` | 780 | 1 | 1 | 15/15 | `grid_color_map_same_shape` |
 | training | `d511f180` | 794 | 1 | 1 | 16/16 | `grid_color_map_same_shape` |
-| training | `ed36ccf7` | 793 | 1 | 1 | 9/9 | `rotate270` |
-| training | `f25fbde4` | 767 | 2 | 1 | 60/60 | `compose_scale_2x_then_crop_non_background_0`, `compose_crop_non_background_0_then_scale_2x` |
-| evaluation | `195ba7dc` | 747 | 1 | 1 | 30/30 | `mask_union_color_1` |
-| evaluation | `5d2a5c43` | 767 | 1 | 2 | 48/48 | `mask_union_color_8` |
+| training | `ded97339` | 759 | 1 | 1 | 100/100 | `object_connect_color_8_both` |
+| training | `ed36ccf7` | 790 | 1 | 1 | 9/9 | `rotate270` |
+| training | `f25fbde4` | 763 | 2 | 1 | 60/60 | `compose_scale_2x_then_crop_non_background_0`, `compose_crop_non_background_0_then_scale_2x` |
+| evaluation | `195ba7dc` | 748 | 1 | 1 | 30/30 | `mask_union_color_1` |
+| evaluation | `5d2a5c43` | 766 | 1 | 2 | 48/48 | `mask_union_color_8` |
 | evaluation | `60c09cac` | 781 | 7 | 1 | 100/100 | `scale_2x`, `compose_scale_2x_then_crop_non_background_{1,2,3}`, `compose_crop_non_background_{1,2,3}_then_scale_2x` |
-| evaluation | `e133d23d` | 788 | 1 | 1 | 9/9 | `mask_union_color_2` |
+| evaluation | `e133d23d` | 785 | 1 | 1 | 9/9 | `mask_union_color_2` |
 
 Interpretation: the loader and certificate path work across many ARC-format
 tasks, but this grammar is intentionally narrow. It only certifies tasks that
 fit the current hand-coded split-panel, recolor, crop, geometry, bbox,
-small-translation, largest connected-component, and learned scale-composition
-families. The object primitive adds two training certifications (`1f85a75f`,
-`be94b721`) and one redundant certificate on `1cf80156`; learned scale
-composition adds the training-only `f25fbde4` certificate. The public evaluation
-split remains at four exact certifications. The learned proposer is still a real
+small-translation, largest connected-component, aligned-object connection, and
+learned scale-composition families. The largest-object primitive adds two
+training certifications (`1f85a75f`, `be94b721`) and one redundant certificate
+on `1cf80156`; learned scale composition adds the training-only `f25fbde4`
+certificate; object-scene connection adds the training-only `ded97339`
+certificate by filling aligned same-color object relations. The object
+translation primitive is present as a scene-induced program family, but it did
+not add a direct public certificate in this pass. The public evaluation split
+remains at four exact certifications. The learned proposer is still a real
 neural scorer over program/task descriptors: it improves tight-budget ranking on
 both splits, but by budget 64 it only recovers the same four evaluation
 certifications as grammar/structural order because the exact-solver ceiling is
