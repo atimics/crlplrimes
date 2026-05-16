@@ -37,7 +37,7 @@ enum {
     ARC_ACCEPTED_RULES_BYTES = 2048,
     ARC_TRANSFORM_NAME_BYTES = 128,
     ARC_RULE_CANDIDATE_COUNT = 2048,
-    ARC_GRAMMAR_VERSION = 6,
+    ARC_GRAMMAR_VERSION = 7,
     ARC_LEARNED_COMPOSE_TOP = 16,
     ARC_LEARNED_COMPOSE_LIMIT = 256,
     ARC_PROGRAM_PROPOSER_BUDGET = 64,
@@ -88,6 +88,7 @@ typedef enum {
     ARC_RULE_COMPOSED = 26,
     ARC_RULE_OBJECT_TRANSLATE = 27,
     ARC_RULE_OBJECT_CONNECT_ALIGNED = 28,
+    ARC_RULE_OBJECT_FILL_ENCLOSED = 29,
 } ARCTransformRule;
 
 /* ARC-AGI-1 training task 0520fde7, reduced to balanced output-cell color scoring. */
@@ -200,7 +201,7 @@ static const NNExperimentSpec ARC_AGI_EXPERIMENT_SPEC = {
         "copy_left, copy_right, mask_intersection, mask_union, object_select_overlap, "
         "color_map, same_grid_color_map, crop, rotate, flip, transpose, scale, bbox, translate, "
         "connected_component_largest, object_scene_translate, object_scene_connect_aligned, "
-        "learned_scale_composition",
+        "object_scene_fill_enclosed, learned_scale_composition",
     .certificate_checker =
         "train-pair consistency plus unique grammar-consistent test prediction, reported against compiled test output",
     .gate_executor = "certified transform gate emits exact color candidates when the grammar prediction is unique",
@@ -625,6 +626,7 @@ static int arc_rule_can_end_composition(ARCTransformRule op)
     case ARC_RULE_OBJECT_MASK_LARGEST:
     case ARC_RULE_OBJECT_TRANSLATE:
     case ARC_RULE_OBJECT_CONNECT_ALIGNED:
+    case ARC_RULE_OBJECT_FILL_ENCLOSED:
         return 1;
     case ARC_RULE_COPY_LEFT:
     case ARC_RULE_COPY_RIGHT:
@@ -913,6 +915,108 @@ static int arc_build_object_connect_candidate(const ARCTask *task,
     return changed_any;
 }
 
+static int arc_apply_object_fill_enclosed_candidate(const ARCTransformCandidate *candidate,
+                                                    const ARCGrid *input,
+                                                    ARCGrid *output)
+{
+    uint8_t reachable[ARC_MAX_GRID_CELLS];
+    size_t queue[ARC_MAX_GRID_CELLS];
+    if (input->width == 0 || input->height == 0) {
+        return 0;
+    }
+    memset(reachable, 0, sizeof(reachable));
+    *output = *input;
+
+    size_t head = 0;
+    size_t tail = 0;
+    for (size_t x = 0; x < input->width; ++x) {
+        size_t top = x;
+        size_t bottom = (input->height - 1u) * input->width + x;
+        if (input->cells[top] != candidate->input_color && !reachable[top]) {
+            reachable[top] = 1;
+            queue[tail++] = top;
+        }
+        if (input->cells[bottom] != candidate->input_color && !reachable[bottom]) {
+            reachable[bottom] = 1;
+            queue[tail++] = bottom;
+        }
+    }
+    for (size_t y = 0; y < input->height; ++y) {
+        size_t left = y * input->width;
+        size_t right = y * input->width + input->width - 1u;
+        if (input->cells[left] != candidate->input_color && !reachable[left]) {
+            reachable[left] = 1;
+            queue[tail++] = left;
+        }
+        if (input->cells[right] != candidate->input_color && !reachable[right]) {
+            reachable[right] = 1;
+            queue[tail++] = right;
+        }
+    }
+
+    while (head < tail) {
+        size_t cell = queue[head++];
+        size_t x = cell % input->width;
+        size_t y = cell / input->width;
+        const int offsets[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        for (size_t i = 0; i < sizeof(offsets) / sizeof(offsets[0]); ++i) {
+            int nx = (int)x + offsets[i][0];
+            int ny = (int)y + offsets[i][1];
+            if (nx < 0 || ny < 0 ||
+                nx >= (int)input->width || ny >= (int)input->height) {
+                continue;
+            }
+            size_t next = (size_t)ny * input->width + (size_t)nx;
+            if (reachable[next] || input->cells[next] == candidate->input_color) {
+                continue;
+            }
+            reachable[next] = 1;
+            queue[tail++] = next;
+        }
+    }
+
+    int changed = 0;
+    for (size_t cell = 0; cell < arc_grid_cells(input); ++cell) {
+        if (input->cells[cell] == candidate->input_color || reachable[cell]) {
+            continue;
+        }
+        output->cells[cell] = candidate->output_color;
+        changed = 1;
+    }
+    return changed;
+}
+
+static int arc_build_object_fill_enclosed_candidate(const ARCTask *task,
+                                                    uint8_t border_color,
+                                                    uint8_t fill_color,
+                                                    ARCTransformCandidate *candidate)
+{
+    arc_init_candidate(candidate, ARC_RULE_OBJECT_FILL_ENCLOSED, "");
+    candidate->input_color = border_color;
+    candidate->output_color = fill_color;
+    candidate->background_color = 0;
+    snprintf(candidate->name,
+             sizeof(candidate->name),
+             "object_fill_enclosed_%u_to_%u",
+             (unsigned)border_color,
+             (unsigned)fill_color);
+
+    int changed_any = 0;
+    for (size_t pair = 0; pair < task->train_count; ++pair) {
+        ARCGrid produced;
+        if (!task->train[pair].has_output ||
+            !arc_grid_same_shape(&task->train[pair].input, &task->train[pair].output) ||
+            !arc_apply_object_fill_enclosed_candidate(candidate,
+                                                      &task->train[pair].input,
+                                                      &produced) ||
+            !arc_grid_equal(&produced, &task->train[pair].output)) {
+            return 0;
+        }
+        changed_any = changed_any || !arc_grid_equal(&task->train[pair].input, &produced);
+    }
+    return changed_any;
+}
+
 static size_t arc_build_candidates(const ARCTask *task,
                                    ARCTransformCandidate *candidates,
                                    size_t capacity)
@@ -1076,6 +1180,11 @@ static size_t arc_build_candidates(const ARCTask *task,
              mode <= ARC_OBJECT_CONNECT_BOTH;
              ++mode) {
             if (arc_build_object_connect_candidate(task, 0, color, mode, &candidate)) {
+                arc_add_candidate(candidates, capacity, &count, &candidate);
+            }
+        }
+        for (uint8_t fill_color = 1; fill_color < ARC_COLOR_COUNT; ++fill_color) {
+            if (arc_build_object_fill_enclosed_candidate(task, color, fill_color, &candidate)) {
                 arc_add_candidate(candidates, capacity, &count, &candidate);
             }
         }
@@ -1957,6 +2066,8 @@ static int arc_apply_candidate(const ARCTransformCandidate *candidate,
         return arc_apply_object_translate_candidate(candidate, input, output);
     case ARC_RULE_OBJECT_CONNECT_ALIGNED:
         return arc_apply_object_connect_candidate(candidate, input, output);
+    case ARC_RULE_OBJECT_FILL_ENCLOSED:
+        return arc_apply_object_fill_enclosed_candidate(candidate, input, output);
     case ARC_RULE_ROTATE90:
         if (input->height > ARC_MAX_GRID_WIDTH || input->width > ARC_MAX_GRID_HEIGHT) {
             return 0;
@@ -2210,7 +2321,8 @@ static int arc_candidate_is_object_program(const ARCTransformCandidate *candidat
            candidate->op == ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR ||
            candidate->op == ARC_RULE_OBJECT_MASK_LARGEST ||
            candidate->op == ARC_RULE_OBJECT_TRANSLATE ||
-           candidate->op == ARC_RULE_OBJECT_CONNECT_ALIGNED;
+           candidate->op == ARC_RULE_OBJECT_CONNECT_ALIGNED ||
+           candidate->op == ARC_RULE_OBJECT_FILL_ENCLOSED;
 }
 
 static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
@@ -2241,6 +2353,8 @@ static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
         return 12;
     case ARC_RULE_OBJECT_CONNECT_ALIGNED:
         return 13;
+    case ARC_RULE_OBJECT_FILL_ENCLOSED:
+        return 14;
     case ARC_RULE_COPY_LEFT:
     case ARC_RULE_COPY_RIGHT:
     case ARC_RULE_INTERSECTION:
@@ -2295,6 +2409,8 @@ static double arc_structural_program_score(const ARCTransformCandidate *candidat
         return 98.0 - (double)(abs(candidate->dx) + abs(candidate->dy));
     case ARC_RULE_OBJECT_CONNECT_ALIGNED:
         return 99.0 - (double)candidate->dx;
+    case ARC_RULE_OBJECT_FILL_ENCLOSED:
+        return 97.0;
     case ARC_RULE_CROP_BACKGROUND_RECOLOR:
     case ARC_RULE_CROP_COLOR_MASK:
         return 84.0;
@@ -2439,6 +2555,38 @@ static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
                              candidate->input_color);
         nn_program_add_param(&connector, "mode", (double)candidate->dx, candidate->dx);
         if (!nn_program_compose(program, &scene, &connector, candidate->name)) {
+            return 0;
+        }
+    } else if (candidate->op == ARC_RULE_OBJECT_FILL_ENCLOSED) {
+        NNProgram scene;
+        NNProgram filler;
+        nn_program_init(&scene,
+                        "arc_agi",
+                        "object_scene",
+                        NN_PROGRAM_KIND_TRANSFORM,
+                        NN_PROGRAM_VALUE_GRID,
+                        NN_PROGRAM_VALUE_OBJECT_SET,
+                        110);
+        nn_program_add_param(&scene,
+                             "background",
+                             (double)candidate->background_color,
+                             candidate->background_color);
+        nn_program_init(&filler,
+                        "arc_agi",
+                        "fill_enclosed_by_color",
+                        NN_PROGRAM_KIND_TRANSFORM,
+                        NN_PROGRAM_VALUE_OBJECT_SET,
+                        NN_PROGRAM_VALUE_GRID,
+                        115);
+        nn_program_add_param(&filler,
+                             "border_color",
+                             (double)candidate->input_color,
+                             candidate->input_color);
+        nn_program_add_param(&filler,
+                             "fill_color",
+                             (double)candidate->output_color,
+                             candidate->output_color);
+        if (!nn_program_compose(program, &scene, &filler, candidate->name)) {
             return 0;
         }
     } else if (arc_candidate_is_object_program(candidate)) {
@@ -4333,9 +4481,9 @@ static int run_arc_task_loader(const ARCConfig *config)
             if (transform.certified) {
                 ARCMetrics transform_metrics = arc_transform_to_metrics(&task, &transform);
                 print_arc_metrics_json(task.id,
-                                       "symbolic-transform-v6",
+                                       "symbolic-transform-v7",
                                        "certified_transform_gate",
-                                       "arc-transform-gate-v6",
+                                       "arc-transform-gate-v7",
                                        &transform_metrics);
             }
         }
@@ -4488,11 +4636,11 @@ int main(int argc, char **argv)
     print_arc_transform_json("0520fde7", &transform);
     ARCMetrics transform_metrics = arc_transform_to_metrics(&builtin_task, &transform);
     print_arc_metrics_json("0520fde7",
-                           "symbolic-transform-v6",
+                           "symbolic-transform-v7",
                            "certified_transform_gate",
-                           "arc-transform-gate-v6",
+                           "arc-transform-gate-v7",
                            &transform_metrics);
-    print_arc_metrics_line("symbolic-transform-v6",
+    print_arc_metrics_line("symbolic-transform-v7",
                            "certified_transform_gate",
                            &transform_metrics);
     arc_emit_builtin_program_summaries(&builtin_task, &config);
