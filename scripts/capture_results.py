@@ -93,6 +93,22 @@ def fmt_number(row: dict[str, object], key: str, digits: int = 4) -> str:
     return f"{float(value):.{digits}f}"
 
 
+def fmt_bool(row: dict[str, object], key: str) -> str:
+    value = row.get(key)
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return ""
+
+
+def fmt_rule_filters(row: dict[str, object]) -> str:
+    filters: list[str] = []
+    if row.get("include_candidate_filters") is True:
+        filters.append("candidate")
+    if row.get("include_gap_filters") is True:
+        filters.append("gap")
+    return "+".join(filters)
+
+
 def markdown_table(rows: list[list[str]], headers: list[str]) -> str:
     lines = [
         "| " + " | ".join(headers) + " |",
@@ -219,6 +235,8 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                     str(row.get("model_hash", "unknown"))[:12],
                     str(row.get("parent_hash", "unknown"))[:12],
                     str(row.get("leakage_policy", "")),
+                    str(row.get("feature_set", "")),
+                    str(row.get("enabled_structural_prior_features", "")),
                     str(row.get("evaluation_mode", "raw")),
                     fmt_percent(row, "accuracy"),
                     fmt_number(row, "nll"),
@@ -235,6 +253,8 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                 "model",
                 "parent",
                 "leakage",
+                "features",
+                "priors",
                 "mode",
                 "accuracy",
                 "nll",
@@ -291,6 +311,8 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                     str(row.get("task", "")),
                     str(row.get("rule_set_hash", "unknown"))[:12],
                     str(row.get("grammar_version", "")),
+                    fmt_bool(row, "include_state_conditions"),
+                    fmt_rule_filters(row),
                     str(row.get("proposer_feature_set", "")),
                     str(row.get("proposer_target", "")),
                     str(row.get("selection_strategy", "")),
@@ -315,6 +337,8 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                 "task",
                 "rule hash",
                 "grammar",
+                "conditions",
+                "filters",
                 "features",
                 "target",
                 "strategy",

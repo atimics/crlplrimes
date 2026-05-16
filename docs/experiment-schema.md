@@ -96,9 +96,11 @@ Leakage status today:
 learned certified gate, and fixed-budget proposer baselines. It should not be
 described as the project goal.
 
-`grid_path` has raw versus budgeted certified legality-gate evaluation. The next
-version should add a richer admissible-pruning grammar and the same fixed-budget
-proposer baselines used by `prime_gap`.
+`grid_path` has raw versus budgeted certified legality-gate evaluation under
+two visible feature regimes: `no_manhattan_priors` for the clean scorer row and
+`with_manhattan_priors` as a priors-allowed ablation. The next version should
+add a richer admissible-pruning grammar and the same fixed-budget proposer
+baselines used by `prime_gap`.
 
 `delayed_claim` currently supports supervised training, trace replay, and
 calibration evaluation. Its threshold/dominance grammar is specified in the

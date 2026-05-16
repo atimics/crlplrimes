@@ -100,6 +100,52 @@ _Static_assert(sizeof(GRID_PATH_SCORER_FEATURES) / sizeof(GRID_PATH_SCORER_FEATU
                    GP_FEATURE_COUNT,
                "grid-path feature schema must match scorer feature count");
 
+typedef struct {
+    const char *name;
+    size_t enabled_structural_prior_features;
+    int use_manhattan_priors;
+} GridFeatureSet;
+
+static const GridFeatureSet GRID_FEATURE_SET_WITH_PRIORS = {
+    "with_manhattan_priors",
+    2,
+    1,
+};
+
+static const GridFeatureSet GRID_FEATURE_SET_NO_PRIORS = {
+    "no_manhattan_priors",
+    0,
+    0,
+};
+
+static const GridFeatureSet *grid_feature_set_or_default(const GridFeatureSet *feature_set)
+{
+    return feature_set == NULL ? &GRID_FEATURE_SET_WITH_PRIORS : feature_set;
+}
+
+static const GridFeatureSet *grid_feature_set_from_name(const char *name)
+{
+    if (name == NULL || name[0] == '\0' || strcmp(name, "unknown") == 0 ||
+        strcmp(name, "grid-observation-v3") == 0 ||
+        strcmp(name, "with-priors") == 0 ||
+        strcmp(name, "with_manhattan_priors") == 0) {
+        return &GRID_FEATURE_SET_WITH_PRIORS;
+    }
+    if (strcmp(name, "no-priors") == 0 ||
+        strcmp(name, "no_manhattan_priors") == 0) {
+        return &GRID_FEATURE_SET_NO_PRIORS;
+    }
+    return NULL;
+}
+
+static const char *grid_feature_set_leakage_policy_name(const GridFeatureSet *feature_set)
+{
+    const GridFeatureSet *selected = grid_feature_set_or_default(feature_set);
+    return selected->enabled_structural_prior_features == 0
+               ? nn_leakage_policy_name(NN_LEAKAGE_FORBIDDEN)
+               : nn_leakage_policy_name(NN_LEAKAGE_PRIORS_ALLOWED);
+}
+
 static const NNExperimentSpec GRID_PATH_EXPERIMENT_SPEC = {
     .task_name = "grid_path",
     .role = "spatial shortest-path action-ranking benchmark for certified pruning outside arithmetic",
@@ -406,11 +452,13 @@ static int generate_grid_state(uint64_t seed, GridState *state)
     return 0;
 }
 
-static size_t fill_grid_candidates(const GridState *state,
-                                   nn_real *candidate_inputs,
-                                   uint32_t *action_ids,
-                                   size_t *target_index)
+static size_t fill_grid_candidates_with_feature_set(const GridState *state,
+                                                    nn_real *candidate_inputs,
+                                                    uint32_t *action_ids,
+                                                    size_t *target_index,
+                                                    const GridFeatureSet *feature_set)
 {
+    const GridFeatureSet *selected_feature_set = grid_feature_set_or_default(feature_set);
     int dist[GP_CELLS];
     bfs_distances_from_goal(state, dist);
     int best_dist = GP_INF;
@@ -446,8 +494,10 @@ static size_t fill_grid_candidates(const GridState *state,
         row[3] = (nn_real)((double)state->gy / (double)(GP_GRID - 1));
         row[4] = (nn_real)((double)(state->gx - feature_x) / (double)(GP_GRID - 1));
         row[5] = (nn_real)((double)(state->gy - feature_y) / (double)(GP_GRID - 1));
-        row[6] = (nn_real)((double)manhattan_after / (double)(2 * (GP_GRID - 1)));
-        row[7] = (nn_real)((double)(manhattan_before - manhattan_after) / 2.0);
+        if (selected_feature_set->use_manhattan_priors) {
+            row[6] = (nn_real)((double)manhattan_after / (double)(2 * (GP_GRID - 1)));
+            row[7] = (nn_real)((double)(manhattan_before - manhattan_after) / 2.0);
+        }
         row[8] = (nn_real)ACTION_DX[action];
         row[9] = (nn_real)ACTION_DY[action];
         for (size_t cell = 0; cell < GP_CELLS; ++cell) {
@@ -467,6 +517,18 @@ static size_t fill_grid_candidates(const GridState *state,
     }
 
     return GP_ACTION_COUNT;
+}
+
+static size_t fill_grid_candidates(const GridState *state,
+                                   nn_real *candidate_inputs,
+                                   uint32_t *action_ids,
+                                   size_t *target_index)
+{
+    return fill_grid_candidates_with_feature_set(state,
+                                                 candidate_inputs,
+                                                 action_ids,
+                                                 target_index,
+                                                 &GRID_FEATURE_SET_WITH_PRIORS);
 }
 
 static const char *grid_rule_name(GridGateRuleKind kind)
@@ -542,16 +604,21 @@ static int grid_gate_rules_reject_action(const GridGateRuleSet *rules,
     return 0;
 }
 
-static size_t fill_grid_candidates_gated(const GridState *state,
-                                         const GridGateRuleSet *rules,
-                                         nn_real *candidate_inputs,
-                                         uint32_t *action_ids,
-                                         size_t *target_index)
+static size_t fill_grid_candidates_gated_with_feature_set(const GridState *state,
+                                                          const GridGateRuleSet *rules,
+                                                          nn_real *candidate_inputs,
+                                                          uint32_t *action_ids,
+                                                          size_t *target_index,
+                                                          const GridFeatureSet *feature_set)
 {
     nn_real raw_inputs[(size_t)GP_ACTION_COUNT * GP_FEATURE_COUNT];
     uint32_t raw_action_ids[GP_ACTION_COUNT];
     size_t raw_target = GP_ACTION_COUNT;
-    fill_grid_candidates(state, raw_inputs, raw_action_ids, &raw_target);
+    fill_grid_candidates_with_feature_set(state,
+                                          raw_inputs,
+                                          raw_action_ids,
+                                          &raw_target,
+                                          feature_set);
 
     *target_index = GP_ACTION_COUNT;
     size_t candidate_count = 0;
@@ -805,6 +872,8 @@ static void print_grid_rule_search_json(const GridGateRuleSet *rules)
     printf("{\"schema\":\"crlp.rule_search.summary.v1\",\"task\":\"grid_path\","
            "\"grammar_version\":%u,\"rule_set_hash\":\"grid-legality-budget-v2\","
            "\"proposer_feature_set\":\"structural\","
+           "\"proposer_target\":\"reject_support_and_cost_savings\","
+           "\"selection_strategy\":\"neural_structural\","
            "\"proposed_rules\":%zu,\"verified_rules\":%zu,\"max_rules\":%u,"
            "\"accepted_rules\":%zu,\"false_rejections\":%zu,"
            "\"train_rejects\":%zu,\"validation_rejects\":%zu,"
@@ -876,8 +945,10 @@ static int save_grid_checkpoint(NeuralNet *net,
                                 const char *path,
                                 const char *parent_hash,
                                 const char *notes,
+                                const GridFeatureSet *feature_set,
                                 char out_hash[65])
 {
+    const GridFeatureSet *selected_feature_set = grid_feature_set_or_default(feature_set);
     NNCheckpointMeta meta;
     memset(&meta, 0, sizeof(meta));
     meta.checkpoint_version = 1;
@@ -891,18 +962,19 @@ static int save_grid_checkpoint(NeuralNet *net,
              sizeof(meta.notes),
              "%s",
              notes == NULL ? "grid_path action scorer" : notes);
-    snprintf(meta.feature_set, sizeof(meta.feature_set), "%s", "grid-observation-v3");
+    snprintf(meta.feature_set, sizeof(meta.feature_set), "%s", selected_feature_set->name);
     return nn_save_checkpoint(net, path, &meta) && nn_hash_checkpoint_hex(path, out_hash);
 }
 
-static GridMetrics evaluate_grid_model_with_rules(NeuralNet *net,
-                                                  const GridGateRuleSet *rules,
-                                                  uint64_t seed_start,
-                                                  size_t samples,
-                                                  nn_real *candidate_inputs,
-                                                  uint32_t *action_ids,
-                                                  nn_real *scores,
-                                                  nn_real *probabilities)
+static GridMetrics evaluate_grid_model_with_rules_and_features(NeuralNet *net,
+                                                               const GridGateRuleSet *rules,
+                                                               uint64_t seed_start,
+                                                               size_t samples,
+                                                               nn_real *candidate_inputs,
+                                                               uint32_t *action_ids,
+                                                               nn_real *scores,
+                                                               nn_real *probabilities,
+                                                               const GridFeatureSet *feature_set)
 {
     GridMetrics metrics;
     memset(&metrics, 0, sizeof(metrics));
@@ -915,15 +987,18 @@ static GridMetrics evaluate_grid_model_with_rules(NeuralNet *net,
             continue;
         }
         size_t candidate_count = rules == NULL
-                                     ? fill_grid_candidates(&state,
-                                                            candidate_inputs,
-                                                            action_ids,
-                                                            &target_index)
-                                     : fill_grid_candidates_gated(&state,
-                                                                  rules,
-                                                                  candidate_inputs,
-                                                                  action_ids,
-                                                                  &target_index);
+                                     ? fill_grid_candidates_with_feature_set(&state,
+                                                                            candidate_inputs,
+                                                                            action_ids,
+                                                                            &target_index,
+                                                                            feature_set)
+                                     : fill_grid_candidates_gated_with_feature_set(
+                                           &state,
+                                           rules,
+                                           candidate_inputs,
+                                           action_ids,
+                                           &target_index,
+                                           feature_set);
         if (candidate_count == 0 || target_index >= candidate_count ||
             !nn_score_action_rows(net,
                                   candidate_inputs,
@@ -1000,30 +1075,13 @@ static GridMetrics evaluate_grid_model_with_rules(NeuralNet *net,
     return metrics;
 }
 
-static GridMetrics evaluate_grid_model(NeuralNet *net,
-                                       uint64_t seed_start,
-                                       size_t samples,
-                                       nn_real *candidate_inputs,
-                                       uint32_t *action_ids,
-                                       nn_real *scores,
-                                       nn_real *probabilities)
-{
-    return evaluate_grid_model_with_rules(net,
-                                          NULL,
-                                          seed_start,
-                                          samples,
-                                          candidate_inputs,
-                                          action_ids,
-                                          scores,
-                                          probabilities);
-}
-
 static int train_grid_model(NeuralNet *net,
                             uint64_t seed_start,
                             size_t samples,
                             size_t epochs,
                             nn_real *candidate_inputs,
-                            uint32_t *action_ids)
+                            uint32_t *action_ids,
+                            const GridFeatureSet *feature_set)
 {
     for (size_t epoch = 0; epoch < epochs; ++epoch) {
         double loss = 0.0;
@@ -1034,8 +1092,11 @@ static int train_grid_model(NeuralNet *net,
             if (!generate_grid_state(seed_start + (uint64_t)i, &state)) {
                 continue;
             }
-            size_t candidate_count =
-                fill_grid_candidates(&state, candidate_inputs, action_ids, &target_index);
+            size_t candidate_count = fill_grid_candidates_with_feature_set(&state,
+                                                                           candidate_inputs,
+                                                                           action_ids,
+                                                                           &target_index,
+                                                                           feature_set);
             if (candidate_count == 0 || target_index >= candidate_count) {
                 continue;
             }
@@ -1400,6 +1461,7 @@ static int replay_grid_trace(const char *trace_path,
                                   out_path,
                                   trace.parent_hash,
                                   "grid_path successor trained from trace replay",
+                                  &GRID_FEATURE_SET_WITH_PRIORS,
                                   hash);
     if (ok) {
         printf("saved grid_path replay checkpoint: %s hash=%s parent=%s\n",
@@ -1413,6 +1475,69 @@ static int replay_grid_trace(const char *trace_path,
     free(action_ids);
     grid_trace_free(&trace);
     return ok;
+}
+
+static void print_grid_feature_set_json_fields(const GridFeatureSet *feature_set)
+{
+    const GridFeatureSet *selected = grid_feature_set_or_default(feature_set);
+    printf("\"feature_set\":\"%s\","
+           "\"enabled_structural_prior_features\":%zu,"
+           "\"structural_prior_features\":[",
+           selected->name,
+           selected->enabled_structural_prior_features);
+    if (selected->use_manhattan_priors) {
+        fputs("\"candidate_manhattan_to_goal\",\"candidate_manhattan_delta\"", stdout);
+    }
+    fputs("],", stdout);
+}
+
+static void print_grid_compare_json(const NNCheckpointMeta *meta,
+                                    const char *hash,
+                                    const char *evaluation_mode,
+                                    const char *rule_set_hash,
+                                    size_t accepted_rules,
+                                    const GridFeatureSet *feature_set,
+                                    const GridMetrics *metrics)
+{
+    const GridFeatureSet *selected_feature_set = grid_feature_set_or_default(feature_set);
+    double samples = metrics->samples == 0 ? 1.0 : (double)metrics->samples;
+    printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"grid_path\","
+           "\"leakage_policy\":\"%s\","
+           "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
+           "\"evaluation_mode\":\"%s\",\"rule_set_hash\":\"%s\","
+           "\"accepted_rules\":%zu,",
+           grid_feature_set_leakage_policy_name(selected_feature_set),
+           hash == NULL ? "unknown" : hash,
+           meta == NULL || meta->parent_model_hash[0] == '\0' ? "unknown"
+                                                               : meta->parent_model_hash,
+           evaluation_mode == NULL ? "raw" : evaluation_mode,
+           rule_set_hash == NULL ? "none" : rule_set_hash,
+           accepted_rules);
+    print_grid_feature_set_json_fields(selected_feature_set);
+    printf("\"feature_encoder_version\":%u,"
+           "\"benchmark_seed\":%u,\"sample_count\":%zu,"
+           "\"accuracy\":%.8f,\"nll\":%.8f,\"ece\":%.8f,"
+           "\"candidate_count\":%.8f,\"rejected_candidates\":%.8f,"
+           "\"decision_utility\":%.8f,\"proposal_steps\":%.8f,"
+           "\"baseline_steps\":%.8f,\"verifier_nodes\":%.8f,"
+           "\"baseline_nodes\":%.8f,\"search_saved\":%.8f",
+           meta == NULL ? (unsigned int)GP_FEATURE_ENCODER_VERSION
+                        : (unsigned int)meta->feature_encoder_version,
+           (unsigned int)GP_TEST_SEED_START,
+           metrics->samples,
+           (double)metrics->correct / samples,
+           metrics->nll,
+           metrics->ece,
+           metrics->candidate_count,
+           metrics->rejected_candidates,
+           metrics->utility,
+           metrics->proposal_steps,
+           metrics->baseline_steps,
+           metrics->verifier_nodes,
+           metrics->baseline_nodes,
+           metrics->baseline_steps - metrics->proposal_steps);
+    print_grid_reliability_bins_json(metrics);
+    printf("}\n");
 }
 
 static int compare_grid_models(int argc, char **argv)
@@ -1458,90 +1583,98 @@ static int compare_grid_models(int argc, char **argv)
             ok = 0;
             continue;
         }
+        const GridFeatureSet *checkpoint_feature_set =
+            grid_feature_set_from_name(meta.feature_set);
+        if (checkpoint_feature_set == NULL) {
+            fprintf(stderr,
+                    "unsupported grid_path checkpoint feature_set: %s\n",
+                    meta.feature_set[0] == '\0' ? "unknown" : meta.feature_set);
+            nn_free(net);
+            ok = 0;
+            continue;
+        }
         nn_hash_checkpoint_hex(argv[i], hash);
-        GridMetrics metrics = evaluate_grid_model(net,
-                                                  GP_TEST_SEED_START,
-                                                  GP_TEST_SAMPLES,
-                                                  candidate_inputs,
-                                                  action_ids,
-                                                  scores,
-                                                  probabilities);
-        double samples = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
-        printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"grid_path\","
-               "\"leakage_policy\":\"%s\","
-               "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
-               "\"evaluation_mode\":\"raw\",\"rule_set_hash\":\"none\","
-               "\"feature_encoder_version\":%u,"
-               "\"benchmark_seed\":%u,\"sample_count\":%zu,"
-               "\"accuracy\":%.8f,\"nll\":%.8f,\"ece\":%.8f,"
-               "\"candidate_count\":%.8f,\"rejected_candidates\":%.8f,"
-               "\"decision_utility\":%.8f,\"proposal_steps\":%.8f,"
-               "\"baseline_steps\":%.8f,\"verifier_nodes\":%.8f,"
-               "\"baseline_nodes\":%.8f,\"search_saved\":%.8f",
-               nn_leakage_policy_name(GRID_PATH_EXPERIMENT_SPEC.leakage_policy),
-               hash,
-               meta.parent_model_hash[0] == '\0' ? "unknown" : meta.parent_model_hash,
-               meta.feature_encoder_version,
-               (unsigned int)GP_TEST_SEED_START,
-               metrics.samples,
-               (double)metrics.correct / samples,
-               metrics.nll,
-               metrics.ece,
-               metrics.candidate_count,
-               metrics.rejected_candidates,
-               metrics.utility,
-               metrics.proposal_steps,
-               metrics.baseline_steps,
-               metrics.verifier_nodes,
-               metrics.baseline_nodes,
-               metrics.baseline_steps - metrics.proposal_steps);
-        print_grid_reliability_bins_json(&metrics);
-        printf("}\n");
+        GridMetrics metrics = evaluate_grid_model_with_rules_and_features(
+            net,
+            NULL,
+            GP_TEST_SEED_START,
+            GP_TEST_SAMPLES,
+            candidate_inputs,
+            action_ids,
+            scores,
+            probabilities,
+            checkpoint_feature_set);
+        print_grid_compare_json(&meta,
+                                hash,
+                                "raw",
+                                "none",
+                                0,
+                                checkpoint_feature_set,
+                                &metrics);
         print_grid_metrics(argv[i], hash, metrics);
 
-        GridMetrics gated_metrics = evaluate_grid_model_with_rules(net,
-                                                                   &gate_rules,
-                                                                   GP_TEST_SEED_START,
-                                                                   GP_TEST_SAMPLES,
-                                                                   candidate_inputs,
-                                                                   action_ids,
-                                                                   scores,
-                                                                   probabilities);
-        samples = gated_metrics.samples == 0 ? 1.0 : (double)gated_metrics.samples;
-        printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"grid_path\","
-               "\"leakage_policy\":\"%s\","
-               "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
-               "\"evaluation_mode\":\"budgeted_legality_gate_model\","
-               "\"rule_set_hash\":\"grid-legality-budget-v2\","
-               "\"accepted_rules\":%zu,"
-               "\"feature_encoder_version\":%u,"
-               "\"benchmark_seed\":%u,\"sample_count\":%zu,"
-               "\"accuracy\":%.8f,\"nll\":%.8f,\"ece\":%.8f,"
-               "\"candidate_count\":%.8f,\"rejected_candidates\":%.8f,"
-               "\"decision_utility\":%.8f,\"proposal_steps\":%.8f,"
-               "\"baseline_steps\":%.8f,\"verifier_nodes\":%.8f,"
-               "\"baseline_nodes\":%.8f,\"search_saved\":%.8f",
-               nn_leakage_policy_name(GRID_PATH_EXPERIMENT_SPEC.leakage_policy),
-               hash,
-               meta.parent_model_hash[0] == '\0' ? "unknown" : meta.parent_model_hash,
-               gate_rules.accepted_rules,
-               meta.feature_encoder_version,
-               (unsigned int)GP_TEST_SEED_START,
-               gated_metrics.samples,
-               (double)gated_metrics.correct / samples,
-               gated_metrics.nll,
-               gated_metrics.ece,
-               gated_metrics.candidate_count,
-               gated_metrics.rejected_candidates,
-               gated_metrics.utility,
-               gated_metrics.proposal_steps,
-               gated_metrics.baseline_steps,
-               gated_metrics.verifier_nodes,
-               gated_metrics.baseline_nodes,
-               gated_metrics.baseline_steps - gated_metrics.proposal_steps);
-        print_grid_reliability_bins_json(&gated_metrics);
-        printf("}\n");
+        if (checkpoint_feature_set->use_manhattan_priors) {
+            GridMetrics no_prior_metrics = evaluate_grid_model_with_rules_and_features(
+                net,
+                NULL,
+                GP_TEST_SEED_START,
+                GP_TEST_SAMPLES,
+                candidate_inputs,
+                action_ids,
+                scores,
+                probabilities,
+                &GRID_FEATURE_SET_NO_PRIORS);
+            print_grid_compare_json(&meta,
+                                    hash,
+                                    "raw_prior_disabled_ablation",
+                                    "none",
+                                    0,
+                                    &GRID_FEATURE_SET_NO_PRIORS,
+                                    &no_prior_metrics);
+            print_grid_metrics("raw-prior-disabled-ablation", hash, no_prior_metrics);
+        }
+
+        GridMetrics gated_metrics = evaluate_grid_model_with_rules_and_features(
+            net,
+            &gate_rules,
+            GP_TEST_SEED_START,
+            GP_TEST_SAMPLES,
+            candidate_inputs,
+            action_ids,
+            scores,
+            probabilities,
+            checkpoint_feature_set);
+        print_grid_compare_json(&meta,
+                                hash,
+                                "budgeted_legality_gate_model",
+                                "grid-legality-budget-v2",
+                                gate_rules.accepted_rules,
+                                checkpoint_feature_set,
+                                &gated_metrics);
         print_grid_metrics("budgeted-legality-gate", hash, gated_metrics);
+
+        if (checkpoint_feature_set->use_manhattan_priors) {
+            GridMetrics gated_no_prior_metrics = evaluate_grid_model_with_rules_and_features(
+                net,
+                &gate_rules,
+                GP_TEST_SEED_START,
+                GP_TEST_SAMPLES,
+                candidate_inputs,
+                action_ids,
+                scores,
+                probabilities,
+                &GRID_FEATURE_SET_NO_PRIORS);
+            print_grid_compare_json(&meta,
+                                    hash,
+                                    "budgeted_legality_gate_prior_disabled_ablation",
+                                    "grid-legality-budget-v2",
+                                    gate_rules.accepted_rules,
+                                    &GRID_FEATURE_SET_NO_PRIORS,
+                                    &gated_no_prior_metrics);
+            print_grid_metrics("budgeted-legality-gate-prior-disabled-ablation",
+                               hash,
+                               gated_no_prior_metrics);
+        }
         nn_free(net);
     }
 
@@ -1555,6 +1688,7 @@ static int compare_grid_models(int argc, char **argv)
 static void print_usage(FILE *stream)
 {
     fputs("usage: grid_path [--trace path] [--save path] "
+          "[--feature-set with-priors|no-priors] "
           "[--trace-train] [--trace-seed seed] [--trace-samples count]\n"
           "       grid_path --replay trace.jsonl --out model.nnckpt [--epochs count]\n"
           "       grid_path --rule-search\n"
@@ -1618,6 +1752,7 @@ int main(int argc, char **argv)
 
     const char *trace_path = NULL;
     const char *save_path = NULL;
+    const GridFeatureSet *feature_set = &GRID_FEATURE_SET_WITH_PRIORS;
     uint64_t trace_seed_start = GP_TEST_SEED_START;
     size_t trace_samples = GP_TEST_SAMPLES;
 
@@ -1626,6 +1761,12 @@ int main(int argc, char **argv)
             trace_path = argv[++i];
         } else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) {
             save_path = argv[++i];
+        } else if (strcmp(argv[i], "--feature-set") == 0 && i + 1 < argc) {
+            feature_set = grid_feature_set_from_name(argv[++i]);
+            if (feature_set == NULL) {
+                print_usage(stderr);
+                return EXIT_FAILURE;
+            }
         } else if (strcmp(argv[i], "--trace-train") == 0) {
             trace_seed_start = GP_TRAIN_SEED_START;
             trace_samples = GP_TRAIN_SAMPLES;
@@ -1643,6 +1784,10 @@ int main(int argc, char **argv)
             print_usage(stderr);
             return EXIT_FAILURE;
         }
+    }
+    if (trace_path != NULL && !feature_set->use_manhattan_priors) {
+        fputs("grid_path trace/replay currently requires with-priors feature_set\n", stderr);
+        return EXIT_FAILURE;
     }
 
     NeuralNet *net = create_grid_model(42424);
@@ -1666,10 +1811,16 @@ int main(int argc, char **argv)
                               GP_TRAIN_SAMPLES,
                               4,
                               candidate_inputs,
-                              action_ids);
+                              action_ids,
+                              feature_set);
     char hash[65] = "unknown";
     if (ok && save_path != NULL) {
-        ok = save_grid_checkpoint(net, save_path, "unknown", "grid_path trained checkpoint", hash);
+        ok = save_grid_checkpoint(net,
+                                  save_path,
+                                  "unknown",
+                                  "grid_path trained checkpoint",
+                                  feature_set,
+                                  hash);
         if (ok) {
             printf("saved grid_path checkpoint: %s hash=%s\n", save_path, hash);
         }
@@ -1679,13 +1830,16 @@ int main(int argc, char **argv)
     }
 
     if (ok) {
-        GridMetrics metrics = evaluate_grid_model(net,
-                                                  GP_TEST_SEED_START,
-                                                  GP_TEST_SAMPLES,
-                                                  candidate_inputs,
-                                                  action_ids,
-                                                  scores,
-                                                  probabilities);
+        GridMetrics metrics = evaluate_grid_model_with_rules_and_features(
+            net,
+            NULL,
+            GP_TEST_SEED_START,
+            GP_TEST_SAMPLES,
+            candidate_inputs,
+            action_ids,
+            scores,
+            probabilities,
+            feature_set);
         print_grid_metrics("grid_path", hash, metrics);
     }
     if (ok && trace_path != NULL) {

@@ -144,6 +144,11 @@ prime-rule-search-baselines: $(PRIME_RULE_SEARCH)
 	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer grammar
 	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer structural
 	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer validation-oracle
+	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer neural
+	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer random --proposer-seed 20240511
+	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer grammar
+	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer structural
+	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer validation-oracle
 
 prime-rule-search-conditional: $(PRIME_RULE_SEARCH)
 	mkdir -p $(BUILD_DIR)/traces
@@ -204,8 +209,11 @@ grid-path-trace: $(GRID_PATH)
 grid-path-replay: $(GRID_PATH) grid-path-trace
 	./$(GRID_PATH) --replay $(BUILD_DIR)/grid_path.jsonl --out $(BUILD_DIR)/grid_path_v2.nnckpt --epochs 5
 
-grid-path-eval: $(GRID_PATH) grid-path-replay
-	./$(GRID_PATH) --compare $(BUILD_DIR)/grid_path_v1.nnckpt $(BUILD_DIR)/grid_path_v2.nnckpt
+grid-path-no-priors: $(GRID_PATH)
+	./$(GRID_PATH) --feature-set no-priors --save $(BUILD_DIR)/grid_path_no_priors.nnckpt
+
+grid-path-eval: $(GRID_PATH) grid-path-replay grid-path-no-priors
+	./$(GRID_PATH) --compare $(BUILD_DIR)/grid_path_v1.nnckpt $(BUILD_DIR)/grid_path_v2.nnckpt $(BUILD_DIR)/grid_path_no_priors.nnckpt
 
 results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH)
 	$(PYTHON) scripts/capture_results.py --output-dir $(RESULTS_DIR) --real $(REAL)

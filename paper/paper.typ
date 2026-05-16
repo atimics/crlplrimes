@@ -67,12 +67,14 @@
     residue-sieve features removed from the scorer input, the raw scorer reaches 9.13% top-1; a
     fixed hand-wheel gate raises this to 45.12%, and a learned rule gate reaches 68.87% at 100%
     top-10 with an $approx$4$times$ reduction in model latency. Grid paths show the same
-    certified-gate pattern outside arithmetic at smaller scope: a budgeted legality gate raises
-    parent accuracy from 75.80% to 89.60%. Delayed claims currently exercise trace replay and
-    calibration, not gate learning. The prime rule-search negative result is load-bearing:
-    grammar order and a simple structural heuristic beat the current neural proposer at a fixed
-    16-rule budget. The contribution is therefore the generalized protocol and audit discipline,
-    not an improved prime algorithm.
+    certified-gate pattern outside arithmetic at smaller scope: with Manhattan priors disabled,
+    a budgeted legality gate raises grid-path accuracy from 70.80% to 84.90%; the priors-allowed
+    checkpoint is retained as an explicit ablation at 75.80% raw and 89.60% gated. Delayed
+    claims currently exercise trace replay and calibration, not gate learning. The prime
+    rule-search negative result is load-bearing: grammar order and a simple structural heuristic
+    beat the current neural proposer at a fixed 16-rule budget, and the conditional gap grammar
+    exposes a larger failure. The contribution is therefore the generalized protocol and audit
+    discipline, not an improved prime algorithm.
   ]
 ]
 
@@ -101,8 +103,9 @@ treated as general:
   smaller grid-path legality result support this. Delayed-claim gate learning remains to be
   implemented.
 + *Rule search must beat fixed-budget symbolic baselines.* The current prime result is negative
-  for neural proposer learning: grammar order beats the neural proposer. This turns proposer
-  learning into a concrete cross-task benchmark rather than a tautology.
+  for neural proposer learning: grammar order beats the neural proposer on the unconditional
+  candidate grammar, and the conditional gap grammar makes the failure larger. This turns
+  proposer learning into a concrete cross-task benchmark rather than a tautology.
 + *Verifier RL must preserve calibration across tasks.* Strict policy gradient on sparse exact
   rewards inflates logit scale on prime gaps; a standard KL-to-prior + entropy term restores
   calibration at unchanged top-k. The same run is still needed on grid paths and delayed claims.
@@ -341,9 +344,10 @@ Full metrics:
 = Axis 2: Rule search must beat fixed-budget symbolic baselines
 
 The canonical rule grammar is `reject candidate n when n > m and n % m == r`; the certificate
-verifier accepts a rule iff $gcd(m, r) > 1$ (so $n$ is necessarily composite). The expanded
-grammar can also express conditional gap filters, but that mode is not the canonical result.
-Zero false rejections is a structural property of the certificate. The proposer input is
+verifier accepts a rule iff $gcd(m, r) > 1$ (so $n$ is necessarily composite). The matched-budget
+baseline table also reports conditional gap filters (`if p % m == a then reject gap % m == b`)
+because that grammar is less saturated and exposes proposer failure more clearly. Zero false
+rejections is a structural property of the certificate. The proposer input is
 structural-only: condition kind, moduli, reciprocal scales, residues, zero-residue indicators,
 gcd ratios, and derived candidate residue. Empirical support and false-rejection counts are
 diagnostics, and budgeted marginal utility is the neural target, not a proposer feature.
@@ -393,17 +397,22 @@ diagnostics, and budgeted marginal utility is the neural target, not a proposer 
 
 #figure(
   table(
-    columns: (auto, auto, auto, auto),
-    align: (left, right, right, right),
-    table.header[*Rule ordering*][*Budget*][*Exact probes*][*Saved*],
-    [neural structural], [16], [1.98], [72.49%],
-    [random, seed 20240511], [16], [3.86], [46.30%],
-    [grammar order], [16], [1.93], [73.22%],
-    [structural heuristic], [16], [1.93], [73.22%],
-    [validation-marginal oracle], [16], [1.93], [73.22%],
+    columns: (auto, auto, auto, auto, auto),
+    align: (left, left, right, right, right),
+    table.header[*Grammar*][*Rule ordering*][*Budget*][*Exact probes*][*Saved*],
+    [candidate], [neural structural], [16], [1.98], [72.49%],
+    [candidate], [random, seed 20240511], [16], [3.86], [46.30%],
+    [candidate], [grammar order], [16], [1.93], [73.22%],
+    [candidate], [structural heuristic], [16], [1.93], [73.22%],
+    [candidate], [validation-marginal oracle], [16], [1.93], [73.22%],
+    [conditional gap], [neural structural], [16], [7.04], [2.15%],
+    [conditional gap], [random, seed 20240511], [16], [6.94], [3.49%],
+    [conditional gap], [grammar order], [16], [3.20], [55.57%],
+    [conditional gap], [structural heuristic], [16], [3.20], [55.57%],
+    [conditional gap], [validation-marginal oracle], [16], [3.11], [56.83%],
   ),
-  caption: [Matched 16-rule-budget proposer baselines over the same grammar, split, and
-    certificate verifier. Lower exact probes is better.],
+  caption: [Matched 16-rule-budget proposer baselines over the same split and certificate
+    verifier. Lower exact probes is better.],
 ) <tab:f2-baselines>
 
 *What this evidence supports.* "Certificate-gated structural rule discovery over this grammar
@@ -412,9 +421,10 @@ from the certificate; the coverage comes from the grammar plus accepted certifie
 
 *What this evidence does not support.* "The neural proposer, specifically, is essential."
 @tab:f2-baselines is a negative result for that stronger claim: simple deterministic orderings
-beat the neural structural proposer at the fixed 16-rule budget. The next neurosymbolic
-experiment must use a richer grammar and show that learned ordering beats grammar-order and
-structural-heuristic baselines under the same budget.
+beat the neural structural proposer at the fixed 16-rule budget on both reported grammars, and
+the conditional gap grammar exposes a larger failure. The next neurosymbolic experiment must use
+a richer grammar and show that learned ordering beats grammar-order and structural-heuristic
+baselines under the same budget.
 
 #pblock[
   *Required to elevate C2 from "the verifier is doing useful work" to "the learned proposer is
@@ -571,8 +581,9 @@ claims auditable. Three pieces matter and would be a brief methods section in a 
 
 #set enum(numbering: "L1.")
 + *Proposer learning not solved (Axis 2).* The fixed-budget baseline shows grammar order and
-  a simple structural heuristic beat the current neural proposer. The load-bearing claim is
-  certificate-gated rule discovery, not learned proposer superiority.
+  a simple structural heuristic beat the current neural proposer on both the unconditional
+  candidate grammar and the conditional gap grammar. The load-bearing claim is certificate-gated
+  rule discovery, not learned proposer superiority.
 + *Cross-task verifier-RL comparison missing (Axis 3).* The pipeline supports it; the
   comparison is not in canonical results yet.
 + *Limited cross-domain gate coverage (Axis 1).* `grid_path` now has a budgeted legality-gate
