@@ -105,7 +105,9 @@ mature:
   the same matched-budget baselines as prime.
 - The symbolic-domain smoke needs real `rule_rejects` and `verify_action`
   callbacks before it can exercise gate execution uniformly.
-- ARC is one compiled sample, not a dataset loader or a general ARC solver.
+- The standalone ARC binary has a JSON directory loader, but the shared
+  symbolic-domain smoke still uses one compiled sample and is not a general ARC
+  solver.
 - The ARC `object_select_overlap` rule is an alias for intersection; replacing
   it with a real connected-object selector is a precondition for claiming
   object-level ARC reasoning.

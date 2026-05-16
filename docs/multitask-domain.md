@@ -74,6 +74,13 @@ Build and run the standalone first-class ARC sample:
 make arc-agi
 ```
 
+Run the ARC-format JSON loader over a local corpus checkout:
+
+```sh
+make arc-agi-loader ARC_AGI_TASK_DIR=/path/to/ARC-AGI/data/training ARC_AGI_MAX_TASKS=400
+./build/float/arc_agi --task-dir /path/to/ARC-AGI/data/evaluation --max-tasks 400 --loader-summary-only
+```
+
 Build and run the shared symbolic-rule smoke:
 
 ```sh
@@ -162,16 +169,17 @@ The interpretation is deliberately conservative:
 - The shared scorer and training loop work across all configured domains.
 - `grid_path` and `delayed_claim` remain easy under this envelope.
 - `prime_gap` is weak without symbolic residue predicates.
-- The harder ARC row is unsaturated under this envelope; it remains one
-  supervised ARC sample rather than a general ARC solver.
+- The harder ARC row is unsaturated under this envelope; the standalone loader
+  can scan many ARC tasks, but the current certified grammar still covers only a
+  narrow split-panel family rather than a general ARC solver.
 
 ## Next Steps
 
-1. Promote ARC from one compiled-in sample to a loader over many ARC tasks.
+1. Expand the ARC loader grammar beyond the current split-panel copy/mask/union
+   family.
 2. Add task-family metadata so ARC tasks with different transformations can be
    evaluated without changing the scorer code.
-3. Promote the compiled symbolic ARC smoke into a loader over many ARC tasks
-   before treating ARC as production verifier-gated ARC evidence beyond the
-   fixed-sample scorer.
+3. Promote loader-backed symbolic ARC evidence into matched grammar/proposer
+   comparisons before treating ARC as production verifier-gated ARC evidence.
 4. Track transfer with held-out task families, not only held-out domains from
    the same compiled set.

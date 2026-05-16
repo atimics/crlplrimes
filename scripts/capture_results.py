@@ -45,6 +45,7 @@ def run_make(repo: Path, real: str, target: str, log_path: Path) -> list[dict[st
             "crlp.compare.v1",
             "crlp.rule_search.summary.v1",
             "crlp.arc_transform.summary.v1",
+            "crlp.arc_loader.summary.v1",
         }:
             row["source_target"] = target
             rows.append(row)
@@ -147,6 +148,11 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
         row
         for row in rows
         if row.get("task") == "arc_agi" and row.get("schema") == "crlp.arc_transform.summary.v1"
+    ]
+    arc_loaders = [
+        row
+        for row in rows
+        if row.get("task") == "arc_agi" and row.get("schema") == "crlp.arc_loader.summary.v1"
     ]
     grid = [
         row
@@ -296,6 +302,39 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                     "correct",
                     "cells",
                     "accepted rules",
+                ],
+            )
+        )
+    if arc_loaders:
+        lines.extend(["", "### ARC Loader", ""])
+        lines.append(
+            markdown_table(
+                [
+                    [
+                        str(row.get("task_dir", "")),
+                        str(row.get("loaded_tasks", "")),
+                        str(row.get("parse_errors", "")),
+                        str(row.get("rules", "")),
+                        str(row.get("unique_prediction_tasks", "")),
+                        str(row.get("test_exact_tasks", "")),
+                        str(row.get("certified_tasks", "")),
+                        str(row.get("test_correct_cells", "")),
+                        str(row.get("test_cells", "")),
+                        fmt_percent(row, "cell_accuracy"),
+                    ]
+                    for row in arc_loaders
+                ],
+                [
+                    "task dir",
+                    "loaded",
+                    "parse errors",
+                    "rules",
+                    "unique",
+                    "test exact",
+                    "certified",
+                    "correct",
+                    "cells",
+                    "cell accuracy",
                 ],
             )
         )
