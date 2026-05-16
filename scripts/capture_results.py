@@ -68,6 +68,10 @@ def dedupe_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
             row.get("max_rules"),
             row.get("selection_strategy"),
             row.get("selection_seed"),
+            row.get("softmax_group_size"),
+            row.get("closed_loop_hidden"),
+            row.get("unified_scorer_hidden"),
+            row.get("marginal_subsample_size"),
             row.get("proposed_rules"),
             row.get("verified_rules"),
             row.get("accepted_rules"),
@@ -98,6 +102,11 @@ def fmt_bool(row: dict[str, object], key: str) -> str:
     if isinstance(value, bool):
         return "yes" if value else "no"
     return ""
+
+
+def fmt_text(row: dict[str, object], key: str) -> str:
+    value = row.get(key)
+    return "" if value is None else str(value)
 
 
 def fmt_rule_filters(row: dict[str, object]) -> str:
@@ -141,6 +150,10 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
             row.get("grammar_version"),
             row.get("max_rules"),
             row.get("selection_strategy"),
+            row.get("softmax_group_size"),
+            row.get("closed_loop_hidden"),
+            row.get("unified_scorer_hidden"),
+            row.get("marginal_subsample_size"),
             row.get("accepted_rules"),
             row.get("accepted_candidate_rules"),
             row.get("accepted_gap_rules"),
@@ -316,6 +329,9 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                     str(row.get("proposer_feature_set", "")),
                     str(row.get("proposer_target", "")),
                     str(row.get("selection_strategy", "")),
+                    fmt_text(row, "softmax_group_size"),
+                    fmt_text(row, "closed_loop_hidden"),
+                    fmt_text(row, "unified_scorer_hidden"),
                     str(row.get("max_rules", "")),
                     str(row.get("proposed_rules", "")),
                     str(row.get("verified_rules", "")),
@@ -342,6 +358,9 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                 "features",
                 "target",
                 "strategy",
+                "softmax group",
+                "closed loop hidden",
+                "unified hidden",
                 "budget",
                 "proposed",
                 "verified",

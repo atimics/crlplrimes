@@ -1665,6 +1665,67 @@ static int test_rule_search_unconditional_range_builds_structural_program(void)
     return ok;
 }
 
+static int test_rule_search_hidden_size_cli_and_json(void)
+{
+    char *argv[] = {
+        "prime_rule_search",
+        "--proposer",
+        "closed-loop",
+        "--closed-loop-hidden",
+        "64x32",
+    };
+    char *alias_argv[] = {
+        "prime_rule_search",
+        "--proposer",
+        "closed-loop",
+        "--rule-hidden",
+        "128/64",
+    };
+    char *unified_argv[] = {
+        "prime_rule_search",
+        "--unified-scorer-hidden",
+        "256x128",
+    };
+    char *bad_argv[] = {
+        "prime_rule_search",
+        "--proposer",
+        "closed-loop",
+        "--closed-loop-hidden",
+        "0x32",
+    };
+    RuleSearchConfig config;
+    RuleSearchConfig alias_config;
+    RuleSearchConfig unified_config;
+    RuleSearchConfig bad_config;
+    char hidden_json[32];
+    int ok = parse_rule_search_config(5, argv, &config) &&
+             config.proposer_mode == RULE_PROPOSER_CLOSED_LOOP &&
+             config.rule_hidden1 == 64u &&
+             config.rule_hidden2 == 32u &&
+             rule_search_effective_hidden1(&config) == 64u &&
+             rule_search_effective_hidden2(&config) == 32u;
+
+    rule_search_closed_loop_hidden_json(&config, hidden_json, sizeof(hidden_json));
+    ok = ok && strcmp(hidden_json, "\"64x32\"") == 0;
+
+    ok = ok && parse_rule_search_config(5, alias_argv, &alias_config) &&
+         alias_config.rule_hidden1 == 128u &&
+         alias_config.rule_hidden2 == 64u;
+    rule_search_closed_loop_hidden_json(&alias_config, hidden_json, sizeof(hidden_json));
+    ok = ok && strcmp(hidden_json, "\"128x64\"") == 0;
+
+    alias_config.proposer_mode = RULE_PROPOSER_GRAMMAR;
+    rule_search_closed_loop_hidden_json(&alias_config, hidden_json, sizeof(hidden_json));
+    ok = ok && strcmp(hidden_json, "null") == 0;
+
+    ok = ok && parse_rule_search_config(3, unified_argv, &unified_config) &&
+         unified_config.unified_hidden1 == 256u &&
+         unified_config.unified_hidden2 == 128u;
+
+    ok = ok && !parse_rule_search_config(5, bad_argv, &bad_config);
+    return ok;
+}
+
 static int test_expanded_rule_survivor_mask_rejects_candidate_filters(void)
 {
     ExpandedRule rule;
@@ -2209,6 +2270,8 @@ static int test_closed_loop_rule_search_selects_certified_rules(void)
                  accepted.count <= config.max_rules &&
                  metrics.proposer_calls <= config.max_rules &&
                  metrics.residual_train_samples > 0 &&
+                 metrics.softmax_group_size > 0 &&
+                 metrics.softmax_group_size <= (size_t)RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP &&
                  metrics.false_rejections == 0;
         }
     }
@@ -2278,6 +2341,8 @@ int main(void)
           "rule proposer target uses marginal utility");
     check(test_rule_search_unconditional_range_builds_structural_program(),
           "rule search unconditional range builds structural program");
+    check(test_rule_search_hidden_size_cli_and_json(),
+          "rule search hidden-size CLI is reported in JSON fields");
     check(test_expanded_rule_survivor_mask_rejects_candidate_filters(),
           "expanded rule survivor mask rejects candidate filters");
     check(test_expanded_rule_checkpoint_roundtrip(),

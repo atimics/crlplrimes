@@ -40,6 +40,10 @@ static RuleSearchConfig default_rule_search_config(void)
     config.max_test_states = DEFAULT_MAX_TEST_STATES;
     config.max_marginal_states = (size_t)RULE_SEARCH_MARGINAL_MAX_STATES;
     config.max_rules = 256;
+    config.rule_hidden1 = 0;
+    config.rule_hidden2 = 0;
+    config.unified_hidden1 = 0;
+    config.unified_hidden2 = 0;
     config.proposer_mode = RULE_PROPOSER_NEURAL;
     config.proposer_seed = 20240511u;
     config.include_state_conditions = 1;
@@ -52,6 +56,34 @@ static RuleSearchConfig default_rule_search_config(void)
         config.moduli[i] = FEATURE_MODS[i];
     }
     return config;
+}
+
+static size_t rule_search_effective_hidden1(const RuleSearchConfig *config)
+{
+    return config != NULL && config->rule_hidden1 != 0 ? config->rule_hidden1 : 32u;
+}
+
+static size_t rule_search_effective_hidden2(const RuleSearchConfig *config)
+{
+    return config != NULL && config->rule_hidden2 != 0 ? config->rule_hidden2 : 16u;
+}
+
+static void rule_search_closed_loop_hidden_json(const RuleSearchConfig *config,
+                                                char *buffer,
+                                                size_t buffer_size)
+{
+    if (buffer == NULL || buffer_size == 0) {
+        return;
+    }
+    if (config != NULL && config->proposer_mode == RULE_PROPOSER_CLOSED_LOOP) {
+        snprintf(buffer,
+                 buffer_size,
+                 "\"%zux%zu\"",
+                 rule_search_effective_hidden1(config),
+                 rule_search_effective_hidden2(config));
+    } else {
+        snprintf(buffer, buffer_size, "null");
+    }
 }
 
 static const char *rule_proposer_mode_name(RuleProposerMode mode)
@@ -237,6 +269,45 @@ static int parse_rule_search_moduli_range(const char *text,
     return 1;
 }
 
+static int parse_rule_hidden_text(const char *text, size_t *hidden1, size_t *hidden2)
+{
+    if (text == NULL || hidden1 == NULL || hidden2 == NULL || text[0] == '\0') {
+        return 0;
+    }
+
+    char copy[64];
+    size_t length = strlen(text);
+    if (length >= sizeof(copy)) {
+        return 0;
+    }
+    memcpy(copy, text, length + 1u);
+
+    char *separator = strchr(copy, 'x');
+    if (separator == NULL) {
+        separator = strchr(copy, 'X');
+    }
+    if (separator == NULL) {
+        separator = strchr(copy, '/');
+    }
+    if (separator == NULL) {
+        separator = strchr(copy, ',');
+    }
+    if (separator == NULL) {
+        return 0;
+    }
+    *separator++ = '\0';
+
+    size_t first = 0;
+    size_t second = 0;
+    if (!parse_size_text(copy, &first) || !parse_size_text(separator, &second) ||
+        first == 0 || second == 0) {
+        return 0;
+    }
+    *hidden1 = first;
+    *hidden2 = second;
+    return 1;
+}
+
 static int parse_rule_search_config(int argc, char **argv, RuleSearchConfig *config)
 {
     *config = default_rule_search_config();
@@ -263,6 +334,20 @@ static int parse_rule_search_config(int argc, char **argv, RuleSearchConfig *con
             }
         } else if (strcmp(argv[i], "--max-rules") == 0 && i + 1 < argc) {
             if (!parse_size_text(argv[++i], &config->max_rules)) {
+                return 0;
+            }
+        } else if ((strcmp(argv[i], "--rule-hidden") == 0 ||
+                    strcmp(argv[i], "--closed-loop-hidden") == 0) &&
+                   i + 1 < argc) {
+            if (!parse_rule_hidden_text(argv[++i],
+                                        &config->rule_hidden1,
+                                        &config->rule_hidden2)) {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--unified-scorer-hidden") == 0 && i + 1 < argc) {
+            if (!parse_rule_hidden_text(argv[++i],
+                                        &config->unified_hidden1,
+                                        &config->unified_hidden2)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--proposer") == 0 && i + 1 < argc) {
@@ -316,6 +401,7 @@ static void print_rule_search_usage(FILE *stream)
     fputs("usage: prime_rule_search [--train-limit n] [--test-limit n] "
           "[--max-train-states n] [--max-test-states n] "
           "[--max-marginal-states n] [--max-rules n] "
+          "[--closed-loop-hidden h1xh2] [--unified-scorer-hidden h1xh2] "
           "[--proposer neural|closed-loop|random|grammar|structural|validation-oracle] "
           "[--proposer-seed n] "
           "[--gap-only|--candidate-only] [--unconditional-only] "
@@ -1454,12 +1540,25 @@ static int select_expanded_rules_closed_loop(ExpandedRuleSet *rules,
     context.config = config;
     context.max_modulus = max_rule_search_modulus(config);
 
+    size_t eligible_count = 0;
+    for (size_t i = 0; i < rules->count; ++i) {
+        if (prime_closed_loop_candidate_allowed(i, NULL, 0, &context)) {
+            ++eligible_count;
+        }
+    }
+    metrics->softmax_group_size =
+        eligible_count < (size_t)RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP
+            ? eligible_count
+            : (size_t)RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP;
+
     NNClosedLoopRulePolicyConfig policy_config;
     nn_closed_loop_rule_policy_config_defaults(&policy_config,
                                                (size_t)RULE_DISCOVERY_FEATURE_COUNT);
     policy_config.max_rules = config->max_rules;
     policy_config.max_train_rules_per_step = (size_t)RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP;
     policy_config.epochs = (size_t)RULE_SEARCH_SCORER_EPOCHS;
+    policy_config.hidden1 = rule_search_effective_hidden1(config);
+    policy_config.hidden2 = rule_search_effective_hidden2(config);
     policy_config.seed = config->proposer_seed ^ 119417u;
     policy_config.verbose = 1;
     policy_config.feature_schema = PRIME_CLOSED_LOOP_RULE_FEATURES;
@@ -1782,6 +1881,10 @@ static void hash_expanded_rule_set_hex(const ExpandedRuleSet *rules,
     hash = mix_rule_hash_u64(hash, (uint64_t)config->max_rules);
     hash = mix_rule_hash_u64(hash, (uint64_t)config->proposer_mode);
     hash = mix_rule_hash_u64(hash, config->proposer_seed);
+    if (config->proposer_mode == RULE_PROPOSER_CLOSED_LOOP) {
+        hash = mix_rule_hash_u64(hash, (uint64_t)rule_search_effective_hidden1(config));
+        hash = mix_rule_hash_u64(hash, (uint64_t)rule_search_effective_hidden2(config));
+    }
     hash = mix_rule_hash_u64(hash, (uint64_t)metrics->accepted_rules);
     for (size_t i = 0; i < config->mod_count; ++i) {
         hash = mix_rule_hash_u64(hash, (uint64_t)config->moduli[i]);
@@ -2053,6 +2156,10 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
     double expanded_saved_pct = metrics->direct_exact_tests == 0.0
                                     ? 0.0
                                     : 100.0 * expanded_saved / metrics->direct_exact_tests;
+    char closed_loop_hidden_json[64];
+    rule_search_closed_loop_hidden_json(config,
+                                        closed_loop_hidden_json,
+                                        sizeof(closed_loop_hidden_json));
 
     printf("{\"schema\":\"crlp.rule_search.summary.v1\",\"task\":\"prime_gap\","
            "\"grammar_version\":%u,\"rule_set_hash\":\"%s\","
@@ -2060,6 +2167,9 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            "\"include_state_conditions\":%s,"
            "\"include_candidate_filters\":%s,\"include_gap_filters\":%s,"
            "\"max_rules\":%zu,\"max_marginal_states\":%zu,"
+           "\"softmax_group_size\":%zu,"
+           "\"closed_loop_hidden\":%s,"
+           "\"unified_scorer_hidden\":null,"
            "\"selection_strategy\":\"%s\","
            "\"selection_seed\":%llu,"
            "\"proposed_rules\":%zu,\"proposer_calls\":%zu,"
@@ -2089,6 +2199,8 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            config->include_gap_filters ? "true" : "false",
            config->max_rules,
            config->max_marginal_states,
+           metrics->softmax_group_size,
+           closed_loop_hidden_json,
            rule_proposer_mode_name(config->proposer_mode),
            (unsigned long long)config->proposer_seed,
            metrics->proposed_rules,
@@ -2132,6 +2244,9 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            config->max_rules,
            config->max_marginal_states,
            (unsigned long long)config->proposer_seed);
+    if (metrics->softmax_group_size != 0) {
+        printf("  softmax_group_size=%zu\n", metrics->softmax_group_size);
+    }
     printf("  proposer_target=%s marginal_samples train=%zu validation=%zu events train=%zu validation=%zu\n",
            rule_proposer_target_name(config->proposer_mode),
            metrics->train_marginal_samples,
@@ -2152,9 +2267,16 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            metrics->accepted_candidate_rules);
     if (config->proposer_mode == RULE_PROPOSER_NEURAL ||
         config->proposer_mode == RULE_PROPOSER_CLOSED_LOOP) {
-        printf("  neural_rule_scorer_epochs=%u feature_set=%s final_mse=%.6f residual_samples=%zu\n",
+        printf("  neural_rule_scorer_epochs=%u feature_set=%s hidden=%zux%zu "
+               "final_mse=%.6f residual_samples=%zu\n",
                (uint32_t)RULE_SEARCH_SCORER_EPOCHS,
                rule_proposer_feature_set_name(config->proposer_mode),
+               config->proposer_mode == RULE_PROPOSER_CLOSED_LOOP
+                   ? rule_search_effective_hidden1(config)
+                   : 20u,
+               config->proposer_mode == RULE_PROPOSER_CLOSED_LOOP
+                   ? rule_search_effective_hidden2(config)
+                   : 10u,
                metrics->proposer_loss,
                metrics->residual_train_samples);
     } else {

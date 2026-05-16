@@ -1,0 +1,281 @@
+# Unified Scorer Proposal — Rule Discovery as Action Scoring
+
+Status: proposed, not implemented.
+Author: drafted from a 2026-05-16 design discussion after the closed-loop policy results.
+
+Implementation note from code gap analysis: this document is a design target, not
+a description of current code. The current repo already has `NN_LEAKAGE_GATE_ALLOWED`
+for proposer/gate surfaces and `examples/multitask_domain.c` already uses a
+`64/32` shared scorer. The missing work is the unified rule-row path, per-role
+auditing, matched-capacity CLI/reporting, and the deployment hook from
+`prime_rule_search` into the shared scorer.
+
+## Motivation
+
+The closed-loop policy experiment landed cleanly:
+
+- It fixed the catastrophic failure of the static neural proposer on conditional grammars (`2.15% → 54.71%` saved at budget=16).
+- It still does not beat the deterministic `grammar-order` baseline (`-0.86pp` on conditional, `-0.98pp` on unconditional).
+
+The current architecture has a structural ceiling. The closed-loop policy is a small MLP whose training target is greedy set-cover's output on the training-set events. Its deployment ceiling on the same data is greedy's output. On the two grammars currently evaluated, greedy's output is approximately the lexicographic enumeration of small-prime rules, which is exactly what `grammar-order` produces. So the network converges toward `grammar-order` with training noise, by construction.
+
+The proposal here changes the experimental object rather than tuning the existing one. Instead of treating the rule proposer as a specialized neural component evaluated in isolation, this proposal unifies it with the action scorer.
+
+## Thesis
+
+> A single neural scorer handles both action selection and rule discovery under exact verification. Rule discovery is not a special architecture; it is action scoring over a different candidate set with a different verifier.
+
+If correct, the rule-scoring half of a shared scorer should match or beat the dedicated closed-loop policy at the same matched budget. The mechanism for any improvement is **cross-role transfer**: representations learned from action-scoring across four task domains act as auxiliary supervision for the rule-scoring half on its small dataset.
+
+The thesis is testable; it is intentionally falsifiable; and even a clean negative result tightens the paper's contribution (the architectural unification holds even when the empirical edge does not).
+
+## Existing Substrate
+
+This proposal builds on infrastructure that already exists:
+
+- `examples/multitask_domain.c` already trains one shared action scorer across four domains (`prime_gap`, `grid_path`, `delayed_claim`, `arc_agi`) using a 96-wide action-row envelope.
+- `include/nn_symbolic.h` defines `NNRule`, `NNCertificate`, `NNRuleCoverage`, and `NNClosedLoopRulePolicy`. The closed-loop policy already encodes rules conditional on the accepted set and residual coverage.
+- `src/prime_gap/rule_search.c` runs matched-budget baselines (`random`, `grammar`, `structural`, `validation-oracle`, `neural`, `closed-loop`) at fixed rule budgets for both unconditional and conditional grammars.
+- `include/nn_experiment.h` enforces leakage policy via `NNFeatureSchema` + `NNFeatureAudit`. It already defines `NN_LEAKAGE_GATE_ALLOWED` for proposer/gate surfaces; `crlp.experiment_schema.v1` scorer specs deliberately cannot use that policy today.
+- `results/latest/comparison.jsonl` and the `crlp.rule_search.summary.v1` schema host the existing matched-budget evidence.
+
+The proposal does not require any new abstraction. It requires extending the existing envelope and harness.
+
+## Architectural Change
+
+### Add `prime_rule_propose` as a fifth logical domain in the multitask envelope
+
+The action-scoring envelope in `examples/multitask_domain.c` becomes the substrate for rule scoring as well. The 96-wide row already carries:
+
+- bias,
+- optional task one-hot,
+- normalized action index,
+- normalized candidate count,
+- common state/action fields,
+- domain-specific fields.
+
+For the `prime_rule_propose` domain, each row encodes one candidate rule (not one candidate action). Slots already used by action domains zero out. New slots in the domain-specific region encode rule-side information:
+
+- structural rule features: `modulus / max_mod`, `residue / modulus`, `gcd(m, r) / m`, kind flag (candidate-mod vs gap-mod), conditional flag, state-modulus normalization, candidate-residue normalization.
+- accepted-set summary: `accepted_count / max_rules`, `residual_fraction`, fraction by kind.
+- per-rule similarity to accepted set: `same_kind / accepted_count`, `same_filter_modulus`, `same_state_modulus`, `same_candidate_residue`, `is_subset_covered_by_accepted` indicator.
+
+These are the same features `prime_closed_loop_encode_features` already emits. They pack into the existing envelope by reusing domain-specific slots; if the envelope is too narrow, widen it once and propagate.
+
+There is one concrete layout hazard in the current code: task tags occupy slots
+`1..4` and `MT_F_ACTION_INDEX` starts at slot `5`. Adding a fifth task tag would
+collide. The implementation must either:
+
+- move the task tag region and bump downstream offsets, or
+- keep four action-domain tags and encode `prime_rule_propose` through a separate role/domain pair.
+
+Do not silently reuse slot `5` for both a fifth task and normalized action index.
+
+### Add a `role` tag (action vs rule) alongside the existing domain tag
+
+The current envelope has a domain tag (`prime_gap`, `grid_path`, etc.). Add a role tag (`action`, `rule`) as a second one-hot or bias slot. The scorer learns to specialize on both axes. Two slots, four parameters, no architectural complexity.
+
+The row schema must be auditable by role:
+
+- `role=action` rows preserve the original per-task leakage policy and must keep gate-derived slots zero.
+- `role=rule` rows may populate the 10 accepted-set/residual features under the existing `gate_allowed` proposer policy.
+
+### Training data construction
+
+Per training step, sample mixed batches with controlled per-role sampling weights:
+
+- Action-scoring rows: existing `prime_gap`, `grid_path`, `delayed_claim`, `arc_agi` candidate rows with verifier-correct action index as the softmax target.
+- Rule-scoring rows: greedy-set-cover trajectories. At step `k` of greedy on the prime-gap training events, all eligible rules become a single softmax group; the target index is the rule with highest marginal utility under the current residual.
+
+Both roles use softmax cross-entropy. One loss, one optimizer, one set of parameters.
+
+This is a real change from the current rule-proposer implementations. The static
+rule proposer and the existing closed-loop policy train scalar MSE targets; they
+do not currently train a softmax over each greedy candidate set. The unified
+scorer should use the same `nn_train_action_scorer` / softmax-scorer family used
+by action scoring, applied to rule rows.
+
+The current multitask trainer allocates only `ACTION_COUNT` rows per candidate
+group. Full rule groups are much larger (`~25k-33k` candidates depending on
+grammar), so Phase 1 must either allocate a rule-sized candidate buffer or stream
+the softmax group through a dedicated workspace. A truncated rule group is only
+acceptable if it is explicitly reported as an approximation and matched for the
+closed-loop baseline.
+
+### Per-role sampling discipline
+
+Rule-scoring trajectories produce few rows compared to action-scoring data (≈ 16 budget × ≈ 32k eligible rules per step ≈ 500k rule rows for one grammar; action scoring is millions of rows). Implement per-role sampling weights so the gradient sees both roles in approximately equal proportion. Default: 50/50 split per batch.
+
+### Capacity
+
+The current shared multitask scorer is already `64/32` hidden. The current
+closed-loop rule policy default is `32/16`, and the static rule proposer is
+`20/10`. Phase 1 should make capacity explicit rather than relying on defaults.
+The canonical CLI flags are:
+
+- `--closed-loop-hidden 64x32` for the dedicated closed-loop baseline,
+- `--unified-scorer-hidden 64x32` for the unified scorer.
+
+`--rule-hidden` may exist as a developer alias, but scripts and reports should
+prefer the canonical names above.
+
+The Phase 1 default comparison is:
+
+- unified scorer: `64/32`,
+- dedicated closed-loop baseline: `64/32`,
+- static neural baseline: leave as existing unless the phase specifically asks for a matched-capacity static proposer.
+
+Phase 2 then runs the explicit ladder `128/64` and `256/128`, always comparing
+unified against a dedicated closed-loop policy at the same hidden size.
+
+## Experimental Protocol
+
+The matched-budget invariant from `docs/experiment-schema.md` is unchanged. The unified scorer must be evaluated against the same baseline orderings already implemented in `make prime-rule-search-baselines`:
+
+- `random` (seed 20240511)
+- `grammar` (grammar order)
+- `structural` (structural heuristic)
+- `validation-oracle` (greedy set-cover on held-out marginal utility)
+- `neural` (static dedicated proposer)
+- `closed-loop` (dedicated residual-aware proposer)
+- `unified` (new — this proposal)
+
+At budget=16, on both grammars (unconditional `candidate-only` and conditional `gap-only`).
+
+The unified scorer's "rule-scoring half" at deployment time:
+
+1. The shared scorer is trained jointly on all roles.
+2. At inference, the scorer scores rule rows produced by the same per-greedy-step encoder used during training.
+3. The accepted set is built greedily: encode all eligible rules under the current accepted set, score, pick argmax, update residual, repeat to budget.
+
+This is the same deployment loop as the dedicated closed-loop policy. The only difference is whose parameters do the scoring.
+
+## Phased Implementation
+
+Three phases, smallest-first. Each phase produces a publishable result.
+
+### Phase 1 — Baseline parity
+
+**Goal**: confirm the unified scorer matches the dedicated closed-loop policy on rule scoring at the same capacity.
+
+Implement the `prime_rule_propose` domain in the multitask envelope. Train one shared scorer on all five domains at hidden=64/32. Evaluate the rule-scoring half against the matched-budget grid.
+
+**Success**: rule-scoring saved% within `±1pp` of the dedicated closed-loop policy on both grammars at the same hidden size and the same `softmax_group_size`.
+**Failure**: more than `1pp` worse than closed-loop. Diagnoses multitask interference; mitigation in Phase 2.
+
+### Phase 2 — Capacity scaling
+
+**Goal**: rule out capacity as the bottleneck.
+
+Run Phase 1 at hidden=128/64 and hidden=256/128. Compare to the dedicated closed-loop policy at the same sizes. Record where the unified scorer's rule-scoring saved% saturates as capacity grows.
+
+**Success**: unified scorer at some hidden size beats `grammar-order` on at least one grammar.
+**Defensible negative**: unified scorer matches but does not beat `grammar-order` at every reasonable size. This still validates the unification claim.
+
+### Phase 3 — Data-sparse rule target
+
+**Goal**: place the rule-scoring half in a regime where it cannot recover greedy on its own and must lean on cross-role transfer.
+
+Compute the rule-scoring marginal-utility target on a small subsample (default: 64 training states, not 4096). The greedy-on-subsample oracle becomes noisy. Train the shared scorer on the noisy rule target alongside the full action-scoring data. Evaluate against `greedy-on-subsample` (the appropriate oracle for that data regime) and `grammar-order` (data-free).
+
+**Success**: unified scorer at hidden=128/64 beats `greedy-on-subsample` on at least one grammar. This is the positive headline — cross-role transfer denoising rule selection.
+**Defensible negative**: unified scorer matches `greedy-on-subsample` but does not beat it. Says cross-role transfer is structural but not data-efficient at this scale.
+
+## Reporting and Schema
+
+Every phase emits rows in the existing `crlp.rule_search.summary.v1` schema with these additions:
+
+- `selection_strategy = "unified_scorer"` (new value).
+- A new field `unified_scorer_hidden = "64x32"` (or equivalent) so capacity is visible in the row.
+- A corresponding `closed_loop_hidden = "64x32"` field when reporting the matched dedicated baseline, so capacity fairness is machine-readable.
+- A new integer field `softmax_group_size`. If the full eligible rule set is used, this is the full eligible-rule count for the first greedy step; if a cap is used, this is the effective cap value. Unified and closed-loop rows being compared must match on this field.
+
+Phase 3 also adds `marginal_subsample_size = 64` to the row so data-sparseness is reported alongside the result.
+
+`results/latest/comparison.jsonl` should include the new strategy rows under both grammars at every phase. `results/latest/summary.md` adds a `Unified scorer` row to the existing rule-search baseline table.
+
+A short markdown writeup per phase under `results/2026-05-XX-unified-scorer-phaseN.md` records command, parameters, and findings, following the format of `results/2026-05-16-multitask-arc-matrix.md`.
+
+## Leakage Discipline
+
+The unified scorer must remain leakage-compliant under both roles:
+
+- Action-scoring rows: existing leakage policy (`forbidden` for `prime_gap` and `delayed_claim`, `priors_allowed` for `grid_path`). No change.
+- Rule-scoring rows: features are structural (modulus, residue, gcd ratios, kind flags) plus accepted-set-derived (residual fraction, similarity to accepted set, subset-cover indicator). The latter are `NN_FEATURE_DERIVED_FROM_GATE`, which is allowed for a proposer but would be forbidden for an action scorer.
+
+Two consequences:
+
+1. Do not add a new global leakage enum just to spell `gate_allowed`; it already exists. Add a per-role policy declaration/override for the unified envelope instead.
+2. The action-scoring half of any task whose original policy is `forbidden` must continue to satisfy `forbidden` — that is, action-scoring rows of `prime_gap` must not see `NN_FEATURE_DERIVED_FROM_GATE` slots populated. The envelope must zero those slots for action-scoring rows. The audit machinery should enforce this, ideally by typing the envelope's slot provenance per role.
+
+The cleanest path: introduce a per-role audit table, not a broad scorer policy:
+
+- `role=action, task=prime_gap`: audit under `forbidden`.
+- `role=action, task=delayed_claim`: audit under `forbidden`.
+- `role=action, task=grid_path`: audit under `priors_allowed`.
+- `role=rule, task=prime_rule_propose`: audit under `gate_allowed`.
+
+`NNExperimentSpec` may remain conservative for production action scorers. If a
+unified experiment schema row is added, it should describe the mixed-role
+envelope explicitly and include per-role audit results rather than pretending
+one global leakage policy covers both roles.
+
+## Failure Modes to Pre-empt
+
+1. **Multitask interference at small capacity.** Five logical domains × two roles into the existing small dedicated rule-proposer sizes is undersized. Phase 1 must use ≥ 64/32. Compare the dedicated closed-loop at the same size; do not credit a unified scorer "win" that is really a capacity advantage over an undersized baseline.
+2. **Role imbalance in batches.** Action-scoring rows outnumber rule-scoring rows by orders of magnitude. Without per-role sampling weights, the rule-scoring loss is invisible to the optimizer. The mitigation is explicit in `Per-role sampling discipline` above and must not be skipped.
+3. **Verifier-derived signals leaking through `accepted-set-derived` features into action-scoring rows.** The fix is per-role provenance gating in the envelope. The audit must verify that action-scoring rows do not populate gate-derived slots.
+4. **Phase 3 oracle confusion.** The right oracle for Phase 3 is `greedy-on-subsample`, not `greedy-on-full-train`. The latter would be unfair (full-train greedy has more data than the unified scorer's rule-scoring half). Report both for transparency, but the headline comparison is against the same-data oracle.
+5. **Capacity arms race in reporting.** Each phase reports the dedicated closed-loop at the same hidden size. Do not compare unified-128/64 against a smaller closed-loop default.
+
+## Files Likely to Change
+
+Implementer should expect to touch (in approximate order):
+
+- `examples/multitask_domain.c`: add `prime_rule_propose` domain, role tag, rule-row encoder, training-loop integration. Largest single change.
+- `src/prime_gap/rule_search.c`: add `--proposer unified` selection strategy that hands rule-scoring to the multitask scorer at deployment; add hidden-size CLI fields for matched-capacity runs.
+- `include/nn_experiment.h` and `src/nn_experiment.c`: add per-role audit support only if the unified envelope emits a formal experiment schema row. Do not add a duplicate `gate_allowed` enum.
+- `src/nn_symbolic.c`: optionally expose `nn_closed_loop_rule_policy_select` in a form that takes an external scorer callback (so the unified scorer plugs in without a parallel implementation). Training still needs a new mixed-role path because the current closed-loop trainer uses MSE regression, not rule-set softmax cross-entropy.
+- `Makefile`: add `unified` to the `prime-rule-search-baselines` target's proposer sweep.
+- `scripts/capture_results.py`: recognize the new `selection_strategy = "unified_scorer"` value when building the summary table.
+- `tests/test_nn.c`: add a regression test that the unified scorer's rule-scoring half produces a sound rule set (zero false rejections at evaluation) and that action-scoring rows continue to pass leakage audit.
+
+Do not touch:
+
+- `nn_core.h` and `nn_train.h`: no new neural primitives are needed.
+- `nn_symbolic.h` interface unless the external scorer callback cannot be expressed cleanly through `nn_closed_loop_rule_policy_select`. Prefer a small callback overload in `src/nn_symbolic.c` over changing core neural primitives.
+
+## What This Changes About the Paper
+
+The thesis sharpens from "hybrid neural-symbolic action scoring under exact verification" to "a single neural scorer handles both action selection and rule discovery under exact verification — rule discovery is action scoring over a different candidate set with a different verifier."
+
+The pre-existing negative result (closed-loop ties grammar-order) keeps its sharpness: the matched-budget discipline still says deterministic baselines are competitive in this regime. The new result either (a) reinforces the negative by showing it survives unification, or (b) breaks the negative by showing cross-role transfer adds value where the specialized architecture cannot.
+
+Either outcome lands cleanly. The repository's discipline produces an honest answer at every fork; this proposal extends that discipline to a fork that has not yet been taken.
+
+## Out of Scope
+
+This proposal does not:
+
+- Introduce new task domains (prime/grid/claim/arc are the existing four; ARC remains a one-sample smoke).
+- Change the certificate verifier or the soundness guarantee.
+- Change the leakage policy enforcement on action-scoring rows.
+- Promote the multitask envelope into the certified-gate evidence table; the multitask result stays in its own schema (`crlp.multitask.summary.v1`).
+- Add online learning or RL into the unified scorer's training loop. Supervised cross-entropy on greedy targets is the same target shape as the existing closed-loop; this proposal is about architectural unification, not new optimization.
+
+## Open Questions for the Implementer
+
+1. Should the `role` tag be a one-hot extension to the domain tag, or a separate slot? Either works; the implementer's choice.
+2. Should action-scoring and rule-scoring share the output head or have separate heads with a shared trunk? Shared head is simpler and matches the unification claim more cleanly; separate heads may improve Phase 1 parity with the dedicated closed-loop. If shared head underperforms in Phase 1, switch to separate heads in Phase 2 and note the change.
+3. Should full eligible rule sets be used for every softmax group, or should Phase 1 use the existing `RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP` cap? Full groups match the proposal cleanly; capped groups are faster but must be reported as `softmax_group_size` and matched for baseline fairness.
+4. How are rule-scoring greedy trajectories cached? Recomputing per epoch is fine for prime_gap at the current scale; if Phase 3 is slow, cache once at training start.
+5. Should ARC contribute rule rows too? The current ARC smoke does not have a rule grammar with marginal-utility events; leaving ARC as action-scoring-only is fine for this proposal.
+
+## Decision Required from the Maintainer Before Implementation Starts
+
+1. Confirm the per-role leakage audit mechanism is acceptable: action rows keep their existing task policies, rule rows use existing `gate_allowed`.
+2. Confirm the proposed capacity ladder (64/32 → 128/64 → 256/128) is acceptable, or specify a different one.
+3. Confirm Phase 3's data-sparse subsample size (64 states) is acceptable, or specify a different one.
+4. Confirm whether Phase 1 must use full rule softmax groups or may use a reported, matched cap.
+
+Once these decisions are made, Phase 1 is unblocked and self-contained.

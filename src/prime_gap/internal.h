@@ -208,6 +208,10 @@ typedef struct {
     size_t max_test_states;
     size_t max_marginal_states;
     size_t max_rules;
+    size_t rule_hidden1;
+    size_t rule_hidden2;
+    size_t unified_hidden1;
+    size_t unified_hidden2;
     RuleProposerMode proposer_mode;
     uint64_t proposer_seed;
     uint32_t moduli[RULE_SEARCH_MAX_MODULI];
@@ -231,6 +235,7 @@ typedef struct {
     size_t uncertified_rules;
     size_t proposer_calls;
     size_t residual_train_samples;
+    size_t softmax_group_size;
     size_t train_marginal_samples;
     size_t validation_marginal_samples;
     size_t train_marginal_events;

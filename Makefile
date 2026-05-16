@@ -162,12 +162,14 @@ prime-rule-search: $(PRIME_RULE_SEARCH)
 prime-rule-search-baselines: $(PRIME_RULE_SEARCH)
 	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer neural
 	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer closed-loop
+	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer closed-loop --closed-loop-hidden 64x32
 	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer random --proposer-seed 20240511
 	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer grammar
 	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer structural
 	./$(PRIME_RULE_SEARCH) --candidate-only --unconditional-only --moduli-range 3:255 --max-rules 16 --proposer validation-oracle
 	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer neural
 	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer closed-loop
+	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer closed-loop --closed-loop-hidden 64x32
 	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer random --proposer-seed 20240511
 	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer grammar
 	./$(PRIME_RULE_SEARCH) --gap-only --max-rules 16 --proposer structural
