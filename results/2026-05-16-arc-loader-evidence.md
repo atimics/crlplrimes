@@ -7,8 +7,8 @@ The corpus is not vendored in this repository.
 
 ```sh
 git clone --depth 1 https://github.com/fchollet/ARC-AGI.git /private/tmp/ARC-AGI
-./build/float/arc_agi --task-dir /private/tmp/ARC-AGI/data/training --max-tasks 400 --loader-summary-only
-./build/float/arc_agi --task-dir /private/tmp/ARC-AGI/data/evaluation --max-tasks 400 --loader-summary-only
+./build/float/arc_agi --task-dir /private/tmp/ARC-AGI/data/training --max-tasks 400 --loader-summary-only --program-budget-grid
+./build/float/arc_agi --program-train-dir /private/tmp/ARC-AGI/data/training --task-dir /private/tmp/ARC-AGI/data/evaluation --max-tasks 400 --loader-summary-only --program-budget-grid
 ```
 
 ## Loader Summary
@@ -21,20 +21,53 @@ git clone --depth 1 https://github.com/fchollet/ARC-AGI.git /private/tmp/ARC-AGI
 ## Program-Proposer Summary
 
 Grammar v4 maps ARC transforms into `NNProgram` rows, adds a connected-component
-largest-object primitive, and reports matched 64-program proposer budgets through
-`crlp.program_proposer.summary.v1`.
+largest-object primitive, and reports matched proposer budget curves through
+`crlp.program_proposer.summary.v1`. The learned proposer uses the shared
+`nn_program_encode_features()` program encoder plus ARC shape/color/object
+descriptors. The evaluation rows below pretrain that proposer on the public
+training split before scoring the public evaluation split.
 
 | Split | Strategy | Budget | Proposed | Certified programs | Accepted programs | Covered cells | Event cells | Utility |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| training | grammar-order | 8 | 3200 | 0 | 0 | 0 | 56672 | 0.0000% |
+| training | structural heuristic | 8 | 3200 | 13 | 13 | 228 | 56672 | 0.4023% |
+| training | random | 8 | 3200 | 0 | 0 | 0 | 56672 | 0.0000% |
+| training | learned program scorer | 8 | 3200 | 14 | 14 | 328 | 56672 | 0.5788% |
+| training | oracle | 8 | 3200 | 29 | 29 | 521 | 56672 | 0.9193% |
+| training | grammar-order | 16 | 6400 | 0 | 0 | 0 | 56672 | 0.0000% |
+| training | structural heuristic | 16 | 6400 | 13 | 13 | 228 | 56672 | 0.4023% |
+| training | random | 16 | 6400 | 0 | 0 | 0 | 56672 | 0.0000% |
+| training | learned program scorer | 16 | 6400 | 15 | 15 | 409 | 56672 | 0.7217% |
+| training | oracle | 16 | 6400 | 30 | 30 | 521 | 56672 | 0.9193% |
+| training | grammar-order | 32 | 12800 | 1 | 1 | 9 | 56672 | 0.0159% |
+| training | structural heuristic | 32 | 12800 | 14 | 14 | 228 | 56672 | 0.4023% |
+| training | random | 32 | 12800 | 0 | 0 | 0 | 56672 | 0.0000% |
+| training | learned program scorer | 32 | 12800 | 16 | 16 | 409 | 56672 | 0.7217% |
+| training | oracle | 32 | 12800 | 30 | 30 | 521 | 56672 | 0.9193% |
 | training | grammar-order | 64 | 25600 | 17 | 17 | 433 | 56672 | 0.7640% |
 | training | structural heuristic | 64 | 25600 | 16 | 16 | 409 | 56672 | 0.7217% |
 | training | random | 64 | 25600 | 0 | 0 | 0 | 56672 | 0.0000% |
-| training | learned family prior | 64 | 25600 | 10 | 10 | 168 | 56672 | 0.2964% |
+| training | learned program scorer | 64 | 25600 | 17 | 17 | 433 | 56672 | 0.7640% |
 | training | oracle | 64 | 25600 | 30 | 30 | 521 | 56672 | 0.9193% |
+| evaluation | grammar-order | 8 | 3200 | 0 | 0 | 0 | 98515 | 0.0000% |
+| evaluation | structural heuristic | 8 | 3200 | 0 | 0 | 0 | 98515 | 0.0000% |
+| evaluation | random | 8 | 3200 | 0 | 0 | 0 | 98515 | 0.0000% |
+| evaluation | learned program scorer | 8 | 3200 | 1 | 1 | 100 | 98515 | 0.1015% |
+| evaluation | oracle | 8 | 3200 | 4 | 4 | 187 | 98515 | 0.1898% |
+| evaluation | grammar-order | 16 | 6400 | 0 | 0 | 0 | 98515 | 0.0000% |
+| evaluation | structural heuristic | 16 | 6400 | 1 | 1 | 9 | 98515 | 0.0091% |
+| evaluation | random | 16 | 6400 | 0 | 0 | 0 | 98515 | 0.0000% |
+| evaluation | learned program scorer | 16 | 6400 | 2 | 2 | 130 | 98515 | 0.1320% |
+| evaluation | oracle | 16 | 6400 | 4 | 4 | 187 | 98515 | 0.1898% |
+| evaluation | grammar-order | 32 | 12800 | 2 | 2 | 39 | 98515 | 0.0396% |
+| evaluation | structural heuristic | 32 | 12800 | 3 | 3 | 87 | 98515 | 0.0883% |
+| evaluation | random | 32 | 12800 | 0 | 0 | 0 | 98515 | 0.0000% |
+| evaluation | learned program scorer | 32 | 12800 | 3 | 3 | 139 | 98515 | 0.1411% |
+| evaluation | oracle | 32 | 12800 | 4 | 4 | 187 | 98515 | 0.1898% |
 | evaluation | grammar-order | 64 | 25600 | 4 | 4 | 187 | 98515 | 0.1898% |
 | evaluation | structural heuristic | 64 | 25600 | 4 | 4 | 187 | 98515 | 0.1898% |
 | evaluation | random | 64 | 25600 | 0 | 0 | 0 | 98515 | 0.0000% |
-| evaluation | learned family prior | 64 | 25600 | 4 | 4 | 187 | 98515 | 0.1898% |
+| evaluation | learned program scorer | 64 | 25600 | 4 | 4 | 187 | 98515 | 0.1898% |
 | evaluation | oracle | 64 | 25600 | 4 | 4 | 187 | 98515 | 0.1898% |
 
 ## Certified Tasks
@@ -71,3 +104,7 @@ fit the current hand-coded split-panel, recolor, crop, geometry, bbox,
 small-translation, and largest connected-component families. The object primitive
 adds two training certifications (`1f85a75f`, `be94b721`) and one redundant
 certificate on `1cf80156`; it does not improve the public evaluation split yet.
+The learned proposer is now a real neural scorer over program/task descriptors:
+it improves tight-budget ranking on both splits, but it only recovers the same
+four evaluation certifications as grammar/structural order by budget 64 because
+the grammar ceiling is still four tasks.

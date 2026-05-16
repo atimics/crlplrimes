@@ -130,8 +130,11 @@ row. The same binary can also scan ARC-format JSON directories with `--task-dir`
 and emit per-task `crlp.arc_transform.summary.v1` rows plus a
 `crlp.arc_loader.summary.v1` aggregate. It also maps transform candidates into
 typed `NNProgram` rows and emits `crlp.program_proposer.summary.v1` for
-grammar-order, structural, random, learned-family, and oracle orderings at a
-matched program budget. The loader evidence is intentionally narrow: grammar
+grammar-order, structural, random, learned-program, and oracle orderings across
+matched program-budget curves. The learned proposer uses the shared
+`nn_program_encode_features()` encoder plus ARC task-level shape/color/object
+descriptors, and can be pretrained with `--program-train-dir` before evaluating
+another split. The loader evidence is intentionally narrow: grammar
 version 4 covers two same-height panel masks, same-shape color maps,
 foreground/object crops, rotations, flips, transposes, small integer scales,
 bbox drawing, small foreground translations, and largest connected-component
@@ -182,6 +185,8 @@ are more naturally expressed as programs than as one-step rejection rules.
 ```text
 domain grammar emits typed NNProgram rows
         ↓
+nn_program_encode_features emits domain-neutral program features
+        ↓
 canonical id from signature, params, and child ids
         ↓
 optional composition under input/output type checks
@@ -195,11 +200,12 @@ crlp.program_proposer.summary.v1 records matched-budget proposer comparisons
 ```
 
 The program layer does not replace `NNSymbolicDomain`; it gives symbolic
-domains a lower-level object for candidates with typed inputs and outputs. For
-ARC, this is where connected-object extractors, relation predicates, tiling
-operators, and learned transform-family proposals should land before they are
-connected to a production gate. For program synthesis, the same object can
-name reusable DSL abstractions. The certificate checker remains domain-owned.
+domains a lower-level object for candidates with typed inputs and outputs plus a
+shared structural feature encoder for candidate ranking. ARC appends
+task-specific shape/color/object descriptors to those domain-neutral program
+features before training its learned proposer. For program synthesis, the same
+object can name reusable DSL abstractions. The certificate checker remains
+domain-owned.
 
 ## Rule-Search Summary Rows
 
@@ -290,6 +296,6 @@ production learned-gate evaluation table is open work.
    heuristic, and oracle ranking on the same gated candidate set.
 8. Report random-normalized and gate-marginal skill in cross-task tables; keep
    raw top-1 in task-specific sections.
-9. Use `NNProgram` for ARC object-relation, tiling, and learned
-   transform-family candidates, then run matched program-proposer comparisons
-   before treating ARC as production verifier-gated ARC evidence.
+9. Extend ARC beyond the current `NNProgram` ranking experiment into actual
+   object-relation, tiling, and transform-induction candidates before treating
+   it as production verifier-gated ARC evidence.

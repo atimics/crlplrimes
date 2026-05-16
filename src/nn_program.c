@@ -1,7 +1,57 @@
 #include "nn_program.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
+static const NNFeatureSchema NN_PROGRAM_FEATURE_SCHEMA[NN_PROGRAM_FEATURE_COUNT] = {
+    {"program_bias", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_kind_norm", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_input_type_norm", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_output_type_norm", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_template_id_norm", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_param_count_norm", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_child_count_norm", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_structural_feature_count_norm", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_has_children", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_is_composition", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_input_output_same_type", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_input_is_grid", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_output_is_grid", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_output_is_object_set", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_output_is_object", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_output_is_mask", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_param_mean_abs", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_param_max_abs", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_param_mean_signed", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_param_integer_mean_abs", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_payload_00", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_payload_01", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_payload_02", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_payload_03", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_payload_04", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_payload_05", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_payload_06", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_payload_07", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_payload_08", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_payload_09", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_payload_10", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"program_payload_11", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+};
+
+static nn_real nn_program_clamped_unit(double value, double scale)
+{
+    if (!isfinite(value) || scale <= 0.0) {
+        return (nn_real)0;
+    }
+    double scaled = value / scale;
+    if (scaled > 1.0) {
+        scaled = 1.0;
+    } else if (scaled < -1.0) {
+        scaled = -1.0;
+    }
+    return (nn_real)scaled;
+}
 
 static void nn_program_copy_text(char *dst, size_t dst_size, const char *src)
 {
@@ -250,6 +300,76 @@ int nn_program_add_feature(NNProgram *program, nn_real value)
         return 0;
     }
     program->structural_features[program->structural_feature_count++] = value;
+    return 1;
+}
+
+const NNFeatureSchema *nn_program_feature_schema(size_t *feature_count_out)
+{
+    if (feature_count_out != NULL) {
+        *feature_count_out = NN_PROGRAM_FEATURE_COUNT;
+    }
+    return NN_PROGRAM_FEATURE_SCHEMA;
+}
+
+int nn_program_encode_features(const NNProgram *program,
+                               nn_real *features,
+                               size_t capacity,
+                               size_t *feature_count_out)
+{
+    if (program == NULL || features == NULL || capacity < NN_PROGRAM_FEATURE_COUNT) {
+        return 0;
+    }
+    memset(features, 0, NN_PROGRAM_FEATURE_COUNT * sizeof(*features));
+
+    double param_abs_sum = 0.0;
+    double param_signed_sum = 0.0;
+    double param_max_abs = 0.0;
+    double integer_abs_sum = 0.0;
+    for (size_t i = 0; i < program->param_count; ++i) {
+        double abs_value = fabs(program->params[i].value);
+        param_abs_sum += abs_value;
+        param_signed_sum += program->params[i].value;
+        if (abs_value > param_max_abs) {
+            param_max_abs = abs_value;
+        }
+        integer_abs_sum += fabs((double)program->params[i].integer);
+    }
+    double param_count = program->param_count == 0 ? 1.0 : (double)program->param_count;
+
+    features[0] = (nn_real)1;
+    features[1] = nn_program_clamped_unit((double)program->kind, 255.0);
+    features[2] = nn_program_clamped_unit((double)program->input_type, 255.0);
+    features[3] = nn_program_clamped_unit((double)program->output_type, 255.0);
+    features[4] = nn_program_clamped_unit((double)program->template_id, 1024.0);
+    features[5] = nn_program_clamped_unit((double)program->param_count,
+                                          (double)NN_PROGRAM_MAX_PARAMS);
+    features[6] = nn_program_clamped_unit((double)program->child_count,
+                                          (double)NN_PROGRAM_MAX_CHILDREN);
+    features[7] = nn_program_clamped_unit((double)program->structural_feature_count,
+                                          (double)NN_PROGRAM_MAX_FEATURES);
+    features[8] = program->child_count != 0 ? (nn_real)1 : (nn_real)0;
+    features[9] = program->kind == NN_PROGRAM_KIND_COMPOSITION ? (nn_real)1 : (nn_real)0;
+    features[10] = program->input_type == program->output_type ? (nn_real)1 : (nn_real)0;
+    features[11] = program->input_type == NN_PROGRAM_VALUE_GRID ? (nn_real)1 : (nn_real)0;
+    features[12] = program->output_type == NN_PROGRAM_VALUE_GRID ? (nn_real)1 : (nn_real)0;
+    features[13] = program->output_type == NN_PROGRAM_VALUE_OBJECT_SET ? (nn_real)1 : (nn_real)0;
+    features[14] = program->output_type == NN_PROGRAM_VALUE_OBJECT ? (nn_real)1 : (nn_real)0;
+    features[15] = program->output_type == NN_PROGRAM_VALUE_MASK ? (nn_real)1 : (nn_real)0;
+    features[16] = nn_program_clamped_unit(param_abs_sum / param_count, 16.0);
+    features[17] = nn_program_clamped_unit(param_max_abs, 64.0);
+    features[18] = nn_program_clamped_unit(param_signed_sum / param_count, 16.0);
+    features[19] = nn_program_clamped_unit(integer_abs_sum / param_count, 64.0);
+
+    size_t payload_count = NN_PROGRAM_FEATURE_COUNT - 20u;
+    if (payload_count > program->structural_feature_count) {
+        payload_count = program->structural_feature_count;
+    }
+    for (size_t i = 0; i < payload_count; ++i) {
+        features[20u + i] = program->structural_features[i];
+    }
+    if (feature_count_out != NULL) {
+        *feature_count_out = NN_PROGRAM_FEATURE_COUNT;
+    }
     return 1;
 }
 

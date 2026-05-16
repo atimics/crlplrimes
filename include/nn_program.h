@@ -14,6 +14,8 @@
 #define NN_PROGRAM_MAX_FEATURES 96u
 #define NN_PROGRAM_MAX_CHILDREN 4u
 #define NN_PROGRAM_MAX_CANONICAL_ID 192u
+#define NN_PROGRAM_FEATURE_ENCODER_VERSION 1u
+#define NN_PROGRAM_FEATURE_COUNT 32u
 
 typedef enum {
     NN_PROGRAM_VALUE_ANY = 0,
@@ -118,6 +120,11 @@ int nn_program_add_param(NNProgram *program,
 int nn_program_get_param(const NNProgram *program, const char *name, double *value_out);
 int nn_program_get_param_i64(const NNProgram *program, const char *name, int64_t *value_out);
 int nn_program_add_feature(NNProgram *program, nn_real value);
+const NNFeatureSchema *nn_program_feature_schema(size_t *feature_count_out);
+int nn_program_encode_features(const NNProgram *program,
+                               nn_real *features,
+                               size_t capacity,
+                               size_t *feature_count_out);
 int nn_program_is_composable(const NNProgram *first, const NNProgram *second);
 int nn_program_compose(NNProgram *out,
                        const NNProgram *first,

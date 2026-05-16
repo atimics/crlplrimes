@@ -334,6 +334,38 @@ static int test_program_typed_composition_and_canonical_id(void)
     return ok;
 }
 
+static int test_program_feature_encoder(void)
+{
+    NNProgram program;
+    nn_real features[NN_PROGRAM_FEATURE_COUNT];
+    size_t encoded_count = 0;
+    size_t schema_count = 0;
+    const NNFeatureSchema *schema = nn_program_feature_schema(&schema_count);
+    nn_program_init(&program,
+                    "arc",
+                    "rotate90",
+                    NN_PROGRAM_KIND_TRANSFORM,
+                    NN_PROGRAM_VALUE_GRID,
+                    NN_PROGRAM_VALUE_GRID,
+                    13);
+    int ok = schema != NULL && schema_count == NN_PROGRAM_FEATURE_COUNT;
+    ok = ok && nn_program_add_param(&program, "op", 13.0, 13);
+    ok = ok && nn_program_add_feature(&program, (nn_real)0.5);
+    ok = ok && nn_program_add_feature(&program, (nn_real)0.25);
+    ok = ok && nn_program_encode_features(&program,
+                                           features,
+                                           NN_PROGRAM_FEATURE_COUNT,
+                                           &encoded_count);
+    ok = ok && encoded_count == NN_PROGRAM_FEATURE_COUNT;
+    ok = ok && nearly_equal(features[0], (nn_real)1, (nn_real)1e-6, (nn_real)1e-6);
+    ok = ok && features[10] == (nn_real)1;
+    ok = ok && features[11] == (nn_real)1;
+    ok = ok && features[12] == (nn_real)1;
+    ok = ok && nearly_equal(features[20], (nn_real)0.5, (nn_real)1e-6, (nn_real)1e-6);
+    ok = ok && nearly_equal(features[21], (nn_real)0.25, (nn_real)1e-6, (nn_real)1e-6);
+    return ok;
+}
+
 static int test_program_coverage_and_proposer_summary_json(void)
 {
     NNProgramCoverage coverage = {0};
@@ -2572,6 +2604,8 @@ int main(void)
           "symbolic coverage tracks residual events");
     check(test_program_typed_composition_and_canonical_id(),
           "program layer composes typed transforms with canonical ids");
+    check(test_program_feature_encoder(),
+          "program layer encodes domain-neutral structural features");
     check(test_program_coverage_and_proposer_summary_json(),
           "program layer tracks coverage and proposer evidence");
     check(test_closed_loop_policy_uses_generic_residual_coverage(),

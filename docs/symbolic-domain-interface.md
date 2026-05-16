@@ -47,6 +47,7 @@ The core engine features are:
 | Typed signatures | `NNProgramValueType` and `nn_program_is_composable()` prevent composing, for example, an `object -> mask` transform into a `grid -> object_set` extractor in the wrong order |
 | Canonical identities | `nn_program_refresh_canonical_id()` derives a stable id and hash from domain, name, kind, signature, params, and child program ids |
 | Program composition | `nn_program_compose()` creates a typed composition row and records both child canonical ids |
+| Program features | `nn_program_encode_features()` emits a fixed structural feature row that learned proposers can share across domains |
 | Program coverage | `NNProgramCoverage` mirrors rule coverage for program-to-event support, residual gain, and accepted-set coverage |
 | Proposer evidence | `nn_program_write_proposer_summary_json()` emits `crlp.program_proposer.summary.v1` rows for random, grammar-order, structural, learned, closed-loop, and oracle program orderings |
 
@@ -133,9 +134,11 @@ mature:
 - The standalone ARC binary has a JSON directory loader, but the shared
   symbolic-domain smoke still uses one compiled sample and is not a general ARC
   solver.
-- The standalone ARC loader now has typed `NNProgram` rows and a largest
-  connected-component primitive; the older shared symbolic-domain
-  `object_select_overlap` rule is still an alias for intersection.
+- The standalone ARC loader now has typed `NNProgram` rows, a largest
+  connected-component primitive, budget curves, and a learned program proposer
+  over shared program features plus ARC task descriptors; the older shared
+  symbolic-domain `object_select_overlap` rule is still an alias for
+  intersection.
 - The shared proposer should be evaluated against random, grammar-order,
   structural-heuristic, and oracle orderings on each non-ARC domain; ARC now
   emits matched program-proposer rows from the standalone loader path.

@@ -277,10 +277,10 @@ program-synthesis-baselines: $(PROGRAM_SYNTHESIS)
 	./$(PROGRAM_SYNTHESIS) --proposer all --budget-grid
 
 arc-agi: $(ARC_AGI)
-	./$(ARC_AGI) --save $(BUILD_DIR)/arc_agi.nnckpt
+	./$(ARC_AGI) --program-budget-grid --save $(BUILD_DIR)/arc_agi.nnckpt
 
 arc-agi-loader: $(ARC_AGI)
-	./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS)
+	./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS) --program-budget-grid
 
 results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(ARC_AGI)
 	$(PYTHON) scripts/capture_results.py --output-dir $(RESULTS_DIR) --real $(REAL)

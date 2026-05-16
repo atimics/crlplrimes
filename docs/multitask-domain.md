@@ -78,7 +78,7 @@ Run the ARC-format JSON loader over a local corpus checkout:
 
 ```sh
 make arc-agi-loader ARC_AGI_TASK_DIR=/path/to/ARC-AGI/data/training ARC_AGI_MAX_TASKS=400
-./build/float/arc_agi --task-dir /path/to/ARC-AGI/data/evaluation --max-tasks 400 --loader-summary-only
+./build/float/arc_agi --program-train-dir /path/to/ARC-AGI/data/training --task-dir /path/to/ARC-AGI/data/evaluation --max-tasks 400 --loader-summary-only --program-budget-grid
 ```
 
 Build and run the shared symbolic-rule smoke:
