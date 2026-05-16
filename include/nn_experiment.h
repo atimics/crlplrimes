@@ -18,6 +18,7 @@ typedef enum {
     NN_LEAKAGE_FORBIDDEN = 0,
     NN_LEAKAGE_PRIORS_ALLOWED = 1,
     NN_LEAKAGE_LEGACY = 2,
+    NN_LEAKAGE_GATE_ALLOWED = 3,
 } NNLeakagePolicy;
 
 typedef enum {
@@ -74,6 +75,11 @@ typedef struct {
 const char *nn_feature_provenance_name(NNFeatureProvenance provenance);
 const char *nn_leakage_policy_name(NNLeakagePolicy policy);
 const char *nn_proposer_mode_name(NNProposerMode mode);
+int nn_leakage_policy_is_valid(NNLeakagePolicy policy);
+int nn_feature_schema_is_valid(const NNFeatureSchema *features, size_t feature_count);
+NNFeatureAudit nn_feature_schema_audit(const NNFeatureSchema *features,
+                                       size_t feature_count,
+                                       NNLeakagePolicy policy);
 NNFeatureAudit nn_experiment_feature_audit(const NNExperimentSpec *spec);
 int nn_experiment_spec_is_valid(const NNExperimentSpec *spec);
 int nn_experiment_write_schema_json(FILE *fp, const NNExperimentSpec *spec);

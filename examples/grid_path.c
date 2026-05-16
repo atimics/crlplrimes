@@ -161,12 +161,12 @@ static const NNExperimentSpec GRID_PATH_EXPERIMENT_SPEC = {
     .neural_scorer = "shared MLP scores one grid/action row and softmax ranks surviving moves",
     .exact_verifier = "BFS identifies shortest-path successors and verifier node cost",
     .verifier_feedback = "target move, correctness, utility, candidate count, BFS nodes, calibration bins",
-    .rule_grammar = "legality and admissible-pruning predicates over grid boundary, blocked cells, and distance bounds",
+    .rule_grammar = "legality predicates over grid boundary and blocked cells; distance-bound pruning planned",
     .certificate_checker =
         "finite validation/exhaustive geometry checks prove a rule never rejects an optimal move",
-    .gate_executor = "accepted predicates remove impossible or certified non-optimal moves before neural scoring",
+    .gate_executor = "accepted predicates remove impossible moves before neural scoring",
     .proposer_inputs =
-        "structural rule descriptors: rule kind, direction, boundary relation, cell relation, distance relation",
+        "structural rule descriptors: rule kind, direction, boundary relation, and cell relation",
     .proposer_targets = "reject support and verifier-cost savings predicted from train/validation labels",
     .proposer_mode = NN_PROPOSER_SELECTION,
     .baseline_orderings = "neural, random, grammar-order, structural heuristic, validation oracle",

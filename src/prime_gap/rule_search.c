@@ -2,6 +2,34 @@
 
 #include "internal.h"
 
+static const NNFeatureSchema PRIME_CLOSED_LOOP_RULE_FEATURES[RULE_DISCOVERY_FEATURE_COUNT] = {
+    {"is_conditional", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"state_modulus", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"state_residue", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"state_residue_is_zero", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"state_common_factor", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"is_gap_filter", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"filter_modulus", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"filter_residue", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"filter_residue_is_zero", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"filter_common_factor", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"same_state_filter_modulus", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"candidate_residue", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"candidate_common_factor", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"inverse_filter_modulus", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"inverse_state_modulus", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"accepted_fraction", NN_FEATURE_DERIVED_FROM_GATE, 1},
+    {"residual_fraction", NN_FEATURE_DERIVED_FROM_GATE, 1},
+    {"accepted_candidate_fraction", NN_FEATURE_DERIVED_FROM_GATE, 1},
+    {"accepted_gap_fraction", NN_FEATURE_DERIVED_FROM_GATE, 1},
+    {"accepted_conditional_fraction", NN_FEATURE_DERIVED_FROM_GATE, 1},
+    {"same_kind_fraction", NN_FEATURE_DERIVED_FROM_GATE, 1},
+    {"same_filter_modulus_fraction", NN_FEATURE_DERIVED_FROM_GATE, 1},
+    {"same_state_modulus_fraction", NN_FEATURE_DERIVED_FROM_GATE, 1},
+    {"same_candidate_residue_fraction", NN_FEATURE_DERIVED_FROM_GATE, 1},
+    {"is_subset_covered", NN_FEATURE_DERIVED_FROM_GATE, 1},
+};
+
 static RuleSearchConfig default_rule_search_config(void)
 {
     RuleSearchConfig config;
@@ -1434,6 +1462,10 @@ static int select_expanded_rules_closed_loop(ExpandedRuleSet *rules,
     policy_config.epochs = (size_t)RULE_SEARCH_SCORER_EPOCHS;
     policy_config.seed = config->proposer_seed ^ 119417u;
     policy_config.verbose = 1;
+    policy_config.feature_schema = PRIME_CLOSED_LOOP_RULE_FEATURES;
+    policy_config.feature_schema_count = sizeof(PRIME_CLOSED_LOOP_RULE_FEATURES) /
+                                         sizeof(PRIME_CLOSED_LOOP_RULE_FEATURES[0]);
+    policy_config.leakage_policy = NN_LEAKAGE_GATE_ALLOWED;
 
     NNClosedLoopRulePolicy policy;
     if (!nn_closed_loop_rule_policy_train(&coverage,

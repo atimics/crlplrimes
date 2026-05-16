@@ -194,7 +194,8 @@ static int test_symbolic_domain_rule_certificate_contract(void)
     NNCertificate certificate;
     int rejects = 0;
     size_t count = nn_symbolic_domain_enumerate_rules(&domain, &rule, 1);
-    return count == 1 &&
+    return nn_symbolic_domain_is_valid(&domain) &&
+           count == 1 &&
            nn_symbolic_domain_check_certificate(&domain, &rule, &certificate) &&
            rule.accepted &&
            certificate.status == NN_CERTIFICATE_CERTIFIED &&
@@ -204,6 +205,47 @@ static int test_symbolic_domain_rule_certificate_contract(void)
            rejects &&
            nn_symbolic_domain_rule_rejects(&domain, &rule, NULL, 0, &rejects) &&
            !rejects;
+}
+
+static int test_symbolic_domain_rejects_leaky_feature_schema(void)
+{
+    const NNFeatureSchema rule_features[] = {
+        {"rule_kind", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+        {"is_subset_covered", NN_FEATURE_DERIVED_FROM_GATE, 1},
+    };
+    const NNFeatureSchema leaky_scorer_features[] = {
+        {"state", NN_FEATURE_STATE_OBSERVATION, 1},
+        {"verifier_margin", NN_FEATURE_VERIFIER_DERIVED, 1},
+    };
+    NNSymbolicDomain domain = {
+        .name = "toy_symbolic",
+        .description = "toy finite rule system",
+        .symbols = "state, action",
+        .axioms = "action one is dominated",
+        .grammar = "reject_action(action)",
+        .max_rule_count = 1,
+        .rule_feature_count = sizeof(rule_features) / sizeof(rule_features[0]),
+        .leakage_policy = NN_LEAKAGE_GATE_ALLOWED,
+        .rule_feature_schema = rule_features,
+        .rule_feature_schema_count = sizeof(rule_features) / sizeof(rule_features[0]),
+        .max_action_count = 2,
+        .enumerate_rules = toy_symbolic_enumerate_rules,
+        .check_certificate = toy_symbolic_check_certificate,
+    };
+    NNFeatureAudit audit = nn_symbolic_domain_rule_feature_audit(&domain);
+    int ok = nn_symbolic_domain_is_valid(&domain) &&
+             audit.enabled_gate_derived_features == 1 &&
+             audit.scorer_input_is_policy_compliant;
+
+    domain.leakage_policy = NN_LEAKAGE_PRIORS_ALLOWED;
+    ok = ok && !nn_symbolic_domain_is_valid(&domain);
+
+    domain.leakage_policy = NN_LEAKAGE_GATE_ALLOWED;
+    domain.scorer_feature_schema = leaky_scorer_features;
+    domain.scorer_feature_count =
+        sizeof(leaky_scorer_features) / sizeof(leaky_scorer_features[0]);
+    ok = ok && !nn_symbolic_domain_is_valid(&domain);
+    return ok;
 }
 
 static int test_symbolic_rule_coverage_and_residual_summary(void)
@@ -265,6 +307,11 @@ static int toy_residual_candidate_allowed(size_t rule_index,
 
 static int test_closed_loop_policy_uses_generic_residual_coverage(void)
 {
+    const NNFeatureSchema residual_features[] = {
+        {"residual_gain", NN_FEATURE_DERIVED_FROM_GATE, 1},
+        {"rule_index", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+        {"accepted_count", NN_FEATURE_DERIVED_FROM_GATE, 1},
+    };
     NNRuleCoverage coverage;
     NNClosedLoopRulePolicyConfig config;
     NNClosedLoopRulePolicy policy;
@@ -286,6 +333,9 @@ static int test_closed_loop_policy_uses_generic_residual_coverage(void)
     config.batch_size = 3;
     config.learning_rate = (nn_real)0.05;
     config.seed = 777u;
+    config.feature_schema = residual_features;
+    config.feature_schema_count = sizeof(residual_features) / sizeof(residual_features[0]);
+    config.leakage_policy = NN_LEAKAGE_GATE_ALLOWED;
 
     ok = ok && nn_closed_loop_rule_policy_train(&coverage,
                                                 &config,
@@ -2203,6 +2253,8 @@ int main(void)
           "experiment schema emits parseable task contract");
     check(test_symbolic_domain_rule_certificate_contract(),
           "symbolic domain certifies and applies generic rules");
+    check(test_symbolic_domain_rejects_leaky_feature_schema(),
+          "symbolic domain audits proposer and scorer feature schemas");
     check(test_symbolic_rule_coverage_and_residual_summary(),
           "symbolic coverage tracks residual events");
     check(test_closed_loop_policy_uses_generic_residual_coverage(),

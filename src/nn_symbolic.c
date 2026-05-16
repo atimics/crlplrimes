@@ -17,6 +17,11 @@ static void nn_copy_text(char *dst, size_t dst_size, const char *src)
     snprintf(dst, dst_size, "%s", src);
 }
 
+static int nn_text_is_present(const char *text)
+{
+    return text != NULL && text[0] != '\0';
+}
+
 static size_t nn_popcount_u64(uint64_t value)
 {
 #if defined(__GNUC__) || defined(__clang__)
@@ -164,11 +169,85 @@ int nn_rule_add_feature(NNRule *rule, nn_real value)
     return 1;
 }
 
+NNFeatureAudit nn_symbolic_domain_rule_feature_audit(const NNSymbolicDomain *domain)
+{
+    if (domain == NULL) {
+        NNFeatureAudit audit = {0};
+        audit.scorer_input_is_policy_compliant = 0;
+        audit.has_warning = 1;
+        return audit;
+    }
+    return nn_feature_schema_audit(domain->rule_feature_schema,
+                                   domain->rule_feature_schema_count,
+                                   domain->leakage_policy);
+}
+
+NNFeatureAudit nn_symbolic_domain_scorer_feature_audit(const NNSymbolicDomain *domain)
+{
+    if (domain == NULL) {
+        NNFeatureAudit audit = {0};
+        audit.scorer_input_is_policy_compliant = 0;
+        audit.has_warning = 1;
+        return audit;
+    }
+    return nn_feature_schema_audit(domain->scorer_feature_schema,
+                                   domain->scorer_feature_count,
+                                   domain->leakage_policy);
+}
+
+int nn_symbolic_domain_is_valid(const NNSymbolicDomain *domain)
+{
+    if (domain == NULL || !nn_text_is_present(domain->name) ||
+        !nn_text_is_present(domain->description) ||
+        !nn_text_is_present(domain->symbols) ||
+        !nn_text_is_present(domain->axioms) ||
+        !nn_text_is_present(domain->grammar) ||
+        domain->max_rule_count == 0 || domain->max_action_count == 0 ||
+        domain->rule_feature_count > NN_RULE_MAX_FEATURES ||
+        !nn_leakage_policy_is_valid(domain->leakage_policy) ||
+        domain->enumerate_rules == NULL || domain->check_certificate == NULL) {
+        return 0;
+    }
+    if (domain->rule_feature_count == 0) {
+        if (domain->rule_feature_schema != NULL || domain->rule_feature_schema_count != 0) {
+            return 0;
+        }
+    } else if (domain->rule_feature_schema_count != domain->rule_feature_count ||
+               !nn_feature_schema_is_valid(domain->rule_feature_schema,
+                                           domain->rule_feature_schema_count)) {
+        return 0;
+    }
+    if (domain->scorer_feature_schema == NULL) {
+        if (domain->scorer_feature_count != 0) {
+            return 0;
+        }
+    } else if (!nn_feature_schema_is_valid(domain->scorer_feature_schema,
+                                           domain->scorer_feature_count)) {
+        return 0;
+    }
+    if (domain->scorer_feature_schema != NULL &&
+        domain->leakage_policy == NN_LEAKAGE_GATE_ALLOWED) {
+        return 0;
+    }
+
+    NNFeatureAudit rule_audit = nn_symbolic_domain_rule_feature_audit(domain);
+    if (!rule_audit.scorer_input_is_policy_compliant) {
+        return 0;
+    }
+    if (domain->scorer_feature_schema != NULL) {
+        NNFeatureAudit scorer_audit = nn_symbolic_domain_scorer_feature_audit(domain);
+        if (!scorer_audit.scorer_input_is_policy_compliant) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 size_t nn_symbolic_domain_enumerate_rules(const NNSymbolicDomain *domain,
                                           NNRule *rules,
                                           size_t capacity)
 {
-    if (domain == NULL || domain->enumerate_rules == NULL) {
+    if (!nn_symbolic_domain_is_valid(domain)) {
         return 0;
     }
     return domain->enumerate_rules(domain, rules, capacity);
@@ -180,13 +259,24 @@ int nn_symbolic_domain_encode_rule(const NNSymbolicDomain *domain,
                                    size_t capacity,
                                    size_t *feature_count_out)
 {
-    if (domain == NULL || rule == NULL || features == NULL) {
+    if (!nn_symbolic_domain_is_valid(domain) || rule == NULL || features == NULL) {
         return 0;
     }
     if (domain->encode_rule != NULL) {
-        return domain->encode_rule(domain, rule, features, capacity, feature_count_out);
+        size_t encoded_count = 0;
+        int ok = domain->encode_rule(domain, rule, features, capacity, &encoded_count);
+        if (!ok || encoded_count != domain->rule_feature_count) {
+            return 0;
+        }
+        if (feature_count_out != NULL) {
+            *feature_count_out = encoded_count;
+        }
+        return 1;
     }
     if (capacity < rule->structural_feature_count) {
+        return 0;
+    }
+    if (rule->structural_feature_count != domain->rule_feature_count) {
         return 0;
     }
     if (rule->structural_feature_count != 0) {
@@ -204,7 +294,7 @@ int nn_symbolic_domain_check_certificate(const NNSymbolicDomain *domain,
                                          NNRule *rule,
                                          NNCertificate *certificate_out)
 {
-    if (domain == NULL || rule == NULL || domain->check_certificate == NULL) {
+    if (!nn_symbolic_domain_is_valid(domain) || rule == NULL) {
         return 0;
     }
     NNCertificate certificate;
@@ -227,7 +317,7 @@ int nn_symbolic_domain_rule_rejects(const NNSymbolicDomain *domain,
                                     size_t action,
                                     int *rejects)
 {
-    if (domain == NULL || rule == NULL || rejects == NULL ||
+    if (!nn_symbolic_domain_is_valid(domain) || rule == NULL || rejects == NULL ||
         domain->rule_rejects == NULL) {
         return 0;
     }
@@ -239,7 +329,8 @@ int nn_symbolic_domain_verify_action(const NNSymbolicDomain *domain,
                                      size_t action,
                                      NNVerifyResult *result)
 {
-    if (domain == NULL || result == NULL || domain->verify_action == NULL) {
+    if (!nn_symbolic_domain_is_valid(domain) || result == NULL ||
+        domain->verify_action == NULL) {
         return 0;
     }
     return domain->verify_action(domain, state, action, result);
@@ -469,6 +560,22 @@ static void nn_compact_accepted_indices(size_t *accepted_indices,
     *accepted_count = write;
 }
 
+static int nn_closed_loop_rule_policy_config_is_valid(const NNClosedLoopRulePolicyConfig *config)
+{
+    if (config == NULL || config->feature_count == 0 || config->max_rules == 0 ||
+        config->max_train_rules_per_step == 0 ||
+        config->feature_schema_count != config->feature_count ||
+        !nn_leakage_policy_is_valid(config->leakage_policy) ||
+        !nn_feature_schema_is_valid(config->feature_schema, config->feature_schema_count)) {
+        return 0;
+    }
+    NNFeatureAudit audit =
+        nn_feature_schema_audit(config->feature_schema,
+                                config->feature_schema_count,
+                                config->leakage_policy);
+    return audit.scorer_input_is_policy_compliant;
+}
+
 void nn_closed_loop_rule_policy_config_defaults(NNClosedLoopRulePolicyConfig *config,
                                                 size_t feature_count)
 {
@@ -483,6 +590,9 @@ void nn_closed_loop_rule_policy_config_defaults(NNClosedLoopRulePolicyConfig *co
     config->batch_size = 256;
     config->hidden1 = 32;
     config->hidden2 = 16;
+    config->leakage_policy = NN_LEAKAGE_GATE_ALLOWED;
+    config->feature_schema = NULL;
+    config->feature_schema_count = 0;
     config->learning_rate = (nn_real)0.02;
     config->seed = 119417u;
     config->verbose = 0;
@@ -519,8 +629,8 @@ int nn_closed_loop_rule_policy_train(const NNRuleCoverage *coverage,
     }
     nn_closed_loop_rule_policy_clear(policy);
     if (coverage->rule_count == 0 || coverage->event_count == 0 ||
-        coverage->word_count == 0 || config->feature_count == 0 ||
-        config->max_rules == 0 || config->max_train_rules_per_step == 0) {
+        coverage->word_count == 0 ||
+        !nn_closed_loop_rule_policy_config_is_valid(config)) {
         return 0;
     }
 
@@ -761,7 +871,7 @@ int nn_closed_loop_rule_policy_select(const NNRuleCoverage *coverage,
     if (coverage == NULL || config == NULL || encode_features == NULL ||
         candidate_allowed == NULL || policy == NULL || policy->net == NULL ||
         accepted_indices == NULL || accepted_capacity == 0 ||
-        config->feature_count == 0) {
+        !nn_closed_loop_rule_policy_config_is_valid(config)) {
         return 0;
     }
     if (accepted_count_out != NULL) {

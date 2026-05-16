@@ -12,7 +12,7 @@ The core objects are:
 | --- | --- |
 | `NNRule` | Generic symbolic rule with domain, type, template id, params, structural features, certificate status, and utility counters |
 | `NNCertificate` | Soundness result from the domain checker: unchecked, rejected, or certified |
-| `NNSymbolicDomain` | Domain descriptor plus callbacks for enumeration, feature encoding, certificate checking, gate execution, and action verification |
+| `NNSymbolicDomain` | Domain descriptor plus rule/scorer feature schemas, leakage policy, enumeration, feature encoding, certificate checking, and gate/action execution when the production path implements them |
 | `NNRuleCoverage` | Shared bitset for rule-to-event residual coverage |
 | `NNClosedLoopRulePolicy` | Generic residual-aware neural proposer trained from greedy coverage trajectories |
 
@@ -20,7 +20,8 @@ The separation is intentional:
 
 ```text
 symbols + grammar + certificate checker  -> domain formal system
-NNRule rows + residual coverage          -> shared proposer substrate
+NNRule rows + feature provenance audit   -> shared row contract
+residual coverage                        -> shared proposer substrate
 Neural policy                            -> proposes next verifier call
 Certificate checker                      -> decides whether a rule is sound
 ```
@@ -31,14 +32,17 @@ checker.
 
 ## Implemented Domains
 
-`examples/symbolic_domains.c` wires four domains through the same interface:
+`examples/symbolic_domains.c` wires four domains through the same enumeration,
+feature-encoding, and certificate interface. In this smoke binary, gate/action
+execution callbacks are placeholders; the production gate paths still live in
+their task binaries.
 
 | Domain | Grammar | Certificate |
 | --- | --- | --- |
 | `prime_gap` | candidate modular filters, conditional gap modular filters | algebraic `gcd` compositeness proof |
 | `grid_path` | edge legality, blocked-next legality | legality axiom: impossible moves cannot be optimal successors |
 | `delayed_claim` | threshold rules over claim features and actions | finite-generator check with zero false rejections |
-| `arc_agi` | copy, mask/intersection, union, object select, color map | match all train pairs and require all train-consistent grammar rules to agree on the test grid |
+| `arc_agi` | copy, mask/intersection, union, object-select-overlap, color map | match all train pairs and require all train-consistent grammar rules to agree on the test grid |
 
 Run:
 
@@ -53,10 +57,18 @@ crlp.symbolic_domain.summary.v1
 crlp.symbolic_rule_proposer.summary.v1
 ```
 
-The shared proposer currently trains one small MLP on all enumerated rule rows
-from all four domains. This proves the interface and training path are unified;
-it is not yet evidence that the learned proposer beats grammar-order baselines
-on every domain.
+`nn_symbolic_domain_is_valid()` refuses domains whose declared feature schemas
+violate the domain leakage policy or whose encoded rule width does not match the
+declared rule schema. The domain summary rows include the rule-feature leakage
+policy and a `rule_feature_policy_compliant` flag. In the current smoke all rule
+features are structural descriptors under `priors_allowed`; verifier-derived
+counts remain labels or diagnostics, not proposer inputs.
+
+The shared proposer smoke currently trains one small MLP on all enumerated rule
+rows from all four domains using certificate status as the label. This proves
+the interface and training path are unified; it is not yet evidence that the
+learned proposer beats grammar-order baselines on every domain, and it is not
+the closed-loop residual policy.
 
 ## Closed-Loop Policy
 
@@ -75,8 +87,14 @@ Domain code provides:
 | `NNResidualRuleCandidateFn` | Decide whether a rule is eligible under the current accepted set |
 | `NNResidualRuleKeepAcceptedFn` | Optional set-maintenance hook, e.g. drop accepted rules subsumed by a new rule |
 
-Prime rule search now uses this shared policy and only contributes prime-specific
-feature encoding and subset logic.
+`NNClosedLoopRulePolicyConfig` also carries an `NNFeatureSchema[]` and
+`NNLeakagePolicy`. Prime's closed-loop rule search declares 15 structural rule
+features plus 10 gate-derived residual-set features under `gate_allowed`; the
+shared train/select functions reject missing schemas or verifier-derived
+features. Prime rule search now uses this shared policy and only contributes
+prime-specific feature encoding and subset logic. The `symbolic_domains` smoke
+does not use this policy yet; it trains the simpler certificate-status
+classifier described above.
 
 ## Remaining Work
 
@@ -85,7 +103,12 @@ mature:
 
 - `grid_path` and `delayed_claim` still need production gate-ablation tables
   under the same matched-budget baselines as prime.
+- The symbolic-domain smoke still needs real `rule_rejects` and
+  `verify_action` callbacks before it can exercise gate execution uniformly.
 - ARC is one compiled sample, not a dataset loader or a general ARC solver.
+- The current ARC `object_select_overlap` rule is an alias for intersection;
+  replace it with a real connected-object selector before claiming object-level
+  ARC reasoning.
 - The shared proposer should be evaluated against random, grammar-order,
   structural-heuristic, and oracle orderings on each domain.
 - The formal-system descriptor is still C callbacks, not a declarative symbol

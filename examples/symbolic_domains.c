@@ -54,6 +54,25 @@ typedef struct {
     size_t target;
 } ClaimStateLite;
 
+static const NNFeatureSchema FORMAL_RULE_FEATURE_SCHEMA[FORMAL_FEATURE_COUNT] = {
+    {"domain_tag", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"rule_kind", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"template_id", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"param_0", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"param_1", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"param_2", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"param_3", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"param_4", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"param_5", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"param_6", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"param_7", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"param_8", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"param_9", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"param_10", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"param_11", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+    {"padding", NN_FEATURE_STRUCTURAL_PRIOR, 1},
+};
+
 static const uint8_t ARC_TRAIN_INPUTS[ARC_PAIR_COUNT][ARC_INPUT_CELLS] = {
     {1, 0, 0, 5, 0, 1, 0,
      0, 1, 0, 5, 1, 1, 1,
@@ -602,6 +621,9 @@ static int collect_domain_rules(const NNSymbolicDomain *domain,
                                 nn_real *targets,
                                 size_t *count)
 {
+    if (!nn_symbolic_domain_is_valid(domain)) {
+        return 0;
+    }
     size_t available = nn_symbolic_domain_enumerate_rules(domain, NULL, 0);
     NNRule *local = calloc(available, sizeof(*local));
     if (local == NULL) {
@@ -635,15 +657,23 @@ static int collect_domain_rules(const NNSymbolicDomain *domain,
         ++*count;
         certified += certificate.status == NN_CERTIFICATE_CERTIFIED ? 1u : 0u;
     }
+    NNFeatureAudit audit = nn_symbolic_domain_rule_feature_audit(domain);
     printf("{\"schema\":\"crlp.symbolic_domain.summary.v1\",\"domain\":\"%s\","
            "\"rules\":%zu,\"certified\":%zu,\"symbols\":\"%s\","
-           "\"axioms\":\"%s\",\"grammar\":\"%s\"}\n",
+           "\"axioms\":\"%s\",\"grammar\":\"%s\","
+           "\"leakage_policy\":\"%s\",\"rule_features\":%zu,"
+           "\"enabled_gate_derived_features\":%zu,"
+           "\"rule_feature_policy_compliant\":%s}\n",
            domain->name,
            local_count,
            certified,
            domain->symbols,
            domain->axioms,
-           domain->grammar);
+           domain->grammar,
+           nn_leakage_policy_name(domain->leakage_policy),
+           audit.enabled_features,
+           audit.enabled_gate_derived_features,
+           audit.scorer_input_is_policy_compliant ? "true" : "false");
     free(local);
     return 1;
 }
@@ -659,6 +689,10 @@ int main(void)
             .grammar = "candidate_mod, conditional_gap_mod",
             .max_rule_count = 4,
             .rule_feature_count = FORMAL_FEATURE_COUNT,
+            .leakage_policy = NN_LEAKAGE_PRIORS_ALLOWED,
+            .rule_feature_schema = FORMAL_RULE_FEATURE_SCHEMA,
+            .rule_feature_schema_count = sizeof(FORMAL_RULE_FEATURE_SCHEMA) /
+                                         sizeof(FORMAL_RULE_FEATURE_SCHEMA[0]),
             .max_action_count = 129,
             .enumerate_rules = enumerate_prime_rules,
             .encode_rule = encode_prime_rule,
@@ -673,6 +707,10 @@ int main(void)
             .grammar = "edge_legality, blocked_next",
             .max_rule_count = 5,
             .rule_feature_count = FORMAL_FEATURE_COUNT,
+            .leakage_policy = NN_LEAKAGE_PRIORS_ALLOWED,
+            .rule_feature_schema = FORMAL_RULE_FEATURE_SCHEMA,
+            .rule_feature_schema_count = sizeof(FORMAL_RULE_FEATURE_SCHEMA) /
+                                         sizeof(FORMAL_RULE_FEATURE_SCHEMA[0]),
             .max_action_count = 4,
             .enumerate_rules = enumerate_grid_rules,
             .encode_rule = encode_grid_rule,
@@ -687,6 +725,10 @@ int main(void)
             .grammar = "reject_action_if_feature_threshold",
             .max_rule_count = 4,
             .rule_feature_count = FORMAL_FEATURE_COUNT,
+            .leakage_policy = NN_LEAKAGE_PRIORS_ALLOWED,
+            .rule_feature_schema = FORMAL_RULE_FEATURE_SCHEMA,
+            .rule_feature_schema_count = sizeof(FORMAL_RULE_FEATURE_SCHEMA) /
+                                         sizeof(FORMAL_RULE_FEATURE_SCHEMA[0]),
             .max_action_count = CLAIM_ACTION_COUNT,
             .enumerate_rules = enumerate_claim_rules,
             .encode_rule = encode_claim_rule,
@@ -698,9 +740,13 @@ int main(void)
             .description = "ARC 0520fde7 transformation rules",
             .symbols = "grid,color,object,mask,transform",
             .axioms = "certified transform matches train pairs and has a unique grammar-consistent test output",
-            .grammar = "copy_left, copy_right, mask_intersection, mask_union, object_select, color_map",
+            .grammar = "copy_left, copy_right, mask_intersection, mask_union, object_select_overlap, color_map",
             .max_rule_count = ARC_RULE_COUNT,
             .rule_feature_count = FORMAL_FEATURE_COUNT,
+            .leakage_policy = NN_LEAKAGE_PRIORS_ALLOWED,
+            .rule_feature_schema = FORMAL_RULE_FEATURE_SCHEMA,
+            .rule_feature_schema_count = sizeof(FORMAL_RULE_FEATURE_SCHEMA) /
+                                         sizeof(FORMAL_RULE_FEATURE_SCHEMA[0]),
             .max_action_count = 10,
             .enumerate_rules = enumerate_arc_rules,
             .encode_rule = encode_arc_rule,

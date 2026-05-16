@@ -12,8 +12,10 @@ train across heterogeneous action domains in shuffled order?
 
 There is now a second shared-domain smoke for symbolic rules:
 `examples/symbolic_domains.c`. That binary uses `NNSymbolicDomain` instead of
-the fixed 96-wide action-row envelope, and trains one rule proposer across
-prime, grid, delayed-claim, and a tiny ARC transform grammar.
+the fixed 96-wide action-row envelope, and trains one certificate-status rule
+classifier across prime, grid, delayed-claim, and a tiny ARC transform grammar.
+It is a shared formal-interface smoke, not the closed-loop residual proposer
+benchmark.
 
 ## Domains
 
@@ -63,11 +65,16 @@ make multitask-domain
 ./build/float/multitask_domain --tasks all --eval-tasks all
 ```
 
-Build and run the shared symbolic-rule proposer:
+Build and run the shared symbolic-rule smoke:
 
 ```sh
 make symbolic-domains
 ```
+
+`make symbolic-domains` currently emits `crlp.symbolic_domain.summary.v1` and
+`crlp.symbolic_rule_proposer.summary.v1` directly to stdout. The domain rows
+include rule-feature leakage-policy fields. It is not captured by the canonical
+`make results` pipeline yet.
 
 Run the repeatable multi-seed matrix:
 

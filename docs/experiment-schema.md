@@ -1,9 +1,11 @@
 # Generalized Experiment Schema
 
 The project is one verifier-gated action-scoring architecture with three
-certified task instantiations. Prime gaps, grid paths, and delayed claims must
-all be described with the same contract before they are used as certified
-evidence.
+production task schemas. Prime gaps, grid paths, and delayed claims must all be
+described with the same contract before they are used as certified evidence.
+The evidence maturity differs by task: prime has the complete production
+learned-gate table, grid has a budgeted legality gate, and delayed-claim still
+needs a production learned-gate evaluation.
 
 There is also a separate shared-envelope multitask probe that includes one
 ARC-AGI-1 sample. That probe is useful for testing whether the core C scorer can
@@ -39,13 +41,18 @@ The task-schema C API lives in `include/nn_experiment.h`; the implementation is
 `src/nn_experiment.c`. The shared symbolic-domain API lives in
 `include/nn_symbolic.h`; its implementation is `src/nn_symbolic.c`.
 
+Schema fields describe the intended formal contract. The evidence-status section
+below is the controlling source for which production binaries currently execute
+which gate and baseline paths.
+
 ## Enforced Schema Fields
 
 The schema is no longer only strings. Each task also declares:
 
 - `NNFeatureSchema[]`: one row per scorer input feature, with a typed
   `NNFeatureProvenance`.
-- `NNLeakagePolicy`: `forbidden`, `priors_allowed`, or `legacy`.
+- `NNLeakagePolicy`: `forbidden`, `priors_allowed`, `legacy`, or the
+  proposer-only `gate_allowed`.
 - `NNProposerMode`: `selection` or `discovery`.
 - `NNFeatureAudit`: emitted automatically in `crlp.experiment_schema.v1`.
 
@@ -62,10 +69,14 @@ NN_FEATURE_DERIVED_FROM_GATE
 scorer. `NN_LEAKAGE_PRIORS_ALLOWED` allows enabled structural priors but still
 forbids verifier-derived and gate-derived scorer inputs. `NN_LEAKAGE_LEGACY`
 marks runs that are not directly comparable to clean rows.
+`NN_LEAKAGE_GATE_ALLOWED` is for proposer/gate surfaces such as closed-loop
+residual-set features; experiment scorer schemas deliberately cannot use it.
 
-The schema writer refuses to emit a task whose enabled features violate its
-declared leakage policy. Comparison rows also carry `leakage_policy`, so mixed
-policy tables are visible in `results/latest`.
+The schema writer refuses to emit a task whose enabled scorer features violate
+its declared leakage policy. The same reusable audit helper is used by
+`NNSymbolicDomain` and `NNClosedLoopRulePolicyConfig` so symbolic proposers
+cannot silently add verifier-derived inputs. Comparison rows also carry
+`leakage_policy`, so mixed policy tables are visible in `results/latest`.
 
 ## Invariants
 
@@ -73,7 +84,8 @@ policy tables are visible in `results/latest`.
 2. Scorer features are observable state/action features only.
 3. Verifier outputs may be labels, rewards, certificates, diagnostics, or
    executed gates, but they are not default scorer inputs.
-4. Proposer inputs are structural rule descriptors only.
+4. Static proposer inputs are structural rule descriptors only; closed-loop
+   proposer inputs may include declared gate-derived residual-set features.
 5. Empirical support, utility, and false-rejection counts are targets or
    diagnostics, not proposer features.
 6. A rule enters the gate only through the task certificate checker.
@@ -83,13 +95,13 @@ policy tables are visible in `results/latest`.
 
 ## Current Instantiations
 
-Certified verifier-backed tasks:
+Verifier-backed production task schemas:
 
-| Task | State | Actions | Verifier | Grammar | Certificate |
-| --- | --- | --- | --- | --- | --- |
-| `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | modular rejection predicates | algebraic divisibility proof |
-| `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality and admissible-pruning predicates | cannot reject an optimal move |
-| `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold/dominance/evidence predicates | finite-generator safety check |
+| Task | State | Actions | Verifier | Grammar | Certificate | Production gate status |
+| --- | --- | --- | --- | --- | --- | --- |
+| `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | modular rejection predicates | algebraic divisibility proof | learned-rule gate plus matched baselines |
+| `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality predicates; admissible pruning planned | cannot reject an optimal move | budgeted legality gate; richer baselines pending |
+| `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold predicates; richer claim rules planned | finite-generator safety check in symbolic smoke | production learned-gate table pending |
 
 Shared-envelope integration task:
 
@@ -116,26 +128,33 @@ fixed 96-wide action-row envelope documented in [multitask-domain.md](multitask-
 ```text
 symbols, axioms, grammar
         ↓
+declare rule/scorer feature schemas and leakage policy
+        ↓
 enumerate NNRule rows
         ↓
 check NNCertificate
         ↓
 encode structural/residual features
         ↓
-train/select with the generic closed-loop rule policy
+train a shared certificate classifier, or use the closed-loop policy where
+residual coverage callbacks are implemented
 ```
 
 `examples/symbolic_domains.c` currently instantiates this interface for
 `prime_gap`, `grid_path`, `delayed_claim`, and a compiled ARC-AGI-1 sample. It
-emits `crlp.symbolic_domain.summary.v1` per domain and
-`crlp.symbolic_rule_proposer.summary.v1` for one rule proposer trained across
-all four domains.
+emits `crlp.symbolic_domain.summary.v1` per domain, including rule-feature
+leakage-policy compliance fields, and
+`crlp.symbolic_rule_proposer.summary.v1` for one certificate-status classifier
+trained across all four domains. This smoke path checks enumeration,
+structural encoding, and certificate labels; it is not the closed-loop residual
+policy benchmark.
 
 The ARC grammar in that smoke path contains copy, mask/intersection, union,
-object-select, and color-map transforms. Its checker accepts a rule only when it
-matches all train pairs and every grammar-consistent rule agrees on the test
-output. This is still a fixed-sample formal-system smoke, not a general ARC
-solver claim.
+object-select-overlap, and color-map transforms. Its checker accepts a rule only
+when it matches all train pairs and every grammar-consistent rule agrees on the
+test output. The current object-select-overlap rule is an alias for intersection
+in this compiled sample, not a general connected-object selector. This is still
+a fixed-sample formal-system smoke, not a general ARC solver claim.
 
 ## Shared Multitask Summary Rows
 

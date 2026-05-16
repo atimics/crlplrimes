@@ -15,15 +15,26 @@ static int feature_provenance_is_valid(NNFeatureProvenance provenance)
            provenance == NN_FEATURE_DERIVED_FROM_GATE;
 }
 
-static int feature_schema_is_valid(const NNExperimentSpec *spec)
+int nn_leakage_policy_is_valid(NNLeakagePolicy policy)
 {
-    if (spec == NULL || spec->feature_count == 0 || spec->features == NULL) {
+    return policy == NN_LEAKAGE_FORBIDDEN ||
+           policy == NN_LEAKAGE_PRIORS_ALLOWED ||
+           policy == NN_LEAKAGE_LEGACY ||
+           policy == NN_LEAKAGE_GATE_ALLOWED;
+}
+
+int nn_feature_schema_is_valid(const NNFeatureSchema *features, size_t feature_count)
+{
+    if (feature_count == 0) {
+        return features == NULL;
+    }
+    if (features == NULL) {
         return 0;
     }
 
-    for (size_t i = 0; i < spec->feature_count; ++i) {
-        if (!text_is_present(spec->features[i].name) ||
-            !feature_provenance_is_valid(spec->features[i].provenance)) {
+    for (size_t i = 0; i < feature_count; ++i) {
+        if (!text_is_present(features[i].name) ||
+            !feature_provenance_is_valid(features[i].provenance)) {
             return 0;
         }
     }
@@ -55,6 +66,8 @@ const char *nn_leakage_policy_name(NNLeakagePolicy policy)
         return "priors_allowed";
     case NN_LEAKAGE_LEGACY:
         return "legacy";
+    case NN_LEAKAGE_GATE_ALLOWED:
+        return "gate_allowed";
     default:
         return "unknown";
     }
@@ -72,19 +85,22 @@ const char *nn_proposer_mode_name(NNProposerMode mode)
     }
 }
 
-NNFeatureAudit nn_experiment_feature_audit(const NNExperimentSpec *spec)
+NNFeatureAudit nn_feature_schema_audit(const NNFeatureSchema *features,
+                                       size_t feature_count,
+                                       NNLeakagePolicy policy)
 {
     NNFeatureAudit audit = {0};
     audit.scorer_input_is_policy_compliant = 0;
     audit.has_warning = 1;
 
-    if (spec == NULL || (spec->feature_count > 0 && spec->features == NULL)) {
+    if (!nn_feature_schema_is_valid(features, feature_count) ||
+        !nn_leakage_policy_is_valid(policy)) {
         return audit;
     }
 
-    audit.total_features = spec->feature_count;
-    for (size_t i = 0; i < spec->feature_count; ++i) {
-        const NNFeatureSchema *feature = &spec->features[i];
+    audit.total_features = feature_count;
+    for (size_t i = 0; i < feature_count; ++i) {
+        const NNFeatureSchema *feature = &features[i];
         int enabled = feature->enabled_by_default != 0;
         if (enabled) {
             ++audit.enabled_features;
@@ -115,7 +131,7 @@ NNFeatureAudit nn_experiment_feature_audit(const NNExperimentSpec *spec)
         }
     }
 
-    switch (spec->leakage_policy) {
+    switch (policy) {
     case NN_LEAKAGE_FORBIDDEN:
         audit.scorer_input_is_policy_compliant =
             audit.enabled_structural_prior_features == 0 &&
@@ -131,6 +147,10 @@ NNFeatureAudit nn_experiment_feature_audit(const NNExperimentSpec *spec)
         audit.scorer_input_is_policy_compliant =
             audit.enabled_verifier_derived_features == 0;
         break;
+    case NN_LEAKAGE_GATE_ALLOWED:
+        audit.scorer_input_is_policy_compliant =
+            audit.enabled_verifier_derived_features == 0;
+        break;
     default:
         audit.scorer_input_is_policy_compliant = 0;
         break;
@@ -143,6 +163,26 @@ NNFeatureAudit nn_experiment_feature_audit(const NNExperimentSpec *spec)
     return audit;
 }
 
+NNFeatureAudit nn_experiment_feature_audit(const NNExperimentSpec *spec)
+{
+    if (spec == NULL) {
+        NNFeatureAudit audit = {0};
+        audit.scorer_input_is_policy_compliant = 0;
+        audit.has_warning = 1;
+        return audit;
+    }
+    return nn_feature_schema_audit(spec->features,
+                                   spec->feature_count,
+                                   spec->leakage_policy);
+}
+
+static int experiment_leakage_policy_is_valid(NNLeakagePolicy policy)
+{
+    return policy == NN_LEAKAGE_FORBIDDEN ||
+           policy == NN_LEAKAGE_PRIORS_ALLOWED ||
+           policy == NN_LEAKAGE_LEGACY;
+}
+
 int nn_experiment_spec_is_valid(const NNExperimentSpec *spec)
 {
     NNFeatureAudit audit = nn_experiment_feature_audit(spec);
@@ -151,7 +191,7 @@ int nn_experiment_spec_is_valid(const NNExperimentSpec *spec)
            text_is_present(spec->action_space) &&
            text_is_present(spec->candidate_enumerator) &&
            text_is_present(spec->observable_features) &&
-           nn_leakage_policy_name(spec->leakage_policy)[0] != 'u' &&
+           experiment_leakage_policy_is_valid(spec->leakage_policy) &&
            text_is_present(spec->neural_scorer) &&
            text_is_present(spec->exact_verifier) &&
            text_is_present(spec->verifier_feedback) && text_is_present(spec->rule_grammar) &&
@@ -162,7 +202,8 @@ int nn_experiment_spec_is_valid(const NNExperimentSpec *spec)
            text_is_present(spec->baseline_orderings) &&
            text_is_present(spec->generalization_axis) &&
            text_is_present(spec->trace_schema) && text_is_present(spec->replay_protocol) &&
-           text_is_present(spec->rl_protocol) && feature_schema_is_valid(spec) &&
+           text_is_present(spec->rl_protocol) && spec->feature_count > 0 &&
+           nn_feature_schema_is_valid(spec->features, spec->feature_count) &&
            audit.scorer_input_is_policy_compliant;
 }
 

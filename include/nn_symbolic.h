@@ -2,6 +2,7 @@
 #define NN_SYMBOLIC_H
 
 #include "nn_core.h"
+#include "nn_experiment.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -102,6 +103,11 @@ typedef struct NNSymbolicDomain {
     const char *grammar;
     size_t max_rule_count;
     size_t rule_feature_count;
+    NNLeakagePolicy leakage_policy;
+    const NNFeatureSchema *rule_feature_schema;
+    size_t rule_feature_schema_count;
+    const NNFeatureSchema *scorer_feature_schema;
+    size_t scorer_feature_count;
     size_t max_action_count;
     void *context;
     NNSymbolicEnumerateRulesFn enumerate_rules;
@@ -150,6 +156,9 @@ typedef struct {
     size_t batch_size;
     size_t hidden1;
     size_t hidden2;
+    NNLeakagePolicy leakage_policy;
+    const NNFeatureSchema *feature_schema;
+    size_t feature_schema_count;
     nn_real learning_rate;
     unsigned int seed;
     int verbose;
@@ -184,6 +193,9 @@ int nn_rule_add_param(NNRule *rule, const char *name, double value, int64_t inte
 int nn_rule_get_param(const NNRule *rule, const char *name, double *value_out);
 int nn_rule_get_param_i64(const NNRule *rule, const char *name, int64_t *value_out);
 int nn_rule_add_feature(NNRule *rule, nn_real value);
+NNFeatureAudit nn_symbolic_domain_rule_feature_audit(const NNSymbolicDomain *domain);
+NNFeatureAudit nn_symbolic_domain_scorer_feature_audit(const NNSymbolicDomain *domain);
+int nn_symbolic_domain_is_valid(const NNSymbolicDomain *domain);
 
 size_t nn_symbolic_domain_enumerate_rules(const NNSymbolicDomain *domain,
                                           NNRule *rules,
