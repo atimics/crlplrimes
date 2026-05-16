@@ -33,8 +33,11 @@ enum {
     ARC_MAX_TASK_FILES = 4096,
     ARC_MAX_TASK_PATH = 1024,
     ARC_ACCEPTED_RULES_BYTES = 2048,
-    ARC_RULE_CANDIDATE_COUNT = 1024,
-    ARC_GRAMMAR_VERSION = 4,
+    ARC_TRANSFORM_NAME_BYTES = 128,
+    ARC_RULE_CANDIDATE_COUNT = 1536,
+    ARC_GRAMMAR_VERSION = 5,
+    ARC_LEARNED_COMPOSE_TOP = 16,
+    ARC_LEARNED_COMPOSE_LIMIT = 256,
     ARC_PROGRAM_PROPOSER_BUDGET = 64,
     ARC_PROGRAM_BUDGET_GRID_COUNT = 4,
     ARC_PROGRAM_TASK_FEATURE_COUNT = 24,
@@ -77,6 +80,7 @@ typedef enum {
     ARC_RULE_OBJECT_CROP_LARGEST = 23,
     ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR = 24,
     ARC_RULE_OBJECT_MASK_LARGEST = 25,
+    ARC_RULE_COMPOSED = 26,
 } ARCTransformRule;
 
 /* ARC-AGI-1 training task 0520fde7, reduced to balanced output-cell color scoring. */
@@ -188,7 +192,7 @@ static const NNExperimentSpec ARC_AGI_EXPERIMENT_SPEC = {
     .rule_grammar =
         "copy_left, copy_right, mask_intersection, mask_union, object_select_overlap, "
         "color_map, same_grid_color_map, crop, rotate, flip, transpose, scale, bbox, translate, "
-        "connected_component_largest",
+        "connected_component_largest, learned_scale_composition",
     .certificate_checker =
         "train-pair consistency plus unique grammar-consistent test prediction, reported against compiled test output",
     .gate_executor = "certified transform gate emits exact color candidates when the grammar prediction is unique",
@@ -263,7 +267,21 @@ typedef struct {
     int dx;
     int dy;
     size_t scale;
-    char name[96];
+    char name[ARC_TRANSFORM_NAME_BYTES];
+} ARCTransformStep;
+
+typedef struct {
+    ARCTransformRule op;
+    uint8_t input_color;
+    uint8_t output_color;
+    uint8_t background_color;
+    uint8_t color_map[ARC_COLOR_COUNT];
+    int dx;
+    int dy;
+    size_t scale;
+    size_t step_count;
+    ARCTransformStep steps[2];
+    char name[ARC_TRANSFORM_NAME_BYTES];
 } ARCTransformCandidate;
 
 typedef struct {
@@ -503,6 +521,103 @@ static void arc_init_candidate(ARCTransformCandidate *candidate, ARCTransformRul
         candidate->color_map[color] = color;
     }
     snprintf(candidate->name, sizeof(candidate->name), "%s", name);
+}
+
+static int arc_candidate_is_composed(const ARCTransformCandidate *candidate)
+{
+    return candidate != NULL &&
+           candidate->op == ARC_RULE_COMPOSED &&
+           candidate->step_count == 2;
+}
+
+static void arc_step_from_candidate(const ARCTransformCandidate *candidate, ARCTransformStep *step)
+{
+    memset(step, 0, sizeof(*step));
+    step->op = candidate->op;
+    step->input_color = candidate->input_color;
+    step->output_color = candidate->output_color;
+    step->background_color = candidate->background_color;
+    memcpy(step->color_map, candidate->color_map, sizeof(step->color_map));
+    step->dx = candidate->dx;
+    step->dy = candidate->dy;
+    step->scale = candidate->scale;
+    snprintf(step->name, sizeof(step->name), "%s", candidate->name);
+}
+
+static void arc_candidate_from_step(const ARCTransformStep *step, ARCTransformCandidate *candidate)
+{
+    arc_init_candidate(candidate, step->op, step->name);
+    candidate->input_color = step->input_color;
+    candidate->output_color = step->output_color;
+    candidate->background_color = step->background_color;
+    memcpy(candidate->color_map, step->color_map, sizeof(candidate->color_map));
+    candidate->dx = step->dx;
+    candidate->dy = step->dy;
+    candidate->scale = step->scale;
+}
+
+static int arc_rule_can_end_composition(ARCTransformRule op)
+{
+    switch (op) {
+    case ARC_RULE_GRID_IDENTITY:
+    case ARC_RULE_GRID_COLOR_MAP:
+    case ARC_RULE_GRID_FOREGROUND_RECOLOR:
+    case ARC_RULE_CROP_BACKGROUND:
+    case ARC_RULE_CROP_BACKGROUND_RECOLOR:
+    case ARC_RULE_CROP_COLOR:
+    case ARC_RULE_CROP_COLOR_MASK:
+    case ARC_RULE_ROTATE90:
+    case ARC_RULE_ROTATE180:
+    case ARC_RULE_ROTATE270:
+    case ARC_RULE_FLIP_HORIZONTAL:
+    case ARC_RULE_FLIP_VERTICAL:
+    case ARC_RULE_TRANSPOSE:
+    case ARC_RULE_SCALE:
+    case ARC_RULE_BBOX_OUTLINE:
+    case ARC_RULE_BBOX_FILL:
+    case ARC_RULE_TRANSLATE:
+    case ARC_RULE_OBJECT_CROP_LARGEST:
+    case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
+    case ARC_RULE_OBJECT_MASK_LARGEST:
+        return 1;
+    case ARC_RULE_COPY_LEFT:
+    case ARC_RULE_COPY_RIGHT:
+    case ARC_RULE_INTERSECTION:
+    case ARC_RULE_UNION:
+    case ARC_RULE_OBJECT_SELECT:
+    case ARC_RULE_COLOR_MAP_LEFT:
+    case ARC_RULE_COMPOSED:
+        return 0;
+    }
+    return 0;
+}
+
+static int arc_init_composed_candidate(ARCTransformCandidate *candidate,
+                                       const ARCTransformCandidate *first,
+                                       const ARCTransformCandidate *second)
+{
+    if (candidate == NULL || first == NULL || second == NULL ||
+        arc_candidate_is_composed(first) || arc_candidate_is_composed(second) ||
+        !arc_rule_can_end_composition(second->op) ||
+        (first->op != ARC_RULE_SCALE && second->op != ARC_RULE_SCALE)) {
+        return 0;
+    }
+    arc_init_candidate(candidate, ARC_RULE_COMPOSED, "");
+    candidate->step_count = 2;
+    candidate->input_color = first->input_color;
+    candidate->output_color = second->output_color;
+    candidate->background_color = first->background_color;
+    candidate->dx = first->dx + second->dx;
+    candidate->dy = first->dy + second->dy;
+    candidate->scale = second->scale;
+    arc_step_from_candidate(first, &candidate->steps[0]);
+    arc_step_from_candidate(second, &candidate->steps[1]);
+    snprintf(candidate->name,
+             sizeof(candidate->name),
+             "compose_%s_then_%s",
+             first->name,
+             second->name);
+    return 1;
 }
 
 static int arc_add_candidate(ARCTransformCandidate *candidates,
@@ -1259,6 +1374,16 @@ static int arc_apply_candidate(const ARCTransformCandidate *candidate,
                                const ARCGrid *input,
                                ARCGrid *output)
 {
+    if (arc_candidate_is_composed(candidate)) {
+        ARCTransformCandidate first;
+        ARCTransformCandidate second;
+        ARCGrid intermediate;
+        arc_candidate_from_step(&candidate->steps[0], &first);
+        arc_candidate_from_step(&candidate->steps[1], &second);
+        return arc_apply_candidate(&first, input, &intermediate) &&
+               arc_apply_candidate(&second, &intermediate, output);
+    }
+
     switch (candidate->op) {
     case ARC_RULE_COPY_LEFT:
     case ARC_RULE_COPY_RIGHT:
@@ -1541,6 +1666,9 @@ static uint64_t arc_prediction_hash(const ARCGrid *predictions, size_t count)
 
 static int arc_candidate_is_object_program(const ARCTransformCandidate *candidate)
 {
+    if (arc_candidate_is_composed(candidate)) {
+        return 0;
+    }
     return candidate->op == ARC_RULE_OBJECT_CROP_LARGEST ||
            candidate->op == ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR ||
            candidate->op == ARC_RULE_OBJECT_MASK_LARGEST;
@@ -1585,6 +1713,8 @@ static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
         return 9;
     case ARC_RULE_GRID_FOREGROUND_RECOLOR:
         return 10;
+    case ARC_RULE_COMPOSED:
+        return 11;
     }
     return 0;
 }
@@ -1630,6 +1760,8 @@ static double arc_structural_program_score(const ARCTransformCandidate *candidat
         return 68.0;
     case ARC_RULE_GRID_FOREGROUND_RECOLOR:
         return 62.0;
+    case ARC_RULE_COMPOSED:
+        return -40.0;
     }
     return 0.0;
 }
@@ -1641,7 +1773,35 @@ static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
         return 0;
     }
 
-    if (arc_candidate_is_object_program(candidate)) {
+    if (arc_candidate_is_composed(candidate)) {
+        ARCTransformCandidate first_candidate;
+        ARCTransformCandidate second_candidate;
+        NNProgram first_program;
+        NNProgram second_program;
+        arc_candidate_from_step(&candidate->steps[0], &first_candidate);
+        arc_candidate_from_step(&candidate->steps[1], &second_candidate);
+        if (!arc_candidate_to_program(&first_candidate, &first_program) ||
+            !arc_candidate_to_program(&second_candidate, &second_program) ||
+            !nn_program_compose(program, &first_program, &second_program, candidate->name)) {
+            return 0;
+        }
+        nn_program_add_param(program,
+                             "first_op",
+                             (double)first_candidate.op,
+                             (int64_t)first_candidate.op);
+        nn_program_add_param(program,
+                             "second_op",
+                             (double)second_candidate.op,
+                             (int64_t)second_candidate.op);
+        nn_program_add_param(program,
+                             "first_family",
+                             (double)arc_candidate_family(&first_candidate),
+                             (int64_t)arc_candidate_family(&first_candidate));
+        nn_program_add_param(program,
+                             "second_family",
+                             (double)arc_candidate_family(&second_candidate),
+                             (int64_t)arc_candidate_family(&second_candidate));
+    } else if (arc_candidate_is_object_program(candidate)) {
         NNProgram components;
         NNProgram largest;
         NNProgram renderer;
@@ -1897,6 +2057,15 @@ static double arc_learned_program_score(ARCProgramLearnedState *state,
     if (state == NULL || state->net == NULL || state->trained_tasks == 0) {
         return arc_learned_family_score(state, candidate);
     }
+    if (arc_candidate_is_composed(candidate)) {
+        ARCTransformCandidate first;
+        ARCTransformCandidate second;
+        arc_candidate_from_step(&candidate->steps[0], &first);
+        arc_candidate_from_step(&candidate->steps[1], &second);
+        double first_score = arc_learned_program_score(state, &first, task_features);
+        double second_score = arc_learned_program_score(state, &second, task_features);
+        return -40.0 + 0.5 * (first_score + second_score);
+    }
     nn_real features[ARC_PROGRAM_FEATURE_COUNT];
     nn_real output[1];
     if (!arc_encode_program_features(candidate,
@@ -1931,6 +2100,9 @@ static int arc_program_learned_train_task(ARCProgramLearnedState *state,
 
     size_t exact_count = 0;
     for (size_t i = 0; i < candidate_count; ++i) {
+        if (arc_candidate_is_composed(&candidates[i])) {
+            continue;
+        }
         exact_count += arc_program_eval_is_exact_success(&evals[i]) ? 1u : 0u;
     }
     if (exact_count == 0) {
@@ -1956,6 +2128,9 @@ static int arc_program_learned_train_task(ARCProgramLearnedState *state,
     nn_real weight = (nn_real)(1.0 / (double)exact_count);
     for (size_t epoch = 0; epoch < ARC_PROGRAM_TRAIN_EPOCHS; ++epoch) {
         for (size_t i = 0; i < candidate_count; ++i) {
+            if (arc_candidate_is_composed(&candidates[i])) {
+                continue;
+            }
             if (!arc_program_eval_is_exact_success(&evals[i])) {
                 continue;
             }
@@ -2037,6 +2212,116 @@ static void arc_build_program_ranks(const ARCTask *task,
         }
         ranks[j] = key;
     }
+}
+
+static int arc_candidate_supports_train_inputs(const ARCTask *task,
+                                               const ARCTransformCandidate *candidate)
+{
+    ARCGrid produced;
+    for (size_t pair = 0; pair < task->train_count; ++pair) {
+        if (!task->train[pair].has_output ||
+            !arc_apply_candidate(candidate, &task->train[pair].input, &produced)) {
+            return 0;
+        }
+    }
+    return task->train_count > 0;
+}
+
+static int arc_composed_candidate_exists(const ARCTransformCandidate *candidates,
+                                         size_t count,
+                                         const ARCTransformCandidate *candidate)
+{
+    if (!arc_candidate_is_composed(candidate)) {
+        return 0;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if (!arc_candidate_is_composed(&candidates[i])) {
+            continue;
+        }
+        if (candidates[i].steps[0].op == candidate->steps[0].op &&
+            candidates[i].steps[1].op == candidate->steps[1].op &&
+            strcmp(candidates[i].steps[0].name, candidate->steps[0].name) == 0 &&
+            strcmp(candidates[i].steps[1].name, candidate->steps[1].name) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static size_t arc_add_learned_compositions(const ARCTask *task,
+                                           ARCProgramLearnedState *learned,
+                                           ARCTransformCandidate *candidates,
+                                           size_t capacity,
+                                           size_t base_count)
+{
+    if (task == NULL || learned == NULL || learned->trained_tasks == 0 ||
+        candidates == NULL || base_count == 0 || base_count >= capacity) {
+        return base_count;
+    }
+
+    ARCProgramEval evals[ARC_RULE_CANDIDATE_COUNT];
+    ARCProgramRank ranks[ARC_RULE_CANDIDATE_COUNT];
+    ARCProgramTaskFeatures task_features;
+    arc_program_task_features(task, &task_features);
+    for (size_t i = 0; i < base_count; ++i) {
+        NNProgram program;
+        memset(&evals[i], 0, sizeof(evals[i]));
+        if (arc_candidate_to_program(&candidates[i], &program)) {
+            evals[i].program_hash = program.canonical_hash;
+        }
+    }
+    arc_build_program_ranks(task,
+                            candidates,
+                            evals,
+                            base_count,
+                            ARC_PROGRAM_STRATEGY_LEARNED,
+                            learned,
+                            &task_features,
+                            ranks);
+
+    size_t top_indices[ARC_LEARNED_COMPOSE_TOP];
+    size_t top_count = 0;
+    for (size_t rank = 0; rank < base_count && top_count < ARC_LEARNED_COMPOSE_TOP; ++rank) {
+        size_t index = ranks[rank].candidate_index;
+        if (arc_candidate_is_composed(&candidates[index])) {
+            continue;
+        }
+        top_indices[top_count++] = index;
+    }
+
+    size_t count = base_count;
+    size_t added = 0;
+    for (size_t first = 0; first < top_count; ++first) {
+        for (size_t second = 0; second < top_count; ++second) {
+            if (count >= capacity || added >= ARC_LEARNED_COMPOSE_LIMIT) {
+                return count;
+            }
+            const ARCTransformCandidate *first_candidate = &candidates[top_indices[first]];
+            const ARCTransformCandidate *second_candidate = &candidates[top_indices[second]];
+            if (first_candidate->op == ARC_RULE_GRID_IDENTITY &&
+                second_candidate->op == ARC_RULE_GRID_IDENTITY) {
+                continue;
+            }
+            ARCTransformCandidate composed;
+            if (!arc_init_composed_candidate(&composed, first_candidate, second_candidate) ||
+                arc_composed_candidate_exists(candidates, count, &composed) ||
+                !arc_candidate_supports_train_inputs(task, &composed)) {
+                continue;
+            }
+            arc_add_candidate(candidates, capacity, &count, &composed);
+            ++added;
+        }
+    }
+    return count;
+}
+
+static size_t arc_build_candidate_set(const ARCTask *task,
+                                      ARCProgramLearnedState *learned,
+                                      ARCTransformCandidate *candidates,
+                                      size_t capacity)
+{
+    size_t count = arc_build_candidates(task, candidates, capacity);
+    return arc_add_learned_compositions(task, learned, candidates, capacity, count);
 }
 
 static void arc_program_aggregate_init(ARCProgramProposerAggregate *aggregate,
@@ -2159,6 +2444,9 @@ static void arc_program_learned_observe(ARCProgramLearnedState *state,
     memset(family_seen, 0, sizeof(family_seen));
     memset(family_success, 0, sizeof(family_success));
     for (size_t i = 0; i < candidate_count; ++i) {
+        if (arc_candidate_is_composed(&candidates[i])) {
+            continue;
+        }
         size_t family = arc_candidate_family(&candidates[i]);
         if (family >= sizeof(family_seen) / sizeof(family_seen[0])) {
             continue;
@@ -2223,7 +2511,7 @@ static void arc_emit_builtin_program_summaries(const ARCTask *task, const ARCCon
                                                  UINT32_MAX))) {
         return;
     }
-    size_t candidate_count = arc_build_candidates(task, candidates, ARC_RULE_CANDIDATE_COUNT);
+    size_t candidate_count = arc_build_candidate_set(task, &learned, candidates, ARC_RULE_CANDIDATE_COUNT);
     arc_evaluate_program_candidates(task, candidates, candidate_count, evals);
     for (size_t budget_index = 0; budget_index < budget_count; ++budget_index) {
         for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
@@ -2245,17 +2533,18 @@ static void arc_emit_builtin_program_summaries(const ARCTask *task, const ARCCon
     arc_program_learned_free(&learned);
 }
 
-static ARCTransformMetrics evaluate_arc_transform_gate_task(const ARCTask *task)
+static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask *task,
+                                                                 const ARCTransformCandidate *candidates,
+                                                                 size_t candidate_count)
 {
     ARCTransformMetrics metrics;
-    ARCTransformCandidate candidates[ARC_RULE_CANDIDATE_COUNT];
     ARCGrid first_predictions[ARC_MAX_PAIRS];
     ARCGrid current_predictions[ARC_MAX_PAIRS];
     memset(&metrics, 0, sizeof(metrics));
     memset(first_predictions, 0, sizeof(first_predictions));
     metrics.unique_test_prediction = 1;
     metrics.test_pairs = task->test_count;
-    metrics.rules = arc_build_candidates(task, candidates, ARC_RULE_CANDIDATE_COUNT);
+    metrics.rules = candidate_count;
 
     int have_prediction = 0;
     for (size_t rule = 0; rule < metrics.rules; ++rule) {
@@ -2329,6 +2618,13 @@ static ARCTransformMetrics evaluate_arc_transform_gate_task(const ARCTask *task)
                         metrics.unique_test_prediction &&
                         metrics.test_exact;
     return metrics;
+}
+
+static ARCTransformMetrics evaluate_arc_transform_gate_task(const ARCTask *task)
+{
+    ARCTransformCandidate candidates[ARC_RULE_CANDIDATE_COUNT];
+    size_t candidate_count = arc_build_candidates(task, candidates, ARC_RULE_CANDIDATE_COUNT);
+    return evaluate_arc_transform_gate_candidates(task, candidates, candidate_count);
 }
 
 static ARCTransformMetrics evaluate_builtin_arc_transform_gate(void)
@@ -3353,13 +3649,15 @@ static int run_arc_task_loader(const ARCConfig *config)
             ++summary.parse_errors;
             continue;
         }
-        ARCTransformMetrics transform = evaluate_arc_transform_gate_task(&task);
-        arc_loader_summary_add(&summary, &task, &transform);
         ARCTransformCandidate candidates[ARC_RULE_CANDIDATE_COUNT];
         ARCProgramEval evals[ARC_RULE_CANDIDATE_COUNT];
-        size_t candidate_count = arc_build_candidates(&task,
-                                                      candidates,
-                                                      ARC_RULE_CANDIDATE_COUNT);
+        size_t candidate_count = arc_build_candidate_set(&task,
+                                                         &learned_state,
+                                                         candidates,
+                                                         ARC_RULE_CANDIDATE_COUNT);
+        ARCTransformMetrics transform =
+            evaluate_arc_transform_gate_candidates(&task, candidates, candidate_count);
+        arc_loader_summary_add(&summary, &task, &transform);
         arc_evaluate_program_candidates(&task, candidates, candidate_count, evals);
         for (size_t budget_index = 0; budget_index < budget_count; ++budget_index) {
             for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
@@ -3374,11 +3672,20 @@ static int run_arc_task_loader(const ARCConfig *config)
             }
         }
         if (config->program_train_dir == NULL) {
+            ARCTransformCandidate learn_candidates[ARC_RULE_CANDIDATE_COUNT];
+            ARCProgramEval learn_evals[ARC_RULE_CANDIDATE_COUNT];
+            size_t learn_candidate_count = arc_build_candidates(&task,
+                                                                learn_candidates,
+                                                                ARC_RULE_CANDIDATE_COUNT);
+            arc_evaluate_program_candidates(&task,
+                                            learn_candidates,
+                                            learn_candidate_count,
+                                            learn_evals);
             arc_program_learned_observe(&learned_state,
                                         &task,
-                                        candidates,
-                                        evals,
-                                        candidate_count,
+                                        learn_candidates,
+                                        learn_evals,
+                                        learn_candidate_count,
                                         config->program_learning_rate);
         }
         if (!config->loader_summary_only) {
@@ -3386,9 +3693,9 @@ static int run_arc_task_loader(const ARCConfig *config)
             if (transform.certified) {
                 ARCMetrics transform_metrics = arc_transform_to_metrics(&task, &transform);
                 print_arc_metrics_json(task.id,
-                                       "symbolic-transform-v4",
+                                       "symbolic-transform-v5",
                                        "certified_transform_gate",
-                                       "arc-transform-gate-v4",
+                                       "arc-transform-gate-v5",
                                        &transform_metrics);
             }
         }
@@ -3541,11 +3848,11 @@ int main(int argc, char **argv)
     print_arc_transform_json("0520fde7", &transform);
     ARCMetrics transform_metrics = arc_transform_to_metrics(&builtin_task, &transform);
     print_arc_metrics_json("0520fde7",
-                           "symbolic-transform-v4",
+                           "symbolic-transform-v5",
                            "certified_transform_gate",
-                           "arc-transform-gate-v4",
+                           "arc-transform-gate-v5",
                            &transform_metrics);
-    print_arc_metrics_line("symbolic-transform-v4",
+    print_arc_metrics_line("symbolic-transform-v5",
                            "certified_transform_gate",
                            &transform_metrics);
     arc_emit_builtin_program_summaries(&builtin_task, &config);
