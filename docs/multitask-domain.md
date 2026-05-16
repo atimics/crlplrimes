@@ -4,11 +4,12 @@
 library. It trains one scalar action scorer across multiple domains by mapping
 every task into the same fixed-width action-row envelope.
 
-This is intentionally separate from the certified-gate evidence. The certified
-contract still lives in `crlp.experiment_schema.v1` and currently covers
-`prime_gap`, `grid_path`, and `delayed_claim`. The multitask binary asks a
-different question: can the same core scorer, update path, and summary protocol
-train across heterogeneous action domains in shuffled order?
+This is intentionally separate from the certified-gate evidence. The first-class
+task contract lives in `crlp.experiment_schema.v1` and currently covers
+`prime_gap`, `grid_path`, `delayed_claim`, `program_synthesis`, and the fixed
+`arc_agi` sample. The multitask binary asks a different question: can the same
+core scorer, update path, and summary protocol train across heterogeneous action
+domains in shuffled order?
 
 A second shared-domain smoke covers symbolic rules:
 `examples/symbolic_domains.c`. That binary uses `NNSymbolicDomain` instead of
@@ -24,13 +25,14 @@ benchmark.
 | `prime_gap` | rank candidate next-prime gaps | 129 | segmented-sieve label | clean scorer row, no residue flags |
 | `grid_path` | rank four grid moves | 4 | BFS shortest-path successor | exact verifier label |
 | `delayed_claim` | choose trust/ignore/evidence/cautious | 4 | deterministic hidden-outcome simulator | synthetic delayed-label task |
-| `arc_agi` | choose output-cell color | 10 | ARC-AGI-1 task `0520fde7` output grid | supervised ARC action row; symbolic smoke has a separate tiny certified transform grammar |
+| `arc_agi` | choose output-cell color | 10 | ARC-AGI-1 task `0520fde7` output grid | first-class fixed-sample schema plus shared ARC action row; symbolic smoke has a separate tiny certified transform grammar |
 
 The ARC sample is reduced to balanced cell-color scoring. Given an input grid,
 an output coordinate, and a candidate color action `0..9`, the scorer ranks the
 candidate colors. The row exposes the flattened input grid, output coordinate,
 grid sizes, candidate action, and optional task tag. It does not expose a direct
-overlap/intersection rule.
+overlap/intersection rule. The standalone `make arc-agi` path uses the same
+fixed task without the multitask task tag and is captured by `make results`.
 
 ## Feature Envelope
 
@@ -63,6 +65,12 @@ Build and run one all-domain scorer:
 ```sh
 make multitask-domain
 ./build/float/multitask_domain --tasks all --eval-tasks all
+```
+
+Build and run the standalone first-class ARC sample:
+
+```sh
+make arc-agi
 ```
 
 Build and run the shared symbolic-rule smoke:
@@ -162,6 +170,7 @@ The interpretation is deliberately conservative:
 2. Add task-family metadata so ARC tasks with different transformations can be
    evaluated without changing the scorer code.
 3. Promote the compiled symbolic ARC smoke into a loader over many ARC tasks
-   before treating ARC as part of the verifier-gated evidence table.
+   before treating ARC as production verifier-gated ARC evidence beyond the
+   fixed-sample scorer.
 4. Track transfer with held-out task families, not only held-out domains from
    the same compiled set.

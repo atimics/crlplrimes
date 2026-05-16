@@ -1,17 +1,17 @@
 # Generalized Experiment Schema
 
-The project is one verifier-gated action-scoring architecture with three
-production task schemas plus case-study discovery schemas. Prime gaps, grid
-paths, delayed claims, and case-study domains must all be described with the
-same contract before they are used as certified evidence.
-The evidence maturity differs by task: prime has the complete production
-learned-gate table, grid has a budgeted legality gate, and delayed-claim still
-needs a production learned-gate evaluation.
+The project is one verifier-gated action-scoring architecture with first-class
+task schemas plus case-study discovery schemas. Prime gaps, grid paths, delayed
+claims, program synthesis, and the fixed ARC-AGI sample must all be described
+with the same contract before they are used as evidence. The evidence maturity
+differs by task: prime has the complete production learned-gate table, grid has
+a budgeted legality gate, delayed-claim still needs a production learned-gate
+evaluation, and ARC is a fixed-sample scorer rather than a full ARC solver.
 
-There is also a separate shared-envelope multitask probe that includes one
+There is also a separate shared-envelope multitask probe that includes the same
 ARC-AGI-1 sample. That probe is useful for testing whether the core C scorer can
-train across heterogeneous action domains, but it is not yet part of the
-certified rule/verifier evidence table.
+train across heterogeneous action domains, but it is not a substitute for the
+standalone schema/result row or for future verifier-gated ARC rule evidence.
 
 ## Contract
 
@@ -96,25 +96,20 @@ cannot silently add verifier-derived inputs. Comparison rows also carry
 
 ## Current Instantiations
 
-Verifier-backed production task schemas:
+Verifier-backed first-class task schemas:
 
 | Task | State | Actions | Verifier | Grammar | Certificate | Production gate status |
 | --- | --- | --- | --- | --- | --- | --- |
 | `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | modular rejection predicates | algebraic divisibility proof | learned-rule gate plus matched baselines |
 | `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality predicates; admissible pruning planned | cannot reject an optimal move | budgeted legality gate; richer baselines pending |
 | `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold predicates; richer claim rules planned | finite-generator safety check in symbolic smoke | production learned-gate table pending |
+| `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | tiny transform grammar in symbolic smoke | train-pair consistency plus compiled-test agreement in symbolic smoke | first-class fixed-sample scorer; production gate pending |
 
 Verifier-backed case-study discovery schemas:
 
 | Task | State | Actions | Verifier | Grammar | Certificate | Evidence status |
 | --- | --- | --- | --- | --- | --- | --- |
 | `program_synthesis` | list-routine task with input/output examples | candidate library abstraction | run abstraction on every example | monomorphic list/int DSL over map, filter, fold, and selectors | syntactic DSL type check | matched-budget scaffold with random, grammar-order, structural, validation-oracle, static neural, and closed-loop rows |
-
-Shared-envelope integration task:
-
-| Task | State | Actions | Label source | Status |
-| --- | --- | --- | --- | --- |
-| `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | supervised cell-color scorer; separate symbolic-domain smoke has a tiny certified transform grammar |
 
 Leakage status today:
 
@@ -123,10 +118,12 @@ Leakage status today:
 | `prime_gap` | `forbidden` | 3 enabled observations; 10 disabled structural-prior residue columns retained only for ablations |
 | `grid_path` | `priors_allowed` | 61 observations plus 2 enabled Manhattan structural priors |
 | `delayed_claim` | `forbidden` | 10 enabled observations |
+| `program_synthesis` | `priors_allowed` | 18 enabled structural-prior DSL abstraction features |
+| `arc_agi` | `forbidden` | 49 enabled observations over grid cells, output coordinate, candidate color, and action one-hot |
 
-`arc_agi` is omitted from the leakage table until it has a task schema and a
-dataset-level certificate checker. In the current multitask binary it uses the
-fixed 96-wide action-row envelope documented in [multitask-domain.md](multitask-domain.md).
+The first-class `arc_agi` schema is still one fixed ARC-AGI-1 task. The
+multitask binary uses a separate fixed 96-wide action-row envelope documented in
+[multitask-domain.md](multitask-domain.md).
 
 ## Shared Symbolic-Domain Interface
 
@@ -252,4 +249,4 @@ production learned-gate evaluation table is open work.
    raw top-1 in task-specific sections.
 9. Promote ARC from one fixed cell-color sample to a loader over many ARC tasks,
    then add certifiable symbolic ARC transformations before treating ARC as
-   verifier-gated evidence.
+   production verifier-gated ARC evidence.

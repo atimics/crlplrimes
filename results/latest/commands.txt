@@ -1,6 +1,8 @@
 make REAL=float experiment-schemas
+make REAL=float arc-agi
 make REAL=float delayed-claim-eval
 make REAL=float grid-path-eval
 make REAL=float prime-rule-search
 make REAL=float prime-rule-search-baselines
+make REAL=float program-synthesis-baselines
 make REAL=float prime-gap-eval

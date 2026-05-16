@@ -12,6 +12,7 @@ from pathlib import Path
 
 COMMANDS = (
     ("experiment_schemas", ("experiment-schemas",)),
+    ("arc_agi", ("arc-agi",)),
     ("delayed_claim", ("delayed-claim-eval",)),
     ("grid_path", ("grid-path-eval",)),
     ("prime_rule_search", ("prime-rule-search",)),
@@ -136,6 +137,11 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
         for row in rows
         if row.get("task") == "delayed_claim" and row.get("schema") == "crlp.compare.v1"
     ]
+    arc = [
+        row
+        for row in rows
+        if row.get("task") == "arc_agi" and row.get("schema") == "crlp.compare.v1"
+    ]
     grid = [
         row
         for row in rows
@@ -215,8 +221,50 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
     lines.extend(
         [
             "",
-        "## Delayed Claim",
-        "",
+            "## ARC-AGI",
+            "",
+        ]
+    )
+    lines.append(
+        markdown_table(
+            [
+                [
+                    str(row.get("model_hash", "unknown"))[:12],
+                    str(row.get("task_instance", "")),
+                    str(row.get("leakage_policy", "")),
+                    fmt_percent(row, "top1"),
+                    fmt_percent(row, "top5"),
+                    fmt_percent(row, "top10"),
+                    fmt_number(row, "nll"),
+                    fmt_number(row, "ece"),
+                    fmt_number(row, "mean_rank", 3),
+                    fmt_number(row, "proposal_steps", 3),
+                    fmt_number(row, "baseline_steps", 3),
+                ]
+                for row in arc
+            ],
+            [
+                "model",
+                "task",
+                "leakage",
+                "top1",
+                "top5",
+                "top10",
+                "nll",
+                "ece",
+                "mean rank",
+                "steps",
+                "baseline",
+            ],
+        )
+        if arc
+        else "_No ARC-AGI rows captured._"
+    )
+    lines.extend(
+        [
+            "",
+            "## Delayed Claim",
+            "",
         ]
     )
     lines.append(

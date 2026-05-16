@@ -1,14 +1,16 @@
 # CRLPLRIMES: Certificate-Gated Neural Proposers for Verifier-Grounded Action Scoring
 
-This repository is a compact C neural-network library and an exact-verifier research harness for **certified neural-symbolic action scoring**. The project is not a prime-gap solver. The code exposes one architecture across three verifier-backed production task schemas, plus separate shared-action and shared-symbolic smoke tests that add one harder ARC-AGI-1 sample. The production certified-gate evidence is complete for `prime_gap`, partial for `grid_path`, and not yet implemented as a production gate table for `delayed_claim`:
+This repository is a compact C neural-network library and an exact-verifier research harness for **certified neural-symbolic action scoring**. The project is not a prime-gap solver. The code exposes one architecture across first-class verifier-backed task schemas, plus shared-action and shared-symbolic cross-domain tests. The production certified-gate evidence is complete for `prime_gap`, partial for `grid_path`, and not yet implemented as production gate tables for `delayed_claim` or `arc_agi`:
 
-| Task | State | Actions | Exact verifier | Gate grammar | Certificate | Production gate status |
+| Task | State | Actions | Exact verifier | Gate grammar | Certificate | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | modular rejection predicates | algebraic divisibility proof | learned-rule gate plus matched baselines |
 | `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality predicates; admissible pruning planned | cannot reject an optimal move | budgeted legality gate; richer baselines pending |
 | `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold predicates; richer claim rules planned | finite-generator safety check in symbolic smoke | production learned-gate table pending |
+| `arc_agi` | ARC-AGI-1 task `0520fde7` input plus output coordinate | colors `0..9` | held-out output-cell color lookup | tiny transform grammar in symbolic smoke | train-pair consistency plus compiled-test agreement | first-class fixed-sample scorer; production gate pending |
+| `program_synthesis` | list/int routine examples | candidate library abstractions | run abstraction on examples | list/int DSL abstraction grammar | monomorphic DSL type checker | discovery case study |
 
-Every production task schema publishes the same machine-readable contract with:
+Every first-class task schema publishes the same machine-readable contract with:
 
 ```sh
 make experiment-schemas
@@ -73,12 +75,14 @@ Current leakage audit:
 | `prime_gap` | `forbidden` | 0 |
 | `grid_path` | `priors_allowed` | 2 |
 | `delayed_claim` | `forbidden` | 0 |
+| `arc_agi` | `forbidden` | 0 |
+| `program_synthesis` | `priors_allowed` | 18 |
 
-The `arc_agi` row in the shared multitask binary is not a certified ARC solver claim. A separate symbolic-domain smoke path (`make symbolic-domains`) carries a tiny ARC grammar over task `0520fde7`; that checker accepts a transform only when it matches all train pairs and all train-consistent grammar rules agree on the test output. The `object_select_overlap` rule in that smoke is an overlap-style placeholder, not a general connected-object selector.
+The `arc_agi` task is not a certified ARC solver claim. It is one fixed ARC-AGI-1 task (`0520fde7`) promoted to the same schema/result surface as the other experiments, reduced to balanced output-cell color scoring. A separate symbolic-domain smoke path (`make symbolic-domains`) carries a tiny ARC grammar over the same task; that checker accepts a transform only when it matches all train pairs and all train-consistent grammar rules agree on the test output. The `object_select_overlap` rule in that smoke is an overlap-style placeholder, not a general connected-object selector.
 
 ## Current Evidence
 
-The canonical result is strongest on `prime_gap`, presented as one task row rather than the project goal. With residue-sieve features excluded from the scorer input, the raw prime scorer reaches **9.13%** top-1; a fixed hand gate reaches **45.12%**; and a certified learned-rule gate reaches **68.87%** at 100% top-10. On `grid_path`, the no-Manhattan-prior scorer reaches **70.80%** raw accuracy and **84.90%** with the budgeted legality gate; the priors-allowed checkpoint is reported as an explicit ablation at **75.80%** raw and **89.60%** gated. On `delayed_claim`, the load-bearing result is trace replay and calibration: the replay successor reaches **94.80%** accuracy versus **93.50%** for the trained parent.
+The canonical result is strongest on `prime_gap`, presented as one task row rather than the project goal. With residue-sieve features excluded from the scorer input, the raw prime scorer reaches **9.13%** top-1; a fixed hand gate reaches **45.12%**; and a certified learned-rule gate reaches **68.87%** at 100% top-10. On `grid_path`, the no-Manhattan-prior scorer reaches **70.80%** raw accuracy and **84.90%** with the budgeted legality gate; the priors-allowed checkpoint is reported as an explicit ablation at **75.80%** raw and **89.60%** gated. On `delayed_claim`, the load-bearing result is trace replay and calibration: the replay successor reaches **94.80%** accuracy versus **93.50%** for the trained parent. On the fixed `arc_agi` task, the standalone scorer reaches **28.56%** top-1 with **100.00%** top-5/top-10, but calibration is poor (`ECE=0.5574`), so it should be read as a first-class smoke benchmark rather than solved ARC evidence.
 
 At a 16-rule budget with neural proposers configured at matched `64x32` capacity, the closed-loop residual proposer reaches **56.18%** work saved on the conditional gap grammar, above grammar order (`55.57%`) and structural heuristic (`55.57%`), within `0.65pp` of the validation oracle (`56.83%`). The unified scorer with joint action+rule training reaches **73.22%** on the unconditional candidate grammar, matching grammar order, structural heuristic, and the validation oracle exactly, and accepting `16/16` rules versus the dedicated closed-loop proposer's `10/16` at the same capacity (`69.40%`). Random ordering trails on both grammars (`46.30%` unconditional, `3.49%` conditional). The full matched-budget grid lives in `results/unified_scorer/phase_{1,2,3}/summary.md`.
 
@@ -230,7 +234,7 @@ The grid legality proposer accepts 3/5 certified rules under budget with 0 held-
 - **Proposer learning is domain-specific.** Closed-loop and unified proposers match the validation-oracle ceiling on conditional gap rules and match grammar order exactly on unconditional candidate rules. Both reach the available ceiling at `64x32` capacity. Capacity ladders at `128x64` and `256x128` produce no further gain on conditional and small regressions on unconditional. Where the deterministic baselines already saturate the achievable signal, additional capacity does not help.
 - **Cross-task verifier-RL comparison.** Axis 3 (strict-vs-regularized RL on the prime-gap task) requires matching runs on `grid_path` and `delayed_claim` before it can be stated as a general property of sparse-exact-reward policy gradient. The pipeline supports it; the comparison is not in the canonical results yet.
 - **Richer non-prime gate grammars.** `grid_path` carries a budgeted certified legality gate that is intentionally shallow. The next cross-domain test should learn admissible dead-end or distance-bound pruning rules that reduce BFS verifier work without becoming a hand-coded solver.
-- **ARC is only a smoke test.** The current `arc_agi` action scorer is one fixed ARC-AGI-1 task reduced to balanced output-cell color scoring. The new symbolic ARC path certifies a tiny compiled grammar for the same task, but it still does not parse the full dataset or induce transformations across ARC tasks.
+- **ARC is only a smoke test.** The first-class `arc_agi` experiment is one fixed ARC-AGI-1 task reduced to balanced output-cell color scoring. The symbolic ARC path certifies a tiny compiled grammar for the same task, but it still does not parse the full dataset or induce transformations across ARC tasks.
 - **Statistical rigor.** The default `make prime-gap-experiments` config currently runs 1 seed; the harness supports more (`PRIME_GAP_EXPERIMENT_SEEDS=...`). The minimal-vs-leakage, strict-vs-regularized, and hand-wheel-vs-learned-rule deltas should be reported with confidence intervals across >=5 seeds.
 - **Reliability diagrams.** The comparison schema stores `reliability_bins`; the README currently reports only ECE. Calibration claims would be stronger with a small reliability plot.
 - **Learned-rule calibration.** The learned rule program improves ranking sharply, but its ECE is worse than the raw minimal and hand-wheel rows in the default run. That calibration tradeoff deserves a focused reliability-diagram pass.
@@ -257,13 +261,14 @@ make prime-gap-eval
 make prime-rule-search
 make delayed-claim
 make grid-path
+make arc-agi
 make multitask-domain
 make symbolic-domains
 python3 scripts/multitask_ablation_matrix.py
 make results
 ```
 
-`prime-gap-trace` writes `build/float/prime_v1.nnckpt` and `build/float/traces/prime_gap.jsonl`. `prime-gap-replay` trains `build/float/prime_v2.nnckpt` from that trace. `prime-gap-eval` compares both checkpoints on the same frozen benchmark. `prime-rule-search` writes `build/float/prime_rules_v2.crlprule` and `build/float/traces/prime_rule_search.jsonl`. `make results` writes `results/latest/summary.md`, `results/latest/comparison.jsonl`, and `results/latest/commands.txt`; bulky logs stay under ignored `results/**/logs/`. `make symbolic-domains` is currently outside the canonical `make results` capture script, so run it separately when refreshing symbolic-domain smoke evidence.
+`prime-gap-trace` writes `build/float/prime_v1.nnckpt` and `build/float/traces/prime_gap.jsonl`. `prime-gap-replay` trains `build/float/prime_v2.nnckpt` from that trace. `prime-gap-eval` compares both checkpoints on the same frozen benchmark. `prime-rule-search` writes `build/float/prime_rules_v2.crlprule` and `build/float/traces/prime_rule_search.jsonl`. `arc-agi` trains the fixed `0520fde7` cell-color scorer and writes `build/float/arc_agi.nnckpt`. `make results` writes `results/latest/summary.md`, `results/latest/comparison.jsonl`, and `results/latest/commands.txt`; bulky logs stay under ignored `results/**/logs/`. `make symbolic-domains` is currently outside the canonical `make results` capture script, so run it separately when refreshing symbolic-domain smoke evidence.
 
 Cross-task tuning uses a separate noisy workspace so canonical result snapshots stay stable:
 
@@ -642,14 +647,22 @@ make grid-path-eval
 
 ## Shared Multitask / ARC-AGI Sample
 
-`multitask_domain` is the current generalization smoke test for the core scorer API. It trains one scalar action scorer over a fixed 96-feature row envelope while shuffling samples from `prime_gap`, `grid_path`, `delayed_claim`, and `arc_agi`.
+`arc_agi` is now also a standalone first-class schema/result target:
+
+```sh
+make arc-agi
+```
+
+The standalone task is ARC-AGI-1 task `0520fde7`, reduced to output-cell color prediction over actions `0..9`. The model sees the flattened input grid, target output coordinate, candidate color, and action one-hot. It does not receive a direct overlap/intersection feature.
+
+`multitask_domain` remains the generalization smoke test for the core scorer API. It trains one scalar action scorer over a fixed 96-feature row envelope while shuffling samples from `prime_gap`, `grid_path`, `delayed_claim`, and `arc_agi`.
 
 ```sh
 make multitask-domain
 python3 scripts/multitask_ablation_matrix.py
 ```
 
-The ARC row is ARC-AGI-1 task `0520fde7`, reduced to output-cell color prediction over actions `0..9`. The model sees the flattened input grid, target output coordinate, candidate color, and optional task tag; it does not receive a direct overlap/intersection feature. The matrix script enumerates every non-empty task combination, evaluates all domains each time, and writes JSONL/CSV/Markdown summaries under `build/float/multitask_ablation_matrix/`.
+The multitask ARC row uses the same fixed task and adds the optional task tag from the shared envelope. The matrix script enumerates every non-empty task combination, evaluates all domains each time, and writes JSONL/CSV/Markdown summaries under `build/float/multitask_ablation_matrix/`.
 
 Current all-domain top-1 means over three seeds:
 

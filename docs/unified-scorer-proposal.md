@@ -5,8 +5,9 @@ captured.
 
 `prime_rule_search --proposer unified` trains one 96-wide shared scorer with
 alternating action-row softmax updates from `prime_gap`, `grid_path`,
-`delayed_claim`, and the ARC smoke task, plus rule-row softmax updates from the
-prime rule trajectory. It deploys those parameters for rule selection and emits
+`delayed_claim`, and the first-class fixed ARC sample, plus rule-row softmax
+updates from the prime rule trajectory. It deploys those parameters for rule
+selection and emits
 `selection_strategy="unified_scorer"`,
 `proposer_feature_set="task_role_tagged_action_rule_rows_v1"`,
 `proposer_target="joint_action_rule_softmax"`, and engine-side `parameters` /
@@ -280,7 +281,7 @@ Either outcome lands cleanly. The repository's discipline produces an honest ans
 
 This proposal does not:
 
-- Introduce new task domains (prime/grid/claim/arc are the existing four; ARC remains a one-sample smoke).
+- Introduce new task domains (prime/grid/claim/arc are the existing action domains; ARC remains one fixed sample).
 - Change the certificate verifier or the soundness guarantee.
 - Change the leakage policy enforcement on action-scoring rows.
 - Promote the multitask envelope into the certified-gate evidence table; the multitask result stays in its own schema (`crlp.multitask.summary.v1`).
@@ -292,7 +293,7 @@ This proposal does not:
 2. Action scoring and rule scoring share one output head. This is the strictest version of the unification claim.
 3. Rule softmax groups use the existing `RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP` cap and report the effective `softmax_group_size`; matched closed-loop rows must use the same cap for fair comparison.
 4. Rule-scoring greedy trajectories are built once at training start, including accepted-set snapshots, residual snapshots, and deterministic capped candidate groups.
-5. ARC contributes action rows only. The current ARC smoke does not have a rule grammar with marginal-utility events.
+5. ARC contributes action rows only. The current first-class ARC sample does not have a rule grammar with marginal-utility events.
 
 ## Remaining Maintainer Decisions
 
