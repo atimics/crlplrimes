@@ -15,14 +15,15 @@ git clone --depth 1 https://github.com/fchollet/ARC-AGI.git /private/tmp/ARC-AGI
 
 | Split | Files | Loaded | Parse errors | Train pairs | Test pairs | Max rules | Unique predictions | Test exact | Certified | Unsupported | Correct cells | Test cells | Cell accuracy |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| training | 400 | 400 | 0 | 1302 | 416 | 790 | 24 | 23 | 23 | 48 | 1162 | 56672 | 2.0504% |
+| training | 400 | 400 | 0 | 1302 | 416 | 790 | 25 | 24 | 24 | 48 | 1187 | 56672 | 2.0945% |
 | evaluation | 400 | 400 | 0 | 1363 | 419 | 793 | 4 | 4 | 4 | 44 | 187 | 98515 | 0.1898% |
 
 ## Program-Proposer Summary
 
-Grammar v8 maps ARC transforms into `NNProgram` rows, adds deterministic
+Grammar v9 maps ARC transforms into `NNProgram` rows, adds deterministic
 object-scene evidence, folds object translation, aligned-object connection, and
 enclosed-region fill under a generic `object_relation_induced` template, and
+induces relation background plus input/output color parameters from train pairs.
 lets a trained proposer append verifier-checked two-step scale compositions
 from its top primitive candidates.
 The learned proposer uses the shared `nn_program_encode_features()` program
@@ -36,22 +37,22 @@ training split before scoring the public evaluation split.
 | training | structural heuristic | 8 | 3200 | 13 | 13 | 228 | 56672 | 0.4023% |
 | training | random | 8 | 3200 | 0 | 0 | 0 | 56672 | 0.0000% |
 | training | learned program scorer | 8 | 3200 | 13 | 13 | 319 | 56672 | 0.5629% |
-| training | oracle | 8 | 3200 | 36 | 36 | 1162 | 56672 | 2.0504% |
+| training | oracle | 8 | 3200 | 37 | 37 | 1187 | 56672 | 2.0945% |
 | training | grammar-order | 16 | 6400 | 0 | 0 | 0 | 56672 | 0.0000% |
 | training | structural heuristic | 16 | 6400 | 13 | 13 | 228 | 56672 | 0.4023% |
 | training | random | 16 | 6400 | 0 | 0 | 0 | 56672 | 0.0000% |
 | training | learned program scorer | 16 | 6400 | 16 | 16 | 409 | 56672 | 0.7217% |
-| training | oracle | 16 | 6400 | 37 | 37 | 1162 | 56672 | 2.0504% |
+| training | oracle | 16 | 6400 | 38 | 38 | 1187 | 56672 | 2.0945% |
 | training | grammar-order | 32 | 12800 | 1 | 1 | 9 | 56672 | 0.0159% |
 | training | structural heuristic | 32 | 12800 | 14 | 14 | 228 | 56672 | 0.4023% |
 | training | random | 32 | 12800 | 1 | 1 | 100 | 56672 | 0.1765% |
 | training | learned program scorer | 32 | 12800 | 16 | 16 | 409 | 56672 | 0.7217% |
-| training | oracle | 32 | 12800 | 37 | 37 | 1162 | 56672 | 2.0504% |
+| training | oracle | 32 | 12800 | 38 | 38 | 1187 | 56672 | 2.0945% |
 | training | grammar-order | 64 | 25600 | 17 | 17 | 433 | 56672 | 0.7640% |
 | training | structural heuristic | 64 | 25600 | 16 | 16 | 409 | 56672 | 0.7217% |
 | training | random | 64 | 25600 | 1 | 1 | 100 | 56672 | 0.1765% |
-| training | learned program scorer | 64 | 25600 | 17 | 17 | 433 | 56672 | 0.7640% |
-| training | oracle | 64 | 25600 | 37 | 37 | 1162 | 56672 | 2.0504% |
+| training | learned program scorer | 64 | 25600 | 18 | 18 | 533 | 56672 | 0.9405% |
+| training | oracle | 64 | 25600 | 38 | 38 | 1187 | 56672 | 2.0945% |
 | evaluation | grammar-order | 8 | 3200 | 0 | 0 | 0 | 98515 | 0.0000% |
 | evaluation | structural heuristic | 8 | 3200 | 0 | 0 | 0 | 98515 | 0.0000% |
 | evaluation | random | 8 | 3200 | 0 | 0 | 0 | 98515 | 0.0000% |
@@ -92,12 +93,13 @@ training split before scoring the public evaluation split.
 | training | `9172f3a0` | 762 | 1 | 1 | 81/81 | `scale_3x` |
 | training | `9dfd6313` | 757 | 1 | 1 | 36/36 | `transpose` |
 | training | `a5313dff` | 733 | 1 | 1 | 81/81 | `object_relation_fill_enclosed_2_to_1` |
+| training | `a79310a0` | 762 | 1 | 1 | 25/25 | `object_relation_translate_bg_0_color_8_to_2_+0_+1` |
 | training | `b1948b0a` | 762 | 1 | 1 | 16/16 | `grid_color_map_same_shape` |
 | training | `be94b721` | 730 | 1 | 1 | 12/12 | `object_crop_largest_non_background_0` |
 | training | `c59eb873` | 763 | 3 | 1 | 100/100 | `scale_2x`, `compose_scale_2x_then_crop_non_background_0`, `compose_crop_non_background_0_then_scale_2x` |
 | training | `c8f0f002` | 774 | 1 | 1 | 15/15 | `grid_color_map_same_shape` |
 | training | `d511f180` | 788 | 1 | 1 | 16/16 | `grid_color_map_same_shape` |
-| training | `ded97339` | 755 | 1 | 1 | 100/100 | `object_relation_connect_aligned_color_8_both` |
+| training | `ded97339` | 755 | 1 | 1 | 100/100 | `object_relation_connect_aligned_bg_0_color_8_to_8_both` |
 | training | `ed36ccf7` | 790 | 1 | 1 | 9/9 | `rotate270` |
 | training | `f25fbde4` | 763 | 2 | 1 | 60/60 | `compose_scale_2x_then_crop_non_background_0`, `compose_crop_non_background_0_then_scale_2x` |
 | evaluation | `195ba7dc` | 748 | 1 | 1 | 30/30 | `mask_union_color_1` |
@@ -113,11 +115,12 @@ induction, and learned scale-composition families. The largest-object primitive
 adds two training certifications (`1f85a75f`, `be94b721`) and one redundant
 certificate on `1cf80156`; learned scale composition adds the training-only
 `f25fbde4` certificate. The generic object-relation template induces the
-training-only `ded97339`, `00d62c1b`, and `a5313dff` certificates by learning
-selector/parameter scores over relation kind, colors, mode, and offset rather
-than treating connection and enclosed fill as separate families. The public
-evaluation split remains at four exact certifications. The learned proposer is
+training-only `ded97339`, `00d62c1b`, `a5313dff`, and `a79310a0`
+certificates by learning selector/parameter scores over relation kind,
+background, colors, mode, and offset rather than treating connection, recolored
+translation, and enclosed fill as separate families. The public evaluation
+split remains at four exact certifications. The learned proposer is
 still a real neural scorer over program/task descriptors: it improves
-tight-budget ranking on both splits, but by budget 64 it only recovers the same
-four evaluation certifications as grammar/structural order because the
-exact-solver ceiling is still four tasks.
+tight-budget ranking on both splits and now covers 533 training cells at budget
+64, but on evaluation it only recovers the same four certifications as
+grammar/structural order because the exact-solver ceiling is still four tasks.

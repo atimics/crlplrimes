@@ -37,7 +37,7 @@ enum {
     ARC_ACCEPTED_RULES_BYTES = 2048,
     ARC_TRANSFORM_NAME_BYTES = 128,
     ARC_RULE_CANDIDATE_COUNT = 2048,
-    ARC_GRAMMAR_VERSION = 8,
+    ARC_GRAMMAR_VERSION = 9,
     ARC_LEARNED_COMPOSE_TOP = 16,
     ARC_LEARNED_COMPOSE_LIMIT = 256,
     ARC_PROGRAM_PROPOSER_BUDGET = 64,
@@ -399,6 +399,7 @@ typedef struct {
     double family_score[32];
     double relation_score[ARC_OBJECT_RELATION_KIND_COUNT];
     double relation_color_score[ARC_OBJECT_RELATION_KIND_COUNT][ARC_COLOR_COUNT][ARC_COLOR_COUNT];
+    double relation_background_score[ARC_OBJECT_RELATION_KIND_COUNT][ARC_COLOR_COUNT];
 } ARCProgramLearnedState;
 
 typedef struct {
@@ -783,6 +784,74 @@ static int arc_build_observed_color_map_candidate(const ARCTask *task,
     return mapped_any;
 }
 
+static uint8_t arc_grid_dominant_color(const ARCGrid *grid)
+{
+    size_t counts[ARC_COLOR_COUNT];
+    memset(counts, 0, sizeof(counts));
+    for (size_t cell = 0; cell < arc_grid_cells(grid); ++cell) {
+        if (grid->cells[cell] < ARC_COLOR_COUNT) {
+            ++counts[grid->cells[cell]];
+        }
+    }
+    uint8_t best_color = 0;
+    size_t best_count = counts[0];
+    for (uint8_t color = 1; color < ARC_COLOR_COUNT; ++color) {
+        if (counts[color] > best_count) {
+            best_count = counts[color];
+            best_color = color;
+        }
+    }
+    return best_color;
+}
+
+static void arc_add_unique_color(uint8_t *colors, size_t capacity, size_t *count, uint8_t color)
+{
+    if (colors == NULL || count == NULL || *count >= capacity) {
+        return;
+    }
+    for (size_t i = 0; i < *count; ++i) {
+        if (colors[i] == color) {
+            return;
+        }
+    }
+    colors[*count] = color;
+    ++*count;
+}
+
+static size_t arc_task_relation_backgrounds(const ARCTask *task,
+                                            uint8_t *backgrounds,
+                                            size_t capacity)
+{
+    size_t count = 0;
+    arc_add_unique_color(backgrounds, capacity, &count, 0);
+    if (task == NULL || task->train_count == 0) {
+        return count;
+    }
+
+    int have_background = 0;
+    uint8_t observed_background = 0;
+    for (size_t pair = 0; pair < task->train_count; ++pair) {
+        if (!task->train[pair].has_output) {
+            return count;
+        }
+        uint8_t input_background = arc_grid_dominant_color(&task->train[pair].input);
+        uint8_t output_background = arc_grid_dominant_color(&task->train[pair].output);
+        if (input_background != output_background) {
+            return count;
+        }
+        if (!have_background) {
+            observed_background = input_background;
+            have_background = 1;
+        } else if (observed_background != input_background) {
+            return count;
+        }
+    }
+    if (have_background) {
+        arc_add_unique_color(backgrounds, capacity, &count, observed_background);
+    }
+    return count;
+}
+
 static int arc_objects_same_shape(const ARCObject *lhs, const ARCObject *rhs)
 {
     size_t lhs_width = lhs->max_x - lhs->min_x + 1u;
@@ -797,7 +866,8 @@ static int arc_objects_same_shape(const ARCObject *lhs, const ARCObject *rhs)
 
 static int arc_build_object_translation_candidate(const ARCTask *task,
                                                   uint8_t background,
-                                                  uint8_t color,
+                                                  uint8_t input_color,
+                                                  uint8_t output_color,
                                                   ARCTransformCandidate *candidate)
 {
     int have_offset = 0;
@@ -814,8 +884,8 @@ static int arc_build_object_translation_candidate(const ARCTask *task,
         ARCObject output_object;
         if (!arc_extract_scene(&task->train[pair].input, background, &input_scene) ||
             !arc_extract_scene(&task->train[pair].output, background, &output_scene) ||
-            !arc_scene_unique_color_object(&input_scene, color, &input_object) ||
-            !arc_scene_unique_color_object(&output_scene, color, &output_object) ||
+            !arc_scene_unique_color_object(&input_scene, input_color, &input_object) ||
+            !arc_scene_unique_color_object(&output_scene, output_color, &output_object) ||
             !arc_objects_same_shape(&input_object, &output_object)) {
             return 0;
         }
@@ -837,15 +907,17 @@ static int arc_build_object_translation_candidate(const ARCTask *task,
     }
 
     arc_init_candidate(candidate, ARC_RULE_OBJECT_TRANSLATE, "");
-    candidate->input_color = color;
-    candidate->output_color = color;
+    candidate->input_color = input_color;
+    candidate->output_color = output_color;
     candidate->background_color = background;
     candidate->dx = dx;
     candidate->dy = dy;
     snprintf(candidate->name,
              sizeof(candidate->name),
-             "object_translate_color_%u_%+d_%+d",
-             (unsigned)color,
+             "object_translate_bg_%u_color_%u_to_%u_%+d_%+d",
+             (unsigned)background,
+             (unsigned)input_color,
+             (unsigned)output_color,
              dx,
              dy);
     return 1;
@@ -943,7 +1015,8 @@ static int arc_apply_object_connect_candidate(const ARCTransformCandidate *candi
 
 static int arc_build_object_connect_candidate(const ARCTask *task,
                                               uint8_t background,
-                                              uint8_t color,
+                                              uint8_t input_color,
+                                              uint8_t output_color,
                                               int mode,
                                               ARCTransformCandidate *candidate)
 {
@@ -951,14 +1024,16 @@ static int arc_build_object_connect_candidate(const ARCTask *task,
                                 ? "horizontal"
                                 : mode == ARC_OBJECT_CONNECT_VERTICAL ? "vertical" : "both";
     arc_init_candidate(candidate, ARC_RULE_OBJECT_CONNECT_ALIGNED, "");
-    candidate->input_color = color;
-    candidate->output_color = color;
+    candidate->input_color = input_color;
+    candidate->output_color = output_color;
     candidate->background_color = background;
     candidate->dx = mode;
     snprintf(candidate->name,
              sizeof(candidate->name),
-             "object_connect_color_%u_%s",
-             (unsigned)color,
+             "object_connect_bg_%u_color_%u_to_%u_%s",
+             (unsigned)background,
+             (unsigned)input_color,
+             (unsigned)output_color,
              mode_name);
 
     int changed_any = 0;
@@ -1095,14 +1170,17 @@ static int arc_build_object_relation_candidate(const ARCTask *task,
         if (!arc_build_object_translation_candidate(task,
                                                     background,
                                                     input_color,
+                                                    output_color,
                                                     &induced)) {
             return 0;
         }
         snprintf(induced.name,
                  sizeof(induced.name),
-                 "object_relation_%s_color_%u_%+d_%+d",
+                 "object_relation_%s_bg_%u_color_%u_to_%u_%+d_%+d",
                  arc_object_relation_kind_name(relation_kind),
+                 (unsigned)induced.background_color,
                  (unsigned)induced.input_color,
+                 (unsigned)induced.output_color,
                  induced.dx,
                  induced.dy);
         break;
@@ -1110,6 +1188,7 @@ static int arc_build_object_relation_candidate(const ARCTask *task,
         if (!arc_build_object_connect_candidate(task,
                                                 background,
                                                 input_color,
+                                                output_color,
                                                 mode,
                                                 &induced)) {
             return 0;
@@ -1120,9 +1199,11 @@ static int arc_build_object_relation_candidate(const ARCTask *task,
                 : mode == ARC_OBJECT_CONNECT_VERTICAL ? "vertical" : "both";
         snprintf(induced.name,
                  sizeof(induced.name),
-                 "object_relation_%s_color_%u_%s",
+                 "object_relation_%s_bg_%u_color_%u_to_%u_%s",
                  arc_object_relation_kind_name(relation_kind),
+                 (unsigned)induced.background_color,
                  (unsigned)induced.input_color,
+                 (unsigned)induced.output_color,
                  mode_name);
         break;
     }
@@ -1305,29 +1386,51 @@ static size_t arc_build_candidates(const ARCTask *task,
         }
     }
 
-    for (uint8_t color = 1; color < ARC_COLOR_COUNT; ++color) {
-        if (arc_build_object_relation_candidate(task,
-                                                ARC_OBJECT_RELATION_TRANSLATE,
-                                                0,
-                                                color,
-                                                color,
-                                                0,
-                                                &candidate)) {
-            arc_add_candidate(candidates, capacity, &count, &candidate);
-        }
-        for (int mode = ARC_OBJECT_CONNECT_HORIZONTAL;
-             mode <= ARC_OBJECT_CONNECT_BOTH;
-             ++mode) {
-            if (arc_build_object_relation_candidate(task,
-                                                    ARC_OBJECT_RELATION_CONNECT_ALIGNED,
-                                                    0,
-                                                    color,
-                                                    color,
-                                                    mode,
-                                                    &candidate)) {
-                arc_add_candidate(candidates, capacity, &count, &candidate);
+    uint8_t relation_backgrounds[2];
+    size_t relation_background_count =
+        arc_task_relation_backgrounds(task,
+                                      relation_backgrounds,
+                                      sizeof(relation_backgrounds) /
+                                          sizeof(relation_backgrounds[0]));
+    for (size_t background_index = 0;
+         background_index < relation_background_count;
+         ++background_index) {
+        uint8_t background = relation_backgrounds[background_index];
+        for (uint8_t input_color = 0; input_color < ARC_COLOR_COUNT; ++input_color) {
+            if (input_color == background) {
+                continue;
+            }
+            for (uint8_t output_color = 0; output_color < ARC_COLOR_COUNT; ++output_color) {
+                if (output_color == background) {
+                    continue;
+                }
+                if (arc_build_object_relation_candidate(task,
+                                                        ARC_OBJECT_RELATION_TRANSLATE,
+                                                        background,
+                                                        input_color,
+                                                        output_color,
+                                                        0,
+                                                        &candidate)) {
+                    arc_add_candidate(candidates, capacity, &count, &candidate);
+                }
+                for (int mode = ARC_OBJECT_CONNECT_HORIZONTAL;
+                     mode <= ARC_OBJECT_CONNECT_BOTH;
+                     ++mode) {
+                    if (arc_build_object_relation_candidate(task,
+                                                            ARC_OBJECT_RELATION_CONNECT_ALIGNED,
+                                                            background,
+                                                            input_color,
+                                                            output_color,
+                                                            mode,
+                                                            &candidate)) {
+                        arc_add_candidate(candidates, capacity, &count, &candidate);
+                    }
+                }
             }
         }
+    }
+
+    for (uint8_t color = 1; color < ARC_COLOR_COUNT; ++color) {
         for (uint8_t fill_color = 1; fill_color < ARC_COLOR_COUNT; ++fill_color) {
             if (arc_build_object_relation_candidate(task,
                                                     ARC_OBJECT_RELATION_FILL_ENCLOSED,
@@ -3095,7 +3198,9 @@ static double arc_learned_relation_score(const ARCProgramLearnedState *state,
     return state->relation_score[relation_kind] +
            0.5 * state->relation_color_score[relation_kind]
                                               [candidate->input_color]
-                                              [candidate->output_color];
+                                              [candidate->output_color] +
+           0.25 * state->relation_background_score[relation_kind]
+                                                [candidate->background_color];
 }
 
 static double arc_learned_program_score(ARCProgramLearnedState *state,
@@ -3496,12 +3601,16 @@ static int arc_program_learned_observe(ARCProgramLearnedState *state,
     size_t relation_success[ARC_OBJECT_RELATION_KIND_COUNT];
     size_t relation_color_seen[ARC_OBJECT_RELATION_KIND_COUNT][ARC_COLOR_COUNT][ARC_COLOR_COUNT];
     size_t relation_color_success[ARC_OBJECT_RELATION_KIND_COUNT][ARC_COLOR_COUNT][ARC_COLOR_COUNT];
+    size_t relation_background_seen[ARC_OBJECT_RELATION_KIND_COUNT][ARC_COLOR_COUNT];
+    size_t relation_background_success[ARC_OBJECT_RELATION_KIND_COUNT][ARC_COLOR_COUNT];
     memset(family_seen, 0, sizeof(family_seen));
     memset(family_success, 0, sizeof(family_success));
     memset(relation_seen, 0, sizeof(relation_seen));
     memset(relation_success, 0, sizeof(relation_success));
     memset(relation_color_seen, 0, sizeof(relation_color_seen));
     memset(relation_color_success, 0, sizeof(relation_color_success));
+    memset(relation_background_seen, 0, sizeof(relation_background_seen));
+    memset(relation_background_success, 0, sizeof(relation_background_success));
     for (size_t i = 0; i < candidate_count; ++i) {
         if (arc_candidate_is_composed(&candidates[i])) {
             continue;
@@ -3521,11 +3630,14 @@ static int arc_program_learned_observe(ARCProgramLearnedState *state,
             candidates[i].output_color < ARC_COLOR_COUNT) {
             uint8_t input_color = candidates[i].input_color;
             uint8_t output_color = candidates[i].output_color;
+            uint8_t background = candidates[i].background_color;
             ++relation_seen[relation_kind];
             ++relation_color_seen[relation_kind][input_color][output_color];
+            ++relation_background_seen[relation_kind][background];
             if (evals[i].train_consistent) {
                 ++relation_success[relation_kind];
                 ++relation_color_success[relation_kind][input_color][output_color];
+                ++relation_background_success[relation_kind][background];
             }
         }
     }
@@ -3555,6 +3667,17 @@ static int arc_program_learned_observe(ARCProgramLearnedState *state,
                     0.85 * state->relation_color_score[relation_kind][input_color][output_color] +
                     0.15 * observation;
             }
+        }
+        for (uint8_t background = 0; background < ARC_COLOR_COUNT; ++background) {
+            if (relation_background_seen[relation_kind][background] == 0) {
+                continue;
+            }
+            double observation =
+                (double)relation_background_success[relation_kind][background] /
+                (double)relation_background_seen[relation_kind][background];
+            state->relation_background_score[relation_kind][background] =
+                0.85 * state->relation_background_score[relation_kind][background] +
+                0.15 * observation;
         }
     }
     return arc_program_learned_train_task(state,
@@ -4791,9 +4914,9 @@ static int run_arc_task_loader(const ARCConfig *config)
             if (transform.certified) {
                 ARCMetrics transform_metrics = arc_transform_to_metrics(&task, &transform);
                 print_arc_metrics_json(task.id,
-                                       "symbolic-transform-v8",
+                                       "symbolic-transform-v9",
                                        "certified_transform_gate",
-                                       "arc-transform-gate-v8",
+                                       "arc-transform-gate-v9",
                                        &transform_metrics);
             }
         }
@@ -4946,11 +5069,11 @@ int main(int argc, char **argv)
     print_arc_transform_json("0520fde7", &transform);
     ARCMetrics transform_metrics = arc_transform_to_metrics(&builtin_task, &transform);
     print_arc_metrics_json("0520fde7",
-                           "symbolic-transform-v8",
+                           "symbolic-transform-v9",
                            "certified_transform_gate",
-                           "arc-transform-gate-v8",
+                           "arc-transform-gate-v9",
                            &transform_metrics);
-    print_arc_metrics_line("symbolic-transform-v8",
+    print_arc_metrics_line("symbolic-transform-v9",
                            "certified_transform_gate",
                            &transform_metrics);
     arc_emit_builtin_program_summaries(&builtin_task, &config);
