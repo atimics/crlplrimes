@@ -35,8 +35,9 @@ The machine-readable form is emitted as `crlp.experiment_schema.v1`:
 make experiment-schemas
 ```
 
-The C API lives in `include/nn_experiment.h`; the implementation is
-`src/nn_experiment.c`.
+The task-schema C API lives in `include/nn_experiment.h`; the implementation is
+`src/nn_experiment.c`. The shared symbolic-domain API lives in
+`include/nn_symbolic.h`; its implementation is `src/nn_symbolic.c`.
 
 ## Enforced Schema Fields
 
@@ -94,7 +95,7 @@ Shared-envelope integration task:
 
 | Task | State | Actions | Label source | Status |
 | --- | --- | --- | --- | --- |
-| `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | supervised cell-color scorer; no certificate grammar yet |
+| `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | supervised cell-color scorer; separate symbolic-domain smoke has a tiny certified transform grammar |
 
 Leakage status today:
 
@@ -105,8 +106,36 @@ Leakage status today:
 | `delayed_claim` | `forbidden` | 10 enabled observations |
 
 `arc_agi` is omitted from the leakage table until it has a task schema and a
-certificate checker. In the current multitask binary it uses the fixed 96-wide
-action-row envelope documented in [multitask-domain.md](multitask-domain.md).
+dataset-level certificate checker. In the current multitask binary it uses the
+fixed 96-wide action-row envelope documented in [multitask-domain.md](multitask-domain.md).
+
+## Shared Symbolic-Domain Interface
+
+`NNSymbolicDomain` is the generalized formal-system hook:
+
+```text
+symbols, axioms, grammar
+        ↓
+enumerate NNRule rows
+        ↓
+check NNCertificate
+        ↓
+encode structural/residual features
+        ↓
+train/select with the generic closed-loop rule policy
+```
+
+`examples/symbolic_domains.c` currently instantiates this interface for
+`prime_gap`, `grid_path`, `delayed_claim`, and a compiled ARC-AGI-1 sample. It
+emits `crlp.symbolic_domain.summary.v1` per domain and
+`crlp.symbolic_rule_proposer.summary.v1` for one rule proposer trained across
+all four domains.
+
+The ARC grammar in that smoke path contains copy, mask/intersection, union,
+object-select, and color-map transforms. Its checker accepts a rule only when it
+matches all train pairs and every grammar-consistent rule agrees on the test
+output. This is still a fixed-sample formal-system smoke, not a general ARC
+solver claim.
 
 ## Shared Multitask Summary Rows
 
@@ -146,14 +175,16 @@ add a richer admissible-pruning grammar and the same fixed-budget proposer
 baselines used by `prime_gap`.
 
 `delayed_claim` currently supports supervised training, trace replay, and
-calibration evaluation. Its threshold/dominance grammar is specified in the
-schema but not yet implemented as a learned certified gate.
+calibration evaluation in its production binary. Its threshold grammar now has a
+finite-generator certificate in the shared symbolic-domain smoke, but it still
+needs a production learned-gate evaluation table.
 
 ## Next Build Targets
 
 1. Move `grid_path` and `delayed_claim` out of monolithic examples into task
    modules with the same shape as `src/prime_gap/`.
-2. Implement the delayed-claim certified gate grammar.
+2. Promote the delayed-claim certified gate from symbolic-domain smoke into the
+   production delayed-claim evaluation.
 3. Extend grid-path gates beyond simple legality to admissible pruning rules.
 4. Run proposer baselines for every task at matched rule budgets.
 5. Run strict versus KL/entropy verifier RL on the certified tasks.

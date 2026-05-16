@@ -10,6 +10,11 @@ contract still lives in `crlp.experiment_schema.v1` and currently covers
 different question: can the same core scorer, update path, and summary protocol
 train across heterogeneous action domains in shuffled order?
 
+There is now a second shared-domain smoke for symbolic rules:
+`examples/symbolic_domains.c`. That binary uses `NNSymbolicDomain` instead of
+the fixed 96-wide action-row envelope, and trains one rule proposer across
+prime, grid, delayed-claim, and a tiny ARC transform grammar.
+
 ## Domains
 
 | Domain | Action task | Candidate count | Label source | Status |
@@ -17,7 +22,7 @@ train across heterogeneous action domains in shuffled order?
 | `prime_gap` | rank candidate next-prime gaps | 129 | segmented-sieve label | clean scorer row, no residue flags |
 | `grid_path` | rank four grid moves | 4 | BFS shortest-path successor | exact verifier label |
 | `delayed_claim` | choose trust/ignore/evidence/cautious | 4 | deterministic hidden-outcome simulator | synthetic delayed-label task |
-| `arc_agi` | choose output-cell color | 10 | ARC-AGI-1 task `0520fde7` output grid | supervised ARC sample, not certified |
+| `arc_agi` | choose output-cell color | 10 | ARC-AGI-1 task `0520fde7` output grid | supervised ARC action row; symbolic smoke has a separate tiny certified transform grammar |
 
 The ARC sample is reduced to balanced cell-color scoring. Given an input grid,
 an output coordinate, and a candidate color action `0..9`, the scorer ranks the
@@ -56,6 +61,12 @@ Build and run one all-domain scorer:
 ```sh
 make multitask-domain
 ./build/float/multitask_domain --tasks all --eval-tasks all
+```
+
+Build and run the shared symbolic-rule proposer:
+
+```sh
+make symbolic-domains
 ```
 
 Run the repeatable multi-seed matrix:
@@ -143,7 +154,7 @@ The interpretation is deliberately conservative:
 1. Promote ARC from one compiled-in sample to a loader over many ARC tasks.
 2. Add task-family metadata so ARC tasks with different transformations can be
    evaluated without changing the scorer code.
-3. Add certifiable symbolic ARC transformations before treating ARC as part of
-   the verifier-gated evidence table.
+3. Promote the compiled symbolic ARC smoke into a loader over many ARC tasks
+   before treating ARC as part of the verifier-gated evidence table.
 4. Track transfer with held-out task families, not only held-out domains from
    the same compiled set.

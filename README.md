@@ -14,8 +14,8 @@ Every certified experiment publishes the same machine-readable task contract wit
 make experiment-schemas
 ```
 
-The schema is `crlp.experiment_schema.v1` and defines the state distribution, candidate enumerator, typed feature provenance, leakage policy, scorer, verifier, rule grammar, certificate checker, proposer inputs, proposer mode, baselines, trace protocol, replay protocol, and verifier-RL protocol. The public C contract lives in `include/nn_experiment.h`.
-The working design note is [docs/experiment-schema.md](docs/experiment-schema.md). The shared-model multitask matrix is documented separately in [docs/multitask-domain.md](docs/multitask-domain.md).
+The schema is `crlp.experiment_schema.v1` and defines the state distribution, candidate enumerator, typed feature provenance, leakage policy, scorer, verifier, rule grammar, certificate checker, proposer inputs, proposer mode, baselines, trace protocol, replay protocol, and verifier-RL protocol. The public C contracts live in `include/nn_experiment.h` for task schemas and `include/nn_symbolic.h` for shared symbolic rule domains.
+The working design note is [docs/experiment-schema.md](docs/experiment-schema.md). The shared-model multitask matrix is documented separately in [docs/multitask-domain.md](docs/multitask-domain.md). The formal symbolic-domain interface is documented in [docs/symbolic-domain-interface.md](docs/symbolic-domain-interface.md).
 
 ## Generalized Experiment Schema
 
@@ -74,7 +74,7 @@ Current leakage audit:
 | `grid_path` | `priors_allowed` | 2 |
 | `delayed_claim` | `forbidden` | 0 |
 
-The `arc_agi` row used by the shared multitask binary is intentionally outside this certificate table for now. It is a supervised cell-color action task from ARC-AGI-1, useful for testing whether one fixed-width scorer can train across domains, not a certified ARC solver claim.
+The `arc_agi` row used by the shared multitask binary is still not a certified ARC solver claim. There is now a separate symbolic-domain smoke path (`make symbolic-domains`) with a tiny ARC grammar over task `0520fde7`; that checker accepts a transform only when it matches all train pairs and all train-consistent grammar rules agree on the test output.
 
 ## Current Evidence
 
@@ -94,7 +94,7 @@ Each task should report the same gate ablation: no gate, hand/spec gate, learned
 | Hand-wheel (small-prime divisibility) | 45.12% | 99.77% | 1.5902 |
 | **Learned rule program** (certificate-checked rules) | **68.87%** | **100.00%** | **1.0056** |
 
-The same protocol is partially implemented on `grid_path`: with Manhattan priors disabled during training, raw accuracy is **70.80%** and budgeted legality-gate accuracy is **84.90%**. The priors-allowed checkpoint remains visible as an ablation at **75.80%** raw and **89.60%** gated; its comparison rows list `feature_set=with_manhattan_priors` and `enabled_structural_prior_features=2`. `delayed_claim` still needs its certified gate grammar implemented; until then it is a trace/replay and verifier-RL task, not evidence for gate learning. The former raw 45.12% prime figure is retained only as a full-sieve-feature leakage ablation.
+The same protocol is partially implemented on `grid_path`: with Manhattan priors disabled during training, raw accuracy is **70.80%** and budgeted legality-gate accuracy is **84.90%**. The priors-allowed checkpoint remains visible as an ablation at **75.80%** raw and **89.60%** gated; its comparison rows list `feature_set=with_manhattan_priors` and `enabled_structural_prior_features=2`. `delayed_claim` now has a threshold grammar and finite-generator certificate in the shared symbolic-domain smoke, but the production delayed-claim binary still needs the same gate-ablation table as prime and grid. The former raw 45.12% prime figure is retained only as a full-sieve-feature leakage ablation.
 
 ### Axis 2 — Rule search must beat fixed-budget symbolic baselines
 
@@ -226,18 +226,19 @@ The grid legality proposer accepts 3/5 certified rules under budget with 0 held-
 - **Proposer learning is not solved.** The fixed-budget baseline now shows grammar order and a simple structural heuristic outperform the current neural proposer at a 16-rule budget on both unconditional candidate rules and conditional gap rules. Axis 2 should be read as a benchmark requirement, not as evidence that the neural proposer is essential. The next proposer experiment needs richer grammars across the certified tasks where ordering is non-trivial and random/grammar/heuristic baselines are hard to beat.
 - **Cross-task verifier-RL comparison.** Axis 3 (strict-vs-regularized RL on the prime-gap task) needs a matching run on `grid_path` and `delayed_claim` before it can be stated as a general property of sparse-exact-reward policy gradient. The pipeline supports it; the comparison is not in the canonical results yet.
 - **Richer non-prime gate grammars.** `grid_path` now has a budgeted certified legality gate, but that gate is intentionally shallow. The next cross-domain test should learn admissible dead-end or distance-bound pruning rules that reduce BFS verifier work without becoming a hand-coded solver.
-- **ARC is only a smoke test.** The current `arc_agi` domain is one fixed ARC-AGI-1 task reduced to balanced output-cell color scoring. It does not parse the full dataset, induce transformations, or certify rules yet.
+- **ARC is only a smoke test.** The current `arc_agi` action scorer is one fixed ARC-AGI-1 task reduced to balanced output-cell color scoring. The new symbolic ARC path certifies a tiny compiled grammar for the same task, but it still does not parse the full dataset or induce transformations across ARC tasks.
 - **Statistical rigor.** The default `make prime-gap-experiments` config currently runs 1 seed; the harness supports more (`PRIME_GAP_EXPERIMENT_SEEDS=...`). The minimal-vs-leakage, strict-vs-regularized, and hand-wheel-vs-learned-rule deltas should be reported with confidence intervals across >=5 seeds.
 - **Reliability diagrams.** The comparison schema stores `reliability_bins`; the README currently reports only ECE. Calibration claims would be stronger with a small reliability plot.
 - **Learned-rule calibration.** The learned rule program improves ranking sharply, but its ECE is worse than the raw minimal and hand-wheel rows in the default run. That calibration tradeoff deserves a focused reliability-diagram pass.
 
 ## Reproducibility Substrate
 
-The hybrid architecture is the contribution; the substrate is the discipline that makes it auditable. Three pieces matter:
+The hybrid architecture is the contribution; the substrate is the discipline that makes it auditable. Four pieces matter:
 
 - **Stable action IDs and trace contract.** Trace rows carry `schema: "crlp.trace.v1"`, `trace_version: 1`, and `action_id_contract: "stable_unique_action_ids"`. Replay resolves `target_index` to the trace row's `action_id`, then maps that stable id back into the regenerated candidate row. Reordering action ids cannot silently change replay semantics; the prime replay regression test exercises that.
 - **Checkpoint identity.** Checkpoints carry a `parent_model_hash`, a `training_trace_root`, a `feature_encoder_version`, and a `feature_set` in metadata; the model hash is SHA-256 over the exact checkpoint bytes. Successor models declare their parent. Comparison reports (`crlp.compare.v1`) carry `model_hash`, `parent_hash`, `feature_set`, and a machine-readable `reliability_bins` array.
 - **Pure C, no third-party deps.** The neural library is dense layers, sigmoid/ReLU/tanh/linear, MSE and softmax cross-entropy, SGD, batched 4-by-4 tiled forward/backward, cloned networks, action scoring, pairwise ranking loss, cached policy-gradient updates with optional KL/entropy regularization, deterministic checkpoint save/load, SHA-256 hashing, JSONL trace writing. The core is ~3k lines; the prime-gap task is split into focused modules under `src/prime_gap/`.
+- **Shared symbolic substrate.** `include/nn_symbolic.h` defines `NNRule`, `NNCertificate`, `NNSymbolicDomain`, residual coverage bitsets, and a generic closed-loop residual rule policy. Prime now uses the shared closed-loop policy; `examples/symbolic_domains.c` runs prime, grid, delayed-claim, and ARC through one formal rule interface.
 
 End-to-end quick path:
 
@@ -253,6 +254,7 @@ make prime-rule-search
 make delayed-claim
 make grid-path
 make multitask-domain
+make symbolic-domains
 python3 scripts/multitask_ablation_matrix.py
 make results
 ```
@@ -277,6 +279,14 @@ make multitask-domain
 
 Use `--tasks prime,grid,claim,arc|all` for combination ablations and `--eval-tasks all` to evaluate held-out domains after training on a subset. A matched per-domain update comparison can scale `--steps-per-epoch` by the number of active domains, for example `--tasks prime --steps-per-epoch 3000`, `--tasks prime,grid --steps-per-epoch 6000`, and `--tasks all --steps-per-epoch 12000`. The remaining feature ablation is explicit: `--no-task-tags` removes the task one-hot fields. Prime residue flags were removed from this shared multitask envelope so the prime row no longer receives hand-coded modular predicates.
 
+The shared formal-system smoke test trains one rule proposer across rule rows from all symbolic domains:
+
+```sh
+make symbolic-domains
+```
+
+`examples/symbolic_domains.c` exposes the same `NNSymbolicDomain` callbacks for prime modular filters, grid legality filters, delayed-claim threshold gates, and an ARC grammar (`copy`, `mask`, `intersection`, `object_select`, `color_map`). It prints per-domain `crlp.symbolic_domain.summary.v1` rows and one `crlp.symbolic_rule_proposer.summary.v1` row for the shared proposer.
+
 For the repeatable multi-seed matrix:
 
 ```sh
@@ -293,6 +303,7 @@ Public headers split conceptually:
 include/nn_core.h             allocation, inspection, forward pass, softmax, action scoring, checkpoints, traces
 include/nn_train.h            sample training, batch training, action-scorer training, cached policy-gradient with KL/entropy reg
 include/nn_experiment.h       shared experiment-schema contract for verifier-backed action tasks
+include/nn_symbolic.h         shared rule, certificate, symbolic-domain, and closed-loop residual policy API
 include/nn_tasks_prime_gap.h  command entry points for the prime-gap task module
 include/nn.h                  compatibility umbrella for existing users
 ```

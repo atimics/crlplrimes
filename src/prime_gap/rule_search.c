@@ -549,19 +549,6 @@ static void accumulate_expanded_rule_stats(ExpandedRuleSet *rules,
     }
 }
 
-typedef struct {
-    uint64_t *bits;
-    size_t rule_count;
-    size_t event_count;
-    size_t word_count;
-} RuleCoverage;
-
-static void free_rule_coverage(RuleCoverage *coverage)
-{
-    free(coverage->bits);
-    memset(coverage, 0, sizeof(*coverage));
-}
-
 static size_t rule_search_sample_count(const GapDataset *dataset, size_t max_states)
 {
     size_t samples = dataset->count;
@@ -594,7 +581,7 @@ static size_t count_negative_gap_events(const GapDataset *dataset, size_t max_st
     return events;
 }
 
-static void mark_matching_rule_coverage(RuleCoverage *coverage,
+static void mark_matching_rule_coverage(NNRuleCoverage *coverage,
                                         const RuleSearchConfig *config,
                                         const RuleSearchGrammar *grammar,
                                         uint32_t p,
@@ -605,8 +592,6 @@ static void mark_matching_rule_coverage(RuleCoverage *coverage,
     size_t filter_indices[RULE_SEARCH_MAX_MODULI * 2u];
     size_t state_count = 1;
     size_t filter_count = 0;
-    size_t word = event_index / 64u;
-    uint64_t mask = UINT64_C(1) << (event_index % 64u);
     uint32_t candidate = p + gap;
 
     state_indices[0] = 0;
@@ -630,7 +615,7 @@ static void mark_matching_rule_coverage(RuleCoverage *coverage,
         size_t base = state_indices[state] * grammar->filter_count;
         for (size_t filter = 0; filter < filter_count; ++filter) {
             size_t rule_index = base + filter_indices[filter];
-            coverage->bits[rule_index * coverage->word_count + word] |= mask;
+            nn_rule_coverage_set(coverage, rule_index, event_index);
         }
     }
 }
@@ -640,29 +625,20 @@ static int build_rule_coverage(const RuleSearchConfig *config,
                                const ExpandedRuleSet *rules,
                                const GapDataset *dataset,
                                size_t max_states,
-                               RuleCoverage *coverage,
+                               NNRuleCoverage *coverage,
                                size_t *samples_out)
 {
     memset(coverage, 0, sizeof(*coverage));
     size_t samples = rule_search_sample_count(dataset, max_states);
     size_t events = count_negative_gap_events(dataset, max_states);
-    size_t word_count = (events + 63u) / 64u;
     if (samples_out != NULL) {
         *samples_out = samples;
     }
-    coverage->rule_count = rules->count;
-    coverage->event_count = events;
-    coverage->word_count = word_count;
+    if (!nn_rule_coverage_init(coverage, rules->count, events)) {
+        return 0;
+    }
     if (events == 0 || rules->count == 0) {
         return 1;
-    }
-    if (word_count > SIZE_MAX / rules->count ||
-        rules->count * word_count > SIZE_MAX / sizeof(*coverage->bits)) {
-        return 0;
-    }
-    coverage->bits = calloc(rules->count * word_count, sizeof(*coverage->bits));
-    if (coverage->bits == NULL) {
-        return 0;
     }
 
     size_t event_index = 0;
@@ -680,22 +656,10 @@ static int build_rule_coverage(const RuleSearchConfig *config,
         }
     }
     if (event_index != events) {
-        free_rule_coverage(coverage);
+        nn_rule_coverage_free(coverage);
         return 0;
     }
     return 1;
-}
-
-static size_t popcount_rule_gain(const uint64_t *rule_bits,
-                                 const uint64_t *covered,
-                                 size_t word_count)
-{
-    size_t gain = 0;
-    for (size_t word = 0; word < word_count; ++word) {
-        uint64_t newly_covered = rule_bits[word] & ~covered[word];
-        gain += (size_t)__builtin_popcountll((unsigned long long)newly_covered);
-    }
-    return gain;
 }
 
 static int rule_is_marginal_candidate(const ExpandedRule *rule, int validation)
@@ -718,7 +682,7 @@ static int compute_marginal_rule_utilities(ExpandedRuleSet *rules,
                                            size_t *samples_out,
                                            size_t *events_out)
 {
-    RuleCoverage coverage;
+    NNRuleCoverage coverage;
     size_t samples = 0;
     if (!build_rule_coverage(config, grammar, rules, dataset, max_states, &coverage, &samples)) {
         return 0;
@@ -738,7 +702,7 @@ static int compute_marginal_rule_utilities(ExpandedRuleSet *rules,
         }
     }
     if (coverage.event_count == 0 || coverage.word_count == 0) {
-        free_rule_coverage(&coverage);
+        nn_rule_coverage_free(&coverage);
         return 1;
     }
 
@@ -747,7 +711,7 @@ static int compute_marginal_rule_utilities(ExpandedRuleSet *rules,
     if (selected == NULL || covered == NULL) {
         free(selected);
         free(covered);
-        free_rule_coverage(&coverage);
+        nn_rule_coverage_free(&coverage);
         return 0;
     }
 
@@ -758,8 +722,7 @@ static int compute_marginal_rule_utilities(ExpandedRuleSet *rules,
             if (selected[i] || !rule_is_marginal_candidate(&rules->items[i], validation)) {
                 continue;
             }
-            const uint64_t *rule_bits = &coverage.bits[i * coverage.word_count];
-            size_t gain = popcount_rule_gain(rule_bits, covered, coverage.word_count);
+            size_t gain = nn_rule_coverage_gain(&coverage, i, covered);
             if (gain > best_gain) {
                 best_gain = gain;
                 best_index = i;
@@ -775,15 +738,12 @@ static int compute_marginal_rule_utilities(ExpandedRuleSet *rules,
         } else {
             rules->items[best_index].train_marginal_utility = (double)best_gain;
         }
-        uint64_t *best_bits = &coverage.bits[best_index * coverage.word_count];
-        for (size_t word = 0; word < coverage.word_count; ++word) {
-            covered[word] |= best_bits[word];
-        }
+        nn_rule_coverage_add_rule_to_residual(&coverage, best_index, covered);
     }
 
     free(selected);
     free(covered);
-    free_rule_coverage(&coverage);
+    nn_rule_coverage_free(&coverage);
     return 1;
 }
 
@@ -1156,6 +1116,24 @@ static int expanded_rule_is_covered(const ExpandedRuleSet *accepted,
     return 0;
 }
 
+static int expanded_rule_is_covered_by_indices(const ExpandedRuleSet *rules,
+                                               const size_t *accepted_indices,
+                                               size_t accepted_count,
+                                               const ExpandedRule *candidate)
+{
+    if (rules == NULL || accepted_indices == NULL) {
+        return 0;
+    }
+    for (size_t i = 0; i < accepted_count; ++i) {
+        size_t accepted_index = accepted_indices[i];
+        if (accepted_index < rules->count &&
+            expanded_candidate_rule_subset_of(candidate, &rules->items[accepted_index])) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void expanded_rule_remove_subsets(ExpandedRuleSet *accepted,
                                          const ExpandedRule *candidate)
 {
@@ -1230,27 +1208,10 @@ static void mark_expanded_rule_acceptance(ExpandedRuleSet *rules,
     }
 }
 
-static size_t covered_event_count(const uint64_t *covered, size_t word_count)
-{
-    size_t count = 0;
-    for (size_t word = 0; word < word_count; ++word) {
-        count += (size_t)__builtin_popcountll((unsigned long long)covered[word]);
-    }
-    return count;
-}
-
-static void add_rule_coverage_to_residual(const RuleCoverage *coverage,
-                                          size_t rule_index,
-                                          uint64_t *covered)
-{
-    const uint64_t *rule_bits = &coverage->bits[rule_index * coverage->word_count];
-    for (size_t word = 0; word < coverage->word_count; ++word) {
-        covered[word] |= rule_bits[word];
-    }
-}
-
 typedef struct {
-    const ExpandedRuleSet *accepted;
+    const ExpandedRuleSet *rules;
+    const size_t *accepted_indices;
+    size_t accepted_count;
     size_t accepted_candidate_rules;
     size_t accepted_gap_rules;
     size_t accepted_conditional_rules;
@@ -1259,22 +1220,31 @@ typedef struct {
     size_t max_rules;
 } RuleDiscoveryState;
 
-static RuleDiscoveryState build_rule_discovery_state(const ExpandedRuleSet *accepted,
-                                                     const RuleCoverage *coverage,
+static RuleDiscoveryState build_rule_discovery_state(const ExpandedRuleSet *rules,
+                                                     const size_t *accepted_indices,
+                                                     size_t accepted_count,
+                                                     const NNRuleCoverage *coverage,
                                                      const uint64_t *covered,
                                                      size_t max_rules)
 {
     RuleDiscoveryState state;
     memset(&state, 0, sizeof(state));
-    state.accepted = accepted;
+    state.rules = rules;
+    state.accepted_indices = accepted_indices;
+    state.accepted_count = accepted_count;
     state.event_count = coverage->event_count;
-    state.covered_events = covered_event_count(covered, coverage->word_count);
+    state.covered_events = nn_rule_coverage_count_covered(covered, coverage->word_count);
     state.max_rules = max_rules;
-    for (size_t i = 0; i < accepted->count; ++i) {
-        if (expanded_rule_is_conditional(&accepted->items[i])) {
+    for (size_t i = 0; i < accepted_count; ++i) {
+        size_t accepted_index = accepted_indices[i];
+        if (rules == NULL || accepted_index >= rules->count) {
+            continue;
+        }
+        const ExpandedRule *accepted = &rules->items[accepted_index];
+        if (expanded_rule_is_conditional(accepted)) {
             ++state.accepted_conditional_rules;
         }
-        if (accepted->items[i].kind == RULE_FILTER_GAP_MOD) {
+        if (accepted->kind == RULE_FILTER_GAP_MOD) {
             ++state.accepted_gap_rules;
         } else {
             ++state.accepted_candidate_rules;
@@ -1291,7 +1261,7 @@ static void fill_rule_discovery_features(const ExpandedRule *rule,
     fill_expanded_rule_features(rule, max_modulus, features);
 
     double max_rules = state->max_rules == 0 ? 1.0 : (double)state->max_rules;
-    double accepted_count = state->accepted == NULL ? 0.0 : (double)state->accepted->count;
+    double accepted_count = (double)state->accepted_count;
     double accepted_scale = accepted_count <= 0.0 ? 1.0 : accepted_count;
     double residual_events = state->event_count <= state->covered_events
                                  ? 0.0
@@ -1305,9 +1275,13 @@ static void fill_rule_discovery_features(const ExpandedRule *rule,
     size_t same_state_modulus = 0;
     size_t same_candidate_residue = 0;
 
-    if (state->accepted != NULL) {
-        for (size_t i = 0; i < state->accepted->count; ++i) {
-            const ExpandedRule *accepted = &state->accepted->items[i];
+    if (state->rules != NULL && state->accepted_indices != NULL) {
+        for (size_t i = 0; i < state->accepted_count; ++i) {
+            size_t accepted_index = state->accepted_indices[i];
+            if (accepted_index >= state->rules->count) {
+                continue;
+            }
+            const ExpandedRule *accepted = &state->rules->items[accepted_index];
             if (accepted->kind == rule->kind) {
                 ++same_kind;
             }
@@ -1339,7 +1313,11 @@ static void fill_rule_discovery_features(const ExpandedRule *rule,
     features[RULE_SEARCH_FEATURE_COUNT + 8] =
         (nn_real)((double)same_candidate_residue / accepted_scale);
     features[RULE_SEARCH_FEATURE_COUNT + 9] =
-        state->accepted != NULL && expanded_rule_is_covered(state->accepted, rule)
+        state->rules != NULL &&
+                expanded_rule_is_covered_by_indices(state->rules,
+                                                    state->accepted_indices,
+                                                    state->accepted_count,
+                                                    rule)
             ? (nn_real)1
             : (nn_real)0;
 }
@@ -1355,239 +1333,69 @@ static uint32_t max_rule_search_modulus(const RuleSearchConfig *config)
     return max_modulus;
 }
 
-static int append_rule_discovery_training_sample(nn_real *inputs,
-                                                 nn_real *targets,
-                                                 size_t capacity,
-                                                 size_t *sample_count,
-                                                 const ExpandedRule *rule,
-                                                 uint32_t max_modulus,
-                                                 const RuleDiscoveryState *state,
-                                                 nn_real target)
+typedef struct {
+    const ExpandedRuleSet *rules;
+    const RuleSearchConfig *config;
+    uint32_t max_modulus;
+} PrimeClosedLoopContext;
+
+static int prime_closed_loop_candidate_allowed(size_t rule_index,
+                                               const size_t *accepted_indices,
+                                               size_t accepted_count,
+                                               void *context)
 {
-    if (*sample_count >= capacity) {
+    PrimeClosedLoopContext *prime = (PrimeClosedLoopContext *)context;
+    if (prime == NULL || prime->rules == NULL || rule_index >= prime->rules->count) {
         return 0;
     }
-    fill_rule_discovery_features(rule,
-                                 max_modulus,
-                                 state,
-                                 &inputs[*sample_count * RULE_DISCOVERY_FEATURE_COUNT]);
-    targets[*sample_count] = target;
-    ++*sample_count;
-    return 1;
+    const ExpandedRule *rule = &prime->rules->items[rule_index];
+    return expanded_rule_is_selectable(rule) &&
+           !expanded_rule_is_covered_by_indices(prime->rules,
+                                                accepted_indices,
+                                                accepted_count,
+                                                rule);
 }
 
-static int train_closed_loop_rule_policy(const ExpandedRuleSet *rules,
-                                         const RuleSearchConfig *config,
-                                         const RuleCoverage *coverage,
-                                         NeuralNet **net_out,
-                                         double *loss_out,
-                                         size_t *sample_count_out)
+static int prime_closed_loop_keep_accepted(size_t accepted_rule_index,
+                                           size_t candidate_rule_index,
+                                           void *context)
 {
-    *net_out = NULL;
-    if (loss_out != NULL) {
-        *loss_out = 0.0;
-    }
-    if (sample_count_out != NULL) {
-        *sample_count_out = 0;
-    }
-
-    size_t eligible_count = 0;
-    for (size_t i = 0; i < rules->count; ++i) {
-        if (expanded_rule_is_selectable(&rules->items[i])) {
-            ++eligible_count;
-        }
-    }
-    if (eligible_count == 0 || coverage->event_count == 0 || coverage->word_count == 0) {
+    PrimeClosedLoopContext *prime = (PrimeClosedLoopContext *)context;
+    if (prime == NULL || prime->rules == NULL ||
+        accepted_rule_index >= prime->rules->count ||
+        candidate_rule_index >= prime->rules->count) {
         return 0;
     }
+    return !expanded_candidate_rule_subset_of(&prime->rules->items[accepted_rule_index],
+                                              &prime->rules->items[candidate_rule_index]);
+}
 
-    size_t max_steps = config->max_rules < eligible_count ? config->max_rules : eligible_count;
-    size_t per_step_limit = eligible_count < (size_t)RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP
-                                ? eligible_count
-                                : (size_t)RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP;
-    if (max_steps == 0 || per_step_limit == 0 ||
-        max_steps > SIZE_MAX / per_step_limit) {
+static int prime_closed_loop_encode_features(size_t rule_index,
+                                             const size_t *accepted_indices,
+                                             size_t accepted_count,
+                                             const NNRuleCoverage *coverage,
+                                             const uint64_t *covered,
+                                             void *context,
+                                             nn_real *features,
+                                             size_t capacity)
+{
+    PrimeClosedLoopContext *prime = (PrimeClosedLoopContext *)context;
+    if (prime == NULL || prime->rules == NULL || coverage == NULL || covered == NULL ||
+        features == NULL || capacity < (size_t)RULE_DISCOVERY_FEATURE_COUNT ||
+        rule_index >= prime->rules->count) {
         return 0;
     }
-    size_t capacity = max_steps * per_step_limit;
-    if (capacity > SIZE_MAX / RULE_DISCOVERY_FEATURE_COUNT ||
-        capacity * RULE_DISCOVERY_FEATURE_COUNT > SIZE_MAX / sizeof(nn_real)) {
-        return 0;
-    }
-
-    nn_real *inputs = calloc(capacity * RULE_DISCOVERY_FEATURE_COUNT, sizeof(*inputs));
-    nn_real *targets = calloc(capacity, sizeof(*targets));
-    uint8_t *selected = calloc(rules->count, sizeof(*selected));
-    uint64_t *covered = calloc(coverage->word_count, sizeof(*covered));
-    size_t *gains = calloc(rules->count, sizeof(*gains));
-    ExpandedRuleSet greedy_accepted;
-    memset(&greedy_accepted, 0, sizeof(greedy_accepted));
-    greedy_accepted.items = calloc(max_steps, sizeof(*greedy_accepted.items));
-    if (inputs == NULL || targets == NULL || selected == NULL || covered == NULL ||
-        gains == NULL || greedy_accepted.items == NULL) {
-        free(inputs);
-        free(targets);
-        free(selected);
-        free(covered);
-        free(gains);
-        free(greedy_accepted.items);
-        return 0;
-    }
-
-    uint32_t max_modulus = max_rule_search_modulus(config);
-    size_t sample_count = 0;
-    for (size_t step = 0; step < max_steps; ++step) {
-        RuleDiscoveryState state =
-            build_rule_discovery_state(&greedy_accepted, coverage, covered, config->max_rules);
-        size_t best_index = (size_t)-1;
-        size_t best_gain = 0;
-        memset(gains, 0, rules->count * sizeof(*gains));
-
-        for (size_t i = 0; i < rules->count; ++i) {
-            if (selected[i] || !expanded_rule_is_selectable(&rules->items[i]) ||
-                expanded_rule_is_covered(&greedy_accepted, &rules->items[i])) {
-                continue;
-            }
-            const uint64_t *rule_bits = &coverage->bits[i * coverage->word_count];
-            size_t gain = popcount_rule_gain(rule_bits, covered, coverage->word_count);
-            gains[i] = gain;
-            if (gain > best_gain) {
-                best_gain = gain;
-                best_index = i;
-            }
-        }
-        if (best_index == (size_t)-1 || best_gain == 0) {
-            break;
-        }
-
-        size_t kept = 0;
-        if (!append_rule_discovery_training_sample(inputs,
-                                                   targets,
-                                                   capacity,
-                                                   &sample_count,
-                                                   &rules->items[best_index],
-                                                   max_modulus,
-                                                   &state,
-                                                   (nn_real)1)) {
-            break;
-        }
-        ++kept;
-
-        for (size_t i = 0; i < rules->count && kept < per_step_limit; ++i) {
-            if (i == best_index || gains[i] == 0 || selected[i] ||
-                !expanded_rule_is_selectable(&rules->items[i]) ||
-                expanded_rule_is_covered(&greedy_accepted, &rules->items[i])) {
-                continue;
-            }
-            nn_real target = (nn_real)((double)gains[i] / (double)best_gain);
-            if (!append_rule_discovery_training_sample(inputs,
-                                                       targets,
-                                                       capacity,
-                                                       &sample_count,
-                                                       &rules->items[i],
-                                                       max_modulus,
-                                                       &state,
-                                                       target)) {
-                break;
-            }
-            ++kept;
-        }
-
-        for (size_t i = 0; i < rules->count && kept < per_step_limit; ++i) {
-            if (i == best_index || gains[i] != 0 || selected[i] ||
-                !expanded_rule_is_selectable(&rules->items[i]) ||
-                expanded_rule_is_covered(&greedy_accepted, &rules->items[i])) {
-                continue;
-            }
-            uint64_t hash = expanded_rule_key_hash(&rules->items[i],
-                                                   config->proposer_seed + step + 1u);
-            if ((hash % 17u) != 0u && kept + 1u < per_step_limit) {
-                continue;
-            }
-            if (!append_rule_discovery_training_sample(inputs,
-                                                       targets,
-                                                       capacity,
-                                                       &sample_count,
-                                                       &rules->items[i],
-                                                       max_modulus,
-                                                       &state,
-                                                       (nn_real)0)) {
-                break;
-            }
-            ++kept;
-        }
-
-        selected[best_index] = 1;
-        expanded_rule_remove_subsets(&greedy_accepted, &rules->items[best_index]);
-        if (greedy_accepted.count < max_steps) {
-            greedy_accepted.items[greedy_accepted.count++] = rules->items[best_index];
-        }
-        add_rule_coverage_to_residual(coverage, best_index, covered);
-    }
-
-    if (sample_count == 0) {
-        free(inputs);
-        free(targets);
-        free(selected);
-        free(covered);
-        free(gains);
-        free(greedy_accepted.items);
-        return 0;
-    }
-
-    const size_t layers[] = {RULE_DISCOVERY_FEATURE_COUNT, 32, 16, 1};
-    NNConfig nn_config;
-    nn_config.layer_sizes = layers;
-    nn_config.layer_count = sizeof(layers) / sizeof(layers[0]);
-    nn_config.seed = 119417u;
-    nn_config.hidden_activation = NN_ACTIVATION_RELU;
-    nn_config.output_activation = NN_ACTIVATION_LINEAR;
-    nn_config.loss = NN_LOSS_MSE;
-
-    NeuralNet *net = nn_create_config(&nn_config);
-    if (net == NULL) {
-        free(inputs);
-        free(targets);
-        free(selected);
-        free(covered);
-        free(gains);
-        free(greedy_accepted.items);
-        return 0;
-    }
-
-    nn_real loss = nn_train_batched(net,
-                                    inputs,
-                                    targets,
-                                    sample_count,
-                                    256,
-                                    (nn_real)0.02,
-                                    RULE_SEARCH_SCORER_EPOCHS,
-                                    1);
-    if (isnan((double)loss)) {
-        nn_free(net);
-        free(inputs);
-        free(targets);
-        free(selected);
-        free(covered);
-        free(gains);
-        free(greedy_accepted.items);
-        return 0;
-    }
-
-    *net_out = net;
-    if (loss_out != NULL) {
-        *loss_out = (double)loss;
-    }
-    if (sample_count_out != NULL) {
-        *sample_count_out = sample_count;
-    }
-
-    free(inputs);
-    free(targets);
-    free(selected);
-    free(covered);
-    free(gains);
-    free(greedy_accepted.items);
+    RuleDiscoveryState state =
+        build_rule_discovery_state(prime->rules,
+                                   accepted_indices,
+                                   accepted_count,
+                                   coverage,
+                                   covered,
+                                   prime->config == NULL ? 0 : prime->config->max_rules);
+    fill_rule_discovery_features(&prime->rules->items[rule_index],
+                                 prime->max_modulus,
+                                 &state,
+                                 features);
     return 1;
 }
 
@@ -1607,82 +1415,89 @@ static int select_expanded_rules_closed_loop(ExpandedRuleSet *rules,
 
     summarize_expanded_rule_candidates(rules, metrics);
 
-    RuleCoverage coverage;
+    NNRuleCoverage coverage;
     size_t samples = 0;
     if (!build_rule_coverage(config, grammar, rules, dataset, max_states, &coverage, &samples)) {
         return 0;
     }
 
-    NeuralNet *net = NULL;
-    int ok = train_closed_loop_rule_policy(rules,
-                                           config,
-                                           &coverage,
-                                           &net,
-                                           &metrics->proposer_loss,
-                                           &metrics->residual_train_samples);
+    PrimeClosedLoopContext context;
+    context.rules = rules;
+    context.config = config;
+    context.max_modulus = max_rule_search_modulus(config);
+
+    NNClosedLoopRulePolicyConfig policy_config;
+    nn_closed_loop_rule_policy_config_defaults(&policy_config,
+                                               (size_t)RULE_DISCOVERY_FEATURE_COUNT);
+    policy_config.max_rules = config->max_rules;
+    policy_config.max_train_rules_per_step = (size_t)RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP;
+    policy_config.epochs = (size_t)RULE_SEARCH_SCORER_EPOCHS;
+    policy_config.seed = config->proposer_seed ^ 119417u;
+    policy_config.verbose = 1;
+
+    NNClosedLoopRulePolicy policy;
+    if (!nn_closed_loop_rule_policy_train(&coverage,
+                                          &policy_config,
+                                          prime_closed_loop_encode_features,
+                                          prime_closed_loop_candidate_allowed,
+                                          prime_closed_loop_keep_accepted,
+                                          &context,
+                                          &policy)) {
+        nn_rule_coverage_free(&coverage);
+        return 0;
+    }
+    metrics->proposer_loss = policy.loss;
+    metrics->residual_train_samples = policy.sample_count;
+
+    nn_real *scores = calloc(rules->count, sizeof(*scores));
+    size_t *accepted_indices = calloc(config->max_rules, sizeof(*accepted_indices));
+    size_t accepted_count = 0;
+    size_t proposal_calls = 0;
+    if (scores == NULL || accepted_indices == NULL) {
+        free(scores);
+        free(accepted_indices);
+        nn_closed_loop_rule_policy_free(&policy);
+        nn_rule_coverage_free(&coverage);
+        return 0;
+    }
+
+    int ok = nn_closed_loop_rule_policy_select(&coverage,
+                                               &policy_config,
+                                               prime_closed_loop_encode_features,
+                                               prime_closed_loop_candidate_allowed,
+                                               prime_closed_loop_keep_accepted,
+                                               &context,
+                                               &policy,
+                                               scores,
+                                               accepted_indices,
+                                               config->max_rules,
+                                               &accepted_count,
+                                               &proposal_calls);
     if (!ok) {
-        free_rule_coverage(&coverage);
+        free(scores);
+        free(accepted_indices);
+        nn_closed_loop_rule_policy_free(&policy);
+        nn_rule_coverage_free(&coverage);
         return 0;
     }
-
-    uint8_t *selected = calloc(rules->count, sizeof(*selected));
-    uint64_t *covered = calloc(coverage.word_count, sizeof(*covered));
-    nn_real features[RULE_DISCOVERY_FEATURE_COUNT];
-    nn_real output[1];
-    uint32_t max_modulus = max_rule_search_modulus(config);
-    if (selected == NULL || covered == NULL) {
-        free(selected);
-        free(covered);
-        nn_free(net);
-        free_rule_coverage(&coverage);
-        return 0;
+    metrics->proposer_calls = proposal_calls;
+    for (size_t i = 0; i < rules->count; ++i) {
+        rules->items[i].model_score = scores[i];
     }
-
-    for (size_t call = 0; call < config->max_rules; ++call) {
-        RuleDiscoveryState state =
-            build_rule_discovery_state(accepted, &coverage, covered, config->max_rules);
-        size_t best_index = (size_t)-1;
-        nn_real best_score = (nn_real)-INFINITY;
-
-        for (size_t i = 0; i < rules->count; ++i) {
-            if (selected[i] || !expanded_rule_is_selectable(&rules->items[i]) ||
-                expanded_rule_is_covered(accepted, &rules->items[i])) {
-                continue;
-            }
-            fill_rule_discovery_features(&rules->items[i], max_modulus, &state, features);
-            nn_forward(net, features, output);
-            rules->items[i].model_score = output[0];
-            if (best_index == (size_t)-1 || output[0] > best_score) {
-                best_score = output[0];
-                best_index = i;
-            }
+    for (size_t i = 0; i < accepted_count; ++i) {
+        size_t rule_index = accepted_indices[i];
+        if (rule_index < rules->count && accepted->count < config->max_rules) {
+            rules->items[rule_index].accepted = 1;
+            accepted->items[accepted->count++] = rules->items[rule_index];
         }
-        if (best_index == (size_t)-1) {
-            break;
-        }
-
-        selected[best_index] = 1;
-        ++metrics->proposer_calls;
-        const uint64_t *rule_bits = &coverage.bits[best_index * coverage.word_count];
-        size_t gain = popcount_rule_gain(rule_bits, covered, coverage.word_count);
-        if (gain == 0) {
-            continue;
-        }
-
-        expanded_rule_remove_subsets(accepted, &rules->items[best_index]);
-        if (accepted->count < config->max_rules) {
-            rules->items[best_index].accepted = 1;
-            accepted->items[accepted->count++] = rules->items[best_index];
-        }
-        add_rule_coverage_to_residual(&coverage, best_index, covered);
     }
 
     mark_expanded_rule_acceptance(rules, accepted, metrics);
 
-    free(selected);
-    free(covered);
-    nn_free(net);
-    free_rule_coverage(&coverage);
+    free(scores);
+    free(accepted_indices);
+    nn_closed_loop_rule_policy_free(&policy);
+    nn_rule_coverage_free(&coverage);
     return 1;
 }
 

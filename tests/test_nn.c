@@ -125,6 +125,196 @@ static int test_experiment_schema_json_contract(void)
            strstr(buffer, "\"provenance\":\"structural_prior\"") != NULL;
 }
 
+static size_t toy_symbolic_enumerate_rules(const NNSymbolicDomain *domain,
+                                           NNRule *rules,
+                                           size_t capacity)
+{
+    (void)domain;
+    if (rules == NULL || capacity == 0) {
+        return 1;
+    }
+    nn_rule_init(&rules[0], "toy_symbolic", "reject_action_one", NN_RULE_KIND_REJECT_ACTION, 7);
+    return nn_rule_add_param(&rules[0], "action", 1.0, 1) ? 1u : 0u;
+}
+
+static int toy_symbolic_check_certificate(const NNSymbolicDomain *domain,
+                                          const NNRule *rule,
+                                          NNCertificate *certificate)
+{
+    (void)domain;
+    int64_t action = -1;
+    if (nn_rule_get_param_i64(rule, "action", &action) && action == 1) {
+        nn_certificate_accept(certificate,
+                              "finite-toy-proof",
+                              "action one is dominated in the toy domain",
+                              4,
+                              2);
+        return 1;
+    }
+    nn_certificate_reject(certificate,
+                          "finite-toy-proof",
+                          "unsupported toy rule",
+                          4,
+                          1);
+    return 1;
+}
+
+static int toy_symbolic_rule_rejects(const NNSymbolicDomain *domain,
+                                     const NNRule *rule,
+                                     const void *state,
+                                     size_t action,
+                                     int *rejects)
+{
+    (void)domain;
+    (void)state;
+    int64_t rejected_action = -1;
+    if (!nn_rule_get_param_i64(rule, "action", &rejected_action)) {
+        return 0;
+    }
+    *rejects = action == (size_t)rejected_action;
+    return 1;
+}
+
+static int test_symbolic_domain_rule_certificate_contract(void)
+{
+    NNSymbolicDomain domain = {
+        .name = "toy_symbolic",
+        .description = "toy finite rule system",
+        .symbols = "state, action",
+        .axioms = "action one is dominated",
+        .grammar = "reject_action(action)",
+        .max_rule_count = 1,
+        .rule_feature_count = 0,
+        .max_action_count = 2,
+        .enumerate_rules = toy_symbolic_enumerate_rules,
+        .check_certificate = toy_symbolic_check_certificate,
+        .rule_rejects = toy_symbolic_rule_rejects,
+    };
+    NNRule rule;
+    NNCertificate certificate;
+    int rejects = 0;
+    size_t count = nn_symbolic_domain_enumerate_rules(&domain, &rule, 1);
+    return count == 1 &&
+           nn_symbolic_domain_check_certificate(&domain, &rule, &certificate) &&
+           rule.accepted &&
+           certificate.status == NN_CERTIFICATE_CERTIFIED &&
+           strcmp(nn_certificate_status_name(certificate.status), "certified") == 0 &&
+           certificate.support == 2 &&
+           nn_symbolic_domain_rule_rejects(&domain, &rule, NULL, 1, &rejects) &&
+           rejects &&
+           nn_symbolic_domain_rule_rejects(&domain, &rule, NULL, 0, &rejects) &&
+           !rejects;
+}
+
+static int test_symbolic_rule_coverage_and_residual_summary(void)
+{
+    NNRuleCoverage coverage;
+    uint64_t covered[1] = {0};
+    NNResidualSummary summary;
+    nn_real features[4];
+    int ok = nn_rule_coverage_init(&coverage, 2, 4);
+    ok = ok && nn_rule_coverage_set(&coverage, 0, 0);
+    ok = ok && nn_rule_coverage_set(&coverage, 0, 2);
+    ok = ok && nn_rule_coverage_set(&coverage, 1, 2);
+    ok = ok && nn_rule_coverage_set(&coverage, 1, 3);
+    ok = ok && nn_rule_coverage_get(&coverage, 0, 2);
+    ok = ok && nn_rule_coverage_gain(&coverage, 0, covered) == 2;
+    ok = ok && nn_rule_coverage_add_rule_to_residual(&coverage, 0, covered);
+    ok = ok && nn_rule_coverage_gain(&coverage, 1, covered) == 1;
+    nn_residual_summary_from_coverage(&summary, 1, 4, &coverage, covered);
+    ok = ok && summary.accepted_count == 1 &&
+         summary.covered_events == 2 &&
+         nn_residual_summary_write_features(&summary, features, 4) == 4 &&
+         nearly_equal(features[0], (nn_real)0.25, (nn_real)1e-6, (nn_real)1e-6) &&
+         nearly_equal(features[1], (nn_real)0.5, (nn_real)1e-6, (nn_real)1e-6);
+    nn_rule_coverage_free(&coverage);
+    return ok;
+}
+
+static int toy_residual_encode_features(size_t rule_index,
+                                        const size_t *accepted_indices,
+                                        size_t accepted_count,
+                                        const NNRuleCoverage *coverage,
+                                        const uint64_t *covered,
+                                        void *context,
+                                        nn_real *features,
+                                        size_t capacity)
+{
+    (void)accepted_indices;
+    (void)context;
+    if (capacity < 3) {
+        return 0;
+    }
+    size_t gain = nn_rule_coverage_gain(coverage, rule_index, covered);
+    features[0] = (nn_real)((double)gain / 4.0);
+    features[1] = (nn_real)((double)rule_index / 3.0);
+    features[2] = (nn_real)((double)accepted_count / 2.0);
+    return 1;
+}
+
+static int toy_residual_candidate_allowed(size_t rule_index,
+                                          const size_t *accepted_indices,
+                                          size_t accepted_count,
+                                          void *context)
+{
+    (void)accepted_indices;
+    (void)accepted_count;
+    (void)context;
+    return rule_index < 3;
+}
+
+static int test_closed_loop_policy_uses_generic_residual_coverage(void)
+{
+    NNRuleCoverage coverage;
+    NNClosedLoopRulePolicyConfig config;
+    NNClosedLoopRulePolicy policy;
+    size_t accepted_indices[2] = {0};
+    size_t accepted_count = 0;
+    size_t proposal_calls = 0;
+    nn_closed_loop_rule_policy_clear(&policy);
+    int ok = nn_rule_coverage_init(&coverage, 3, 4);
+    ok = ok && nn_rule_coverage_set(&coverage, 0, 0);
+    ok = ok && nn_rule_coverage_set(&coverage, 0, 1);
+    ok = ok && nn_rule_coverage_set(&coverage, 1, 2);
+    ok = ok && nn_rule_coverage_set(&coverage, 1, 3);
+    ok = ok && nn_rule_coverage_set(&coverage, 2, 0);
+
+    nn_closed_loop_rule_policy_config_defaults(&config, 3);
+    config.max_rules = 2;
+    config.max_train_rules_per_step = 3;
+    config.epochs = 200;
+    config.batch_size = 3;
+    config.learning_rate = (nn_real)0.05;
+    config.seed = 777u;
+
+    ok = ok && nn_closed_loop_rule_policy_train(&coverage,
+                                                &config,
+                                                toy_residual_encode_features,
+                                                toy_residual_candidate_allowed,
+                                                NULL,
+                                                NULL,
+                                                &policy);
+    ok = ok && policy.sample_count >= 2;
+    ok = ok && nn_closed_loop_rule_policy_select(&coverage,
+                                                 &config,
+                                                 toy_residual_encode_features,
+                                                 toy_residual_candidate_allowed,
+                                                 NULL,
+                                                 NULL,
+                                                 &policy,
+                                                 NULL,
+                                                 accepted_indices,
+                                                 2,
+                                                 &accepted_count,
+                                                 &proposal_calls);
+    ok = ok && accepted_count > 0 &&
+         proposal_calls > 0 &&
+         accepted_indices[0] < 3;
+    nn_closed_loop_rule_policy_free(&policy);
+    nn_rule_coverage_free(&coverage);
+    return ok;
+}
+
 static nn_real average_loss(NeuralNet *net,
                             const nn_real *inputs,
                             const nn_real *targets,
@@ -2011,6 +2201,12 @@ int main(void)
           "trace writer emits parseable jsonl");
     check(test_experiment_schema_json_contract(),
           "experiment schema emits parseable task contract");
+    check(test_symbolic_domain_rule_certificate_contract(),
+          "symbolic domain certifies and applies generic rules");
+    check(test_symbolic_rule_coverage_and_residual_summary(),
+          "symbolic coverage tracks residual events");
+    check(test_closed_loop_policy_uses_generic_residual_coverage(),
+          "closed-loop policy trains on generic residual coverage");
     check(test_fixture_checkpoint_load_and_scoring(),
           "fixture checkpoint load and scoring");
     check(test_fixture_trace_parser(),
