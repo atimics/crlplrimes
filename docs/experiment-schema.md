@@ -6,7 +6,7 @@ claims, program synthesis, and the fixed ARC-AGI sample must all be described
 with the same contract before they are used as evidence. The evidence maturity
 differs by task: prime has the complete production learned-gate table, grid has
 a budgeted legality gate, delayed-claim still needs a production learned-gate
-evaluation, and ARC is a fixed-sample scorer rather than a full ARC solver.
+evaluation, and ARC is a fixed-sample scorer/gate rather than a full ARC solver.
 
 There is also a separate shared-envelope multitask probe that includes the same
 ARC-AGI-1 sample. That probe is useful for testing whether the core C scorer can
@@ -103,7 +103,7 @@ Verifier-backed first-class task schemas:
 | `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | modular rejection predicates | algebraic divisibility proof | learned-rule gate plus matched baselines |
 | `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality predicates; admissible pruning planned | cannot reject an optimal move | budgeted legality gate; richer baselines pending |
 | `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold predicates; richer claim rules planned | finite-generator safety check in symbolic smoke | production learned-gate table pending |
-| `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | tiny transform grammar in symbolic smoke | train-pair consistency plus compiled-test agreement in symbolic smoke | first-class fixed-sample scorer; production gate pending |
+| `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | copy/mask/intersection transform grammar | train-pair consistency plus unique grammar-consistent test prediction | fixed-sample certified transform gate; dataset loader pending |
 
 Verifier-backed case-study discovery schemas:
 
@@ -121,7 +121,8 @@ Leakage status today:
 | `program_synthesis` | `priors_allowed` | 18 enabled structural-prior DSL abstraction features |
 | `arc_agi` | `forbidden` | 49 enabled observations over grid cells, output coordinate, candidate color, and action one-hot |
 
-The first-class `arc_agi` schema is still one fixed ARC-AGI-1 task. The
+The first-class `arc_agi` schema is still one fixed ARC-AGI-1 task. It now emits
+both a neural cell-scorer comparison row and a certified transform-gate row. The
 multitask binary uses a separate fixed 96-wide action-row envelope documented in
 [multitask-domain.md](multitask-domain.md).
 

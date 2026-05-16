@@ -44,6 +44,7 @@ def run_make(repo: Path, real: str, target: str, log_path: Path) -> list[dict[st
             "crlp.experiment_schema.v1",
             "crlp.compare.v1",
             "crlp.rule_search.summary.v1",
+            "crlp.arc_transform.summary.v1",
         }:
             row["source_target"] = target
             rows.append(row)
@@ -142,6 +143,11 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
         for row in rows
         if row.get("task") == "arc_agi" and row.get("schema") == "crlp.compare.v1"
     ]
+    arc_transforms = [
+        row
+        for row in rows
+        if row.get("task") == "arc_agi" and row.get("schema") == "crlp.arc_transform.summary.v1"
+    ]
     grid = [
         row
         for row in rows
@@ -231,6 +237,7 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                 [
                     str(row.get("model_hash", "unknown"))[:12],
                     str(row.get("task_instance", "")),
+                    str(row.get("evaluation_mode", "")),
                     str(row.get("leakage_policy", "")),
                     fmt_percent(row, "top1"),
                     fmt_percent(row, "top5"),
@@ -246,6 +253,7 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
             [
                 "model",
                 "task",
+                "mode",
                 "leakage",
                 "top1",
                 "top5",
@@ -260,6 +268,37 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
         if arc
         else "_No ARC-AGI rows captured._"
     )
+    if arc_transforms:
+        lines.extend(["", "### ARC Transform Gate", ""])
+        lines.append(
+            markdown_table(
+                [
+                    [
+                        str(row.get("task_instance", "")),
+                        str(row.get("rules", "")),
+                        str(row.get("train_consistent_rules", "")),
+                        fmt_bool(row, "unique_test_prediction"),
+                        fmt_bool(row, "test_exact"),
+                        fmt_bool(row, "certified"),
+                        str(row.get("test_correct_cells", "")),
+                        str(row.get("test_cells", "")),
+                        str(row.get("accepted_rules", "")),
+                    ]
+                    for row in arc_transforms
+                ],
+                [
+                    "task",
+                    "rules",
+                    "train consistent",
+                    "unique",
+                    "test exact",
+                    "certified",
+                    "correct",
+                    "cells",
+                    "accepted rules",
+                ],
+            )
+        )
     lines.extend(
         [
             "",
