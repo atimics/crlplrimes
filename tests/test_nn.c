@@ -1630,12 +1630,15 @@ static int test_rule_search_unconditional_range_builds_structural_program(void)
         "17",
         "--max-marginal-states",
         "64",
+        "--coverage-cache-dir",
+        "/tmp/crlp-rule-cache",
     };
     RuleSearchConfig baseline_config;
-    ok = ok && parse_rule_search_config(11, baseline_argv, &baseline_config) &&
+    ok = ok && parse_rule_search_config(13, baseline_argv, &baseline_config) &&
          baseline_config.proposer_mode == RULE_PROPOSER_RANDOM &&
          baseline_config.proposer_seed == 17u &&
-         baseline_config.max_marginal_states == 64u;
+         baseline_config.max_marginal_states == 64u &&
+         strcmp(baseline_config.coverage_cache_dir, "/tmp/crlp-rule-cache") == 0;
 
     char *closed_loop_argv[] = {
         "prime_rule_search",
@@ -1683,6 +1686,8 @@ static int test_rule_search_hidden_size_cli_and_json(void)
     };
     char *unified_argv[] = {
         "prime_rule_search",
+        "--proposer",
+        "unified",
         "--unified-scorer-hidden",
         "256x128",
     };
@@ -1718,9 +1723,14 @@ static int test_rule_search_hidden_size_cli_and_json(void)
     rule_search_closed_loop_hidden_json(&alias_config, hidden_json, sizeof(hidden_json));
     ok = ok && strcmp(hidden_json, "null") == 0;
 
-    ok = ok && parse_rule_search_config(3, unified_argv, &unified_config) &&
+    ok = ok && parse_rule_search_config(5, unified_argv, &unified_config) &&
+         unified_config.proposer_mode == RULE_PROPOSER_UNIFIED &&
          unified_config.unified_hidden1 == 256u &&
          unified_config.unified_hidden2 == 128u;
+    rule_search_unified_hidden_json(&unified_config, hidden_json, sizeof(hidden_json));
+    ok = ok && strcmp(hidden_json, "\"256x128\"") == 0;
+    rule_search_closed_loop_hidden_json(&unified_config, hidden_json, sizeof(hidden_json));
+    ok = ok && strcmp(hidden_json, "null") == 0;
 
     ok = ok && !parse_rule_search_config(5, bad_argv, &bad_config);
     return ok;
@@ -2286,6 +2296,136 @@ static int test_closed_loop_rule_search_selects_certified_rules(void)
     return ok;
 }
 
+static int test_unified_rule_search_trains_joint_action_rule_scorer(void)
+{
+    char *argv[] = {
+        "prime_rule_search",
+        "--candidate-only",
+        "--unconditional-only",
+        "--moduli-range",
+        "3:11",
+        "--train-limit",
+        "10000",
+        "--test-limit",
+        "20000",
+        "--max-train-states",
+        "128",
+        "--max-test-states",
+        "64",
+        "--max-marginal-states",
+        "64",
+        "--max-rules",
+        "2",
+        "--proposer",
+        "unified",
+        "--unified-scorer-hidden",
+        "16x8",
+    };
+    RuleSearchConfig config;
+    Sieve sieve;
+    GapDataset train;
+    GapDataset validation;
+    GapDataset test;
+    RuleSearchGrammar grammar;
+    ExpandedRuleSet candidates;
+    ExpandedRuleSet accepted;
+    RuleSearchMetrics metrics;
+
+    memset(&sieve, 0, sizeof(sieve));
+    memset(&train, 0, sizeof(train));
+    memset(&validation, 0, sizeof(validation));
+    memset(&test, 0, sizeof(test));
+    memset(&grammar, 0, sizeof(grammar));
+    memset(&candidates, 0, sizeof(candidates));
+    memset(&accepted, 0, sizeof(accepted));
+    memset(&metrics, 0, sizeof(metrics));
+
+    int ok = parse_rule_search_config(21, argv, &config) &&
+             config.proposer_mode == RULE_PROPOSER_UNIFIED &&
+             build_sieve((uint32_t)config.test_limit + (uint32_t)G_MAX, &sieve) &&
+             build_gap_datasets(&sieve,
+                                (uint32_t)config.train_limit,
+                                (uint32_t)config.test_limit,
+                                &train,
+                                &validation,
+                                &test) &&
+             build_rule_search_grammar(&config, &grammar) &&
+             build_expanded_rules(&grammar, &candidates);
+
+    if (ok) {
+        accumulate_expanded_rule_stats(&candidates,
+                                       &config,
+                                       &grammar,
+                                       &train,
+                                       config.max_train_states,
+                                       0);
+        accumulate_expanded_rule_stats(&candidates,
+                                       &config,
+                                       &grammar,
+                                       &validation,
+                                       config.max_train_states,
+                                       1);
+        size_t marginal_state_limit = rule_search_marginal_state_limit(&config);
+        ok = compute_marginal_rule_utilities(&candidates,
+                                             &config,
+                                             &grammar,
+                                             &train,
+                                             marginal_state_limit,
+                                             0,
+                                             &metrics.train_marginal_samples,
+                                             &metrics.train_marginal_events) &&
+             compute_marginal_rule_utilities(&candidates,
+                                             &config,
+                                             &grammar,
+                                             &validation,
+                                             marginal_state_limit,
+                                             1,
+                                             &metrics.validation_marginal_samples,
+                                             &metrics.validation_marginal_events);
+        if (ok) {
+            set_expanded_rule_utilities(&candidates);
+            ok = select_expanded_rules_unified(&candidates,
+                                               &config,
+                                               &grammar,
+                                               &train,
+                                               marginal_state_limit,
+                                               &accepted,
+                                               &metrics);
+        }
+        if (ok) {
+            metrics = evaluate_expanded_rules(&sieve,
+                                              &accepted,
+                                              &test,
+                                              config.max_test_states,
+                                              metrics);
+            ok = accepted.count > 0 &&
+                 accepted.count <= config.max_rules &&
+                 metrics.proposer_calls <= config.max_rules &&
+                 metrics.residual_train_samples > 0 &&
+                 metrics.unified_action_updates > 0 &&
+                 metrics.unified_rule_updates > 0 &&
+                 metrics.parameters > 0 &&
+                 metrics.forward_flops > 0 &&
+                 metrics.softmax_group_size > 0 &&
+                 metrics.softmax_group_size <= (size_t)RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP &&
+                 metrics.false_rejections == 0 &&
+                 strcmp(rule_proposer_feature_set_name(config.proposer_mode),
+                        "task_role_tagged_action_rule_rows_v1") == 0 &&
+                 strcmp(rule_proposer_target_name(config.proposer_mode),
+                        "joint_action_rule_softmax") == 0;
+        }
+    }
+
+    free_expanded_rule_set(&accepted);
+    free_expanded_rule_set(&candidates);
+    free_rule_search_grammar(&grammar);
+    free_gap_dataset(&train);
+    free_gap_dataset(&validation);
+    free_gap_dataset(&test);
+    free_sieve(&sieve);
+    return ok;
+}
+
 int main(void)
 {
     check(test_forward_batch_matches_scalar(), "batched forward matches scalar");
@@ -2365,6 +2505,8 @@ int main(void)
           "prime-gap dataset tracks overflow actions");
     check(test_closed_loop_rule_search_selects_certified_rules(),
           "closed-loop rule search selects certified rules");
+    check(test_unified_rule_search_trains_joint_action_rule_scorer(),
+          "unified rule search trains joint action/rule scorer");
 
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

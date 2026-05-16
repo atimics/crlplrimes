@@ -10,7 +10,7 @@ contract still lives in `crlp.experiment_schema.v1` and currently covers
 different question: can the same core scorer, update path, and summary protocol
 train across heterogeneous action domains in shuffled order?
 
-There is now a second shared-domain smoke for symbolic rules:
+A second shared-domain smoke covers symbolic rules:
 `examples/symbolic_domains.c`. That binary uses `NNSymbolicDomain` instead of
 the fixed 96-wide action-row envelope, and trains one certificate-status rule
 classifier across prime, grid, delayed-claim, and a tiny ARC transform grammar.
@@ -135,8 +135,8 @@ Each evaluated domain emits one JSON row:
 task_set:model_kind:feature_envelope
 ```
 
-There is no `prime_features` field because prime residue flags are no longer a
-multitask feature option.
+There is no `prime_features` field; prime residue flags are not a multitask
+feature option under this envelope.
 
 ## Current Matrix
 
@@ -153,8 +153,8 @@ The interpretation is deliberately conservative:
 - The shared scorer and training loop work across all configured domains.
 - `grid_path` and `delayed_claim` remain easy under this envelope.
 - `prime_gap` is weak without symbolic residue predicates.
-- The harder ARC row is no longer saturated, but it is still one supervised ARC
-  sample rather than a general ARC solver.
+- The harder ARC row is unsaturated under this envelope; it remains one
+  supervised ARC sample rather than a general ARC solver.
 
 ## Next Steps
 

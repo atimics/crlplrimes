@@ -1,5 +1,6 @@
 build/
 results/**/logs/
+results/**/coverage-cache/
 *.o
 *.a
 *.so

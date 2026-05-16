@@ -199,6 +199,7 @@ typedef enum {
     RULE_PROPOSER_STRUCTURAL = 3,
     RULE_PROPOSER_VALIDATION_ORACLE = 4,
     RULE_PROPOSER_CLOSED_LOOP = 5,
+    RULE_PROPOSER_UNIFIED = 6,
 } RuleProposerMode;
 
 typedef struct {
@@ -219,6 +220,7 @@ typedef struct {
     int include_state_conditions;
     int include_candidate_filters;
     int include_gap_filters;
+    const char *coverage_cache_dir;
     const char *trace_path;
     const char *save_path;
 } RuleSearchConfig;
@@ -240,6 +242,13 @@ typedef struct {
     size_t validation_marginal_samples;
     size_t train_marginal_events;
     size_t validation_marginal_events;
+    size_t coverage_cache_hits;
+    size_t coverage_cache_misses;
+    size_t coverage_cache_writes;
+    size_t parameters;
+    size_t forward_flops;
+    size_t unified_action_updates;
+    size_t unified_rule_updates;
     size_t samples;
     size_t false_rejections;
     double proposer_loss;

@@ -72,7 +72,7 @@ the closed-loop residual policy.
 
 ## Closed-Loop Policy
 
-The closed-loop residual proposer now lives in `src/nn_symbolic.c`:
+The closed-loop residual proposer lives in `src/nn_symbolic.c`:
 
 ```c
 nn_closed_loop_rule_policy_train(...)
@@ -91,25 +91,25 @@ Domain code provides:
 `NNLeakagePolicy`. Prime's closed-loop rule search declares 15 structural rule
 features plus 10 gate-derived residual-set features under `gate_allowed`; the
 shared train/select functions reject missing schemas or verifier-derived
-features. Prime rule search now uses this shared policy and only contributes
+features. Prime rule search consumes this shared policy and contributes only
 prime-specific feature encoding and subset logic. The `symbolic_domains` smoke
-does not use this policy yet; it trains the simpler certificate-status
-classifier described above.
+does not consume the closed-loop policy; it trains the simpler
+certificate-status classifier described above.
 
 ## Remaining Work
 
-The interface is now generalized, but the task implementations are not equally
+The interface is generalized, but the task implementations are not equally
 mature:
 
-- `grid_path` and `delayed_claim` still need production gate-ablation tables
-  under the same matched-budget baselines as prime.
-- The symbolic-domain smoke still needs real `rule_rejects` and
-  `verify_action` callbacks before it can exercise gate execution uniformly.
+- `grid_path` and `delayed_claim` need production gate-ablation tables under
+  the same matched-budget baselines as prime.
+- The symbolic-domain smoke needs real `rule_rejects` and `verify_action`
+  callbacks before it can exercise gate execution uniformly.
 - ARC is one compiled sample, not a dataset loader or a general ARC solver.
-- The current ARC `object_select_overlap` rule is an alias for intersection;
-  replace it with a real connected-object selector before claiming object-level
-  ARC reasoning.
+- The ARC `object_select_overlap` rule is an alias for intersection; replacing
+  it with a real connected-object selector is a precondition for claiming
+  object-level ARC reasoning.
 - The shared proposer should be evaluated against random, grammar-order,
   structural-heuristic, and oracle orderings on each domain.
-- The formal-system descriptor is still C callbacks, not a declarative symbol
-  and axiom language.
+- The formal-system descriptor is C callbacks, not a declarative symbol and
+  axiom language.

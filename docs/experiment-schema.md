@@ -1,8 +1,9 @@
 # Generalized Experiment Schema
 
 The project is one verifier-gated action-scoring architecture with three
-production task schemas. Prime gaps, grid paths, and delayed claims must all be
-described with the same contract before they are used as certified evidence.
+production task schemas plus case-study discovery schemas. Prime gaps, grid
+paths, delayed claims, and case-study domains must all be described with the
+same contract before they are used as certified evidence.
 The evidence maturity differs by task: prime has the complete production
 learned-gate table, grid has a budgeted legality gate, and delayed-claim still
 needs a production learned-gate evaluation.
@@ -47,7 +48,7 @@ which gate and baseline paths.
 
 ## Enforced Schema Fields
 
-The schema is no longer only strings. Each task also declares:
+The schema is not limited to strings. Each task also declares:
 
 - `NNFeatureSchema[]`: one row per scorer input feature, with a typed
   `NNFeatureProvenance`.
@@ -103,6 +104,12 @@ Verifier-backed production task schemas:
 | `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality predicates; admissible pruning planned | cannot reject an optimal move | budgeted legality gate; richer baselines pending |
 | `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold predicates; richer claim rules planned | finite-generator safety check in symbolic smoke | production learned-gate table pending |
 
+Verifier-backed case-study discovery schemas:
+
+| Task | State | Actions | Verifier | Grammar | Certificate | Evidence status |
+| --- | --- | --- | --- | --- | --- | --- |
+| `program_synthesis` | list-routine task with input/output examples | candidate library abstraction | run abstraction on every example | monomorphic list/int DSL over map, filter, fold, and selectors | syntactic DSL type check | matched-budget scaffold with random, grammar-order, structural, validation-oracle, static neural, and closed-loop rows |
+
 Shared-envelope integration task:
 
 | Task | State | Actions | Label source | Status |
@@ -149,12 +156,41 @@ trained across all four domains. This smoke path checks enumeration,
 structural encoding, and certificate labels; it is not the closed-loop residual
 policy benchmark.
 
+`examples/program_synthesis.c` instantiates the same interface for the
+program-synthesis case study. It uses `NNRuleCoverage` as the task-compression
+matrix and the generic closed-loop residual policy for the `closed_loop_neural`
+baseline, emitting `crlp.rule_search.summary.v1` rows compatible with the
+existing result capture path.
+
+## Rule-Search Summary Rows
+
+`prime_rule_search` and case-study rule-discovery binaries emit
+`crlp.rule_search.summary.v1` rows for matched-budget proposer comparisons.
+Capacity and truncation-sensitive comparisons are machine-readable through:
+
+| Field | Meaning |
+| --- | --- |
+| `selection_strategy` | proposer actually used, including `closed_loop_neural` and `unified_scorer` |
+| `closed_loop_hidden` | hidden-size label for dedicated closed-loop rows; `null` for unified rows |
+| `unified_scorer_hidden` | hidden-size label for unified scorer rows; `null` for closed-loop rows |
+| `softmax_group_size` | effective rule group size used by residual-aware training/selection, including any cap |
+| `parameters`, `forward_flops` | actual model capacity from `nn_parameter_count` and `nn_forward_flop_count` when a neural proposer constructs a net |
+| `unified_action_updates`, `unified_rule_updates` | cross-role sampling counts for unified scorer rows |
+| `coverage_cache_hits`, `coverage_cache_misses`, `coverage_cache_writes` | coverage-blob reuse counters for rule-search runs that use `--coverage-cache-dir` |
+
+Unified scorer rows in `prime_rule_search` are Phase 1 cross-role-transfer
+rows. They train one 96-wide shared scorer with action rows from the existing
+action domains and rule rows from the prime rule trajectory, then deploy that
+same scorer for rule selection. The row's `proposer_feature_set` is
+`task_role_tagged_action_rule_rows_v1` and its `proposer_target` is
+`joint_action_rule_softmax`.
+
 The ARC grammar in that smoke path contains copy, mask/intersection, union,
 object-select-overlap, and color-map transforms. Its checker accepts a rule only
 when it matches all train pairs and every grammar-consistent rule agrees on the
 test output. The current object-select-overlap rule is an alias for intersection
-in this compiled sample, not a general connected-object selector. This is still
-a fixed-sample formal-system smoke, not a general ARC solver claim.
+in this compiled sample, not a general connected-object selector. This is a
+fixed-sample formal-system smoke, not a general ARC solver claim.
 
 ## Shared Multitask Summary Rows
 
@@ -193,10 +229,10 @@ two visible feature regimes: `no_manhattan_priors` for the clean scorer row and
 add a richer admissible-pruning grammar and the same fixed-budget proposer
 baselines used by `prime_gap`.
 
-`delayed_claim` currently supports supervised training, trace replay, and
-calibration evaluation in its production binary. Its threshold grammar now has a
-finite-generator certificate in the shared symbolic-domain smoke, but it still
-needs a production learned-gate evaluation table.
+`delayed_claim` supports supervised training, trace replay, and calibration
+evaluation in its production binary. Its threshold grammar carries a
+finite-generator certificate in the shared symbolic-domain smoke; the
+production learned-gate evaluation table is open work.
 
 ## Next Build Targets
 

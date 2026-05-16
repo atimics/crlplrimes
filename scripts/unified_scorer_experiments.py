@@ -71,6 +71,17 @@ GRAMMAR_SPECS: dict[str, list[str]] = {
     "conditional": ["--gap-only"],
 }
 
+# Effective input width per proposer. The unified scorer consumes the
+# multitask envelope (96 slots); the dedicated closed-loop proposer consumes
+# the rule-discovery feature vector (RULE_DISCOVERY_FEATURE_COUNT in
+# src/prime_gap/internal.h, currently 25). These values let the driver
+# estimate parameter count without requiring the binary to emit it. Override
+# at the CLI if the engine changes these widths.
+DEFAULT_FEATURE_WIDTHS: dict[str, int] = {
+    "unified": 96,
+    "closed-loop": 25,
+}
+
 # All proposers reported per phase. The unified scorer is added per-hidden in the runner.
 STATIC_PROPOSERS = (
     ("random", ["--proposer", "random", "--proposer-seed", str(DEFAULT_RANDOM_SEED)]),
@@ -103,6 +114,69 @@ class RunOutcome:
 
 def shell_join(command: Iterable[str]) -> str:
     return " ".join(shlex.quote(part) for part in command)
+
+
+def parse_hidden_layers(spec: str) -> list[int]:
+    """Parse a hidden-size spec string like '64x32' into [64, 32]."""
+    if not spec:
+        return []
+    parts = [piece.strip() for piece in spec.replace(",", "x").split("x") if piece.strip()]
+    out: list[int] = []
+    for part in parts:
+        try:
+            value = int(part)
+        except ValueError:
+            continue
+        if value > 0:
+            out.append(value)
+    return out
+
+
+def estimate_capacity(input_features: int, hidden_layers: list[int], output_size: int = 1) -> dict[str, int]:
+    """Compute parameter count and forward-pass MACs for a fully-connected MLP.
+
+    Matches the layout of `nn_create_config` in src/nn.c: dense layers with
+    bias per unit, scalar inputs. Returns a dict with `params_est` and
+    `forward_macs_est`. Each row scored at inference time costs
+    `forward_macs_est` multiply-accumulates; multiply by the softmax group
+    size to estimate per-state work.
+    """
+    if input_features <= 0 or not hidden_layers:
+        return {"params_est": 0, "forward_macs_est": 0}
+    sizes = [input_features] + list(hidden_layers) + [output_size]
+    params = 0
+    macs = 0
+    for prev, nxt in zip(sizes[:-1], sizes[1:]):
+        params += prev * nxt + nxt  # weights + biases
+        macs += prev * nxt
+    return {"params_est": params, "forward_macs_est": macs}
+
+
+def capacity_for_row(proposer: str, hidden_spec: str | None) -> dict[str, int]:
+    """Best-effort capacity estimate for a given proposer + hidden spec."""
+    if not hidden_spec:
+        return {"params_est": 0, "forward_macs_est": 0}
+    width = DEFAULT_FEATURE_WIDTHS.get(proposer)
+    if width is None:
+        return {"params_est": 0, "forward_macs_est": 0}
+    return estimate_capacity(width, parse_hidden_layers(hidden_spec))
+
+
+def format_compact_int(value: object) -> str:
+    """Render an integer with a K/M suffix for table compactness."""
+    if value is None or value == "":
+        return ""
+    try:
+        n = int(float(value))
+    except (TypeError, ValueError):
+        return str(value)
+    if n == 0:
+        return "—"
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(n)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -161,6 +235,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Print commands without running them.",
     )
+    parser.add_argument(
+        "--coverage-cache-dir",
+        type=Path,
+        default=None,
+        help="Directory for content-addressed prime_rule_search coverage blobs. "
+        "Defaults to phase_<N>/coverage-cache.",
+    )
+    parser.add_argument(
+        "--no-coverage-cache",
+        action="store_true",
+        help="Do not pass --coverage-cache-dir to prime_rule_search.",
+    )
     return parser.parse_args(argv)
 
 
@@ -178,8 +264,14 @@ def build_invocations(
     hidden_sizes: list[str],
     marginal_states: list[int],
     run_baselines: bool,
+    coverage_cache_dir: Path | None,
 ) -> list[Invocation]:
     invocations: list[Invocation] = []
+    cache_flags = (
+        ["--coverage-cache-dir", str(coverage_cache_dir)]
+        if coverage_cache_dir is not None
+        else []
+    )
     for grammar in grammars:
         if grammar not in GRAMMAR_SPECS:
             raise ValueError(f"unknown grammar: {grammar}")
@@ -198,6 +290,7 @@ def build_invocations(
                             [binary, "--max-rules", str(budget)]
                             + grammar_flags
                             + marginal_flags
+                            + cache_flags
                             + proposer_flags
                         )
                         context: dict[str, object] = {
@@ -209,6 +302,9 @@ def build_invocations(
                         if baseline_hidden:
                             command += ["--closed-loop-hidden", baseline_hidden]
                             context["closed_loop_hidden"] = baseline_hidden
+                            context.update(
+                                capacity_for_row("closed-loop", baseline_hidden)
+                            )
                         invocations.append(
                             Invocation(
                                 invocation_id=invocation_id,
@@ -227,6 +323,7 @@ def build_invocations(
                     [binary, "--max-rules", str(budget)]
                     + grammar_flags
                     + marginal_flags
+                    + cache_flags
                     + [
                         "--proposer",
                         "unified",
@@ -234,19 +331,21 @@ def build_invocations(
                         hidden,
                     ]
                 )
+                unified_context: dict[str, object] = {
+                    "phase": phase,
+                    "grammar": grammar,
+                    "proposer": "unified",
+                    "marginal_states": marginal,
+                    "unified_scorer_hidden": hidden,
+                }
+                unified_context.update(capacity_for_row("unified", hidden))
                 invocations.append(
                     Invocation(
                         invocation_id=invocation_id,
                         grammar=grammar,
                         proposer_label=f"unified ({hidden})",
                         command=command,
-                        context={
-                            "phase": phase,
-                            "grammar": grammar,
-                            "proposer": "unified",
-                            "marginal_states": marginal,
-                            "unified_scorer_hidden": hidden,
-                        },
+                        context=unified_context,
                     )
                 )
     return invocations
@@ -392,10 +491,28 @@ def render_phase_summary(
                     proposer_label = f"unified ({hidden})"
                 elif proposer_label == "closed-loop" and hidden != "—":
                     proposer_label = f"closed-loop ({hidden})"
+                # Prefer binary-emitted values when present, fall back to the
+                # driver's estimate. Either way the params and forward work
+                # appear in the table so capacity saturation is visible.
+                params = row.get("parameters") or row.get("params_est") or ""
+                forward_work = (
+                    row.get("forward_flops")
+                    or row.get("forward_macs")
+                    or row.get("forward_macs_est")
+                    or ""
+                )
+                cache_hit_write = (
+                    f"{row.get('coverage_cache_hits', '')}/{row.get('coverage_cache_writes', '')}"
+                    if "coverage_cache_hits" in row or "coverage_cache_writes" in row
+                    else ""
+                )
                 table_rows.append([
                     proposer_label,
                     str(row.get("max_rules", "")),
                     str(row.get("softmax_group_size", "")),
+                    cache_hit_write,
+                    format_compact_int(params),
+                    format_compact_int(forward_work),
                     format_number(row.get("expanded_exact"), 3),
                     format_percent(row.get("expanded_saved_pct")),
                     format_number(row.get("proposer_loss"), 4),
@@ -407,6 +524,9 @@ def render_phase_summary(
                     "Proposer",
                     "Budget",
                     "Softmax group",
+                    "Cov hit/write",
+                    "Params",
+                    "Forward work",
                     "Exact probes",
                     "Saved %",
                     "Proposer loss",
@@ -415,6 +535,15 @@ def render_phase_summary(
                 ],
                 table_rows,
             ))
+            lines.append("")
+            lines.append(
+                "_Params and Forward work are driver estimates from the "
+                "declared hidden size unless the binary emitted matching "
+                "`parameters` / `forward_flops` fields, in which case those "
+                "are used. The estimate uses input width = 96 for unified "
+                "rows and 25 for closed-loop rows; adjust "
+                "`DEFAULT_FEATURE_WIDTHS` if the engine changes them._"
+            )
             lines.append("")
 
     if failures:
@@ -448,6 +577,10 @@ def run_phase(phase: int, args: argparse.Namespace) -> int:
     phase_dir = args.output_root / f"phase_{phase}"
     log_dir = phase_dir / "logs"
     phase_dir.mkdir(parents=True, exist_ok=True)
+    coverage_cache_dir = None
+    if not args.no_coverage_cache:
+        coverage_cache_dir = args.coverage_cache_dir or (phase_dir / "coverage-cache")
+        coverage_cache_dir.mkdir(parents=True, exist_ok=True)
 
     invocations = build_invocations(
         binary=args.binary,
@@ -457,6 +590,7 @@ def run_phase(phase: int, args: argparse.Namespace) -> int:
         hidden_sizes=hidden_sizes,
         marginal_states=marginal_states,
         run_baselines=run_baselines,
+        coverage_cache_dir=coverage_cache_dir,
     )
 
     if not invocations:

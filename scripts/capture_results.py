@@ -16,6 +16,7 @@ COMMANDS = (
     ("grid_path", ("grid-path-eval",)),
     ("prime_rule_search", ("prime-rule-search",)),
     ("prime_rule_search_baselines", ("prime-rule-search-baselines",)),
+    ("program_synthesis_baselines", ("program-synthesis-baselines",)),
     ("prime_gap", ("prime-gap-eval",)),
 )
 

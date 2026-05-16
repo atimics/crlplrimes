@@ -2,6 +2,9 @@
 
 #include "internal.h"
 
+#include <sys/stat.h>
+#include <unistd.h>
+
 static const NNFeatureSchema PRIME_CLOSED_LOOP_RULE_FEATURES[RULE_DISCOVERY_FEATURE_COUNT] = {
     {"is_conditional", NN_FEATURE_STRUCTURAL_PRIOR, 1},
     {"state_modulus", NN_FEATURE_STRUCTURAL_PRIOR, 1},
@@ -28,6 +31,42 @@ static const NNFeatureSchema PRIME_CLOSED_LOOP_RULE_FEATURES[RULE_DISCOVERY_FEAT
     {"same_state_modulus_fraction", NN_FEATURE_DERIVED_FROM_GATE, 1},
     {"same_candidate_residue_fraction", NN_FEATURE_DERIVED_FROM_GATE, 1},
     {"is_subset_covered", NN_FEATURE_DERIVED_FROM_GATE, 1},
+};
+
+typedef struct {
+    char magic[16];
+    uint64_t key;
+    uint64_t rule_count;
+    uint64_t event_count;
+    uint64_t word_count;
+    uint64_t samples;
+} RuleCoverageCacheHeader;
+
+typedef struct {
+    size_t hits;
+    size_t misses;
+    size_t writes;
+} RuleCoverageCacheStats;
+
+static RuleCoverageCacheStats RULE_COVERAGE_CACHE_STATS;
+
+enum {
+    UNIFIED_SCORER_FEATURE_COUNT = 96,
+    UNIFIED_F_BIAS = 0,
+    UNIFIED_F_ROLE_RULE = 1,
+    UNIFIED_F_DOMAIN_PRIME_RULE = 2,
+    UNIFIED_F_ROLE_ACTION = 3,
+    UNIFIED_F_DOMAIN_PRIME_ACTION = 4,
+    UNIFIED_F_RULE_INDEX = 5,
+    UNIFIED_F_CANDIDATE_COUNT = 6,
+    UNIFIED_F_DOMAIN_GRID_ACTION = 7,
+    UNIFIED_F_DOMAIN_CLAIM_ACTION = 8,
+    UNIFIED_F_DOMAIN_ARC_ACTION = 9,
+    UNIFIED_F_ACTION_COMMON = 10,
+    UNIFIED_F_ACTION_STATE = 20,
+    UNIFIED_F_RULE_FEATURES = 32,
+    UNIFIED_TRANSFER_MIN_RULE_UPDATES = 128,
+    UNIFIED_TRANSFER_RULE_UPDATES_PER_BUDGET = 8,
 };
 
 static RuleSearchConfig default_rule_search_config(void)
@@ -68,6 +107,16 @@ static size_t rule_search_effective_hidden2(const RuleSearchConfig *config)
     return config != NULL && config->rule_hidden2 != 0 ? config->rule_hidden2 : 16u;
 }
 
+static size_t rule_search_effective_unified_hidden1(const RuleSearchConfig *config)
+{
+    return config != NULL && config->unified_hidden1 != 0 ? config->unified_hidden1 : 64u;
+}
+
+static size_t rule_search_effective_unified_hidden2(const RuleSearchConfig *config)
+{
+    return config != NULL && config->unified_hidden2 != 0 ? config->unified_hidden2 : 32u;
+}
+
 static void rule_search_closed_loop_hidden_json(const RuleSearchConfig *config,
                                                 char *buffer,
                                                 size_t buffer_size)
@@ -81,6 +130,24 @@ static void rule_search_closed_loop_hidden_json(const RuleSearchConfig *config,
                  "\"%zux%zu\"",
                  rule_search_effective_hidden1(config),
                  rule_search_effective_hidden2(config));
+    } else {
+        snprintf(buffer, buffer_size, "null");
+    }
+}
+
+static void rule_search_unified_hidden_json(const RuleSearchConfig *config,
+                                            char *buffer,
+                                            size_t buffer_size)
+{
+    if (buffer == NULL || buffer_size == 0) {
+        return;
+    }
+    if (config != NULL && config->proposer_mode == RULE_PROPOSER_UNIFIED) {
+        snprintf(buffer,
+                 buffer_size,
+                 "\"%zux%zu\"",
+                 rule_search_effective_unified_hidden1(config),
+                 rule_search_effective_unified_hidden2(config));
     } else {
         snprintf(buffer, buffer_size, "null");
     }
@@ -101,6 +168,8 @@ static const char *rule_proposer_mode_name(RuleProposerMode mode)
         return "validation_oracle";
     case RULE_PROPOSER_CLOSED_LOOP:
         return "closed_loop_neural";
+    case RULE_PROPOSER_UNIFIED:
+        return "unified_scorer";
     }
     return "unknown";
 }
@@ -119,6 +188,8 @@ static const char *rule_proposer_feature_set_name(RuleProposerMode mode)
         return "validation_counts";
     case RULE_PROPOSER_CLOSED_LOOP:
         return "structural_residual_set";
+    case RULE_PROPOSER_UNIFIED:
+        return "task_role_tagged_action_rule_rows_v1";
     }
     return "unknown";
 }
@@ -130,6 +201,8 @@ static const char *rule_proposer_target_name(RuleProposerMode mode)
         return "train_marginal_utility";
     case RULE_PROPOSER_CLOSED_LOOP:
         return "residual_marginal_utility";
+    case RULE_PROPOSER_UNIFIED:
+        return "joint_action_rule_softmax";
     case RULE_PROPOSER_VALIDATION_ORACLE:
         return "validation_marginal_utility";
     case RULE_PROPOSER_RANDOM:
@@ -166,6 +239,11 @@ static int parse_rule_proposer_mode(const char *text, RuleProposerMode *mode)
     if (strcmp(text, "closed-loop") == 0 || strcmp(text, "residual") == 0 ||
         strcmp(text, "neural-closed-loop") == 0) {
         *mode = RULE_PROPOSER_CLOSED_LOOP;
+        return 1;
+    }
+    if (strcmp(text, "unified") == 0 || strcmp(text, "unified-scorer") == 0 ||
+        strcmp(text, "unified_scorer") == 0) {
+        *mode = RULE_PROPOSER_UNIFIED;
         return 1;
     }
     return 0;
@@ -378,6 +456,8 @@ static int parse_rule_search_config(int argc, char **argv, RuleSearchConfig *con
         } else if (strcmp(argv[i], "--candidate-only") == 0) {
             config->include_candidate_filters = 1;
             config->include_gap_filters = 0;
+        } else if (strcmp(argv[i], "--coverage-cache-dir") == 0 && i + 1 < argc) {
+            config->coverage_cache_dir = argv[++i];
         } else if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc) {
             config->trace_path = argv[++i];
         } else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) {
@@ -402,11 +482,11 @@ static void print_rule_search_usage(FILE *stream)
           "[--max-train-states n] [--max-test-states n] "
           "[--max-marginal-states n] [--max-rules n] "
           "[--closed-loop-hidden h1xh2] [--unified-scorer-hidden h1xh2] "
-          "[--proposer neural|closed-loop|random|grammar|structural|validation-oracle] "
+          "[--proposer neural|closed-loop|unified|random|grammar|structural|validation-oracle] "
           "[--proposer-seed n] "
           "[--gap-only|--candidate-only] [--unconditional-only] "
           "[--moduli 3,5,7,...] [--moduli-range 3:255] "
-          "[--trace path] [--save path]\n",
+          "[--coverage-cache-dir dir] [--trace path] [--save path]\n",
           stream);
 }
 
@@ -695,6 +775,182 @@ static size_t count_negative_gap_events(const GapDataset *dataset, size_t max_st
     return events;
 }
 
+static uint64_t rule_coverage_cache_mix(uint64_t hash, uint64_t value)
+{
+    hash ^= value + UINT64_C(0x9e3779b97f4a7c15) + (hash << 6) + (hash >> 2);
+    hash *= UINT64_C(1099511628211);
+    return hash;
+}
+
+static uint64_t rule_coverage_cache_key(const RuleSearchConfig *config,
+                                        const RuleSearchGrammar *grammar,
+                                        const ExpandedRuleSet *rules,
+                                        const GapDataset *dataset,
+                                        size_t max_states,
+                                        size_t samples,
+                                        size_t events)
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+    hash = rule_coverage_cache_mix(hash, (uint64_t)RULE_SEARCH_GRAMMAR_VERSION);
+    hash = rule_coverage_cache_mix(hash, (uint64_t)config->train_limit);
+    hash = rule_coverage_cache_mix(hash, (uint64_t)config->test_limit);
+    hash = rule_coverage_cache_mix(hash, (uint64_t)max_states);
+    hash = rule_coverage_cache_mix(hash, (uint64_t)samples);
+    hash = rule_coverage_cache_mix(hash, (uint64_t)events);
+    hash = rule_coverage_cache_mix(hash, (uint64_t)config->include_state_conditions);
+    hash = rule_coverage_cache_mix(hash, (uint64_t)config->include_candidate_filters);
+    hash = rule_coverage_cache_mix(hash, (uint64_t)config->include_gap_filters);
+    hash = rule_coverage_cache_mix(hash, (uint64_t)config->mod_count);
+    hash = rule_coverage_cache_mix(hash, (uint64_t)grammar->state_count);
+    hash = rule_coverage_cache_mix(hash, (uint64_t)grammar->filter_count);
+    hash = rule_coverage_cache_mix(hash, (uint64_t)rules->count);
+    for (size_t i = 0; i < config->mod_count; ++i) {
+        hash = rule_coverage_cache_mix(hash, (uint64_t)config->moduli[i]);
+        hash = rule_coverage_cache_mix(hash, (uint64_t)grammar->state_offsets[i]);
+        hash = rule_coverage_cache_mix(hash, (uint64_t)grammar->candidate_offsets[i]);
+        hash = rule_coverage_cache_mix(hash, (uint64_t)grammar->gap_offsets[i]);
+    }
+    for (size_t sample = 0; sample < samples; ++sample) {
+        size_t index = eval_sample_index(dataset, sample, samples);
+        hash = rule_coverage_cache_mix(hash, (uint64_t)dataset->prime[index]);
+        hash = rule_coverage_cache_mix(hash, (uint64_t)dataset->gap[index]);
+    }
+    for (size_t i = 0; i < rules->count; ++i) {
+        const ExpandedRule *rule = &rules->items[i];
+        hash = rule_coverage_cache_mix(hash, (uint64_t)rule->kind);
+        hash = rule_coverage_cache_mix(hash, (uint64_t)rule->state_modulus);
+        hash = rule_coverage_cache_mix(hash, (uint64_t)rule->state_residue);
+        hash = rule_coverage_cache_mix(hash, (uint64_t)rule->filter_modulus);
+        hash = rule_coverage_cache_mix(hash, (uint64_t)rule->filter_residue);
+    }
+    return hash;
+}
+
+static int rule_coverage_cache_path(const RuleSearchConfig *config,
+                                    uint64_t key,
+                                    char *path,
+                                    size_t capacity)
+{
+    if (config == NULL || config->coverage_cache_dir == NULL ||
+        config->coverage_cache_dir[0] == '\0' || path == NULL || capacity == 0) {
+        return 0;
+    }
+    size_t dir_len = strlen(config->coverage_cache_dir);
+    const char *separator =
+        dir_len != 0 && config->coverage_cache_dir[dir_len - 1u] == '/' ? "" : "/";
+    int written = snprintf(path,
+                           capacity,
+                           "%s%sprime-rule-coverage-%016llx.bin",
+                           config->coverage_cache_dir,
+                           separator,
+                           (unsigned long long)key);
+    return written > 0 && (size_t)written < capacity;
+}
+
+static int ensure_rule_coverage_cache_dir(const RuleSearchConfig *config)
+{
+    if (config == NULL || config->coverage_cache_dir == NULL ||
+        config->coverage_cache_dir[0] == '\0') {
+        return 0;
+    }
+    if (mkdir(config->coverage_cache_dir, 0777) == 0 || errno == EEXIST) {
+        return 1;
+    }
+    return 0;
+}
+
+static int load_rule_coverage_cache(const char *path,
+                                    uint64_t key,
+                                    size_t expected_rule_count,
+                                    size_t expected_event_count,
+                                    size_t expected_samples,
+                                    NNRuleCoverage *coverage)
+{
+    FILE *fp = fopen(path, "rb");
+    if (fp == NULL) {
+        return 0;
+    }
+
+    RuleCoverageCacheHeader header;
+    int ok = fread(&header, sizeof(header), 1u, fp) == 1u &&
+             memcmp(header.magic, "crlp.cover.v1", strlen("crlp.cover.v1")) == 0 &&
+             header.key == key &&
+             header.rule_count == (uint64_t)expected_rule_count &&
+             header.event_count == (uint64_t)expected_event_count &&
+             header.samples == (uint64_t)expected_samples;
+    if (!ok || header.word_count != (uint64_t)((expected_event_count + 63u) / 64u)) {
+        fclose(fp);
+        return 0;
+    }
+
+    if (!nn_rule_coverage_init(coverage,
+                               (size_t)header.rule_count,
+                               (size_t)header.event_count)) {
+        fclose(fp);
+        return 0;
+    }
+    size_t words = (size_t)header.rule_count * (size_t)header.word_count;
+    if (words != 0 &&
+        fread(coverage->bits, sizeof(*coverage->bits), words, fp) != words) {
+        nn_rule_coverage_free(coverage);
+        fclose(fp);
+        return 0;
+    }
+    if (fclose(fp) != 0) {
+        nn_rule_coverage_free(coverage);
+        return 0;
+    }
+    return 1;
+}
+
+static int save_rule_coverage_cache(const char *path,
+                                    uint64_t key,
+                                    size_t samples,
+                                    const NNRuleCoverage *coverage)
+{
+    if (path == NULL || coverage == NULL) {
+        return 0;
+    }
+
+    char tmp_path[1024];
+    int written = snprintf(tmp_path,
+                           sizeof(tmp_path),
+                           "%s.tmp.%llu.%llu",
+                           path,
+                           (unsigned long long)getpid(),
+                           (unsigned long long)time(NULL));
+    if (written <= 0 || (size_t)written >= sizeof(tmp_path)) {
+        return 0;
+    }
+
+    FILE *fp = fopen(tmp_path, "wb");
+    if (fp == NULL) {
+        return 0;
+    }
+
+    RuleCoverageCacheHeader header;
+    memset(&header, 0, sizeof(header));
+    memcpy(header.magic, "crlp.cover.v1", strlen("crlp.cover.v1"));
+    header.key = key;
+    header.rule_count = (uint64_t)coverage->rule_count;
+    header.event_count = (uint64_t)coverage->event_count;
+    header.word_count = (uint64_t)coverage->word_count;
+    header.samples = (uint64_t)samples;
+
+    size_t words = coverage->rule_count * coverage->word_count;
+    int ok = fwrite(&header, sizeof(header), 1u, fp) == 1u &&
+             (words == 0 ||
+              fwrite(coverage->bits, sizeof(*coverage->bits), words, fp) == words);
+    if (fclose(fp) != 0) {
+        ok = 0;
+    }
+    if (!ok || rename(tmp_path, path) != 0) {
+        remove(tmp_path);
+        return 0;
+    }
+    return 1;
+}
+
 static void mark_matching_rule_coverage(NNRuleCoverage *coverage,
                                         const RuleSearchConfig *config,
                                         const RuleSearchGrammar *grammar,
@@ -748,10 +1004,41 @@ static int build_rule_coverage(const RuleSearchConfig *config,
     if (samples_out != NULL) {
         *samples_out = samples;
     }
+    char cache_path[1024];
+    uint64_t cache_key = rule_coverage_cache_key(config,
+                                                 grammar,
+                                                 rules,
+                                                 dataset,
+                                                 max_states,
+                                                 samples,
+                                                 events);
+    int use_cache = rule_coverage_cache_path(config,
+                                             cache_key,
+                                             cache_path,
+                                             sizeof(cache_path));
+    if (use_cache &&
+        load_rule_coverage_cache(cache_path,
+                                 cache_key,
+                                 rules->count,
+                                 events,
+                                 samples,
+                                 coverage)) {
+        ++RULE_COVERAGE_CACHE_STATS.hits;
+        return 1;
+    }
+    if (use_cache) {
+        ++RULE_COVERAGE_CACHE_STATS.misses;
+    }
+
+    memset(coverage, 0, sizeof(*coverage));
     if (!nn_rule_coverage_init(coverage, rules->count, events)) {
         return 0;
     }
     if (events == 0 || rules->count == 0) {
+        if (use_cache && ensure_rule_coverage_cache_dir(config) &&
+            save_rule_coverage_cache(cache_path, cache_key, samples, coverage)) {
+            ++RULE_COVERAGE_CACHE_STATS.writes;
+        }
         return 1;
     }
 
@@ -772,6 +1059,10 @@ static int build_rule_coverage(const RuleSearchConfig *config,
     if (event_index != events) {
         nn_rule_coverage_free(coverage);
         return 0;
+    }
+    if (use_cache && ensure_rule_coverage_cache_dir(config) &&
+        save_rule_coverage_cache(cache_path, cache_key, samples, coverage)) {
+        ++RULE_COVERAGE_CACHE_STATS.writes;
     }
     return 1;
 }
@@ -947,7 +1238,9 @@ static void fill_rule_proposer_sample(const ExpandedRule *rule,
 
 static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
                                            const RuleSearchConfig *config,
-                                           double *loss_out)
+                                           double *loss_out,
+                                           size_t *parameters_out,
+                                           size_t *forward_flops_out)
 {
     double max_train_marginal_utility = 0.0;
     uint32_t max_modulus = 0;
@@ -1067,6 +1360,12 @@ static int score_expanded_rules_with_model(ExpandedRuleSet *rules,
     if (loss_out != NULL) {
         *loss_out = (double)loss;
     }
+    if (parameters_out != NULL) {
+        *parameters_out = nn_parameter_count(net);
+    }
+    if (forward_flops_out != NULL) {
+        *forward_flops_out = nn_forward_flop_count(net);
+    }
 
     nn_free(net);
     free(samples);
@@ -1150,6 +1449,7 @@ static int score_expanded_rules_without_model(ExpandedRuleSet *rules,
             break;
         case RULE_PROPOSER_NEURAL:
         case RULE_PROPOSER_CLOSED_LOOP:
+        case RULE_PROPOSER_UNIFIED:
             return 0;
         }
     }
@@ -1161,10 +1461,15 @@ static int score_expanded_rules_without_model(ExpandedRuleSet *rules,
 
 static int score_expanded_rules(ExpandedRuleSet *rules,
                                 const RuleSearchConfig *config,
-                                double *loss_out)
+                                RuleSearchMetrics *metrics)
 {
+    double *loss_out = metrics == NULL ? NULL : &metrics->proposer_loss;
     if (config->proposer_mode == RULE_PROPOSER_NEURAL) {
-        return score_expanded_rules_with_model(rules, config, loss_out);
+        return score_expanded_rules_with_model(rules,
+                                               config,
+                                               loss_out,
+                                               metrics == NULL ? NULL : &metrics->parameters,
+                                               metrics == NULL ? NULL : &metrics->forward_flops);
     }
     return score_expanded_rules_without_model(rules, config, loss_out);
 }
@@ -1513,6 +1818,842 @@ static int prime_closed_loop_encode_features(size_t rule_index,
     return 1;
 }
 
+static void prime_unified_feature_schema(NNFeatureSchema *schema, char names[UNIFIED_SCORER_FEATURE_COUNT][64])
+{
+    for (size_t i = 0; i < (size_t)UNIFIED_SCORER_FEATURE_COUNT; ++i) {
+        snprintf(names[i], 64, "unified_padding_%02zu", i);
+        schema[i].name = names[i];
+        schema[i].provenance = NN_FEATURE_STRUCTURAL_PRIOR;
+        schema[i].enabled_by_default = 0;
+    }
+
+    snprintf(names[UNIFIED_F_BIAS], 64, "bias");
+    schema[UNIFIED_F_BIAS].enabled_by_default = 1;
+    snprintf(names[UNIFIED_F_ROLE_RULE], 64, "role_rule");
+    schema[UNIFIED_F_ROLE_RULE].enabled_by_default = 1;
+    snprintf(names[UNIFIED_F_DOMAIN_PRIME_RULE], 64, "domain_prime_rule_propose");
+    schema[UNIFIED_F_DOMAIN_PRIME_RULE].enabled_by_default = 1;
+    snprintf(names[UNIFIED_F_ROLE_ACTION], 64, "role_action");
+    schema[UNIFIED_F_ROLE_ACTION].enabled_by_default = 1;
+    snprintf(names[UNIFIED_F_DOMAIN_PRIME_ACTION], 64, "domain_prime_gap_action");
+    schema[UNIFIED_F_DOMAIN_PRIME_ACTION].enabled_by_default = 1;
+    snprintf(names[UNIFIED_F_RULE_INDEX], 64, "normalized_rule_index");
+    schema[UNIFIED_F_RULE_INDEX].enabled_by_default = 1;
+    snprintf(names[UNIFIED_F_CANDIDATE_COUNT], 64, "normalized_candidate_count");
+    schema[UNIFIED_F_CANDIDATE_COUNT].enabled_by_default = 1;
+    snprintf(names[UNIFIED_F_DOMAIN_GRID_ACTION], 64, "domain_grid_path_action");
+    schema[UNIFIED_F_DOMAIN_GRID_ACTION].enabled_by_default = 1;
+    snprintf(names[UNIFIED_F_DOMAIN_CLAIM_ACTION], 64, "domain_delayed_claim_action");
+    schema[UNIFIED_F_DOMAIN_CLAIM_ACTION].enabled_by_default = 1;
+    snprintf(names[UNIFIED_F_DOMAIN_ARC_ACTION], 64, "domain_arc_agi_action");
+    schema[UNIFIED_F_DOMAIN_ARC_ACTION].enabled_by_default = 1;
+
+    for (size_t i = 0; i < (size_t)RULE_DISCOVERY_FEATURE_COUNT; ++i) {
+        size_t slot = (size_t)UNIFIED_F_RULE_FEATURES + i;
+        snprintf(names[slot], 64, "prime_rule_%s", PRIME_CLOSED_LOOP_RULE_FEATURES[i].name);
+        schema[slot].provenance = PRIME_CLOSED_LOOP_RULE_FEATURES[i].provenance;
+        schema[slot].enabled_by_default = PRIME_CLOSED_LOOP_RULE_FEATURES[i].enabled_by_default;
+    }
+}
+
+static int prime_unified_encode_features(size_t rule_index,
+                                         const size_t *accepted_indices,
+                                         size_t accepted_count,
+                                         const NNRuleCoverage *coverage,
+                                         const uint64_t *covered,
+                                         void *context,
+                                         nn_real *features,
+                                         size_t capacity)
+{
+    if (features == NULL || capacity < (size_t)UNIFIED_SCORER_FEATURE_COUNT) {
+        return 0;
+    }
+    PrimeClosedLoopContext *prime = (PrimeClosedLoopContext *)context;
+    if (prime == NULL || prime->rules == NULL || rule_index >= prime->rules->count) {
+        return 0;
+    }
+
+    nn_real discovery_features[RULE_DISCOVERY_FEATURE_COUNT];
+    if (!prime_closed_loop_encode_features(rule_index,
+                                           accepted_indices,
+                                           accepted_count,
+                                           coverage,
+                                           covered,
+                                           context,
+                                           discovery_features,
+                                           (size_t)RULE_DISCOVERY_FEATURE_COUNT)) {
+        return 0;
+    }
+
+    memset(features, 0, capacity * sizeof(*features));
+    features[UNIFIED_F_BIAS] = (nn_real)1;
+    features[UNIFIED_F_ROLE_RULE] = (nn_real)1;
+    features[UNIFIED_F_DOMAIN_PRIME_RULE] = (nn_real)1;
+    features[UNIFIED_F_RULE_INDEX] =
+        prime->rules->count <= 1
+            ? (nn_real)0
+            : (nn_real)((double)rule_index / (double)(prime->rules->count - 1u));
+    features[UNIFIED_F_CANDIDATE_COUNT] =
+        (nn_real)((double)prime->rules->count / 65536.0);
+    memcpy(&features[UNIFIED_F_RULE_FEATURES],
+           discovery_features,
+           (size_t)RULE_DISCOVERY_FEATURE_COUNT * sizeof(*features));
+    return 1;
+}
+
+typedef enum {
+    UNIFIED_ACTION_PRIME_GAP = 0,
+    UNIFIED_ACTION_GRID_PATH = 1,
+    UNIFIED_ACTION_DELAYED_CLAIM = 2,
+    UNIFIED_ACTION_ARC_AGI = 3,
+    UNIFIED_ACTION_TASK_COUNT = 4,
+} UnifiedActionTask;
+
+enum {
+    UNIFIED_GRID_SIZE = 7,
+    UNIFIED_GRID_CELLS = UNIFIED_GRID_SIZE * UNIFIED_GRID_SIZE,
+    UNIFIED_GRID_ACTION_COUNT = 4,
+    UNIFIED_GRID_INF = 1000000,
+    UNIFIED_CLAIM_STATE_FEATURES = 6,
+    UNIFIED_CLAIM_ACTION_COUNT = 4,
+    UNIFIED_ARC_INPUT_WIDTH = 7,
+    UNIFIED_ARC_INPUT_HEIGHT = 3,
+    UNIFIED_ARC_INPUT_CELLS = UNIFIED_ARC_INPUT_WIDTH * UNIFIED_ARC_INPUT_HEIGHT,
+    UNIFIED_ARC_OUTPUT_WIDTH = 3,
+    UNIFIED_ARC_OUTPUT_HEIGHT = 3,
+    UNIFIED_ARC_OUTPUT_CELLS = UNIFIED_ARC_OUTPUT_WIDTH * UNIFIED_ARC_OUTPUT_HEIGHT,
+    UNIFIED_ARC_ACTION_COUNT = 10,
+    UNIFIED_ARC_TRAIN_PAIR_COUNT = 3,
+};
+
+static const int UNIFIED_GRID_DX[UNIFIED_GRID_ACTION_COUNT] = {0, 1, 0, -1};
+static const int UNIFIED_GRID_DY[UNIFIED_GRID_ACTION_COUNT] = {-1, 0, 1, 0};
+
+static const uint8_t UNIFIED_ARC_0520FDE7_TRAIN_INPUTS[UNIFIED_ARC_TRAIN_PAIR_COUNT][UNIFIED_ARC_INPUT_CELLS] = {
+    {1, 0, 0, 5, 0, 1, 0,
+     0, 1, 0, 5, 1, 1, 1,
+     1, 0, 0, 5, 0, 0, 0},
+    {1, 1, 0, 5, 0, 1, 0,
+     0, 0, 1, 5, 1, 1, 1,
+     1, 1, 0, 5, 0, 1, 0},
+    {0, 0, 1, 5, 0, 0, 0,
+     1, 1, 0, 5, 1, 0, 1,
+     0, 1, 1, 5, 1, 0, 1},
+};
+
+static const uint8_t UNIFIED_ARC_0520FDE7_TRAIN_OUTPUTS[UNIFIED_ARC_TRAIN_PAIR_COUNT][UNIFIED_ARC_OUTPUT_CELLS] = {
+    {0, 0, 0,
+     0, 2, 0,
+     0, 0, 0},
+    {0, 2, 0,
+     0, 0, 2,
+     0, 2, 0},
+    {0, 0, 0,
+     2, 0, 0,
+     0, 0, 2},
+};
+
+typedef struct {
+    uint8_t blocked[UNIFIED_GRID_CELLS];
+    int sx;
+    int sy;
+    int gx;
+    int gy;
+} UnifiedGridState;
+
+typedef struct {
+    nn_real state[UNIFIED_CLAIM_STATE_FEATURES];
+    size_t target;
+    nn_real utility[UNIFIED_CLAIM_ACTION_COUNT];
+} UnifiedClaimState;
+
+typedef struct {
+    size_t max_steps;
+    size_t per_step_limit;
+    size_t word_count;
+    size_t step_count;
+    size_t *accepted_counts;
+    size_t *accepted_indices;
+    uint64_t *covered_words;
+    size_t *target_rule_indices;
+    size_t *group_counts;
+    size_t *group_indices;
+} UnifiedRuleTrajectory;
+
+static uint32_t unified_rng_next(uint32_t *state)
+{
+    *state = (*state * 1664525u) + 1013904223u;
+    return *state;
+}
+
+static size_t unified_rng_bounded(uint32_t *state, size_t bound)
+{
+    if (bound == 0) {
+        return 0;
+    }
+    return (size_t)(((uint64_t)unified_rng_next(state) * (uint64_t)bound) >> 32);
+}
+
+static void unified_fill_action_base(nn_real *row,
+                                     UnifiedActionTask task,
+                                     size_t action,
+                                     size_t candidate_count)
+{
+    memset(row, 0, (size_t)UNIFIED_SCORER_FEATURE_COUNT * sizeof(*row));
+    row[UNIFIED_F_BIAS] = (nn_real)1;
+    row[UNIFIED_F_ROLE_ACTION] = (nn_real)1;
+    switch (task) {
+    case UNIFIED_ACTION_PRIME_GAP:
+        row[UNIFIED_F_DOMAIN_PRIME_ACTION] = (nn_real)1;
+        break;
+    case UNIFIED_ACTION_GRID_PATH:
+        row[UNIFIED_F_DOMAIN_GRID_ACTION] = (nn_real)1;
+        break;
+    case UNIFIED_ACTION_DELAYED_CLAIM:
+        row[UNIFIED_F_DOMAIN_CLAIM_ACTION] = (nn_real)1;
+        break;
+    case UNIFIED_ACTION_ARC_AGI:
+        row[UNIFIED_F_DOMAIN_ARC_ACTION] = (nn_real)1;
+        break;
+    case UNIFIED_ACTION_TASK_COUNT:
+        break;
+    }
+    row[UNIFIED_F_RULE_INDEX] =
+        candidate_count <= 1 ? (nn_real)0 : (nn_real)((double)action / (double)(candidate_count - 1u));
+    row[UNIFIED_F_CANDIDATE_COUNT] =
+        (nn_real)((double)candidate_count / (double)ACTION_COUNT);
+}
+
+static size_t unified_fill_prime_action_sample(const GapDataset *dataset,
+                                               double prime_log_scale,
+                                               size_t index,
+                                               nn_real *candidate_inputs,
+                                               size_t *target_index)
+{
+    if (dataset == NULL || dataset->count == 0 || candidate_inputs == NULL ||
+        target_index == NULL) {
+        return 0;
+    }
+    size_t row_index = index % dataset->count;
+    uint32_t p = dataset->prime[row_index];
+    uint32_t target_gap = dataset->gap[row_index];
+    *target_index = gap_to_action(target_gap);
+    if (*target_index >= ACTION_COUNT) {
+        return 0;
+    }
+    for (size_t action = 0; action < ACTION_COUNT; ++action) {
+        size_t candidate_gap = action_gap(action);
+        uint64_t candidate = (uint64_t)p + (uint64_t)candidate_gap;
+        nn_real *row = &candidate_inputs[action * UNIFIED_SCORER_FEATURE_COUNT];
+        unified_fill_action_base(row, UNIFIED_ACTION_PRIME_GAP, action, ACTION_COUNT);
+        row[UNIFIED_F_ACTION_COMMON + 0] =
+            (nn_real)(log((double)p) / prime_log_scale);
+        row[UNIFIED_F_ACTION_COMMON + 1] =
+            (nn_real)((double)candidate_gap / (double)(G_MAX + 2));
+        row[UNIFIED_F_ACTION_COMMON + 2] =
+            action == OVERFLOW_ACTION ? (nn_real)1 : (nn_real)0;
+        row[UNIFIED_F_ACTION_COMMON + 3] =
+            (nn_real)(log1p((double)candidate_gap) / log1p((double)(G_MAX + 2)));
+        row[UNIFIED_F_ACTION_COMMON + 4] =
+            (nn_real)(log((double)candidate) / prime_log_scale);
+    }
+    return ACTION_COUNT;
+}
+
+static int unified_grid_cell_index(int x, int y)
+{
+    return y * UNIFIED_GRID_SIZE + x;
+}
+
+static int unified_grid_in_bounds(int x, int y)
+{
+    return x >= 0 && x < UNIFIED_GRID_SIZE && y >= 0 && y < UNIFIED_GRID_SIZE;
+}
+
+static size_t unified_grid_bfs_distances_from_goal(const UnifiedGridState *state, int *dist)
+{
+    int queue[UNIFIED_GRID_CELLS];
+    size_t head = 0;
+    size_t tail = 0;
+    size_t expansions = 0;
+    for (size_t i = 0; i < UNIFIED_GRID_CELLS; ++i) {
+        dist[i] = UNIFIED_GRID_INF;
+    }
+    int goal = unified_grid_cell_index(state->gx, state->gy);
+    dist[goal] = 0;
+    queue[tail++] = goal;
+    while (head < tail) {
+        int cell = queue[head++];
+        int x = cell % UNIFIED_GRID_SIZE;
+        int y = cell / UNIFIED_GRID_SIZE;
+        ++expansions;
+        for (size_t action = 0; action < UNIFIED_GRID_ACTION_COUNT; ++action) {
+            int nx = x + UNIFIED_GRID_DX[action];
+            int ny = y + UNIFIED_GRID_DY[action];
+            if (!unified_grid_in_bounds(nx, ny)) {
+                continue;
+            }
+            int next = unified_grid_cell_index(nx, ny);
+            if (state->blocked[next] || dist[next] != UNIFIED_GRID_INF) {
+                continue;
+            }
+            dist[next] = dist[cell] + 1;
+            queue[tail++] = next;
+        }
+    }
+    return expansions;
+}
+
+static int unified_generate_grid_state(uint64_t seed, UnifiedGridState *state)
+{
+    uint32_t rng = (uint32_t)(seed ^ (seed >> 32) ^ UINT64_C(0x6d2b79f5));
+    for (size_t attempt = 0; attempt < 64; ++attempt) {
+        memset(state, 0, sizeof(*state));
+        state->sx = (int)(unified_rng_next(&rng) % UNIFIED_GRID_SIZE);
+        state->sy = (int)(unified_rng_next(&rng) % UNIFIED_GRID_SIZE);
+        do {
+            state->gx = (int)(unified_rng_next(&rng) % UNIFIED_GRID_SIZE);
+            state->gy = (int)(unified_rng_next(&rng) % UNIFIED_GRID_SIZE);
+        } while (state->gx == state->sx && state->gy == state->sy);
+        for (int y = 0; y < UNIFIED_GRID_SIZE; ++y) {
+            for (int x = 0; x < UNIFIED_GRID_SIZE; ++x) {
+                if ((x == state->sx && y == state->sy) ||
+                    (x == state->gx && y == state->gy)) {
+                    continue;
+                }
+                state->blocked[unified_grid_cell_index(x, y)] =
+                    (unified_rng_next(&rng) % 100u) < 23u ? 1u : 0u;
+            }
+        }
+        int dist[UNIFIED_GRID_CELLS];
+        unified_grid_bfs_distances_from_goal(state, dist);
+        int start = unified_grid_cell_index(state->sx, state->sy);
+        if (dist[start] > 0 && dist[start] < UNIFIED_GRID_INF) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static size_t unified_fill_grid_action_sample(uint64_t seed,
+                                              nn_real *candidate_inputs,
+                                              size_t *target_index)
+{
+    UnifiedGridState state;
+    if (!unified_generate_grid_state(seed, &state)) {
+        return 0;
+    }
+    int dist[UNIFIED_GRID_CELLS];
+    unified_grid_bfs_distances_from_goal(&state, dist);
+    int best_dist = UNIFIED_GRID_INF;
+    int manhattan_before = abs(state.gx - state.sx) + abs(state.gy - state.sy);
+    *target_index = UNIFIED_GRID_ACTION_COUNT;
+    for (size_t action = 0; action < UNIFIED_GRID_ACTION_COUNT; ++action) {
+        int nx = state.sx + UNIFIED_GRID_DX[action];
+        int ny = state.sy + UNIFIED_GRID_DY[action];
+        int out_of_bounds = !unified_grid_in_bounds(nx, ny);
+        int blocked_next = 0;
+        int next_dist = UNIFIED_GRID_INF;
+        int feature_x = state.sx;
+        int feature_y = state.sy;
+        if (!out_of_bounds) {
+            int next_cell = unified_grid_cell_index(nx, ny);
+            blocked_next = state.blocked[next_cell] ? 1 : 0;
+            feature_x = nx;
+            feature_y = ny;
+            if (!blocked_next) {
+                next_dist = dist[next_cell];
+            }
+        }
+        if (next_dist < UNIFIED_GRID_INF &&
+            (next_dist < best_dist ||
+             (next_dist == best_dist && *target_index == UNIFIED_GRID_ACTION_COUNT))) {
+            best_dist = next_dist;
+            *target_index = action;
+        }
+
+        int manhattan_after = abs(state.gx - feature_x) + abs(state.gy - feature_y);
+        nn_real *row = &candidate_inputs[action * UNIFIED_SCORER_FEATURE_COUNT];
+        unified_fill_action_base(row, UNIFIED_ACTION_GRID_PATH, action, UNIFIED_GRID_ACTION_COUNT);
+        row[UNIFIED_F_ACTION_COMMON + 0] = (nn_real)((double)state.sx / (double)(UNIFIED_GRID_SIZE - 1));
+        row[UNIFIED_F_ACTION_COMMON + 1] = (nn_real)((double)state.sy / (double)(UNIFIED_GRID_SIZE - 1));
+        row[UNIFIED_F_ACTION_COMMON + 2] = (nn_real)((double)state.gx / (double)(UNIFIED_GRID_SIZE - 1));
+        row[UNIFIED_F_ACTION_COMMON + 3] = (nn_real)((double)state.gy / (double)(UNIFIED_GRID_SIZE - 1));
+        row[UNIFIED_F_ACTION_COMMON + 4] =
+            (nn_real)((double)(state.gx - feature_x) / (double)(UNIFIED_GRID_SIZE - 1));
+        row[UNIFIED_F_ACTION_COMMON + 5] =
+            (nn_real)((double)(state.gy - feature_y) / (double)(UNIFIED_GRID_SIZE - 1));
+        row[UNIFIED_F_ACTION_COMMON + 6] =
+            (nn_real)((double)manhattan_after / (double)(2 * (UNIFIED_GRID_SIZE - 1)));
+        row[UNIFIED_F_ACTION_COMMON + 7] =
+            (nn_real)((double)(manhattan_before - manhattan_after) / 2.0);
+        row[UNIFIED_F_ACTION_STATE + 0] = (nn_real)UNIFIED_GRID_DX[action];
+        row[UNIFIED_F_ACTION_STATE + 1] = (nn_real)UNIFIED_GRID_DY[action];
+        row[UNIFIED_F_ACTION_STATE + 2] = out_of_bounds ? (nn_real)1 : (nn_real)0;
+        row[UNIFIED_F_ACTION_STATE + 3] = blocked_next ? (nn_real)1 : (nn_real)0;
+        for (size_t cell = 0; cell < UNIFIED_GRID_CELLS; ++cell) {
+            row[UNIFIED_F_RULE_FEATURES + cell] = state.blocked[cell] ? (nn_real)1 : (nn_real)0;
+        }
+        for (size_t i = 0; i < UNIFIED_GRID_ACTION_COUNT; ++i) {
+            row[UNIFIED_F_RULE_FEATURES + UNIFIED_GRID_CELLS + i] =
+                action == i ? (nn_real)1 : (nn_real)0;
+        }
+    }
+    return *target_index < UNIFIED_GRID_ACTION_COUNT ? UNIFIED_GRID_ACTION_COUNT : 0;
+}
+
+static UnifiedClaimState unified_generate_claim_state(uint64_t seed)
+{
+    uint32_t rng = (uint32_t)(seed ^ (seed >> 32) ^ UINT64_C(0xa511e9b3));
+    UnifiedClaimState state;
+    for (size_t i = 0; i < UNIFIED_CLAIM_STATE_FEATURES; ++i) {
+        state.state[i] = (nn_real)((double)(unified_rng_next(&rng) % 10000u) / 9999.0);
+    }
+    nn_real reliability = state.state[0];
+    nn_real evidence = state.state[1];
+    nn_real contradiction = state.state[2];
+    nn_real age = state.state[3];
+    nn_real history = state.state[4];
+    nn_real noise = state.state[5];
+    state.utility[0] = reliability + (nn_real)0.8 * evidence + (nn_real)0.4 * history -
+                       (nn_real)1.1 * contradiction - (nn_real)0.2 * age;
+    state.utility[1] = (nn_real)0.35 + contradiction + (nn_real)0.25 * age -
+                       (nn_real)0.5 * evidence;
+    state.utility[2] = (nn_real)0.25 + (nn_real)0.7 * noise + (nn_real)0.5 * contradiction -
+                       (nn_real)0.3 * history;
+    state.utility[3] = (nn_real)0.45 + (nn_real)0.5 * reliability + (nn_real)0.3 * evidence -
+                       (nn_real)0.4 * contradiction;
+    state.target = 0;
+    for (size_t action = 1; action < UNIFIED_CLAIM_ACTION_COUNT; ++action) {
+        if (state.utility[action] > state.utility[state.target]) {
+            state.target = action;
+        }
+    }
+    return state;
+}
+
+static size_t unified_fill_claim_action_sample(uint64_t seed,
+                                               nn_real *candidate_inputs,
+                                               size_t *target_index)
+{
+    UnifiedClaimState state = unified_generate_claim_state(seed);
+    *target_index = state.target;
+    for (size_t action = 0; action < UNIFIED_CLAIM_ACTION_COUNT; ++action) {
+        nn_real *row = &candidate_inputs[action * UNIFIED_SCORER_FEATURE_COUNT];
+        unified_fill_action_base(row, UNIFIED_ACTION_DELAYED_CLAIM, action, UNIFIED_CLAIM_ACTION_COUNT);
+        for (size_t i = 0; i < UNIFIED_CLAIM_STATE_FEATURES; ++i) {
+            row[UNIFIED_F_ACTION_COMMON + i] = state.state[i];
+        }
+        for (size_t i = 0; i < UNIFIED_CLAIM_ACTION_COUNT; ++i) {
+            row[UNIFIED_F_RULE_FEATURES + i] = action == i ? (nn_real)1 : (nn_real)0;
+        }
+    }
+    return UNIFIED_CLAIM_ACTION_COUNT;
+}
+
+static size_t unified_arc_select_balanced_cell(const uint8_t *output, uint64_t sample)
+{
+    int want_foreground = (sample & UINT64_C(1)) == 0;
+    size_t match_count = 0;
+    for (size_t cell = 0; cell < UNIFIED_ARC_OUTPUT_CELLS; ++cell) {
+        int foreground = output[cell] != 0;
+        if (foreground == want_foreground) {
+            ++match_count;
+        }
+    }
+    if (match_count == 0) {
+        return (size_t)(sample % UNIFIED_ARC_OUTPUT_CELLS);
+    }
+    size_t wanted = (size_t)((sample >> 1) % match_count);
+    for (size_t cell = 0; cell < UNIFIED_ARC_OUTPUT_CELLS; ++cell) {
+        int foreground = output[cell] != 0;
+        if (foreground != want_foreground) {
+            continue;
+        }
+        if (wanted == 0) {
+            return cell;
+        }
+        --wanted;
+    }
+    return 0;
+}
+
+static size_t unified_fill_arc_action_sample(uint64_t sample,
+                                             nn_real *candidate_inputs,
+                                             size_t *target_index)
+{
+    size_t pair = (size_t)(sample % UNIFIED_ARC_TRAIN_PAIR_COUNT);
+    const uint8_t *input = UNIFIED_ARC_0520FDE7_TRAIN_INPUTS[pair];
+    const uint8_t *output = UNIFIED_ARC_0520FDE7_TRAIN_OUTPUTS[pair];
+    size_t cell = unified_arc_select_balanced_cell(output, sample / UNIFIED_ARC_TRAIN_PAIR_COUNT);
+    size_t output_x = cell % UNIFIED_ARC_OUTPUT_WIDTH;
+    size_t output_y = cell / UNIFIED_ARC_OUTPUT_WIDTH;
+    *target_index = (size_t)output[cell];
+    for (size_t action = 0; action < UNIFIED_ARC_ACTION_COUNT; ++action) {
+        nn_real *row = &candidate_inputs[action * UNIFIED_SCORER_FEATURE_COUNT];
+        unified_fill_action_base(row, UNIFIED_ACTION_ARC_AGI, action, UNIFIED_ARC_ACTION_COUNT);
+        row[UNIFIED_F_ACTION_COMMON + 0] =
+            (nn_real)((double)output_x / (double)(UNIFIED_ARC_OUTPUT_WIDTH - 1));
+        row[UNIFIED_F_ACTION_COMMON + 1] =
+            (nn_real)((double)output_y / (double)(UNIFIED_ARC_OUTPUT_HEIGHT - 1));
+        row[UNIFIED_F_ACTION_COMMON + 2] = (nn_real)((double)UNIFIED_ARC_INPUT_WIDTH / 30.0);
+        row[UNIFIED_F_ACTION_COMMON + 3] = (nn_real)((double)UNIFIED_ARC_INPUT_HEIGHT / 30.0);
+        row[UNIFIED_F_ACTION_COMMON + 4] = (nn_real)((double)UNIFIED_ARC_OUTPUT_WIDTH / 30.0);
+        row[UNIFIED_F_ACTION_COMMON + 5] = (nn_real)((double)UNIFIED_ARC_OUTPUT_HEIGHT / 30.0);
+        row[UNIFIED_F_ACTION_COMMON + 6] =
+            (nn_real)((double)cell / (double)(UNIFIED_ARC_OUTPUT_CELLS - 1));
+        row[UNIFIED_F_ACTION_COMMON + 7] = action == 0 ? (nn_real)1 : (nn_real)0;
+        row[UNIFIED_F_ACTION_COMMON + 8] = (nn_real)((double)action / 9.0);
+        for (size_t i = 0; i < UNIFIED_ARC_INPUT_CELLS; ++i) {
+            row[UNIFIED_F_RULE_FEATURES + i] = (nn_real)((double)input[i] / 9.0);
+        }
+        row[UNIFIED_F_RULE_FEATURES + UNIFIED_ARC_INPUT_CELLS +
+            output_y * UNIFIED_ARC_OUTPUT_WIDTH + output_x] = (nn_real)1;
+        row[UNIFIED_F_RULE_FEATURES + UNIFIED_ARC_INPUT_CELLS +
+            UNIFIED_ARC_OUTPUT_CELLS + action] = (nn_real)1;
+    }
+    return UNIFIED_ARC_ACTION_COUNT;
+}
+
+static size_t unified_fill_action_sample(const GapDataset *prime_train,
+                                         double prime_log_scale,
+                                         UnifiedActionTask task,
+                                         uint64_t sample,
+                                         nn_real *candidate_inputs,
+                                         size_t *target_index)
+{
+    switch (task) {
+    case UNIFIED_ACTION_PRIME_GAP:
+        return unified_fill_prime_action_sample(prime_train,
+                                                prime_log_scale,
+                                                (size_t)sample,
+                                                candidate_inputs,
+                                                target_index);
+    case UNIFIED_ACTION_GRID_PATH:
+        return unified_fill_grid_action_sample(7000u + sample, candidate_inputs, target_index);
+    case UNIFIED_ACTION_DELAYED_CLAIM:
+        return unified_fill_claim_action_sample(1000u + sample, candidate_inputs, target_index);
+    case UNIFIED_ACTION_ARC_AGI:
+        return unified_fill_arc_action_sample(5000u + sample, candidate_inputs, target_index);
+    case UNIFIED_ACTION_TASK_COUNT:
+        break;
+    }
+    return 0;
+}
+
+static void unified_rule_trajectory_free(UnifiedRuleTrajectory *trajectory)
+{
+    if (trajectory == NULL) {
+        return;
+    }
+    free(trajectory->accepted_counts);
+    free(trajectory->accepted_indices);
+    free(trajectory->covered_words);
+    free(trajectory->target_rule_indices);
+    free(trajectory->group_counts);
+    free(trajectory->group_indices);
+    memset(trajectory, 0, sizeof(*trajectory));
+}
+
+static int unified_build_rule_trajectory(const NNRuleCoverage *coverage,
+                                         const RuleSearchConfig *config,
+                                         PrimeClosedLoopContext *context,
+                                         size_t eligible_count,
+                                         UnifiedRuleTrajectory *trajectory)
+{
+    memset(trajectory, 0, sizeof(*trajectory));
+    if (coverage == NULL || config == NULL || context == NULL ||
+        eligible_count == 0 || coverage->word_count == 0) {
+        return 0;
+    }
+    size_t max_steps = config->max_rules < eligible_count ? config->max_rules : eligible_count;
+    size_t per_step_limit =
+        eligible_count < (size_t)RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP
+            ? eligible_count
+            : (size_t)RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP;
+    if (max_steps == 0 || per_step_limit == 0) {
+        return 0;
+    }
+
+    trajectory->max_steps = max_steps;
+    trajectory->per_step_limit = per_step_limit;
+    trajectory->word_count = coverage->word_count;
+    trajectory->accepted_counts = calloc(max_steps, sizeof(*trajectory->accepted_counts));
+    trajectory->accepted_indices = calloc(max_steps * max_steps, sizeof(*trajectory->accepted_indices));
+    trajectory->covered_words = calloc(max_steps * coverage->word_count, sizeof(*trajectory->covered_words));
+    trajectory->target_rule_indices = calloc(max_steps, sizeof(*trajectory->target_rule_indices));
+    trajectory->group_counts = calloc(max_steps, sizeof(*trajectory->group_counts));
+    trajectory->group_indices = calloc(max_steps * per_step_limit, sizeof(*trajectory->group_indices));
+    uint8_t *selected = calloc(coverage->rule_count, sizeof(*selected));
+    uint64_t *covered = calloc(coverage->word_count, sizeof(*covered));
+    size_t *gains = calloc(coverage->rule_count, sizeof(*gains));
+    size_t *accepted_indices = calloc(max_steps, sizeof(*accepted_indices));
+    if (trajectory->accepted_counts == NULL || trajectory->accepted_indices == NULL ||
+        trajectory->covered_words == NULL || trajectory->target_rule_indices == NULL ||
+        trajectory->group_counts == NULL || trajectory->group_indices == NULL ||
+        selected == NULL || covered == NULL || gains == NULL || accepted_indices == NULL) {
+        free(selected);
+        free(covered);
+        free(gains);
+        free(accepted_indices);
+        unified_rule_trajectory_free(trajectory);
+        return 0;
+    }
+
+    size_t accepted_count = 0;
+    for (size_t step = 0; step < max_steps; ++step) {
+        size_t best_index = (size_t)-1;
+        size_t best_gain = 0;
+        memset(gains, 0, coverage->rule_count * sizeof(*gains));
+        for (size_t i = 0; i < coverage->rule_count; ++i) {
+            if (selected[i] ||
+                !prime_closed_loop_candidate_allowed(i, accepted_indices, accepted_count, context)) {
+                continue;
+            }
+            size_t gain = nn_rule_coverage_gain(coverage, i, covered);
+            gains[i] = gain;
+            if (gain > best_gain) {
+                best_gain = gain;
+                best_index = i;
+            }
+        }
+        if (best_index == (size_t)-1 || best_gain == 0) {
+            break;
+        }
+
+        trajectory->accepted_counts[step] = accepted_count;
+        memcpy(&trajectory->accepted_indices[step * max_steps],
+               accepted_indices,
+               accepted_count * sizeof(*accepted_indices));
+        memcpy(&trajectory->covered_words[step * coverage->word_count],
+               covered,
+               coverage->word_count * sizeof(*covered));
+        trajectory->target_rule_indices[step] = best_index;
+
+        size_t kept = 0;
+        trajectory->group_indices[step * per_step_limit + kept++] = best_index;
+        for (size_t i = 0; i < coverage->rule_count && kept < per_step_limit; ++i) {
+            if (i == best_index || gains[i] == 0 || selected[i] ||
+                !prime_closed_loop_candidate_allowed(i, accepted_indices, accepted_count, context)) {
+                continue;
+            }
+            trajectory->group_indices[step * per_step_limit + kept++] = i;
+        }
+        for (size_t i = 0; i < coverage->rule_count && kept < per_step_limit; ++i) {
+            if (i == best_index || gains[i] != 0 || selected[i] ||
+                !prime_closed_loop_candidate_allowed(i, accepted_indices, accepted_count, context)) {
+                continue;
+            }
+            uint64_t hash = mix_rule_hash_u64((uint64_t)i,
+                                              ((uint64_t)step << 32) ^
+                                                  (uint64_t)config->proposer_seed);
+            if ((hash % 17u) != 0u && kept + 1u < per_step_limit) {
+                continue;
+            }
+            trajectory->group_indices[step * per_step_limit + kept++] = i;
+        }
+        trajectory->group_counts[step] = kept;
+        ++trajectory->step_count;
+
+        selected[best_index] = 1;
+        size_t write = 0;
+        for (size_t i = 0; i < accepted_count; ++i) {
+            if (prime_closed_loop_keep_accepted(accepted_indices[i], best_index, context)) {
+                accepted_indices[write++] = accepted_indices[i];
+            }
+        }
+        accepted_count = write;
+        if (accepted_count < max_steps) {
+            accepted_indices[accepted_count++] = best_index;
+        }
+        nn_rule_coverage_add_rule_to_residual(coverage, best_index, covered);
+    }
+
+    free(selected);
+    free(covered);
+    free(gains);
+    free(accepted_indices);
+    if (trajectory->step_count == 0) {
+        unified_rule_trajectory_free(trajectory);
+        return 0;
+    }
+    return 1;
+}
+
+static int unified_train_rule_softmax_step(NeuralNet *net,
+                                           const NNRuleCoverage *coverage,
+                                           PrimeClosedLoopContext *context,
+                                           const UnifiedRuleTrajectory *trajectory,
+                                           size_t step,
+                                           nn_real *candidate_inputs,
+                                           nn_real learning_rate,
+                                           nn_real *loss_out,
+                                           size_t *row_count_out)
+{
+    if (net == NULL || coverage == NULL || context == NULL || trajectory == NULL ||
+        candidate_inputs == NULL || step >= trajectory->step_count) {
+        return 0;
+    }
+    size_t group_count = trajectory->group_counts[step];
+    if (group_count == 0) {
+        return 0;
+    }
+    const size_t *accepted_indices =
+        &trajectory->accepted_indices[step * trajectory->max_steps];
+    size_t accepted_count = trajectory->accepted_counts[step];
+    const uint64_t *covered = &trajectory->covered_words[step * trajectory->word_count];
+    for (size_t group = 0; group < group_count; ++group) {
+        size_t rule_index = trajectory->group_indices[step * trajectory->per_step_limit + group];
+        if (!prime_unified_encode_features(rule_index,
+                                           accepted_indices,
+                                           accepted_count,
+                                           coverage,
+                                           covered,
+                                           context,
+                                           &candidate_inputs[group * UNIFIED_SCORER_FEATURE_COUNT],
+                                           (size_t)UNIFIED_SCORER_FEATURE_COUNT)) {
+            return 0;
+        }
+    }
+    nn_real loss = nn_train_action_scorer(net,
+                                          candidate_inputs,
+                                          group_count,
+                                          0,
+                                          learning_rate);
+    if (isnan((double)loss)) {
+        return 0;
+    }
+    if (loss_out != NULL) {
+        *loss_out = loss;
+    }
+    if (row_count_out != NULL) {
+        *row_count_out = group_count;
+    }
+    return 1;
+}
+
+static NeuralNet *unified_create_shared_scorer(const RuleSearchConfig *config)
+{
+    size_t layers[4];
+    layers[0] = (size_t)UNIFIED_SCORER_FEATURE_COUNT;
+    layers[1] = rule_search_effective_unified_hidden1(config);
+    layers[2] = rule_search_effective_unified_hidden2(config);
+    layers[3] = 1u;
+    NNConfig nn_config;
+    nn_config.layer_sizes = layers;
+    nn_config.layer_count = 4u;
+    nn_config.seed = config->proposer_seed ^ 520637u;
+    nn_config.hidden_activation = NN_ACTIVATION_RELU;
+    nn_config.output_activation = NN_ACTIVATION_LINEAR;
+    nn_config.loss = NN_LOSS_MSE;
+    return nn_create_config(&nn_config);
+}
+
+static int unified_train_shared_action_rule_scorer(NeuralNet *net,
+                                                   const GapDataset *prime_train,
+                                                   const RuleSearchConfig *config,
+                                                   const NNRuleCoverage *coverage,
+                                                   PrimeClosedLoopContext *context,
+                                                   const UnifiedRuleTrajectory *trajectory,
+                                                   RuleSearchMetrics *metrics)
+{
+    size_t rule_updates = config->max_rules * (size_t)UNIFIED_TRANSFER_RULE_UPDATES_PER_BUDGET;
+    if (rule_updates < (size_t)UNIFIED_TRANSFER_MIN_RULE_UPDATES) {
+        rule_updates = (size_t)UNIFIED_TRANSFER_MIN_RULE_UPDATES;
+    }
+    size_t action_updates = rule_updates;
+    nn_real *action_inputs =
+        calloc((size_t)ACTION_COUNT * (size_t)UNIFIED_SCORER_FEATURE_COUNT, sizeof(*action_inputs));
+    nn_real *rule_inputs =
+        calloc(trajectory->per_step_limit * (size_t)UNIFIED_SCORER_FEATURE_COUNT, sizeof(*rule_inputs));
+    if (action_inputs == NULL || rule_inputs == NULL) {
+        free(action_inputs);
+        free(rule_inputs);
+        return 0;
+    }
+
+    uint32_t rng = (uint32_t)(config->proposer_seed ^ UINT32_C(0x31415926));
+    double prime_log_scale = log((double)config->test_limit + (double)G_MAX + 2.0);
+    double action_loss_sum = 0.0;
+    double rule_loss_sum = 0.0;
+    size_t action_done = 0;
+    size_t rule_done = 0;
+    size_t rule_rows = 0;
+    size_t total_updates = action_updates + rule_updates;
+    for (size_t update = 0; update < total_updates; ++update) {
+        int train_rule = (update % 2u) == 0;
+        if (train_rule && rule_done < rule_updates) {
+            size_t step = unified_rng_bounded(&rng, trajectory->step_count);
+            nn_real loss = 0;
+            size_t rows = 0;
+            if (!unified_train_rule_softmax_step(net,
+                                                 coverage,
+                                                 context,
+                                                 trajectory,
+                                                 step,
+                                                 rule_inputs,
+                                                 (nn_real)0.006,
+                                                 &loss,
+                                                 &rows)) {
+                free(action_inputs);
+                free(rule_inputs);
+                return 0;
+            }
+            rule_loss_sum += (double)loss;
+            rule_rows += rows;
+            ++rule_done;
+            continue;
+        }
+
+        if (action_done < action_updates) {
+            UnifiedActionTask task =
+                (UnifiedActionTask)unified_rng_bounded(&rng, (size_t)UNIFIED_ACTION_TASK_COUNT);
+            uint64_t sample = (uint64_t)unified_rng_next(&rng);
+            if (task == UNIFIED_ACTION_PRIME_GAP && prime_train->count != 0) {
+                sample %= (uint64_t)prime_train->count;
+            }
+            size_t target_index = 0;
+            size_t candidate_count = unified_fill_action_sample(prime_train,
+                                                                prime_log_scale,
+                                                                task,
+                                                                sample,
+                                                                action_inputs,
+                                                                &target_index);
+            if (candidate_count == 0 || target_index >= candidate_count) {
+                free(action_inputs);
+                free(rule_inputs);
+                return 0;
+            }
+            nn_real loss = nn_train_action_scorer(net,
+                                                  action_inputs,
+                                                  candidate_count,
+                                                  target_index,
+                                                  (nn_real)0.006);
+            if (isnan((double)loss)) {
+                free(action_inputs);
+                free(rule_inputs);
+                return 0;
+            }
+            action_loss_sum += (double)loss;
+            ++action_done;
+        }
+    }
+
+    metrics->unified_action_updates = action_done;
+    metrics->unified_rule_updates = rule_done;
+    metrics->residual_train_samples = rule_rows;
+    metrics->proposer_loss = rule_done == 0 ? 0.0 : rule_loss_sum / (double)rule_done;
+    printf("unified_transfer action_updates=%zu rule_updates=%zu action_loss=%.4f rule_loss=%.4f\n",
+           action_done,
+           rule_done,
+           action_done == 0 ? 0.0 : action_loss_sum / (double)action_done,
+           metrics->proposer_loss);
+
+    free(action_inputs);
+    free(rule_inputs);
+    return action_done == action_updates && rule_done == rule_updates;
+}
+
 static int select_expanded_rules_closed_loop(ExpandedRuleSet *rules,
                                              const RuleSearchConfig *config,
                                              const RuleSearchGrammar *grammar,
@@ -1579,6 +2720,8 @@ static int select_expanded_rules_closed_loop(ExpandedRuleSet *rules,
     }
     metrics->proposer_loss = policy.loss;
     metrics->residual_train_samples = policy.sample_count;
+    metrics->parameters = nn_parameter_count(policy.net);
+    metrics->forward_flops = nn_forward_flop_count(policy.net);
 
     nn_real *scores = calloc(rules->count, sizeof(*scores));
     size_t *accepted_indices = calloc(config->max_rules, sizeof(*accepted_indices));
@@ -1628,6 +2771,154 @@ static int select_expanded_rules_closed_loop(ExpandedRuleSet *rules,
     free(scores);
     free(accepted_indices);
     nn_closed_loop_rule_policy_free(&policy);
+    nn_rule_coverage_free(&coverage);
+    return 1;
+}
+
+static int select_expanded_rules_unified(ExpandedRuleSet *rules,
+                                         const RuleSearchConfig *config,
+                                         const RuleSearchGrammar *grammar,
+                                         const GapDataset *dataset,
+                                         size_t max_states,
+                                         ExpandedRuleSet *accepted,
+                                         RuleSearchMetrics *metrics)
+{
+    memset(accepted, 0, sizeof(*accepted));
+    accepted->items = calloc(config->max_rules, sizeof(*accepted->items));
+    if (accepted->items == NULL) {
+        return 0;
+    }
+
+    summarize_expanded_rule_candidates(rules, metrics);
+
+    NNRuleCoverage coverage;
+    size_t samples = 0;
+    if (!build_rule_coverage(config, grammar, rules, dataset, max_states, &coverage, &samples)) {
+        return 0;
+    }
+
+    PrimeClosedLoopContext context;
+    context.rules = rules;
+    context.config = config;
+    context.max_modulus = max_rule_search_modulus(config);
+
+    size_t eligible_count = 0;
+    for (size_t i = 0; i < rules->count; ++i) {
+        if (prime_closed_loop_candidate_allowed(i, NULL, 0, &context)) {
+            ++eligible_count;
+        }
+    }
+    metrics->softmax_group_size =
+        eligible_count < (size_t)RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP
+            ? eligible_count
+            : (size_t)RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP;
+
+    NNFeatureSchema feature_schema[UNIFIED_SCORER_FEATURE_COUNT];
+    char feature_names[UNIFIED_SCORER_FEATURE_COUNT][64];
+    prime_unified_feature_schema(feature_schema, feature_names);
+
+    NNClosedLoopRulePolicyConfig policy_config;
+    nn_closed_loop_rule_policy_config_defaults(&policy_config,
+                                               (size_t)UNIFIED_SCORER_FEATURE_COUNT);
+    policy_config.max_rules = config->max_rules;
+    policy_config.max_train_rules_per_step = (size_t)RULE_DISCOVERY_MAX_TRAIN_RULES_PER_STEP;
+    policy_config.epochs = (size_t)RULE_SEARCH_SCORER_EPOCHS;
+    policy_config.hidden1 = rule_search_effective_unified_hidden1(config);
+    policy_config.hidden2 = rule_search_effective_unified_hidden2(config);
+    policy_config.seed = config->proposer_seed ^ 520637u;
+    policy_config.verbose = 1;
+    policy_config.feature_schema = feature_schema;
+    policy_config.feature_schema_count = (size_t)UNIFIED_SCORER_FEATURE_COUNT;
+    policy_config.leakage_policy = NN_LEAKAGE_GATE_ALLOWED;
+
+    UnifiedRuleTrajectory trajectory;
+    if (!unified_build_rule_trajectory(&coverage,
+                                       config,
+                                       &context,
+                                       eligible_count,
+                                       &trajectory)) {
+        nn_rule_coverage_free(&coverage);
+        return 0;
+    }
+
+    NeuralNet *net = unified_create_shared_scorer(config);
+    if (net == NULL) {
+        unified_rule_trajectory_free(&trajectory);
+        nn_rule_coverage_free(&coverage);
+        return 0;
+    }
+    if (!unified_train_shared_action_rule_scorer(net,
+                                                 dataset,
+                                                 config,
+                                                 &coverage,
+                                                 &context,
+                                                 &trajectory,
+                                                 metrics)) {
+        nn_free(net);
+        unified_rule_trajectory_free(&trajectory);
+        nn_rule_coverage_free(&coverage);
+        return 0;
+    }
+    metrics->parameters = nn_parameter_count(net);
+    metrics->forward_flops = nn_forward_flop_count(net);
+
+    NNClosedLoopRulePolicy policy;
+    nn_closed_loop_rule_policy_clear(&policy);
+    policy.net = net;
+    policy.loss = metrics->proposer_loss;
+    policy.sample_count = metrics->residual_train_samples;
+
+    nn_real *scores = calloc(rules->count, sizeof(*scores));
+    size_t *accepted_indices = calloc(config->max_rules, sizeof(*accepted_indices));
+    size_t accepted_count = 0;
+    size_t proposal_calls = 0;
+    if (scores == NULL || accepted_indices == NULL) {
+        free(scores);
+        free(accepted_indices);
+        nn_free(net);
+        unified_rule_trajectory_free(&trajectory);
+        nn_rule_coverage_free(&coverage);
+        return 0;
+    }
+
+    int ok = nn_closed_loop_rule_policy_select(&coverage,
+                                               &policy_config,
+                                               prime_unified_encode_features,
+                                               prime_closed_loop_candidate_allowed,
+                                               prime_closed_loop_keep_accepted,
+                                               &context,
+                                               &policy,
+                                               scores,
+                                               accepted_indices,
+                                               config->max_rules,
+                                               &accepted_count,
+                                               &proposal_calls);
+    if (!ok) {
+        free(scores);
+        free(accepted_indices);
+        nn_free(net);
+        unified_rule_trajectory_free(&trajectory);
+        nn_rule_coverage_free(&coverage);
+        return 0;
+    }
+    metrics->proposer_calls = proposal_calls;
+    for (size_t i = 0; i < rules->count; ++i) {
+        rules->items[i].model_score = scores[i];
+    }
+    for (size_t i = 0; i < accepted_count; ++i) {
+        size_t rule_index = accepted_indices[i];
+        if (rule_index < rules->count && accepted->count < config->max_rules) {
+            rules->items[rule_index].accepted = 1;
+            accepted->items[accepted->count++] = rules->items[rule_index];
+        }
+    }
+
+    mark_expanded_rule_acceptance(rules, accepted, metrics);
+
+    free(scores);
+    free(accepted_indices);
+    nn_free(net);
+    unified_rule_trajectory_free(&trajectory);
     nn_rule_coverage_free(&coverage);
     return 1;
 }
@@ -1884,6 +3175,9 @@ static void hash_expanded_rule_set_hex(const ExpandedRuleSet *rules,
     if (config->proposer_mode == RULE_PROPOSER_CLOSED_LOOP) {
         hash = mix_rule_hash_u64(hash, (uint64_t)rule_search_effective_hidden1(config));
         hash = mix_rule_hash_u64(hash, (uint64_t)rule_search_effective_hidden2(config));
+    } else if (config->proposer_mode == RULE_PROPOSER_UNIFIED) {
+        hash = mix_rule_hash_u64(hash, (uint64_t)rule_search_effective_unified_hidden1(config));
+        hash = mix_rule_hash_u64(hash, (uint64_t)rule_search_effective_unified_hidden2(config));
     }
     hash = mix_rule_hash_u64(hash, (uint64_t)metrics->accepted_rules);
     for (size_t i = 0; i < config->mod_count; ++i) {
@@ -2160,6 +3454,10 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
     rule_search_closed_loop_hidden_json(config,
                                         closed_loop_hidden_json,
                                         sizeof(closed_loop_hidden_json));
+    char unified_hidden_json[64];
+    rule_search_unified_hidden_json(config,
+                                    unified_hidden_json,
+                                    sizeof(unified_hidden_json));
 
     printf("{\"schema\":\"crlp.rule_search.summary.v1\",\"task\":\"prime_gap\","
            "\"grammar_version\":%u,\"rule_set_hash\":\"%s\","
@@ -2169,7 +3467,7 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            "\"max_rules\":%zu,\"max_marginal_states\":%zu,"
            "\"softmax_group_size\":%zu,"
            "\"closed_loop_hidden\":%s,"
-           "\"unified_scorer_hidden\":null,"
+           "\"unified_scorer_hidden\":%s,"
            "\"selection_strategy\":\"%s\","
            "\"selection_seed\":%llu,"
            "\"proposed_rules\":%zu,\"proposer_calls\":%zu,"
@@ -2185,6 +3483,13 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            "\"validation_marginal_samples\":%zu,"
            "\"train_marginal_events\":%zu,"
            "\"validation_marginal_events\":%zu,"
+           "\"coverage_cache_hits\":%zu,"
+           "\"coverage_cache_misses\":%zu,"
+           "\"coverage_cache_writes\":%zu,"
+           "\"parameters\":%zu,"
+           "\"forward_flops\":%zu,"
+           "\"unified_action_updates\":%zu,"
+           "\"unified_rule_updates\":%zu,"
            "\"proposer_loss\":%.8f,"
            "\"direct_exact\":%.8f,\"hand_wheel_exact\":%.8f,"
            "\"expanded_exact\":%.8f,\"expanded_mod\":%.8f,"
@@ -2201,6 +3506,7 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            config->max_marginal_states,
            metrics->softmax_group_size,
            closed_loop_hidden_json,
+           unified_hidden_json,
            rule_proposer_mode_name(config->proposer_mode),
            (unsigned long long)config->proposer_seed,
            metrics->proposed_rules,
@@ -2221,6 +3527,13 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            metrics->validation_marginal_samples,
            metrics->train_marginal_events,
            metrics->validation_marginal_events,
+           metrics->coverage_cache_hits,
+           metrics->coverage_cache_misses,
+           metrics->coverage_cache_writes,
+           metrics->parameters,
+           metrics->forward_flops,
+           metrics->unified_action_updates,
+           metrics->unified_rule_updates,
            metrics->proposer_loss,
            metrics->direct_exact_tests,
            metrics->hand_wheel_exact_tests,
@@ -2265,18 +3578,37 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
            metrics->accepted_conditional_rules,
            metrics->accepted_gap_rules,
            metrics->accepted_candidate_rules);
-    if (config->proposer_mode == RULE_PROPOSER_NEURAL ||
-        config->proposer_mode == RULE_PROPOSER_CLOSED_LOOP) {
+    if (config->proposer_mode == RULE_PROPOSER_UNIFIED) {
+        printf("  unified_transfer feature_set=%s hidden=%zux%zu parameters=%zu "
+               "forward_flops=%zu action_updates=%zu rule_updates=%zu "
+               "rule_ce=%.6f residual_rows=%zu\n",
+               rule_proposer_feature_set_name(config->proposer_mode),
+               rule_search_effective_unified_hidden1(config),
+               rule_search_effective_unified_hidden2(config),
+               metrics->parameters,
+               metrics->forward_flops,
+               metrics->unified_action_updates,
+               metrics->unified_rule_updates,
+               metrics->proposer_loss,
+               metrics->residual_train_samples);
+    } else if (config->proposer_mode == RULE_PROPOSER_NEURAL ||
+               config->proposer_mode == RULE_PROPOSER_CLOSED_LOOP) {
         printf("  neural_rule_scorer_epochs=%u feature_set=%s hidden=%zux%zu "
-               "final_mse=%.6f residual_samples=%zu\n",
+               "parameters=%zu forward_flops=%zu final_mse=%.6f residual_samples=%zu\n",
                (uint32_t)RULE_SEARCH_SCORER_EPOCHS,
                rule_proposer_feature_set_name(config->proposer_mode),
                config->proposer_mode == RULE_PROPOSER_CLOSED_LOOP
                    ? rule_search_effective_hidden1(config)
-                   : 20u,
+                   : (config->proposer_mode == RULE_PROPOSER_UNIFIED
+                          ? rule_search_effective_unified_hidden1(config)
+                          : 20u),
                config->proposer_mode == RULE_PROPOSER_CLOSED_LOOP
                    ? rule_search_effective_hidden2(config)
-                   : 10u,
+                   : (config->proposer_mode == RULE_PROPOSER_UNIFIED
+                          ? rule_search_effective_unified_hidden2(config)
+                          : 10u),
+               metrics->parameters,
+               metrics->forward_flops,
                metrics->proposer_loss,
                metrics->residual_train_samples);
     } else {
@@ -2311,6 +3643,8 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
 
 int nn_prime_rule_search_main(int argc, char **argv)
 {
+    memset(&RULE_COVERAGE_CACHE_STATS, 0, sizeof(RULE_COVERAGE_CACHE_STATS));
+
     RuleSearchConfig config;
     if (!parse_rule_search_config(argc, argv, &config)) {
         print_rule_search_usage(stderr);
@@ -2381,8 +3715,17 @@ int nn_prime_rule_search_main(int argc, char **argv)
                                                    marginal_state_limit,
                                                    &accepted,
                                                    &metrics);
+        } else if (ok && config.proposer_mode == RULE_PROPOSER_UNIFIED) {
+            set_expanded_rule_utilities(&candidates);
+            ok = select_expanded_rules_unified(&candidates,
+                                               &config,
+                                               &grammar,
+                                               &train,
+                                               marginal_state_limit,
+                                               &accepted,
+                                               &metrics);
         } else if (ok) {
-            ok = score_expanded_rules(&candidates, &config, &metrics.proposer_loss) &&
+            ok = score_expanded_rules(&candidates, &config, &metrics) &&
                  select_expanded_rules(&candidates, config.max_rules, &accepted, &metrics);
         }
     }
@@ -2394,6 +3737,9 @@ int nn_prime_rule_search_main(int argc, char **argv)
                                           &test,
                                           config.max_test_states,
                                           metrics);
+        metrics.coverage_cache_hits = RULE_COVERAGE_CACHE_STATS.hits;
+        metrics.coverage_cache_misses = RULE_COVERAGE_CACHE_STATS.misses;
+        metrics.coverage_cache_writes = RULE_COVERAGE_CACHE_STATS.writes;
         if (config.save_path != NULL) {
             ok = save_expanded_rule_checkpoint(&accepted,
                                                &config,
