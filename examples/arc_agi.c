@@ -37,7 +37,7 @@ enum {
     ARC_ACCEPTED_RULES_BYTES = 2048,
     ARC_TRANSFORM_NAME_BYTES = 128,
     ARC_RULE_CANDIDATE_COUNT = 2048,
-    ARC_GRAMMAR_VERSION = 7,
+    ARC_GRAMMAR_VERSION = 8,
     ARC_LEARNED_COMPOSE_TOP = 16,
     ARC_LEARNED_COMPOSE_LIMIT = 256,
     ARC_PROGRAM_PROPOSER_BUDGET = 64,
@@ -49,6 +49,10 @@ enum {
     ARC_OBJECT_CONNECT_HORIZONTAL = 0,
     ARC_OBJECT_CONNECT_VERTICAL = 1,
     ARC_OBJECT_CONNECT_BOTH = 2,
+    ARC_OBJECT_RELATION_TRANSLATE = 1,
+    ARC_OBJECT_RELATION_CONNECT_ALIGNED = 2,
+    ARC_OBJECT_RELATION_FILL_ENCLOSED = 3,
+    ARC_OBJECT_RELATION_KIND_COUNT = 4,
 };
 
 static const size_t ARC_PROGRAM_BUDGET_GRID[ARC_PROGRAM_BUDGET_GRID_COUNT] = {
@@ -89,6 +93,7 @@ typedef enum {
     ARC_RULE_OBJECT_TRANSLATE = 27,
     ARC_RULE_OBJECT_CONNECT_ALIGNED = 28,
     ARC_RULE_OBJECT_FILL_ENCLOSED = 29,
+    ARC_RULE_OBJECT_RELATION_INDUCED = 30,
 } ARCTransformRule;
 
 /* ARC-AGI-1 training task 0520fde7, reduced to balanced output-cell color scoring. */
@@ -200,14 +205,13 @@ static const NNExperimentSpec ARC_AGI_EXPERIMENT_SPEC = {
     .rule_grammar =
         "copy_left, copy_right, mask_intersection, mask_union, object_select_overlap, "
         "color_map, same_grid_color_map, crop, rotate, flip, transpose, scale, bbox, translate, "
-        "connected_component_largest, object_scene_translate, object_scene_connect_aligned, "
-        "object_scene_fill_enclosed, learned_scale_composition",
+        "connected_component_largest, object_relation_induced, learned_scale_composition",
     .certificate_checker =
         "train-pair consistency plus unique grammar-consistent test prediction, reported against compiled test output",
     .gate_executor = "certified transform gate emits exact color candidates when the grammar prediction is unique",
     .proposer_inputs =
         "typed NNProgram transform descriptors encoded by nn_program_encode_features, "
-        "plus ARC train-pair shape/color/object-scene relation descriptors",
+        "plus ARC train-pair shape/color/object-scene selector and parameter descriptors",
     .proposer_targets =
         "train-split exact transform success for learned ranking; held-out exact-cell agreement remains diagnostic",
     .proposer_mode = NN_PROPOSER_SELECTION,
@@ -393,6 +397,8 @@ typedef struct {
     size_t trained_tasks;
     size_t train_updates;
     double family_score[32];
+    double relation_score[ARC_OBJECT_RELATION_KIND_COUNT];
+    double relation_color_score[ARC_OBJECT_RELATION_KIND_COUNT][ARC_COLOR_COUNT][ARC_COLOR_COUNT];
 } ARCProgramLearnedState;
 
 typedef struct {
@@ -601,6 +607,61 @@ static void arc_candidate_from_step(const ARCTransformStep *step, ARCTransformCa
     candidate->scale = step->scale;
 }
 
+static int arc_candidate_is_object_relation(const ARCTransformCandidate *candidate)
+{
+    return candidate != NULL &&
+           (candidate->op == ARC_RULE_OBJECT_RELATION_INDUCED ||
+            candidate->op == ARC_RULE_OBJECT_TRANSLATE ||
+            candidate->op == ARC_RULE_OBJECT_CONNECT_ALIGNED ||
+            candidate->op == ARC_RULE_OBJECT_FILL_ENCLOSED);
+}
+
+static size_t arc_object_relation_kind(const ARCTransformCandidate *candidate)
+{
+    if (candidate == NULL) {
+        return 0;
+    }
+    if (candidate->op == ARC_RULE_OBJECT_RELATION_INDUCED) {
+        return candidate->scale;
+    }
+    if (candidate->op == ARC_RULE_OBJECT_TRANSLATE) {
+        return ARC_OBJECT_RELATION_TRANSLATE;
+    }
+    if (candidate->op == ARC_RULE_OBJECT_CONNECT_ALIGNED) {
+        return ARC_OBJECT_RELATION_CONNECT_ALIGNED;
+    }
+    if (candidate->op == ARC_RULE_OBJECT_FILL_ENCLOSED) {
+        return ARC_OBJECT_RELATION_FILL_ENCLOSED;
+    }
+    return 0;
+}
+
+static const char *arc_object_relation_kind_name(size_t kind)
+{
+    switch (kind) {
+    case ARC_OBJECT_RELATION_TRANSLATE:
+        return "translate";
+    case ARC_OBJECT_RELATION_CONNECT_ALIGNED:
+        return "connect_aligned";
+    case ARC_OBJECT_RELATION_FILL_ENCLOSED:
+        return "fill_enclosed";
+    }
+    return "unknown";
+}
+
+static size_t arc_object_relation_selector_kind(size_t relation_kind)
+{
+    switch (relation_kind) {
+    case ARC_OBJECT_RELATION_TRANSLATE:
+        return 1;
+    case ARC_OBJECT_RELATION_CONNECT_ALIGNED:
+        return 2;
+    case ARC_OBJECT_RELATION_FILL_ENCLOSED:
+        return 3;
+    }
+    return 0;
+}
+
 static int arc_rule_can_end_composition(ARCTransformRule op)
 {
     switch (op) {
@@ -627,6 +688,7 @@ static int arc_rule_can_end_composition(ARCTransformRule op)
     case ARC_RULE_OBJECT_TRANSLATE:
     case ARC_RULE_OBJECT_CONNECT_ALIGNED:
     case ARC_RULE_OBJECT_FILL_ENCLOSED:
+    case ARC_RULE_OBJECT_RELATION_INDUCED:
         return 1;
     case ARC_RULE_COPY_LEFT:
     case ARC_RULE_COPY_RIGHT:
@@ -1017,6 +1079,77 @@ static int arc_build_object_fill_enclosed_candidate(const ARCTask *task,
     return changed_any;
 }
 
+static int arc_build_object_relation_candidate(const ARCTask *task,
+                                               size_t relation_kind,
+                                               uint8_t background,
+                                               uint8_t input_color,
+                                               uint8_t output_color,
+                                               int mode,
+                                               ARCTransformCandidate *candidate)
+{
+    ARCTransformCandidate induced;
+    memset(&induced, 0, sizeof(induced));
+
+    switch (relation_kind) {
+    case ARC_OBJECT_RELATION_TRANSLATE:
+        if (!arc_build_object_translation_candidate(task,
+                                                    background,
+                                                    input_color,
+                                                    &induced)) {
+            return 0;
+        }
+        snprintf(induced.name,
+                 sizeof(induced.name),
+                 "object_relation_%s_color_%u_%+d_%+d",
+                 arc_object_relation_kind_name(relation_kind),
+                 (unsigned)induced.input_color,
+                 induced.dx,
+                 induced.dy);
+        break;
+    case ARC_OBJECT_RELATION_CONNECT_ALIGNED: {
+        if (!arc_build_object_connect_candidate(task,
+                                                background,
+                                                input_color,
+                                                mode,
+                                                &induced)) {
+            return 0;
+        }
+        const char *mode_name =
+            mode == ARC_OBJECT_CONNECT_HORIZONTAL
+                ? "horizontal"
+                : mode == ARC_OBJECT_CONNECT_VERTICAL ? "vertical" : "both";
+        snprintf(induced.name,
+                 sizeof(induced.name),
+                 "object_relation_%s_color_%u_%s",
+                 arc_object_relation_kind_name(relation_kind),
+                 (unsigned)induced.input_color,
+                 mode_name);
+        break;
+    }
+    case ARC_OBJECT_RELATION_FILL_ENCLOSED:
+        if (!arc_build_object_fill_enclosed_candidate(task,
+                                                      input_color,
+                                                      output_color,
+                                                      &induced)) {
+            return 0;
+        }
+        snprintf(induced.name,
+                 sizeof(induced.name),
+                 "object_relation_%s_%u_to_%u",
+                 arc_object_relation_kind_name(relation_kind),
+                 (unsigned)induced.input_color,
+                 (unsigned)induced.output_color);
+        break;
+    default:
+        return 0;
+    }
+
+    induced.op = ARC_RULE_OBJECT_RELATION_INDUCED;
+    induced.scale = relation_kind;
+    *candidate = induced;
+    return 1;
+}
+
 static size_t arc_build_candidates(const ARCTask *task,
                                    ARCTransformCandidate *candidates,
                                    size_t capacity)
@@ -1173,18 +1306,36 @@ static size_t arc_build_candidates(const ARCTask *task,
     }
 
     for (uint8_t color = 1; color < ARC_COLOR_COUNT; ++color) {
-        if (arc_build_object_translation_candidate(task, 0, color, &candidate)) {
+        if (arc_build_object_relation_candidate(task,
+                                                ARC_OBJECT_RELATION_TRANSLATE,
+                                                0,
+                                                color,
+                                                color,
+                                                0,
+                                                &candidate)) {
             arc_add_candidate(candidates, capacity, &count, &candidate);
         }
         for (int mode = ARC_OBJECT_CONNECT_HORIZONTAL;
              mode <= ARC_OBJECT_CONNECT_BOTH;
              ++mode) {
-            if (arc_build_object_connect_candidate(task, 0, color, mode, &candidate)) {
+            if (arc_build_object_relation_candidate(task,
+                                                    ARC_OBJECT_RELATION_CONNECT_ALIGNED,
+                                                    0,
+                                                    color,
+                                                    color,
+                                                    mode,
+                                                    &candidate)) {
                 arc_add_candidate(candidates, capacity, &count, &candidate);
             }
         }
         for (uint8_t fill_color = 1; fill_color < ARC_COLOR_COUNT; ++fill_color) {
-            if (arc_build_object_fill_enclosed_candidate(task, color, fill_color, &candidate)) {
+            if (arc_build_object_relation_candidate(task,
+                                                    ARC_OBJECT_RELATION_FILL_ENCLOSED,
+                                                    0,
+                                                    color,
+                                                    fill_color,
+                                                    0,
+                                                    &candidate)) {
                 arc_add_candidate(candidates, capacity, &count, &candidate);
             }
         }
@@ -2068,6 +2219,17 @@ static int arc_apply_candidate(const ARCTransformCandidate *candidate,
         return arc_apply_object_connect_candidate(candidate, input, output);
     case ARC_RULE_OBJECT_FILL_ENCLOSED:
         return arc_apply_object_fill_enclosed_candidate(candidate, input, output);
+    case ARC_RULE_OBJECT_RELATION_INDUCED:
+        switch (arc_object_relation_kind(candidate)) {
+        case ARC_OBJECT_RELATION_TRANSLATE:
+            return arc_apply_object_translate_candidate(candidate, input, output);
+        case ARC_OBJECT_RELATION_CONNECT_ALIGNED:
+            return arc_apply_object_connect_candidate(candidate, input, output);
+        case ARC_OBJECT_RELATION_FILL_ENCLOSED:
+            return arc_apply_object_fill_enclosed_candidate(candidate, input, output);
+        default:
+            return 0;
+        }
     case ARC_RULE_ROTATE90:
         if (input->height > ARC_MAX_GRID_WIDTH || input->width > ARC_MAX_GRID_HEIGHT) {
             return 0;
@@ -2322,7 +2484,8 @@ static int arc_candidate_is_object_program(const ARCTransformCandidate *candidat
            candidate->op == ARC_RULE_OBJECT_MASK_LARGEST ||
            candidate->op == ARC_RULE_OBJECT_TRANSLATE ||
            candidate->op == ARC_RULE_OBJECT_CONNECT_ALIGNED ||
-           candidate->op == ARC_RULE_OBJECT_FILL_ENCLOSED;
+           candidate->op == ARC_RULE_OBJECT_FILL_ENCLOSED ||
+           candidate->op == ARC_RULE_OBJECT_RELATION_INDUCED;
 }
 
 static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
@@ -2355,6 +2518,8 @@ static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
         return 13;
     case ARC_RULE_OBJECT_FILL_ENCLOSED:
         return 14;
+    case ARC_RULE_OBJECT_RELATION_INDUCED:
+        return 12;
     case ARC_RULE_COPY_LEFT:
     case ARC_RULE_COPY_RIGHT:
     case ARC_RULE_INTERSECTION:
@@ -2411,6 +2576,17 @@ static double arc_structural_program_score(const ARCTransformCandidate *candidat
         return 99.0 - (double)candidate->dx;
     case ARC_RULE_OBJECT_FILL_ENCLOSED:
         return 97.0;
+    case ARC_RULE_OBJECT_RELATION_INDUCED:
+        switch (arc_object_relation_kind(candidate)) {
+        case ARC_OBJECT_RELATION_TRANSLATE:
+            return 98.0 - (double)(abs(candidate->dx) + abs(candidate->dy));
+        case ARC_OBJECT_RELATION_CONNECT_ALIGNED:
+            return 99.0 - (double)candidate->dx;
+        case ARC_OBJECT_RELATION_FILL_ENCLOSED:
+            return 97.0;
+        default:
+            return 90.0;
+        }
     case ARC_RULE_CROP_BACKGROUND_RECOLOR:
     case ARC_RULE_CROP_COLOR_MASK:
         return 84.0;
@@ -2464,6 +2640,67 @@ static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
                              "second_family",
                              (double)arc_candidate_family(&second_candidate),
                              (int64_t)arc_candidate_family(&second_candidate));
+    } else if (candidate->op == ARC_RULE_OBJECT_RELATION_INDUCED) {
+        NNProgram scene;
+        NNProgram relation;
+        size_t relation_kind = arc_object_relation_kind(candidate);
+        int relation_mode = relation_kind == ARC_OBJECT_RELATION_CONNECT_ALIGNED
+                                ? candidate->dx
+                                : 0;
+        nn_program_init(&scene,
+                        "arc_agi",
+                        "object_scene",
+                        NN_PROGRAM_KIND_TRANSFORM,
+                        NN_PROGRAM_VALUE_GRID,
+                        NN_PROGRAM_VALUE_OBJECT_SET,
+                        110);
+        nn_program_add_param(&scene,
+                             "background",
+                             (double)candidate->background_color,
+                             candidate->background_color);
+        nn_program_init(&relation,
+                        "arc_agi",
+                        "object_relation_induced",
+                        NN_PROGRAM_KIND_TRANSFORM,
+                        NN_PROGRAM_VALUE_OBJECT_SET,
+                        NN_PROGRAM_VALUE_GRID,
+                        116);
+        nn_program_add_param(&relation,
+                             "relation_kind",
+                             (double)relation_kind,
+                             (int64_t)relation_kind);
+        nn_program_add_param(&relation,
+                             "selector_kind",
+                             (double)arc_object_relation_selector_kind(relation_kind),
+                             (int64_t)arc_object_relation_selector_kind(relation_kind));
+        nn_program_add_param(&relation,
+                             "input_color",
+                             (double)candidate->input_color,
+                             candidate->input_color);
+        nn_program_add_param(&relation,
+                             "output_color",
+                             (double)candidate->output_color,
+                             candidate->output_color);
+        nn_program_add_param(&relation,
+                             "background",
+                             (double)candidate->background_color,
+                             candidate->background_color);
+        nn_program_add_param(&relation, "dx", (double)candidate->dx, candidate->dx);
+        nn_program_add_param(&relation, "dy", (double)candidate->dy, candidate->dy);
+        nn_program_add_param(&relation, "mode", (double)relation_mode, relation_mode);
+        nn_program_add_feature(&relation, (nn_real)((double)relation_kind / 4.0));
+        nn_program_add_feature(&relation,
+                               (nn_real)((double)arc_object_relation_selector_kind(relation_kind) /
+                                         4.0));
+        nn_program_add_feature(&relation, (nn_real)((double)candidate->input_color / 9.0));
+        nn_program_add_feature(&relation, (nn_real)((double)candidate->output_color / 9.0));
+        nn_program_add_feature(&relation,
+                               (nn_real)((double)candidate->dx / (double)ARC_MAX_GRID_WIDTH));
+        nn_program_add_feature(&relation,
+                               (nn_real)((double)candidate->dy / (double)ARC_MAX_GRID_HEIGHT));
+        if (!nn_program_compose(program, &scene, &relation, candidate->name)) {
+            return 0;
+        }
     } else if (candidate->op == ARC_RULE_OBJECT_TRANSLATE) {
         NNProgram scene;
         NNProgram selector;
@@ -2674,6 +2911,12 @@ static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
     nn_program_add_feature(program, (nn_real)((double)(abs(candidate->dx) + abs(candidate->dy)) / 8.0));
     nn_program_add_feature(program, (nn_real)((double)candidate->scale / 4.0));
     nn_program_add_feature(program, (nn_real)(candidate->input_color == candidate->output_color ? 1.0 : 0.0));
+    nn_program_add_feature(program, (nn_real)((double)candidate->input_color / 9.0));
+    nn_program_add_feature(program,
+                           (nn_real)((double)candidate->dx / (double)ARC_MAX_GRID_WIDTH));
+    nn_program_add_feature(program,
+                           (nn_real)((double)candidate->dy / (double)ARC_MAX_GRID_HEIGHT));
+    nn_program_add_feature(program, (nn_real)(arc_candidate_is_object_relation(candidate) ? 1.0 : 0.0));
     nn_program_refresh_canonical_id(program);
     return 1;
 }
@@ -2838,12 +3081,30 @@ static double arc_learned_family_score(const ARCProgramLearnedState *state,
     return state->family_score[family];
 }
 
+static double arc_learned_relation_score(const ARCProgramLearnedState *state,
+                                         const ARCTransformCandidate *candidate)
+{
+    size_t relation_kind = arc_object_relation_kind(candidate);
+    if (state == NULL ||
+        relation_kind == 0 ||
+        relation_kind >= ARC_OBJECT_RELATION_KIND_COUNT ||
+        candidate->input_color >= ARC_COLOR_COUNT ||
+        candidate->output_color >= ARC_COLOR_COUNT) {
+        return 0.0;
+    }
+    return state->relation_score[relation_kind] +
+           0.5 * state->relation_color_score[relation_kind]
+                                              [candidate->input_color]
+                                              [candidate->output_color];
+}
+
 static double arc_learned_program_score(ARCProgramLearnedState *state,
                                         const ARCTransformCandidate *candidate,
                                         const ARCProgramTaskFeatures *task_features)
 {
     if (state == NULL || state->net == NULL || state->trained_tasks == 0) {
-        return arc_learned_family_score(state, candidate);
+        return arc_learned_family_score(state, candidate) +
+               arc_learned_relation_score(state, candidate);
     }
     if (arc_candidate_is_composed(candidate)) {
         ARCTransformCandidate first;
@@ -2860,10 +3121,12 @@ static double arc_learned_program_score(ARCProgramLearnedState *state,
                                      task_features,
                                      features,
                                      ARC_PROGRAM_FEATURE_COUNT)) {
-        return arc_learned_family_score(state, candidate);
+        return arc_learned_family_score(state, candidate) +
+               arc_learned_relation_score(state, candidate);
     }
     nn_forward(state->net, features, output);
-    return (double)output[0];
+    return (double)output[0] +
+           arc_learned_relation_score(state, candidate);
 }
 
 static int arc_program_eval_is_exact_success(const ARCProgramEval *eval)
@@ -3220,17 +3483,25 @@ static void arc_program_aggregate_task(ARCProgramProposerAggregate *aggregate,
     }
 }
 
-static void arc_program_learned_observe(ARCProgramLearnedState *state,
-                                        const ARCTask *task,
-                                        const ARCTransformCandidate *candidates,
-                                        const ARCProgramEval *evals,
-                                        size_t candidate_count,
-                                        nn_real learning_rate)
+static int arc_program_learned_observe(ARCProgramLearnedState *state,
+                                       const ARCTask *task,
+                                       const ARCTransformCandidate *candidates,
+                                       const ARCProgramEval *evals,
+                                       size_t candidate_count,
+                                       nn_real learning_rate)
 {
     size_t family_seen[32];
     size_t family_success[32];
+    size_t relation_seen[ARC_OBJECT_RELATION_KIND_COUNT];
+    size_t relation_success[ARC_OBJECT_RELATION_KIND_COUNT];
+    size_t relation_color_seen[ARC_OBJECT_RELATION_KIND_COUNT][ARC_COLOR_COUNT][ARC_COLOR_COUNT];
+    size_t relation_color_success[ARC_OBJECT_RELATION_KIND_COUNT][ARC_COLOR_COUNT][ARC_COLOR_COUNT];
     memset(family_seen, 0, sizeof(family_seen));
     memset(family_success, 0, sizeof(family_success));
+    memset(relation_seen, 0, sizeof(relation_seen));
+    memset(relation_success, 0, sizeof(relation_success));
+    memset(relation_color_seen, 0, sizeof(relation_color_seen));
+    memset(relation_color_success, 0, sizeof(relation_color_success));
     for (size_t i = 0; i < candidate_count; ++i) {
         if (arc_candidate_is_composed(&candidates[i])) {
             continue;
@@ -3243,6 +3514,20 @@ static void arc_program_learned_observe(ARCProgramLearnedState *state,
         if (evals[i].train_consistent) {
             ++family_success[family];
         }
+        size_t relation_kind = arc_object_relation_kind(&candidates[i]);
+        if (relation_kind != 0 &&
+            relation_kind < ARC_OBJECT_RELATION_KIND_COUNT &&
+            candidates[i].input_color < ARC_COLOR_COUNT &&
+            candidates[i].output_color < ARC_COLOR_COUNT) {
+            uint8_t input_color = candidates[i].input_color;
+            uint8_t output_color = candidates[i].output_color;
+            ++relation_seen[relation_kind];
+            ++relation_color_seen[relation_kind][input_color][output_color];
+            if (evals[i].train_consistent) {
+                ++relation_success[relation_kind];
+                ++relation_color_success[relation_kind][input_color][output_color];
+            }
+        }
     }
     for (size_t family = 0; family < sizeof(family_seen) / sizeof(family_seen[0]); ++family) {
         if (family_seen[family] == 0) {
@@ -3251,12 +3536,33 @@ static void arc_program_learned_observe(ARCProgramLearnedState *state,
         double observation = (double)family_success[family] / (double)family_seen[family];
         state->family_score[family] = 0.85 * state->family_score[family] + 0.15 * observation;
     }
-    arc_program_learned_train_task(state,
-                                   task,
-                                   candidates,
-                                   evals,
-                                   candidate_count,
-                                   learning_rate);
+    for (size_t relation_kind = 1; relation_kind < ARC_OBJECT_RELATION_KIND_COUNT; ++relation_kind) {
+        if (relation_seen[relation_kind] != 0) {
+            double observation =
+                (double)relation_success[relation_kind] / (double)relation_seen[relation_kind];
+            state->relation_score[relation_kind] =
+                0.85 * state->relation_score[relation_kind] + 0.15 * observation;
+        }
+        for (uint8_t input_color = 0; input_color < ARC_COLOR_COUNT; ++input_color) {
+            for (uint8_t output_color = 0; output_color < ARC_COLOR_COUNT; ++output_color) {
+                if (relation_color_seen[relation_kind][input_color][output_color] == 0) {
+                    continue;
+                }
+                double observation =
+                    (double)relation_color_success[relation_kind][input_color][output_color] /
+                    (double)relation_color_seen[relation_kind][input_color][output_color];
+                state->relation_color_score[relation_kind][input_color][output_color] =
+                    0.85 * state->relation_color_score[relation_kind][input_color][output_color] +
+                    0.15 * observation;
+            }
+        }
+    }
+    return arc_program_learned_train_task(state,
+                                          task,
+                                          candidates,
+                                          evals,
+                                          candidate_count,
+                                          learning_rate);
 }
 
 static void arc_program_print_aggregate(const ARCProgramProposerAggregate *aggregate)
@@ -4202,12 +4508,12 @@ static int arc_pretrain_program_proposer(ARCProgramLearnedState *learned_state,
                                                       candidates,
                                                       ARC_RULE_CANDIDATE_COUNT);
         arc_evaluate_program_candidates(&task, candidates, candidate_count, evals);
-        if (!arc_program_learned_train_task(learned_state,
-                                            &task,
-                                            candidates,
-                                            evals,
-                                            candidate_count,
-                                            learning_rate)) {
+        if (!arc_program_learned_observe(learned_state,
+                                         &task,
+                                         candidates,
+                                         evals,
+                                         candidate_count,
+                                         learning_rate)) {
             free(files);
             return 0;
         }
@@ -4469,21 +4775,25 @@ static int run_arc_task_loader(const ARCConfig *config)
                                             learn_candidates,
                                             learn_candidate_count,
                                             learn_evals);
-            arc_program_learned_observe(&learned_state,
-                                        &task,
-                                        learn_candidates,
-                                        learn_evals,
-                                        learn_candidate_count,
-                                        config->program_learning_rate);
+            if (!arc_program_learned_observe(&learned_state,
+                                             &task,
+                                             learn_candidates,
+                                             learn_evals,
+                                             learn_candidate_count,
+                                             config->program_learning_rate)) {
+                arc_program_learned_free(&learned_state);
+                free(files);
+                return 0;
+            }
         }
         if (!config->loader_summary_only) {
             print_arc_transform_json(task.id, &transform);
             if (transform.certified) {
                 ARCMetrics transform_metrics = arc_transform_to_metrics(&task, &transform);
                 print_arc_metrics_json(task.id,
-                                       "symbolic-transform-v7",
+                                       "symbolic-transform-v8",
                                        "certified_transform_gate",
-                                       "arc-transform-gate-v7",
+                                       "arc-transform-gate-v8",
                                        &transform_metrics);
             }
         }
@@ -4636,11 +4946,11 @@ int main(int argc, char **argv)
     print_arc_transform_json("0520fde7", &transform);
     ARCMetrics transform_metrics = arc_transform_to_metrics(&builtin_task, &transform);
     print_arc_metrics_json("0520fde7",
-                           "symbolic-transform-v7",
+                           "symbolic-transform-v8",
                            "certified_transform_gate",
-                           "arc-transform-gate-v7",
+                           "arc-transform-gate-v8",
                            &transform_metrics);
-    print_arc_metrics_line("symbolic-transform-v7",
+    print_arc_metrics_line("symbolic-transform-v8",
                            "certified_transform_gate",
                            &transform_metrics);
     arc_emit_builtin_program_summaries(&builtin_task, &config);
