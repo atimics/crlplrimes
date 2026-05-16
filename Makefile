@@ -13,7 +13,7 @@ LDFLAGS ?=
 LDLIBS ?= -lm
 
 BUILD_DIR := build/$(REAL)
-NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h
+NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h include/nn_program.h
 PRIME_GAP_TASK_HEADERS := include/nn_tasks_prime_gap.h src/prime_gap/internal.h
 PRIME_GAP_MODULE_SOURCES := $(wildcard src/prime_gap/*.c)
 PRIME_GAP_TASK_SOURCES := src/nn_tasks_prime_gap.c $(PRIME_GAP_MODULE_SOURCES)
@@ -21,15 +21,18 @@ PRIME_GAP_TASK_OBJS := $(patsubst src/prime_gap/%.c,$(BUILD_DIR)/obj/prime_gap/%
 NN_OBJ := $(BUILD_DIR)/nn.o
 NN_EXPERIMENT_OBJ := $(BUILD_DIR)/nn_experiment.o
 NN_SYMBOLIC_OBJ := $(BUILD_DIR)/nn_symbolic.o
+NN_PROGRAM_OBJ := $(BUILD_DIR)/nn_program.o
 NN_TEST_OBJ := $(BUILD_DIR)/nn_test.o
 NN_EXPERIMENT_TEST_OBJ := $(BUILD_DIR)/nn_experiment_test.o
 NN_SYMBOLIC_TEST_OBJ := $(BUILD_DIR)/nn_symbolic_test.o
+NN_PROGRAM_TEST_OBJ := $(BUILD_DIR)/nn_program_test.o
 NN_SANITIZE_OBJ := $(BUILD_DIR)/nn_sanitize.o
 NN_EXPERIMENT_SANITIZE_OBJ := $(BUILD_DIR)/nn_experiment_sanitize.o
 NN_SYMBOLIC_SANITIZE_OBJ := $(BUILD_DIR)/nn_symbolic_sanitize.o
-NN_OBJS := $(NN_OBJ) $(NN_EXPERIMENT_OBJ) $(NN_SYMBOLIC_OBJ)
-NN_TEST_OBJS := $(NN_TEST_OBJ) $(NN_EXPERIMENT_TEST_OBJ) $(NN_SYMBOLIC_TEST_OBJ)
-NN_SANITIZE_OBJS := $(NN_SANITIZE_OBJ) $(NN_EXPERIMENT_SANITIZE_OBJ) $(NN_SYMBOLIC_SANITIZE_OBJ)
+NN_PROGRAM_SANITIZE_OBJ := $(BUILD_DIR)/nn_program_sanitize.o
+NN_OBJS := $(NN_OBJ) $(NN_EXPERIMENT_OBJ) $(NN_SYMBOLIC_OBJ) $(NN_PROGRAM_OBJ)
+NN_TEST_OBJS := $(NN_TEST_OBJ) $(NN_EXPERIMENT_TEST_OBJ) $(NN_SYMBOLIC_TEST_OBJ) $(NN_PROGRAM_TEST_OBJ)
+NN_SANITIZE_OBJS := $(NN_SANITIZE_OBJ) $(NN_EXPERIMENT_SANITIZE_OBJ) $(NN_SYMBOLIC_SANITIZE_OBJ) $(NN_PROGRAM_SANITIZE_OBJ)
 XOR_EXAMPLE := $(BUILD_DIR)/xor
 ACTION_SCORE_EXAMPLE := $(BUILD_DIR)/action_score
 PRIME_GAP_EXAMPLE := $(BUILD_DIR)/prime_gap
@@ -74,6 +77,9 @@ $(NN_EXPERIMENT_OBJ): src/nn_experiment.c include/nn_experiment.h | $(BUILD_DIR)
 $(NN_SYMBOLIC_OBJ): src/nn_symbolic.c include/nn_symbolic.h include/nn_core.h include/nn_experiment.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_symbolic.c -o $@
 
+$(NN_PROGRAM_OBJ): src/nn_program.c include/nn_program.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_program.c -o $@
+
 $(NN_TEST_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn.c -o $@
 
@@ -83,6 +89,9 @@ $(NN_EXPERIMENT_TEST_OBJ): src/nn_experiment.c include/nn_experiment.h | $(BUILD
 $(NN_SYMBOLIC_TEST_OBJ): src/nn_symbolic.c include/nn_symbolic.h include/nn_core.h include/nn_experiment.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_symbolic.c -o $@
 
+$(NN_PROGRAM_TEST_OBJ): src/nn_program.c include/nn_program.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_program.c -o $@
+
 $(NN_SANITIZE_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn.c -o $@
 
@@ -91,6 +100,9 @@ $(NN_EXPERIMENT_SANITIZE_OBJ): src/nn_experiment.c include/nn_experiment.h | $(B
 
 $(NN_SYMBOLIC_SANITIZE_OBJ): src/nn_symbolic.c include/nn_symbolic.h include/nn_core.h include/nn_experiment.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_symbolic.c -o $@
+
+$(NN_PROGRAM_SANITIZE_OBJ): src/nn_program.c include/nn_program.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_program.c -o $@
 
 $(BUILD_DIR)/obj/prime_gap/%.o: src/prime_gap/%.c $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)

@@ -273,6 +273,116 @@ static int test_symbolic_rule_coverage_and_residual_summary(void)
     return ok;
 }
 
+static int test_program_typed_composition_and_canonical_id(void)
+{
+    NNProgram components;
+    NNProgram largest;
+    NNProgram other_domain_selector;
+    NNProgram composed;
+    NNProgram repeated;
+    NNProgram bad;
+    int64_t connectivity = 0;
+    nn_program_init(&components,
+                    "arc",
+                    "connected_components",
+                    NN_PROGRAM_KIND_TRANSFORM,
+                    NN_PROGRAM_VALUE_GRID,
+                    NN_PROGRAM_VALUE_OBJECT_SET,
+                    11);
+    nn_program_init(&largest,
+                    "arc",
+                    "largest_object",
+                    NN_PROGRAM_KIND_SELECTOR,
+                    NN_PROGRAM_VALUE_OBJECT_SET,
+                    NN_PROGRAM_VALUE_OBJECT,
+                    12);
+    nn_program_init(&other_domain_selector,
+                    "program_synthesis",
+                    "largest_object",
+                    NN_PROGRAM_KIND_SELECTOR,
+                    NN_PROGRAM_VALUE_OBJECT_SET,
+                    NN_PROGRAM_VALUE_OBJECT,
+                    12);
+    nn_program_init(&repeated,
+                    "arc",
+                    "connected_components",
+                    NN_PROGRAM_KIND_TRANSFORM,
+                    NN_PROGRAM_VALUE_GRID,
+                    NN_PROGRAM_VALUE_OBJECT_SET,
+                    11);
+
+    int ok = nn_program_add_param(&components, "connectivity", 4.0, 4);
+    ok = ok && nn_program_add_param(&repeated, "connectivity", 4.0, 4);
+    ok = ok && nn_program_get_param_i64(&components, "connectivity", &connectivity);
+    ok = ok && connectivity == 4;
+    ok = ok && strcmp(components.canonical_id, repeated.canonical_id) == 0;
+    ok = ok && components.canonical_hash == repeated.canonical_hash;
+    ok = ok && nn_program_is_composable(&components, &largest);
+    ok = ok && nn_program_compose(&composed, &components, &largest, "largest_component");
+    ok = ok && composed.input_type == NN_PROGRAM_VALUE_GRID;
+    ok = ok && composed.output_type == NN_PROGRAM_VALUE_OBJECT;
+    ok = ok && composed.child_count == 2;
+    ok = ok && strcmp(composed.child_ids[0], components.canonical_id) == 0;
+    ok = ok && strcmp(composed.child_ids[1], largest.canonical_id) == 0;
+    ok = ok && !nn_program_is_composable(&components, &other_domain_selector);
+    ok = ok && !nn_program_is_composable(&largest, &components);
+    ok = ok && !nn_program_compose(&bad, &largest, &components, "bad_composition");
+    ok = ok && strcmp(nn_program_value_type_name(NN_PROGRAM_VALUE_OBJECT_SET),
+                      "object_set") == 0;
+    ok = ok && strcmp(nn_program_kind_name(NN_PROGRAM_KIND_COMPOSITION),
+                      "composition") == 0;
+    return ok;
+}
+
+static int test_program_coverage_and_proposer_summary_json(void)
+{
+    NNProgramCoverage coverage = {0};
+    uint64_t covered[1] = {0};
+    FILE *fp = tmpfile();
+    char buffer[2048];
+    NNProgramProposerSummary summary = {
+        .domain = "arc",
+        .task = "toy_arc_loader",
+        .strategy = NN_PROGRAM_PROPOSER_LEARNED,
+        .budget = 2,
+        .proposed_programs = 8,
+        .certified_programs = 3,
+        .accepted_programs = 2,
+        .event_count = 5,
+        .covered_events = 3,
+        .false_rejections = 0,
+        .utility = 1.75,
+        .program_set_hash = "abc123",
+    };
+
+    int ok = fp != NULL && nn_program_coverage_init(&coverage, 2, 5);
+    ok = ok && nn_program_coverage_set(&coverage, 0, 0);
+    ok = ok && nn_program_coverage_set(&coverage, 0, 2);
+    ok = ok && nn_program_coverage_set(&coverage, 1, 2);
+    ok = ok && nn_program_coverage_set(&coverage, 1, 3);
+    ok = ok && nn_program_coverage_get(&coverage, 1, 3);
+    ok = ok && nn_program_coverage_gain(&coverage, 0, covered) == 2;
+    ok = ok && nn_program_coverage_add_program_to_residual(&coverage, 0, covered);
+    ok = ok && nn_program_coverage_gain(&coverage, 1, covered) == 1;
+    ok = ok && nn_program_coverage_add_program_to_residual(&coverage, 1, covered);
+    ok = ok && nn_program_coverage_count_covered(covered, coverage.word_count) == 3;
+    if (fp != NULL) {
+        ok = ok && nn_program_write_proposer_summary_json(fp, &summary);
+        fflush(fp);
+        rewind(fp);
+        size_t read = fread(buffer, 1, sizeof(buffer) - 1, fp);
+        buffer[read] = '\0';
+        ok = ok &&
+             strstr(buffer, "\"schema\":\"crlp.program_proposer.summary.v1\"") != NULL &&
+             strstr(buffer, "\"domain\":\"arc\"") != NULL &&
+             strstr(buffer, "\"strategy\":\"learned\"") != NULL &&
+             strstr(buffer, "\"covered_events\":3") != NULL;
+        fclose(fp);
+    }
+    nn_program_coverage_free(&coverage);
+    return ok;
+}
+
 static int toy_residual_encode_features(size_t rule_index,
                                         const size_t *accepted_indices,
                                         size_t accepted_count,
@@ -2460,6 +2570,10 @@ int main(void)
           "symbolic domain audits proposer and scorer feature schemas");
     check(test_symbolic_rule_coverage_and_residual_summary(),
           "symbolic coverage tracks residual events");
+    check(test_program_typed_composition_and_canonical_id(),
+          "program layer composes typed transforms with canonical ids");
+    check(test_program_coverage_and_proposer_summary_json(),
+          "program layer tracks coverage and proposer evidence");
     check(test_closed_loop_policy_uses_generic_residual_coverage(),
           "closed-loop policy trains on generic residual coverage");
     check(test_fixture_checkpoint_load_and_scoring(),

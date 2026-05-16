@@ -13,7 +13,9 @@ The core objects are:
 | `NNRule` | Generic symbolic rule with domain, type, template id, params, structural features, certificate status, and utility counters |
 | `NNCertificate` | Soundness result from the domain checker: unchecked, rejected, or certified |
 | `NNSymbolicDomain` | Domain descriptor plus rule/scorer feature schemas, leakage policy, enumeration, feature encoding, certificate checking, and gate/action execution when the production path implements them |
+| `NNProgram` | Typed program/transform descriptor with input/output types, params, structural features, child program ids, canonical id, certificate, and utility counters |
 | `NNRuleCoverage` | Shared bitset for rule-to-event residual coverage |
+| `NNProgramCoverage` | Shared bitset for program-to-event residual coverage |
 | `NNClosedLoopRulePolicy` | Generic residual-aware neural proposer trained from greedy coverage trajectories |
 
 The separation is intentional:
@@ -29,6 +31,29 @@ Certificate checker                      -> decides whether a rule is sound
 The certificate checker is "sound truth" for this project: it is hand-coded
 outside the neural model, and accepted rules enter the gate only through that
 checker.
+
+## Typed Program Layer
+
+`include/nn_program.h` adds the shared transform/program substrate that sits
+beside `NNRule`. It is deliberately domain-neutral: ARC transforms, program
+synthesis library abstractions, theorem-prover lemmas, and future object-level
+operators can all be represented as typed candidates before a domain-specific
+checker decides whether they are certified.
+
+The core engine features are:
+
+| Feature | API |
+| --- | --- |
+| Typed signatures | `NNProgramValueType` and `nn_program_is_composable()` prevent composing, for example, an `object -> mask` transform into a `grid -> object_set` extractor in the wrong order |
+| Canonical identities | `nn_program_refresh_canonical_id()` derives a stable id and hash from domain, name, kind, signature, params, and child program ids |
+| Program composition | `nn_program_compose()` creates a typed composition row and records both child canonical ids |
+| Program coverage | `NNProgramCoverage` mirrors rule coverage for program-to-event support, residual gain, and accepted-set coverage |
+| Proposer evidence | `nn_program_write_proposer_summary_json()` emits `crlp.program_proposer.summary.v1` rows for random, grammar-order, structural, learned, closed-loop, and oracle program orderings |
+
+This does not make ARC object-relation reasoning automatic. It gives each task
+a first-class place to put learned transform induction or object-relation
+candidates without inventing a new row format, coverage matrix, or evidence
+schema per experiment.
 
 ## Implemented Domains
 

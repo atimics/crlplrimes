@@ -16,7 +16,7 @@ Every first-class task schema publishes the same machine-readable contract with:
 make experiment-schemas
 ```
 
-The schema is `crlp.experiment_schema.v1` and defines the state distribution, candidate enumerator, typed feature provenance, leakage policy, scorer, verifier, rule grammar, certificate checker, proposer inputs, proposer mode, baselines, trace protocol, replay protocol, and verifier-RL protocol. The public C contracts live in `include/nn_experiment.h` for task schemas and `include/nn_symbolic.h` for shared symbolic rule domains.
+The schema is `crlp.experiment_schema.v1` and defines the state distribution, candidate enumerator, typed feature provenance, leakage policy, scorer, verifier, rule grammar, certificate checker, proposer inputs, proposer mode, baselines, trace protocol, replay protocol, and verifier-RL protocol. The public C contracts live in `include/nn_experiment.h` for task schemas, `include/nn_symbolic.h` for shared symbolic rule domains, and `include/nn_program.h` for typed program/transform candidates with canonical ids and coverage evidence.
 The working design note is [docs/experiment-schema.md](docs/experiment-schema.md). The shared-model multitask matrix is documented separately in [docs/multitask-domain.md](docs/multitask-domain.md). The formal symbolic-domain interface is documented in [docs/symbolic-domain-interface.md](docs/symbolic-domain-interface.md).
 
 ## Generalized Experiment Schema
@@ -314,6 +314,7 @@ include/nn_core.h             allocation, inspection, forward pass, softmax, act
 include/nn_train.h            sample training, batch training, action-scorer training, cached policy-gradient with KL/entropy reg
 include/nn_experiment.h       shared experiment-schema contract for verifier-backed action tasks
 include/nn_symbolic.h         shared rule, certificate, symbolic-domain, and closed-loop residual policy API
+include/nn_program.h          shared typed program/transform candidates, canonical ids, coverage, and proposer summary rows
 include/nn_tasks_prime_gap.h  command entry points for the prime-gap task module
 include/nn.h                  compatibility umbrella for existing users
 ```

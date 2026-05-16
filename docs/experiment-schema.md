@@ -41,7 +41,9 @@ make experiment-schemas
 
 The task-schema C API lives in `include/nn_experiment.h`; the implementation is
 `src/nn_experiment.c`. The shared symbolic-domain API lives in
-`include/nn_symbolic.h`; its implementation is `src/nn_symbolic.c`.
+`include/nn_symbolic.h`; its implementation is `src/nn_symbolic.c`. The shared
+typed program/transform API lives in `include/nn_program.h`; its implementation
+is `src/nn_program.c`.
 
 Schema fields describe the intended formal contract. The evidence-status section
 below is the controlling source for which production binaries currently execute
@@ -167,6 +169,34 @@ matrix and the generic closed-loop residual policy for the `closed_loop_neural`
 baseline, emitting `crlp.rule_search.summary.v1` rows compatible with the
 existing result capture path.
 
+## Shared Program/Transform Interface
+
+`NNProgram` is the task-neutral representation for transform induction,
+object-relation operators, library abstractions, and other typed candidates that
+are more naturally expressed as programs than as one-step rejection rules.
+
+```text
+domain grammar emits typed NNProgram rows
+        ↓
+canonical id from signature, params, and child ids
+        ↓
+optional composition under input/output type checks
+        ↓
+certificate checker accepts or rejects the candidate
+        ↓
+NNProgramCoverage records support over tasks, examples, cells, obligations, or
+other domain events
+        ↓
+crlp.program_proposer.summary.v1 records matched-budget proposer comparisons
+```
+
+The program layer does not replace `NNSymbolicDomain`; it gives symbolic
+domains a lower-level object for candidates with typed inputs and outputs. For
+ARC, this is where connected-object extractors, relation predicates, tiling
+operators, and learned transform-family proposals should land before they are
+connected to a production gate. For program synthesis, the same object can
+name reusable DSL abstractions. The certificate checker remains domain-owned.
+
 ## Rule-Search Summary Rows
 
 `prime_rule_search` and case-study rule-discovery binaries emit
@@ -255,6 +285,6 @@ production learned-gate evaluation table is open work.
    heuristic, and oracle ranking on the same gated candidate set.
 8. Report random-normalized and gate-marginal skill in cross-task tables; keep
    raw top-1 in task-specific sections.
-9. Expand the ARC loader beyond hand-coded geometry/recolor rules into
-   object-relation, tiling, and learned transform-family proposer comparisons
+9. Use `NNProgram` for ARC object-relation, tiling, and learned
+   transform-family candidates, then run matched program-proposer comparisons
    before treating ARC as production verifier-gated ARC evidence.
