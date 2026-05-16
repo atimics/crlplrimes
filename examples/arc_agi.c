@@ -34,7 +34,9 @@ enum {
     ARC_MAX_TASK_PATH = 1024,
     ARC_ACCEPTED_RULES_BYTES = 2048,
     ARC_RULE_CANDIDATE_COUNT = 1024,
-    ARC_GRAMMAR_VERSION = 3,
+    ARC_GRAMMAR_VERSION = 4,
+    ARC_PROGRAM_PROPOSER_BUDGET = 64,
+    ARC_PROGRAM_STRATEGY_COUNT = 5,
 };
 
 typedef enum {
@@ -61,6 +63,9 @@ typedef enum {
     ARC_RULE_BBOX_OUTLINE = 20,
     ARC_RULE_BBOX_FILL = 21,
     ARC_RULE_TRANSLATE = 22,
+    ARC_RULE_OBJECT_CROP_LARGEST = 23,
+    ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR = 24,
+    ARC_RULE_OBJECT_MASK_LARGEST = 25,
 } ARCTransformRule;
 
 /* ARC-AGI-1 training task 0520fde7, reduced to balanced output-cell color scoring. */
@@ -171,14 +176,16 @@ static const NNExperimentSpec ARC_AGI_EXPERIMENT_SPEC = {
     .verifier_feedback = "target color, top-k correctness, NLL, calibration bins, and proposal rank",
     .rule_grammar =
         "copy_left, copy_right, mask_intersection, mask_union, object_select_overlap, "
-        "color_map, same_grid_color_map, crop, rotate, flip, transpose, scale, bbox, translate",
+        "color_map, same_grid_color_map, crop, rotate, flip, transpose, scale, bbox, translate, "
+        "connected_component_largest",
     .certificate_checker =
         "train-pair consistency plus unique grammar-consistent test prediction, reported against compiled test output",
     .gate_executor = "certified transform gate emits exact color candidates when the grammar prediction is unique",
-    .proposer_inputs = "structural transform descriptors: copy, mask, intersection, color-map",
+    .proposer_inputs = "typed NNProgram transform descriptors: geometry, color-map, and object-component rows",
     .proposer_targets = "held-out-safe transform support and exact output-cell agreement diagnostics",
     .proposer_mode = NN_PROPOSER_SELECTION,
-    .baseline_orderings = "neural scorer, majority color, certified transform gate",
+    .baseline_orderings =
+        "neural scorer, majority color, certified transform gate, program proposer orderings",
     .generalization_axis = "train examples to held-out test grid within one fixed ARC-AGI-1 task",
     .trace_schema = NN_TRACE_SCHEMA,
     .replay_protocol = "planned stable output-cell/color action-id replay",
@@ -192,6 +199,7 @@ typedef struct {
     size_t steps_per_epoch;
     size_t test_samples;
     size_t max_tasks;
+    size_t program_budget;
     uint64_t seed;
     nn_real learning_rate;
     const char *save_path;
@@ -218,6 +226,15 @@ typedef struct {
     ARCGridPair test[ARC_MAX_PAIRS];
     size_t test_count;
 } ARCTask;
+
+typedef struct {
+    size_t count;
+    size_t min_x;
+    size_t min_y;
+    size_t max_x;
+    size_t max_y;
+    uint8_t mask[ARC_MAX_GRID_CELLS];
+} ARCComponent;
 
 typedef struct {
     ARCTransformRule op;
@@ -265,6 +282,47 @@ typedef struct {
     ARCGrid predictions[ARC_MAX_PAIRS];
     size_t prediction_count;
 } ARCTransformMetrics;
+
+typedef struct {
+    int train_consistent;
+    int test_supported;
+    uint64_t prediction_hash;
+    size_t train_checked_cells;
+    size_t train_mismatches;
+    size_t unsupported_train_pairs;
+    size_t unsupported_test_pairs;
+    size_t test_cells;
+    size_t test_correct_cells;
+    uint64_t program_hash;
+    int object_program;
+} ARCProgramEval;
+
+typedef enum {
+    ARC_PROGRAM_STRATEGY_GRAMMAR = 0,
+    ARC_PROGRAM_STRATEGY_STRUCTURAL = 1,
+    ARC_PROGRAM_STRATEGY_RANDOM = 2,
+    ARC_PROGRAM_STRATEGY_LEARNED = 3,
+    ARC_PROGRAM_STRATEGY_ORACLE = 4,
+} ARCProgramStrategy;
+
+typedef struct {
+    size_t candidate_index;
+    double primary;
+    double secondary;
+    uint64_t tie_breaker;
+} ARCProgramRank;
+
+typedef struct {
+    NNProgramProposerSummary summary;
+    uint64_t program_set_hash;
+    char program_set_hash_text[32];
+    size_t unique_prediction_tasks;
+    size_t exact_tasks;
+} ARCProgramProposerAggregate;
+
+typedef struct {
+    double family_score[32];
+} ARCProgramLearnedState;
 
 typedef struct {
     char path[ARC_MAX_TASK_PATH];
@@ -553,6 +611,38 @@ static size_t arc_build_candidates(const ARCTask *task,
         }
     }
 
+    for (uint8_t background = 0; background < ARC_COLOR_COUNT; ++background) {
+        arc_init_candidate(&candidate, ARC_RULE_OBJECT_CROP_LARGEST, "");
+        candidate.background_color = background;
+        snprintf(candidate.name,
+                 sizeof(candidate.name),
+                 "object_crop_largest_non_background_%u",
+                 (unsigned)background);
+        arc_add_candidate(candidates, capacity, &count, &candidate);
+
+        for (uint8_t color = 1; color < ARC_COLOR_COUNT; ++color) {
+            arc_init_candidate(&candidate, ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR, "");
+            candidate.background_color = background;
+            candidate.output_color = color;
+            snprintf(candidate.name,
+                     sizeof(candidate.name),
+                     "object_crop_largest_non_background_%u_to_%u",
+                     (unsigned)background,
+                     (unsigned)color);
+            arc_add_candidate(candidates, capacity, &count, &candidate);
+
+            arc_init_candidate(&candidate, ARC_RULE_OBJECT_MASK_LARGEST, "");
+            candidate.background_color = background;
+            candidate.output_color = color;
+            snprintf(candidate.name,
+                     sizeof(candidate.name),
+                     "object_mask_largest_non_background_%u_to_%u",
+                     (unsigned)background,
+                     (unsigned)color);
+            arc_add_candidate(candidates, capacity, &count, &candidate);
+        }
+    }
+
     for (uint8_t input_color = 1; input_color < ARC_COLOR_COUNT; ++input_color) {
         arc_init_candidate(&candidate, ARC_RULE_CROP_COLOR, "");
         candidate.input_color = input_color;
@@ -659,6 +749,127 @@ static int arc_find_color_bbox(const ARCGrid *grid,
         }
     }
     return found;
+}
+
+static void arc_component_clear(ARCComponent *component)
+{
+    memset(component, 0, sizeof(*component));
+    component->min_x = ARC_MAX_GRID_WIDTH;
+    component->min_y = ARC_MAX_GRID_HEIGHT;
+}
+
+static int arc_find_largest_component(const ARCGrid *grid,
+                                      uint8_t background,
+                                      ARCComponent *component)
+{
+    uint8_t visited[ARC_MAX_GRID_CELLS];
+    uint8_t current_mask[ARC_MAX_GRID_CELLS];
+    size_t queue[ARC_MAX_GRID_CELLS];
+    memset(visited, 0, sizeof(visited));
+    arc_component_clear(component);
+
+    size_t cells = arc_grid_cells(grid);
+    for (size_t start = 0; start < cells; ++start) {
+        if (visited[start] || grid->cells[start] == background) {
+            continue;
+        }
+        memset(current_mask, 0, sizeof(current_mask));
+        size_t head = 0;
+        size_t tail = 0;
+        size_t count = 0;
+        size_t min_x = grid->width;
+        size_t min_y = grid->height;
+        size_t max_x = 0;
+        size_t max_y = 0;
+
+        visited[start] = 1;
+        queue[tail++] = start;
+        while (head < tail) {
+            size_t cell = queue[head++];
+            size_t x = cell % grid->width;
+            size_t y = cell / grid->width;
+            current_mask[cell] = 1;
+            ++count;
+            if (x < min_x) {
+                min_x = x;
+            }
+            if (y < min_y) {
+                min_y = y;
+            }
+            if (x > max_x) {
+                max_x = x;
+            }
+            if (y > max_y) {
+                max_y = y;
+            }
+
+            const int offsets[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+            for (size_t i = 0; i < 4; ++i) {
+                int nx = (int)x + offsets[i][0];
+                int ny = (int)y + offsets[i][1];
+                if (nx < 0 || ny < 0 ||
+                    nx >= (int)grid->width || ny >= (int)grid->height) {
+                    continue;
+                }
+                size_t next = (size_t)ny * grid->width + (size_t)nx;
+                if (visited[next] || grid->cells[next] == background) {
+                    continue;
+                }
+                visited[next] = 1;
+                queue[tail++] = next;
+            }
+        }
+
+        int better = count > component->count ||
+                     (count == component->count && component->count > 0 &&
+                      (min_y < component->min_y ||
+                       (min_y == component->min_y && min_x < component->min_x)));
+        if (better) {
+            component->count = count;
+            component->min_x = min_x;
+            component->min_y = min_y;
+            component->max_x = max_x;
+            component->max_y = max_y;
+            memcpy(component->mask, current_mask, sizeof(component->mask));
+        }
+    }
+    return component->count > 0;
+}
+
+static int arc_apply_largest_component_candidate(const ARCTransformCandidate *candidate,
+                                                 const ARCGrid *input,
+                                                 ARCGrid *output)
+{
+    ARCComponent component;
+    if (!arc_find_largest_component(input, candidate->background_color, &component)) {
+        return 0;
+    }
+
+    if (candidate->op == ARC_RULE_OBJECT_MASK_LARGEST) {
+        arc_init_grid(output, input->width, input->height);
+        for (size_t cell = 0; cell < arc_grid_cells(input); ++cell) {
+            output->cells[cell] = component.mask[cell] ? candidate->output_color : 0;
+        }
+        return 1;
+    }
+
+    size_t width = component.max_x - component.min_x + 1u;
+    size_t height = component.max_y - component.min_y + 1u;
+    arc_init_grid(output, width, height);
+    for (size_t y = 0; y < height; ++y) {
+        for (size_t x = 0; x < width; ++x) {
+            size_t source = (component.min_y + y) * input->width + component.min_x + x;
+            size_t target = y * width + x;
+            if (!component.mask[source]) {
+                output->cells[target] = 0;
+            } else if (candidate->op == ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR) {
+                output->cells[target] = candidate->output_color;
+            } else {
+                output->cells[target] = input->cells[source];
+            }
+        }
+    }
+    return 1;
 }
 
 static int arc_apply_split_panel_candidate(const ARCTransformCandidate *candidate,
@@ -812,6 +1023,10 @@ static int arc_apply_candidate(const ARCTransformCandidate *candidate,
         return arc_apply_crop_color(candidate, input, output, 0);
     case ARC_RULE_CROP_COLOR_MASK:
         return arc_apply_crop_color(candidate, input, output, 1);
+    case ARC_RULE_OBJECT_CROP_LARGEST:
+    case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
+    case ARC_RULE_OBJECT_MASK_LARGEST:
+        return arc_apply_largest_component_candidate(candidate, input, output);
     case ARC_RULE_ROTATE90:
         if (input->height > ARC_MAX_GRID_WIDTH || input->width > ARC_MAX_GRID_HEIGHT) {
             return 0;
@@ -1023,6 +1238,526 @@ static int arc_predictions_equal(const ARCGrid *lhs, const ARCGrid *rhs, size_t 
         }
     }
     return 1;
+}
+
+static uint64_t arc_hash_mix(uint64_t hash, uint64_t value)
+{
+    hash ^= value + UINT64_C(0x9e3779b97f4a7c15) + (hash << 6) + (hash >> 2);
+    return hash;
+}
+
+static size_t arc_task_test_cells(const ARCTask *task)
+{
+    size_t cells = 0;
+    for (size_t pair = 0; pair < task->test_count; ++pair) {
+        if (task->test[pair].has_output) {
+            cells += arc_grid_cells(&task->test[pair].output);
+        }
+    }
+    return cells;
+}
+
+static uint64_t arc_prediction_hash(const ARCGrid *predictions, size_t count)
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+    for (size_t pair = 0; pair < count; ++pair) {
+        hash = arc_hash_mix(hash, predictions[pair].width);
+        hash = arc_hash_mix(hash, predictions[pair].height);
+        size_t cells = arc_grid_cells(&predictions[pair]);
+        for (size_t cell = 0; cell < cells; ++cell) {
+            hash = arc_hash_mix(hash, predictions[pair].cells[cell]);
+        }
+    }
+    return hash;
+}
+
+static int arc_candidate_is_object_program(const ARCTransformCandidate *candidate)
+{
+    return candidate->op == ARC_RULE_OBJECT_CROP_LARGEST ||
+           candidate->op == ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR ||
+           candidate->op == ARC_RULE_OBJECT_MASK_LARGEST;
+}
+
+static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
+{
+    switch (candidate->op) {
+    case ARC_RULE_GRID_COLOR_MAP:
+    case ARC_RULE_COLOR_MAP_LEFT:
+        return 1;
+    case ARC_RULE_ROTATE90:
+    case ARC_RULE_ROTATE180:
+    case ARC_RULE_ROTATE270:
+    case ARC_RULE_FLIP_HORIZONTAL:
+    case ARC_RULE_FLIP_VERTICAL:
+    case ARC_RULE_TRANSPOSE:
+        return 2;
+    case ARC_RULE_SCALE:
+        return 3;
+    case ARC_RULE_CROP_BACKGROUND:
+    case ARC_RULE_CROP_BACKGROUND_RECOLOR:
+    case ARC_RULE_CROP_COLOR:
+    case ARC_RULE_CROP_COLOR_MASK:
+        return 4;
+    case ARC_RULE_OBJECT_CROP_LARGEST:
+    case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
+    case ARC_RULE_OBJECT_MASK_LARGEST:
+        return 5;
+    case ARC_RULE_COPY_LEFT:
+    case ARC_RULE_COPY_RIGHT:
+    case ARC_RULE_INTERSECTION:
+    case ARC_RULE_UNION:
+    case ARC_RULE_OBJECT_SELECT:
+        return 6;
+    case ARC_RULE_BBOX_OUTLINE:
+    case ARC_RULE_BBOX_FILL:
+        return 7;
+    case ARC_RULE_TRANSLATE:
+        return 8;
+    case ARC_RULE_GRID_IDENTITY:
+        return 9;
+    case ARC_RULE_GRID_FOREGROUND_RECOLOR:
+        return 10;
+    }
+    return 0;
+}
+
+static double arc_structural_program_score(const ARCTransformCandidate *candidate)
+{
+    switch (candidate->op) {
+    case ARC_RULE_GRID_COLOR_MAP:
+        return 120.0;
+    case ARC_RULE_ROTATE90:
+    case ARC_RULE_ROTATE180:
+    case ARC_RULE_ROTATE270:
+    case ARC_RULE_FLIP_HORIZONTAL:
+    case ARC_RULE_FLIP_VERTICAL:
+    case ARC_RULE_TRANSPOSE:
+        return 110.0;
+    case ARC_RULE_SCALE:
+        return 105.0 - (double)candidate->scale;
+    case ARC_RULE_INTERSECTION:
+    case ARC_RULE_UNION:
+    case ARC_RULE_OBJECT_SELECT:
+        return 104.0;
+    case ARC_RULE_COPY_LEFT:
+    case ARC_RULE_COPY_RIGHT:
+    case ARC_RULE_COLOR_MAP_LEFT:
+        return 102.0;
+    case ARC_RULE_CROP_BACKGROUND:
+    case ARC_RULE_CROP_COLOR:
+        return 100.0;
+    case ARC_RULE_OBJECT_CROP_LARGEST:
+    case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
+    case ARC_RULE_OBJECT_MASK_LARGEST:
+        return 96.0;
+    case ARC_RULE_CROP_BACKGROUND_RECOLOR:
+    case ARC_RULE_CROP_COLOR_MASK:
+        return 84.0;
+    case ARC_RULE_BBOX_OUTLINE:
+    case ARC_RULE_BBOX_FILL:
+        return 78.0;
+    case ARC_RULE_TRANSLATE:
+        return 72.0 - (double)(abs(candidate->dx) + abs(candidate->dy));
+    case ARC_RULE_GRID_IDENTITY:
+        return 68.0;
+    case ARC_RULE_GRID_FOREGROUND_RECOLOR:
+        return 62.0;
+    }
+    return 0.0;
+}
+
+static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
+                                    NNProgram *program)
+{
+    if (candidate == NULL || program == NULL) {
+        return 0;
+    }
+
+    if (arc_candidate_is_object_program(candidate)) {
+        NNProgram components;
+        NNProgram largest;
+        NNProgram renderer;
+        NNProgram selected;
+        nn_program_init(&components,
+                        "arc_agi",
+                        "connected_components",
+                        NN_PROGRAM_KIND_TRANSFORM,
+                        NN_PROGRAM_VALUE_GRID,
+                        NN_PROGRAM_VALUE_OBJECT_SET,
+                        100);
+        nn_program_add_param(&components,
+                             "background",
+                             (double)candidate->background_color,
+                             candidate->background_color);
+        nn_program_init(&largest,
+                        "arc_agi",
+                        "largest_component",
+                        NN_PROGRAM_KIND_SELECTOR,
+                        NN_PROGRAM_VALUE_OBJECT_SET,
+                        NN_PROGRAM_VALUE_OBJECT,
+                        101);
+        nn_program_init(&renderer,
+                        "arc_agi",
+                        candidate->op == ARC_RULE_OBJECT_MASK_LARGEST ? "object_mask" : "object_crop",
+                        NN_PROGRAM_KIND_TRANSFORM,
+                        NN_PROGRAM_VALUE_OBJECT,
+                        NN_PROGRAM_VALUE_GRID,
+                        candidate->op == ARC_RULE_OBJECT_MASK_LARGEST ? 102u : 103u);
+        nn_program_add_param(&renderer,
+                             "output_color",
+                             (double)candidate->output_color,
+                             candidate->output_color);
+        if (!nn_program_compose(&selected,
+                                &components,
+                                &largest,
+                                "connected_components_then_largest") ||
+            !nn_program_compose(program, &selected, &renderer, candidate->name)) {
+            return 0;
+        }
+    } else {
+        nn_program_init(program,
+                        "arc_agi",
+                        candidate->name,
+                        NN_PROGRAM_KIND_TRANSFORM,
+                        NN_PROGRAM_VALUE_GRID,
+                        NN_PROGRAM_VALUE_GRID,
+                        (uint32_t)candidate->op);
+    }
+
+    nn_program_add_param(program, "op", (double)candidate->op, (int64_t)candidate->op);
+    nn_program_add_param(program,
+                         "input_color",
+                         (double)candidate->input_color,
+                         candidate->input_color);
+    nn_program_add_param(program,
+                         "output_color",
+                         (double)candidate->output_color,
+                         candidate->output_color);
+    nn_program_add_param(program,
+                         "background",
+                         (double)candidate->background_color,
+                         candidate->background_color);
+    nn_program_add_param(program, "dx", (double)candidate->dx, candidate->dx);
+    nn_program_add_param(program, "dy", (double)candidate->dy, candidate->dy);
+    nn_program_add_param(program, "scale", (double)candidate->scale, (int64_t)candidate->scale);
+    if (candidate->op == ARC_RULE_GRID_COLOR_MAP) {
+        for (uint8_t color = 0; color < ARC_COLOR_COUNT; ++color) {
+            char name[16];
+            snprintf(name, sizeof(name), "map_%u", (unsigned)color);
+            nn_program_add_param(program,
+                                 name,
+                                 (double)candidate->color_map[color],
+                                 candidate->color_map[color]);
+        }
+    }
+    nn_program_add_feature(program, (nn_real)((double)candidate->op / 32.0));
+    nn_program_add_feature(program, (nn_real)((double)arc_candidate_family(candidate) / 16.0));
+    nn_program_add_feature(program, (nn_real)((double)candidate->background_color / 9.0));
+    nn_program_add_feature(program, (nn_real)((double)candidate->output_color / 9.0));
+    nn_program_add_feature(program, (nn_real)(arc_candidate_is_object_program(candidate) ? 1.0 : 0.0));
+    nn_program_refresh_canonical_id(program);
+    return 1;
+}
+
+static size_t arc_evaluate_program_candidates(const ARCTask *task,
+                                              const ARCTransformCandidate *candidates,
+                                              size_t candidate_count,
+                                              ARCProgramEval *evals)
+{
+    ARCGrid predictions[ARC_MAX_PAIRS];
+    size_t task_cells = arc_task_test_cells(task);
+    for (size_t i = 0; i < candidate_count; ++i) {
+        NNProgram program;
+        memset(&evals[i], 0, sizeof(evals[i]));
+        if (arc_candidate_to_program(&candidates[i], &program)) {
+            evals[i].program_hash = program.canonical_hash;
+            evals[i].object_program = arc_candidate_is_object_program(&candidates[i]);
+        }
+        evals[i].train_consistent =
+            arc_candidate_matches_train(task,
+                                        &candidates[i],
+                                        &evals[i].train_checked_cells,
+                                        &evals[i].train_mismatches,
+                                        &evals[i].unsupported_train_pairs);
+        if (!evals[i].train_consistent) {
+            continue;
+        }
+        evals[i].test_supported =
+            arc_apply_candidate_to_tests(task,
+                                         &candidates[i],
+                                         predictions,
+                                         &evals[i].unsupported_test_pairs);
+        if (!evals[i].test_supported) {
+            continue;
+        }
+        evals[i].prediction_hash = arc_prediction_hash(predictions, task->test_count);
+        evals[i].test_cells = task_cells;
+        for (size_t pair = 0; pair < task->test_count; ++pair) {
+            if (!task->test[pair].has_output ||
+                !arc_grid_same_shape(&predictions[pair], &task->test[pair].output)) {
+                continue;
+            }
+            size_t cells = arc_grid_cells(&task->test[pair].output);
+            for (size_t cell = 0; cell < cells; ++cell) {
+                evals[i].test_correct_cells +=
+                    predictions[pair].cells[cell] == task->test[pair].output.cells[cell] ? 1u : 0u;
+            }
+        }
+    }
+    return candidate_count;
+}
+
+static NNProgramProposerStrategy arc_program_strategy_to_nn(ARCProgramStrategy strategy)
+{
+    switch (strategy) {
+    case ARC_PROGRAM_STRATEGY_GRAMMAR:
+        return NN_PROGRAM_PROPOSER_GRAMMAR_ORDER;
+    case ARC_PROGRAM_STRATEGY_STRUCTURAL:
+        return NN_PROGRAM_PROPOSER_STRUCTURAL_HEURISTIC;
+    case ARC_PROGRAM_STRATEGY_RANDOM:
+        return NN_PROGRAM_PROPOSER_RANDOM;
+    case ARC_PROGRAM_STRATEGY_LEARNED:
+        return NN_PROGRAM_PROPOSER_LEARNED;
+    case ARC_PROGRAM_STRATEGY_ORACLE:
+        return NN_PROGRAM_PROPOSER_ORACLE;
+    }
+    return NN_PROGRAM_PROPOSER_GRAMMAR_ORDER;
+}
+
+static uint64_t arc_task_hash(const ARCTask *task)
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+    for (const unsigned char *p = (const unsigned char *)task->id; *p != '\0'; ++p) {
+        hash = arc_hash_mix(hash, *p);
+    }
+    return hash;
+}
+
+static double arc_learned_family_score(const ARCProgramLearnedState *state,
+                                       const ARCTransformCandidate *candidate)
+{
+    size_t family = arc_candidate_family(candidate);
+    if (family >= sizeof(state->family_score) / sizeof(state->family_score[0])) {
+        return 0.0;
+    }
+    return state->family_score[family];
+}
+
+static void arc_build_program_ranks(const ARCTask *task,
+                                    const ARCTransformCandidate *candidates,
+                                    const ARCProgramEval *evals,
+                                    size_t candidate_count,
+                                    ARCProgramStrategy strategy,
+                                    const ARCProgramLearnedState *learned,
+                                    ARCProgramRank *ranks)
+{
+    uint64_t task_hash = arc_task_hash(task);
+    for (size_t i = 0; i < candidate_count; ++i) {
+        ranks[i].candidate_index = i;
+        ranks[i].primary = 0.0;
+        ranks[i].secondary = arc_structural_program_score(&candidates[i]);
+        ranks[i].tie_breaker = arc_hash_mix(task_hash, evals[i].program_hash ^ (uint64_t)i);
+        switch (strategy) {
+        case ARC_PROGRAM_STRATEGY_GRAMMAR:
+            ranks[i].primary = -(double)i;
+            ranks[i].secondary = 0.0;
+            ranks[i].tie_breaker = i;
+            break;
+        case ARC_PROGRAM_STRATEGY_STRUCTURAL:
+            ranks[i].primary = ranks[i].secondary;
+            break;
+        case ARC_PROGRAM_STRATEGY_RANDOM:
+            ranks[i].primary = (double)(ranks[i].tie_breaker & UINT64_C(0xffffffff));
+            ranks[i].secondary = 0.0;
+            break;
+        case ARC_PROGRAM_STRATEGY_LEARNED:
+            ranks[i].primary = arc_learned_family_score(learned, &candidates[i]);
+            break;
+        case ARC_PROGRAM_STRATEGY_ORACLE:
+            ranks[i].primary = evals[i].train_consistent ? (double)evals[i].test_correct_cells : -1.0;
+            ranks[i].secondary = evals[i].test_cells != 0 &&
+                                         evals[i].test_correct_cells == evals[i].test_cells
+                                     ? 1.0
+                                     : 0.0;
+            break;
+        }
+    }
+
+    for (size_t i = 1; i < candidate_count; ++i) {
+        ARCProgramRank key = ranks[i];
+        size_t j = i;
+        while (j > 0) {
+            ARCProgramRank prev = ranks[j - 1u];
+            int before = key.primary > prev.primary ||
+                         (key.primary == prev.primary && key.secondary > prev.secondary) ||
+                         (key.primary == prev.primary && key.secondary == prev.secondary &&
+                          key.tie_breaker < prev.tie_breaker);
+            if (!before) {
+                break;
+            }
+            ranks[j] = ranks[j - 1u];
+            --j;
+        }
+        ranks[j] = key;
+    }
+}
+
+static void arc_program_aggregate_init(ARCProgramProposerAggregate *aggregate,
+                                       const char *task_name,
+                                       ARCProgramStrategy strategy,
+                                       size_t budget)
+{
+    memset(aggregate, 0, sizeof(*aggregate));
+    aggregate->summary.domain = "arc_agi";
+    aggregate->summary.task = task_name;
+    aggregate->summary.strategy = arc_program_strategy_to_nn(strategy);
+    aggregate->summary.budget = budget;
+    aggregate->program_set_hash = UINT64_C(1469598103934665603);
+}
+
+static void arc_program_aggregate_task(ARCProgramProposerAggregate *aggregate,
+                                       const ARCTask *task,
+                                       const ARCTransformCandidate *candidates,
+                                       const ARCProgramEval *evals,
+                                       size_t candidate_count,
+                                       ARCProgramStrategy strategy,
+                                       const ARCProgramLearnedState *learned,
+                                       size_t budget)
+{
+    ARCProgramRank ranks[ARC_RULE_CANDIDATE_COUNT];
+    size_t limit = candidate_count < budget ? candidate_count : budget;
+    size_t task_cells = arc_task_test_cells(task);
+    int have_prediction = 0;
+    int unique_prediction = 1;
+    uint64_t prediction_hash = 0;
+    size_t prediction_correct_cells = 0;
+    NNProgramCoverage coverage;
+    uint64_t *covered = NULL;
+    int have_coverage = nn_program_coverage_init(&coverage, candidate_count, task_cells);
+    if (have_coverage && coverage.word_count != 0) {
+        covered = calloc(coverage.word_count, sizeof(*covered));
+        if (covered == NULL) {
+            nn_program_coverage_free(&coverage);
+            have_coverage = 0;
+        }
+    }
+    if (have_coverage) {
+        for (size_t i = 0; i < candidate_count; ++i) {
+            for (size_t event = 0; event < evals[i].test_correct_cells; ++event) {
+                nn_program_coverage_set(&coverage, i, event);
+            }
+        }
+    }
+
+    arc_build_program_ranks(task, candidates, evals, candidate_count, strategy, learned, ranks);
+    aggregate->summary.event_count += task_cells;
+    for (size_t rank = 0; rank < limit; ++rank) {
+        size_t index = ranks[rank].candidate_index;
+        ++aggregate->summary.proposed_programs;
+        aggregate->program_set_hash =
+            arc_hash_mix(aggregate->program_set_hash, evals[index].program_hash);
+        if (!evals[index].train_consistent) {
+            continue;
+        }
+        ++aggregate->summary.certified_programs;
+        if (!evals[index].test_supported) {
+            continue;
+        }
+        ++aggregate->summary.accepted_programs;
+        if (!have_prediction) {
+            prediction_hash = evals[index].prediction_hash;
+            prediction_correct_cells =
+                have_coverage && covered != NULL
+                    ? nn_program_coverage_gain(&coverage, index, covered)
+                    : evals[index].test_correct_cells;
+            have_prediction = 1;
+        } else if (prediction_hash != evals[index].prediction_hash) {
+            unique_prediction = 0;
+        }
+    }
+
+    if (have_prediction && unique_prediction) {
+        ++aggregate->unique_prediction_tasks;
+        aggregate->summary.covered_events += prediction_correct_cells;
+        if (prediction_correct_cells == task_cells && task_cells > 0) {
+            ++aggregate->exact_tasks;
+        } else if (task_cells > prediction_correct_cells) {
+            aggregate->summary.false_rejections += task_cells - prediction_correct_cells;
+        }
+    }
+    if (aggregate->summary.event_count != 0) {
+        aggregate->summary.utility =
+            (double)aggregate->summary.covered_events /
+            (double)aggregate->summary.event_count;
+    }
+    snprintf(aggregate->program_set_hash_text,
+             sizeof(aggregate->program_set_hash_text),
+             "%016llx",
+             (unsigned long long)aggregate->program_set_hash);
+    aggregate->summary.program_set_hash = aggregate->program_set_hash_text;
+    free(covered);
+    if (have_coverage) {
+        nn_program_coverage_free(&coverage);
+    }
+}
+
+static void arc_program_learned_observe(ARCProgramLearnedState *state,
+                                        const ARCTransformCandidate *candidates,
+                                        const ARCProgramEval *evals,
+                                        size_t candidate_count)
+{
+    size_t family_seen[32];
+    size_t family_success[32];
+    memset(family_seen, 0, sizeof(family_seen));
+    memset(family_success, 0, sizeof(family_success));
+    for (size_t i = 0; i < candidate_count; ++i) {
+        size_t family = arc_candidate_family(&candidates[i]);
+        if (family >= sizeof(family_seen) / sizeof(family_seen[0])) {
+            continue;
+        }
+        ++family_seen[family];
+        if (evals[i].train_consistent) {
+            ++family_success[family];
+        }
+    }
+    for (size_t family = 0; family < sizeof(family_seen) / sizeof(family_seen[0]); ++family) {
+        if (family_seen[family] == 0) {
+            continue;
+        }
+        double observation = (double)family_success[family] / (double)family_seen[family];
+        state->family_score[family] = 0.85 * state->family_score[family] + 0.15 * observation;
+    }
+}
+
+static void arc_program_print_aggregate(const ARCProgramProposerAggregate *aggregate)
+{
+    nn_program_write_proposer_summary_json(stdout, &aggregate->summary);
+}
+
+static void arc_emit_builtin_program_summaries(const ARCTask *task, size_t budget)
+{
+    ARCTransformCandidate candidates[ARC_RULE_CANDIDATE_COUNT];
+    ARCProgramEval evals[ARC_RULE_CANDIDATE_COUNT];
+    ARCProgramLearnedState learned;
+    ARCProgramProposerAggregate aggregate;
+    memset(&learned, 0, sizeof(learned));
+    size_t candidate_count = arc_build_candidates(task, candidates, ARC_RULE_CANDIDATE_COUNT);
+    arc_evaluate_program_candidates(task, candidates, candidate_count, evals);
+    for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
+        arc_program_aggregate_init(&aggregate,
+                                   task->id,
+                                   (ARCProgramStrategy)strategy,
+                                   budget);
+        arc_program_aggregate_task(&aggregate,
+                                   task,
+                                   candidates,
+                                   evals,
+                                   candidate_count,
+                                   (ARCProgramStrategy)strategy,
+                                   &learned,
+                                   budget);
+        arc_program_print_aggregate(&aggregate);
+    }
 }
 
 static ARCTransformMetrics evaluate_arc_transform_gate_task(const ARCTask *task)
@@ -2048,6 +2783,15 @@ static int run_arc_task_loader(const ARCConfig *config)
     ARCLoaderSummary summary;
     memset(&summary, 0, sizeof(summary));
     summary.files_seen = file_count;
+    ARCProgramProposerAggregate program_aggregates[ARC_PROGRAM_STRATEGY_COUNT];
+    ARCProgramLearnedState learned_state;
+    memset(&learned_state, 0, sizeof(learned_state));
+    for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
+        arc_program_aggregate_init(&program_aggregates[strategy],
+                                   "arc_loader",
+                                   (ARCProgramStrategy)strategy,
+                                   config->program_budget);
+    }
 
     for (size_t i = 0; i < file_count; ++i) {
         if (config->max_tasks != 0 && summary.loaded_tasks >= config->max_tasks) {
@@ -2060,19 +2804,39 @@ static int run_arc_task_loader(const ARCConfig *config)
         }
         ARCTransformMetrics transform = evaluate_arc_transform_gate_task(&task);
         arc_loader_summary_add(&summary, &task, &transform);
+        ARCTransformCandidate candidates[ARC_RULE_CANDIDATE_COUNT];
+        ARCProgramEval evals[ARC_RULE_CANDIDATE_COUNT];
+        size_t candidate_count = arc_build_candidates(&task,
+                                                      candidates,
+                                                      ARC_RULE_CANDIDATE_COUNT);
+        arc_evaluate_program_candidates(&task, candidates, candidate_count, evals);
+        for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
+            arc_program_aggregate_task(&program_aggregates[strategy],
+                                       &task,
+                                       candidates,
+                                       evals,
+                                       candidate_count,
+                                       (ARCProgramStrategy)strategy,
+                                       &learned_state,
+                                       config->program_budget);
+        }
+        arc_program_learned_observe(&learned_state, candidates, evals, candidate_count);
         if (!config->loader_summary_only) {
             print_arc_transform_json(task.id, &transform);
             if (transform.certified) {
                 ARCMetrics transform_metrics = arc_transform_to_metrics(&task, &transform);
                 print_arc_metrics_json(task.id,
-                                       "symbolic-transform-v3",
+                                       "symbolic-transform-v4",
                                        "certified_transform_gate",
-                                       "arc-transform-gate-v3",
+                                       "arc-transform-gate-v4",
                                        &transform_metrics);
             }
         }
     }
     print_arc_loader_summary_json(config->task_dir, &summary);
+    for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
+        arc_program_print_aggregate(&program_aggregates[strategy]);
+    }
     free(files);
     return summary.loaded_tasks > 0;
 }
@@ -2081,7 +2845,8 @@ static void print_usage(FILE *stream)
 {
     fputs("usage: arc_agi [--schema] [--epochs count] [--steps-per-epoch count] "
           "[--test-samples count] [--learning-rate rate] [--seed seed] [--save path] "
-          "[--task-dir path] [--max-tasks count] [--loader-summary-only]\n",
+          "[--task-dir path] [--max-tasks count] [--program-budget count] "
+          "[--loader-summary-only]\n",
           stream);
 }
 
@@ -2091,6 +2856,7 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->steps_per_epoch = ARC_DEFAULT_STEPS_PER_EPOCH;
     config->test_samples = ARC_DEFAULT_TEST_SAMPLES;
     config->max_tasks = 0;
+    config->program_budget = ARC_PROGRAM_PROPOSER_BUDGET;
     config->seed = 20240516u;
     config->learning_rate = (nn_real)0.006;
     config->save_path = NULL;
@@ -2130,6 +2896,10 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             }
         } else if (strcmp(argv[i], "--max-tasks") == 0 && i + 1 < argc) {
             if (!parse_size_text(argv[++i], &config->max_tasks)) {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--program-budget") == 0 && i + 1 < argc) {
+            if (!parse_size_text(argv[++i], &config->program_budget)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--loader-summary-only") == 0) {
@@ -2187,13 +2957,14 @@ int main(int argc, char **argv)
     print_arc_transform_json("0520fde7", &transform);
     ARCMetrics transform_metrics = arc_transform_to_metrics(&builtin_task, &transform);
     print_arc_metrics_json("0520fde7",
-                           "symbolic-transform-v3",
+                           "symbolic-transform-v4",
                            "certified_transform_gate",
-                           "arc-transform-gate-v3",
+                           "arc-transform-gate-v4",
                            &transform_metrics);
-    print_arc_metrics_line("symbolic-transform-v3",
+    print_arc_metrics_line("symbolic-transform-v4",
                            "certified_transform_gate",
                            &transform_metrics);
+    arc_emit_builtin_program_summaries(&builtin_task, config.program_budget);
     nn_free(net);
     return EXIT_SUCCESS;
 }

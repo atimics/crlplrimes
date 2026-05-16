@@ -133,10 +133,11 @@ mature:
 - The standalone ARC binary has a JSON directory loader, but the shared
   symbolic-domain smoke still uses one compiled sample and is not a general ARC
   solver.
-- The ARC `object_select_overlap` rule is an alias for intersection; replacing
-  it with a real connected-object selector is a precondition for claiming
-  object-level ARC reasoning.
+- The standalone ARC loader now has typed `NNProgram` rows and a largest
+  connected-component primitive; the older shared symbolic-domain
+  `object_select_overlap` rule is still an alias for intersection.
 - The shared proposer should be evaluated against random, grammar-order,
-  structural-heuristic, and oracle orderings on each domain.
+  structural-heuristic, and oracle orderings on each non-ARC domain; ARC now
+  emits matched program-proposer rows from the standalone loader path.
 - The formal-system descriptor is C callbacks, not a declarative symbol and
   axiom language.

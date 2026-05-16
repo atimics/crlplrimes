@@ -25,15 +25,15 @@ benchmark.
 | `prime_gap` | rank candidate next-prime gaps | 129 | segmented-sieve label | clean scorer row, no residue flags |
 | `grid_path` | rank four grid moves | 4 | BFS shortest-path successor | exact verifier label |
 | `delayed_claim` | choose trust/ignore/evidence/cautious | 4 | deterministic hidden-outcome simulator | synthetic delayed-label task |
-| `arc_agi` | choose output-cell color | 10 | ARC-AGI-1 task `0520fde7` output grid | first-class fixed-sample schema plus certified transform gate; shared multitask row remains action-only |
+| `arc_agi` | choose output-cell color | 10 | ARC-AGI-1 task `0520fde7` output grid | first-class fixed-sample schema plus certified transform gate and program-proposer rows; shared multitask row remains action-only |
 
 The ARC sample is reduced to balanced cell-color scoring. Given an input grid,
 an output coordinate, and a candidate color action `0..9`, the scorer ranks the
 candidate colors. The row exposes the flattened input grid, output coordinate,
 grid sizes, candidate action, and optional task tag. It does not expose a direct
 overlap/intersection rule. The standalone `make arc-agi` path uses the same
-fixed task without the multitask task tag, adds a certified transform-gate row,
-and is captured by `make results`.
+fixed task without the multitask task tag, adds certified transform-gate and
+typed program-proposer rows, and is captured by `make results`.
 
 ## Feature Envelope
 

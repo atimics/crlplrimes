@@ -106,7 +106,7 @@ Verifier-backed first-class task schemas:
 | `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | modular rejection predicates | algebraic divisibility proof | learned-rule gate plus matched baselines |
 | `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality predicates; admissible pruning planned | cannot reject an optimal move | budgeted legality gate; richer baselines pending |
 | `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold predicates; richer claim rules planned | finite-generator safety check in symbolic smoke | production learned-gate table pending |
-| `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | copy/mask/intersection/geometric transform grammar | train-pair consistency plus unique grammar-consistent test prediction | fixed-sample certified transform gate plus ARC JSON directory loader for narrow geometry evidence |
+| `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | copy/mask/intersection/geometric/object transform grammar | train-pair consistency plus unique grammar-consistent test prediction | fixed-sample certified transform gate plus ARC JSON directory loader and matched `NNProgram` proposer rows for narrow geometry/object evidence |
 
 Verifier-backed case-study discovery schemas:
 
@@ -128,11 +128,15 @@ The first-class `arc_agi` default schema is still one fixed ARC-AGI-1 task. It
 emits both a neural cell-scorer comparison row and a certified transform-gate
 row. The same binary can also scan ARC-format JSON directories with `--task-dir`
 and emit per-task `crlp.arc_transform.summary.v1` rows plus a
-`crlp.arc_loader.summary.v1` aggregate. The loader evidence is intentionally
-narrow: grammar version 3 covers two same-height panel masks, same-shape color
-maps, foreground/object crops, rotations, flips, transposes, small integer
-scales, bbox drawing, and small foreground translations. The multitask binary
-uses a separate fixed 96-wide action-row envelope documented in
+`crlp.arc_loader.summary.v1` aggregate. It also maps transform candidates into
+typed `NNProgram` rows and emits `crlp.program_proposer.summary.v1` for
+grammar-order, structural, random, learned-family, and oracle orderings at a
+matched program budget. The loader evidence is intentionally narrow: grammar
+version 4 covers two same-height panel masks, same-shape color maps,
+foreground/object crops, rotations, flips, transposes, small integer scales,
+bbox drawing, small foreground translations, and largest connected-component
+crop/mask transforms. The multitask binary uses a separate fixed 96-wide
+action-row envelope documented in
 [multitask-domain.md](multitask-domain.md).
 
 ## Shared Symbolic-Domain Interface
@@ -220,12 +224,13 @@ same scorer for rule selection. The row's `proposer_feature_set` is
 `task_role_tagged_action_rule_rows_v1` and its `proposer_target` is
 `joint_action_rule_softmax`.
 
-The ARC grammar in that smoke path contains copy, mask/intersection, union,
-object-select-overlap, and color-map transforms. Its checker accepts a rule only
-when it matches all train pairs and every grammar-consistent rule agrees on the
-test output. The current object-select-overlap rule is an alias for intersection
-in this compiled sample, not a general connected-object selector. This is a
-fixed-sample formal-system smoke, not a general ARC solver claim.
+The ARC grammar in the shared symbolic-domain smoke path still contains copy,
+mask/intersection, union, object-select-overlap, and color-map transforms. Its
+checker accepts a rule only when it matches all train pairs and every
+grammar-consistent rule agrees on the test output. That smoke path's
+object-select-overlap rule remains an alias for intersection. The standalone
+ARC loader is the path that now carries typed `NNProgram` rows and the largest
+connected-component primitive. Neither path is a general ARC solver claim.
 
 ## Shared Multitask Summary Rows
 

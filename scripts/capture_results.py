@@ -44,6 +44,7 @@ def run_make(repo: Path, real: str, target: str, log_path: Path) -> list[dict[st
             "crlp.experiment_schema.v1",
             "crlp.compare.v1",
             "crlp.rule_search.summary.v1",
+            "crlp.program_proposer.summary.v1",
             "crlp.arc_transform.summary.v1",
             "crlp.arc_loader.summary.v1",
         }:
@@ -153,6 +154,12 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
         row
         for row in rows
         if row.get("task") == "arc_agi" and row.get("schema") == "crlp.arc_loader.summary.v1"
+    ]
+    arc_program_proposers = [
+        row
+        for row in rows
+        if row.get("domain") == "arc_agi"
+        and row.get("schema") == "crlp.program_proposer.summary.v1"
     ]
     grid = [
         row
@@ -335,6 +342,37 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                     "correct",
                     "cells",
                     "cell accuracy",
+                ],
+            )
+        )
+    if arc_program_proposers:
+        lines.extend(["", "### ARC Program Proposers", ""])
+        lines.append(
+            markdown_table(
+                [
+                    [
+                        str(row.get("task", "")),
+                        str(row.get("strategy", "")),
+                        str(row.get("budget", "")),
+                        str(row.get("proposed_programs", "")),
+                        str(row.get("certified_programs", "")),
+                        str(row.get("accepted_programs", "")),
+                        str(row.get("covered_events", "")),
+                        str(row.get("event_count", "")),
+                        fmt_percent(row, "utility"),
+                    ]
+                    for row in arc_program_proposers
+                ],
+                [
+                    "task",
+                    "strategy",
+                    "budget",
+                    "proposed",
+                    "certified",
+                    "accepted",
+                    "covered",
+                    "events",
+                    "utility",
                 ],
             )
         )
