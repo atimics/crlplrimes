@@ -170,12 +170,12 @@ The interpretation is deliberately conservative:
 - `grid_path` and `delayed_claim` remain easy under this envelope.
 - `prime_gap` is weak without symbolic residue predicates.
 - The harder ARC row is unsaturated under this envelope; the standalone loader
-  can scan many ARC tasks, but the current certified grammar still covers only a
-  narrow split-panel family rather than a general ARC solver.
+  can scan many ARC tasks, but the current certified grammar is still a narrow
+  hand-coded geometry/recolor/crop family rather than a general ARC solver.
 
 ## Next Steps
 
-1. Expand the ARC loader grammar beyond the current split-panel copy/mask/union
+1. Expand the ARC loader grammar beyond the current hand-coded geometry/recolor
    family.
 2. Add task-family metadata so ARC tasks with different transformations can be
    evaluated without changing the scorer code.

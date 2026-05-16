@@ -104,7 +104,7 @@ Verifier-backed first-class task schemas:
 | `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | modular rejection predicates | algebraic divisibility proof | learned-rule gate plus matched baselines |
 | `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality predicates; admissible pruning planned | cannot reject an optimal move | budgeted legality gate; richer baselines pending |
 | `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold predicates; richer claim rules planned | finite-generator safety check in symbolic smoke | production learned-gate table pending |
-| `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | copy/mask/intersection transform grammar | train-pair consistency plus unique grammar-consistent test prediction | fixed-sample certified transform gate plus ARC JSON directory loader for narrow split-panel evidence |
+| `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | copy/mask/intersection/geometric transform grammar | train-pair consistency plus unique grammar-consistent test prediction | fixed-sample certified transform gate plus ARC JSON directory loader for narrow geometry evidence |
 
 Verifier-backed case-study discovery schemas:
 
@@ -127,10 +127,11 @@ emits both a neural cell-scorer comparison row and a certified transform-gate
 row. The same binary can also scan ARC-format JSON directories with `--task-dir`
 and emit per-task `crlp.arc_transform.summary.v1` rows plus a
 `crlp.arc_loader.summary.v1` aggregate. The loader evidence is intentionally
-narrow: grammar version 2 covers two same-height panels separated by one column,
-with copy-left, copy-right, intersection, union, overlap-select, and left-color
-map candidates. The multitask binary uses a separate fixed 96-wide action-row
-envelope documented in [multitask-domain.md](multitask-domain.md).
+narrow: grammar version 3 covers two same-height panel masks, same-shape color
+maps, foreground/object crops, rotations, flips, transposes, small integer
+scales, bbox drawing, and small foreground translations. The multitask binary
+uses a separate fixed 96-wide action-row envelope documented in
+[multitask-domain.md](multitask-domain.md).
 
 ## Shared Symbolic-Domain Interface
 
@@ -254,5 +255,6 @@ production learned-gate evaluation table is open work.
    heuristic, and oracle ranking on the same gated candidate set.
 8. Report random-normalized and gate-marginal skill in cross-task tables; keep
    raw top-1 in task-specific sections.
-9. Expand the ARC loader grammar beyond the current split-panel copy/mask/union
-   family before treating ARC as production verifier-gated ARC evidence.
+9. Expand the ARC loader beyond hand-coded geometry/recolor rules into
+   object-relation, tiling, and learned transform-family proposer comparisons
+   before treating ARC as production verifier-gated ARC evidence.
