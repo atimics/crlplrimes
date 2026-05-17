@@ -1,0 +1,22 @@
+{
+  "cc": "cc",
+  "cc_path": "/usr/bin/cc",
+  "cc_version": "Apple clang version 17.0.0 (clang-1700.6.4.2)",
+  "env": {},
+  "git_branch": "main",
+  "git_commit": "840ffd51bb9a7099867753893e4cb857a8390e5f",
+  "git_dirty": true,
+  "make_version": "GNU Make 3.81",
+  "python_implementation": "CPython",
+  "python_version": "3.14.3",
+  "schema": "crlp.environment.v1",
+  "typst_version": "typst 0.14.2 (unknown hash)",
+  "uname": {
+    "machine": "arm64",
+    "node": "Js-MacBook-Pro.local",
+    "processor": "arm",
+    "release": "25.3.0",
+    "system": "Darwin",
+    "version": "Darwin Kernel Version 25.3.0: Wed Jan 28 20:51:28 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T6041"
+  }
+}

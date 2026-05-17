@@ -1,0 +1,77 @@
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Pin runner OS and toolchain. Drift from these pins should be a deliberate
+# decision, not a silent latest-image bump.
+env:
+  CC: gcc-13
+  REAL: float
+  PYTHON_VERSION: "3.12"
+  TYPST_VERSION: "0.14.2"
+
+jobs:
+  unit-and-sanitize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pin toolchain
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-13 make
+          ${CC} --version
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Capture environment manifest
+        run: python3 scripts/environment_manifest.py --output environment.json
+
+      - name: Build all binaries
+        run: make -j$(nproc) all
+
+      - name: Run unit + sanitizer + double-precision tests
+        run: make check
+
+      - name: Smoke-run ARC induction
+        run: make arc-agi-induction-smoke
+
+      - name: Upload environment manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: environment-${{ github.run_id }}
+          path: environment.json
+          if-no-files-found: error
+          retention-days: 30
+
+  build-paper:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install typst
+        run: |
+          curl -sSL "https://github.com/typst/typst/releases/download/v${TYPST_VERSION}/typst-x86_64-unknown-linux-musl.tar.xz" \
+            | tar -xJ -C /tmp
+          sudo install /tmp/typst-x86_64-unknown-linux-musl/typst /usr/local/bin/typst
+          typst --version
+
+      - name: Build paper
+        run: typst compile paper/paper.typ paper/paper.pdf
+
+      - name: Upload PDF
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-${{ github.run_id }}
+          path: paper/paper.pdf
+          if-no-files-found: error
+          retention-days: 30

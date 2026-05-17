@@ -1,0 +1,112 @@
+name: results
+
+# Stable-baseline run. Captures comparison.jsonl, environment manifest, and
+# opens a PR if the canonical (timing-stripped) results diff from main.
+#
+# Not triggered on every push. Use:
+#   - workflow_dispatch: manual rerun.
+#   - schedule: nightly cron, so drift gets surfaced even without a code change.
+
+on:
+  workflow_dispatch:
+    inputs:
+      arc_agi_task_dir:
+        description: "Optional ARC corpus path (left empty: builtin task only)."
+        required: false
+        default: ""
+      arc_agi_max_tasks:
+        description: "Max ARC tasks per split."
+        required: false
+        default: "400"
+  schedule:
+    - cron: "23 7 * * *"  # 07:23 UTC daily
+
+env:
+  CC: gcc-13
+  REAL: float
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pin toolchain
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-13 make
+          ${CC} --version
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Build all binaries
+        run: make -j$(nproc) all
+
+      - name: Capture environment manifest
+        run: python3 scripts/environment_manifest.py --output results/latest/environment.json
+
+      - name: Run make results
+        env:
+          ARC_AGI_TASK_DIR: ${{ inputs.arc_agi_task_dir }}
+          ARC_AGI_MAX_TASKS: ${{ inputs.arc_agi_max_tasks }}
+        run: make results
+
+      - name: Canonicalize comparison.jsonl
+        run: python3 scripts/canonicalize_results.py
+
+      - name: Diff canonical results against main
+        id: diff
+        run: |
+          git fetch origin main --depth=1
+          if git diff --exit-code origin/main -- results/latest/comparison.canonical.jsonl \
+                results/latest/summary.md results/latest/commands.txt; then
+            echo "results_changed=false" >> "$GITHUB_OUTPUT"
+            echo "Canonical results unchanged."
+          else
+            echo "results_changed=true"  >> "$GITHUB_OUTPUT"
+            echo "Canonical results differ from main."
+          fi
+
+      - name: Upload results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ github.run_id }}
+          path: |
+            results/latest/
+          retention-days: 90
+
+      - name: Open results-update PR
+        if: steps.diff.outputs.results_changed == 'true' && github.event_name != 'pull_request'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: ci/results-${{ github.run_id }}
+          base: main
+          title: "ci(results): captured run ${{ github.run_id }}"
+          body: |
+            Automated capture of `make results` from the pinned `ubuntu-24.04` /
+            `gcc-13` runner. The canonical (timing-stripped) comparison rows
+            differ from `main`; open this PR to review and merge if the change
+            is expected. The full `comparison.jsonl`, including runner-dependent
+            timing fields, is uploaded as a run artifact for inspection.
+
+            - run id: `${{ github.run_id }}`
+            - runner: `ubuntu-24.04`
+            - compiler: `${{ env.CC }}`
+            - REAL: `${{ env.REAL }}`
+            - ARC_AGI_TASK_DIR: `${{ inputs.arc_agi_task_dir }}`
+            - ARC_AGI_MAX_TASKS: `${{ inputs.arc_agi_max_tasks }}`
+          commit-message: "ci(results): captured run ${{ github.run_id }}"
+          add-paths: |
+            results/latest/comparison.jsonl
+            results/latest/comparison.canonical.jsonl
+            results/latest/summary.md
+            results/latest/commands.txt
+            results/latest/environment.json

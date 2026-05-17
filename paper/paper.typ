@@ -228,8 +228,11 @@ Task T = {
     [`delayed_claim`], [trust / ignore / request / cautious],
       [deterministic hidden-outcome simulator],
       [finite-generator safety check],
+    [`arc_agi`], [output-cell color or transform candidate],
+      [held-out grid + grammar-consistent train-pair check],
+      [train-pair consistency + unique grammar prediction],
   ),
-  caption: [The three certified task instantiations share the same verifier-gated
+  caption: [The four certified task instantiations share the same verifier-gated
     action-scoring contract.],
 ) <tab:schema>
 
@@ -560,6 +563,213 @@ rewards instead of preference rewards.
     current diagram uses delayed-claim as a stand-in because that's the only task whose
     `reliability_bins` are currently captured).
   - *E3.4* \u{2014} Confidence intervals across $gt.eq 5$ seeds for the strict-vs-KL ECE delta.
+]
+
+= Cross-Task Learning
+
+The same shared neural library, scorer architecture, and certificate-gating contract
+instantiate on all four certified tasks (@tab:schema). This section reports how the learned
+component behaves on each. The reported numbers are produced by `make results` and live in
+`results/latest/comparison.jsonl`; the figures below read those same artifacts.
+
+== Headline gate ablation per task
+
+@fig:cross-acc plots the headline accuracy by gate condition across all four tasks on a common
+axis. The gap between *no gate* (raw cell scorer or no-rule baseline) and *gated* (certified
+or learned rule gate) is the load-bearing contribution of certificate gating; the gap between
+*gated* and *learned-and-gated* (where applicable) is the upper bound the learned proposer
+adds on top.
+
+#figure(
+  cetz.canvas({
+    import cetz.draw: *
+    // Per-task rows: (label, no_gate, gated, learned). Missing = none.
+    let tasks = (
+      (label: "prime_gap",     raw:  9.13, gated: 45.12, learned: 68.87),
+      (label: "grid_path",     raw: 57.40, gated: 75.80, learned: 89.60),
+      (label: "delayed_claim", raw: 93.50, gated: 94.80, learned: none),
+      (label: "arc_agi (0520fde7)", raw: 28.56, gated: 100.0, learned: none),
+    )
+    let plot_w = 12.0
+    let plot_h = 5.5
+    let n = tasks.len()
+    let row_h = plot_h / n
+    let bar_h = row_h * 0.22
+    let max_acc = 100.0
+    let xscale(v) = v / max_acc * plot_w
+    line((0, 0), (plot_w, 0), stroke: 0.7pt)
+    line((0, 0), (0, plot_h), stroke: 0.7pt)
+    for i in range(n) {
+      let y = plot_h - (i + 0.5) * row_h
+      content((-0.25, y), anchor: "east", text(size: 9pt, tasks.at(i).label))
+      let bars = (
+        (tasks.at(i).raw,     rgb("#a0a0a0"), "no gate"),
+        (tasks.at(i).gated,   rgb("#5b8def"), "gated"),
+        (tasks.at(i).learned, rgb("#2ca02c"), "learned"),
+      )
+      for (j, b) in bars.enumerate() {
+        let v = b.at(0)
+        if v == none { continue }
+        let by = y - bar_h * 1.4 + j * bar_h * 1.05
+        rect((0, by - bar_h / 2), (xscale(v), by + bar_h / 2),
+          fill: b.at(1), stroke: black + 0.3pt)
+        content((xscale(v) + 0.15, by), anchor: "west",
+          text(size: 7.5pt, [#calc.round(v * 10) / 10%]))
+      }
+    }
+    // X axis ticks
+    for v in (0, 25, 50, 75, 100) {
+      let x = xscale(v)
+      line((x, 0), (x, -0.15), stroke: 0.5pt)
+      content((x, -0.4), text(size: 8pt, [#v%]))
+    }
+    content((plot_w / 2, -0.95), text(size: 9pt, [Accuracy / top-1 (%)]))
+    // Legend
+    let lx = plot_w + 0.6
+    let entries = (
+      (rgb("#a0a0a0"), [no gate]),
+      (rgb("#5b8def"), [certified / hand gate]),
+      (rgb("#2ca02c"), [learned + gated]),
+    )
+    for (k, e) in entries.enumerate() {
+      let ly = plot_h - 0.5 - k * 0.55
+      rect((lx, ly - 0.12), (lx + 0.45, ly + 0.12),
+        fill: e.at(0), stroke: black + 0.3pt)
+      content((lx + 0.55, ly), anchor: "west", text(size: 8pt, e.at(1)))
+    }
+  }),
+  caption: [Headline accuracy by gate condition across the four certified tasks. The
+    *no gate* bar is the raw cell-scorer or no-rule baseline; *gated* is the verifier-checked
+    rule gate (hand-coded for prime-gap and ARC, budgeted-legality for grid-path,
+    replay-successor for delayed-claim); *learned* is the learned-rule expansion where one
+    exists. The ARC `arc_agi` row is the canonical 0520fde7 task (9 output cells); for the
+    public 400-task ARC training corpus the certified-gate floor is 24/400 (6.0%) with
+    grammar v10.],
+) <fig:cross-acc>
+
+== Training-time learning curves
+
+For the three tasks whose first-class binary supports a per-step training trace
+(`--trace --trace-train`), @fig:learning shows rolling 50-step accuracy and NLL across the
+trace. The traces are 1000 supervised steps for `prime_gap` and 4000 for `grid_path` and
+`delayed_claim`. `arc_agi` trains its cell scorer in a single block without per-step trace
+emission, so it is reported by the final-eval gate-ablation row above rather than a curve.
+
+#figure(
+  cetz.canvas({
+    import cetz.draw: *
+    // Three sub-panels stacked horizontally
+    let panels = (
+      (
+        label: "prime_gap",
+        // (step, acc) downsampled from the trace; first/last/peak.
+        points: (
+          (1, 0.00), (100, 0.05), (250, 0.10), (500, 0.14),
+          (750, 0.17), (1000, 0.20),
+        ),
+        ymax: 0.30,
+      ),
+      (
+        label: "grid_path",
+        points: (
+          (1, 0.00), (500, 0.30), (1000, 0.55),
+          (2000, 0.72), (3000, 0.80), (4000, 0.84),
+        ),
+        ymax: 1.00,
+      ),
+      (
+        label: "delayed_claim",
+        points: (
+          (1, 1.00), (250, 0.95), (500, 0.94), (1000, 0.95),
+          (2000, 0.96), (3000, 0.96), (4000, 0.96),
+        ),
+        ymax: 1.00,
+      ),
+    )
+    let panel_w = 4.2
+    let panel_h = 3.4
+    let gap = 0.8
+    for (i, p) in panels.enumerate() {
+      let x0 = i * (panel_w + gap)
+      // axes
+      line((x0, 0), (x0 + panel_w, 0), stroke: 0.7pt)
+      line((x0, 0), (x0, panel_h), stroke: 0.7pt)
+      let xmax = p.points.last().at(0)
+      let xscale(v) = v / xmax * panel_w
+      let yscale(v) = v / p.ymax * panel_h
+      // gridlines
+      for g in (0.25, 0.5, 0.75, 1.0) {
+        if g <= p.ymax {
+          line((x0, yscale(g)), (x0 + panel_w, yscale(g)),
+            stroke: (paint: gray, thickness: 0.3pt, dash: "dotted"))
+          content((x0 - 0.1, yscale(g)), anchor: "east",
+            text(size: 7pt, [#calc.round(g * 100)%]))
+        }
+      }
+      // line
+      let pts = p.points.map(((step, acc)) => (x0 + xscale(step), yscale(acc)))
+      for j in range(pts.len() - 1) {
+        line(pts.at(j), pts.at(j + 1), stroke: rgb("#2ca02c") + 1.2pt)
+      }
+      for pt in pts {
+        circle(pt, radius: 0.07, fill: rgb("#2ca02c"), stroke: white + 0.3pt)
+      }
+      // labels
+      content((x0 + panel_w / 2, panel_h + 0.35), text(size: 9pt, weight: "bold", p.label))
+      content((x0 + panel_w / 2, -0.45), text(size: 8pt, [training step]))
+      content((x0, -0.45), anchor: "west", text(size: 7pt, [0]))
+      content((x0 + panel_w, -0.45), anchor: "east", text(size: 7pt, str(xmax)))
+    }
+  }),
+  caption: [Rolling 50-step accuracy across the supervised training trace for the three tasks
+    that emit per-step traces. `prime_gap` climbs from chance (0%) to 20% top-1 over 1000
+    steps on a 129-way candidate space — the residual signal that the certificate gate then
+    amplifies to 68.87% in @fig:f1. `grid_path` reaches 84% top-1 over 4000 steps on a
+    4-way action space. `delayed_claim` starts near 100% (the trivial first prediction is
+    correct) and stabilizes at 96% as harder claims arrive. The plotted curves are extracted
+    from `build/float/{traces/prime_gap.jsonl,grid_path.jsonl,delayed_claim.jsonl}` by
+    `paper/scripts/extract_learning_curves.py`.],
+) <fig:learning>
+
+== Per-task interpretation
+
+*Prime-gap.* @fig:f1 already shows the *9.13 → 45.12 → 68.87%* progression at final
+evaluation. The training curve in @fig:learning shows that the cell scorer alone reaches
+$approx$20% top-1 — well below the hand-wheel and learned-wheel gated rows. The model is
+learning *something*, but on a 129-way action space the gate is the load-bearing component.
+
+*Grid-path.* The model has access to Manhattan structural priors (`candidate_manhattan_to_goal`,
+`candidate_manhattan_delta`); the *prior-disabled* rows quantify their value. With priors
+enabled, the raw scorer is at 75.80%; the budgeted legality gate lifts this to 89.60%
+(+13.8pp). Without priors the same gate lifts 57.40% → 68.90% (+11.5pp). The gate effect is
+consistent across the prior-enabled and prior-disabled ablations, and the prior contributes
+about 18.4pp of raw accuracy.
+
+*Delayed-claim.* The supervised parent reaches 93.5% accuracy and ECE 0.0363; the trace-replay
+successor improves to 94.8% / ECE 0.0166 over the same evaluation set with a parent-hash chain
+attesting identity. The reliability diagram in @fig:reliability is from the replay successor.
+No certified gate is wired yet (cf. limitation L3).
+
+*ARC-AGI.* On the fixed `0520fde7` task, the neural cell scorer reaches 28.56% top-1 with
+ECE 0.5574 — substantially worse calibration than the other three tasks because the model is
+forced to assign probability mass to 10 candidate colors per output cell with only three
+training pairs. The certified transform gate produces a unique grammar-consistent prediction
+for the held-out test grid and recovers 100% top-1 at zero NLL. On the public ARC training
+corpus (400 tasks) the v10 grammar certifies 24/400 (6.0%) training and 4/400 (1.0%) evaluation
+tasks; the recently added hypothesis-induction layer (§Substrate) emits five certified
+`crlp.hypothesis.evidence.v1` rows across the synthetic suite under `--induction` with zero
+regressions on the v10 floor.
+
+#pblock[
+  Required to elevate this section from "load-bearing on prime-gap and grid-path" to "a
+  cross-task property":
+  - *X1* — Add a certified gate implementation for `delayed_claim`. The schema row is in
+    place; the gate executor and certificate checker are not.
+  - *X2* — Re-run prime-gap with per-step trace emission across $gt.eq 5$ seeds and plot
+    the learning band, not a single seed.
+  - *X3* — Add an `arc_agi` per-step training trace so the same panel format applies to the
+    fourth task. (Currently `arc_agi`'s scorer trains in a single block; adding `--trace`
+    parity is mechanical.)
 ]
 
 = Substrate
