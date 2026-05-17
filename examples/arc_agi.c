@@ -36,8 +36,8 @@ enum {
     ARC_MAX_TASK_PATH = 1024,
     ARC_ACCEPTED_RULES_BYTES = 2048,
     ARC_TRANSFORM_NAME_BYTES = 128,
-    ARC_RULE_CANDIDATE_COUNT = 2048,
-    ARC_GRAMMAR_VERSION = 9,
+    ARC_RULE_CANDIDATE_COUNT = 4096,
+    ARC_GRAMMAR_VERSION = 10,
     ARC_LEARNED_COMPOSE_TOP = 16,
     ARC_LEARNED_COMPOSE_LIMIT = 256,
     ARC_PROGRAM_PROPOSER_BUDGET = 64,
@@ -53,6 +53,17 @@ enum {
     ARC_OBJECT_RELATION_CONNECT_ALIGNED = 2,
     ARC_OBJECT_RELATION_FILL_ENCLOSED = 3,
     ARC_OBJECT_RELATION_KIND_COUNT = 4,
+    ARC_OBJECT_SELECTOR_ALL_COLOR = 0,
+    ARC_OBJECT_SELECTOR_UNIQUE_COLOR = 1,
+    ARC_OBJECT_SELECTOR_LARGEST_COLOR = 2,
+    ARC_OBJECT_SELECTOR_SMALLEST_COLOR = 3,
+    ARC_OBJECT_SELECTOR_INTERIOR_COLOR = 4,
+    ARC_OBJECT_SELECTOR_TOUCHING_BORDER_COLOR = 5,
+    ARC_OBJECT_SELECTOR_NEAREST_TO_COLOR = 6,
+    ARC_OBJECT_SELECTOR_KIND_COUNT = 7,
+    ARC_OBJECT_RENDER_OVERLAY = 0,
+    ARC_OBJECT_RENDER_ONLY = 1,
+    ARC_OBJECT_RENDER_KIND_COUNT = 2,
 };
 
 static const size_t ARC_PROGRAM_BUDGET_GRID[ARC_PROGRAM_BUDGET_GRID_COUNT] = {
@@ -299,6 +310,10 @@ typedef struct {
     uint8_t input_color;
     uint8_t output_color;
     uint8_t background_color;
+    uint8_t selector_kind;
+    uint8_t output_selector_kind;
+    uint8_t reference_color;
+    uint8_t render_mode;
     uint8_t color_map[ARC_COLOR_COUNT];
     int dx;
     int dy;
@@ -311,6 +326,10 @@ typedef struct {
     uint8_t input_color;
     uint8_t output_color;
     uint8_t background_color;
+    uint8_t selector_kind;
+    uint8_t output_selector_kind;
+    uint8_t reference_color;
+    uint8_t render_mode;
     uint8_t color_map[ARC_COLOR_COUNT];
     int dx;
     int dy;
@@ -400,6 +419,12 @@ typedef struct {
     double relation_score[ARC_OBJECT_RELATION_KIND_COUNT];
     double relation_color_score[ARC_OBJECT_RELATION_KIND_COUNT][ARC_COLOR_COUNT][ARC_COLOR_COUNT];
     double relation_background_score[ARC_OBJECT_RELATION_KIND_COUNT][ARC_COLOR_COUNT];
+    double relation_selector_score[ARC_OBJECT_RELATION_KIND_COUNT][ARC_OBJECT_SELECTOR_KIND_COUNT];
+    double relation_output_selector_score[ARC_OBJECT_RELATION_KIND_COUNT][ARC_OBJECT_SELECTOR_KIND_COUNT];
+    double relation_render_score[ARC_OBJECT_RELATION_KIND_COUNT][ARC_OBJECT_RENDER_KIND_COUNT];
+    double object_selector_score[ARC_OBJECT_SELECTOR_KIND_COUNT];
+    double object_color_score[ARC_COLOR_COUNT][ARC_COLOR_COUNT];
+    double object_render_score[ARC_OBJECT_RENDER_KIND_COUNT];
 } ARCProgramLearnedState;
 
 typedef struct {
@@ -466,6 +491,9 @@ static int arc_extract_scene(const ARCGrid *grid, uint8_t background, ARCScene *
 static int arc_scene_unique_color_object(const ARCScene *scene,
                                          uint8_t color,
                                          ARCObject *object_out);
+static int arc_apply_candidate(const ARCTransformCandidate *candidate,
+                               const ARCGrid *input,
+                               ARCGrid *output);
 
 static int parse_size_text(const char *text, size_t *out_value)
 {
@@ -589,6 +617,10 @@ static void arc_step_from_candidate(const ARCTransformCandidate *candidate, ARCT
     step->input_color = candidate->input_color;
     step->output_color = candidate->output_color;
     step->background_color = candidate->background_color;
+    step->selector_kind = candidate->selector_kind;
+    step->output_selector_kind = candidate->output_selector_kind;
+    step->reference_color = candidate->reference_color;
+    step->render_mode = candidate->render_mode;
     memcpy(step->color_map, candidate->color_map, sizeof(step->color_map));
     step->dx = candidate->dx;
     step->dy = candidate->dy;
@@ -602,6 +634,10 @@ static void arc_candidate_from_step(const ARCTransformStep *step, ARCTransformCa
     candidate->input_color = step->input_color;
     candidate->output_color = step->output_color;
     candidate->background_color = step->background_color;
+    candidate->selector_kind = step->selector_kind;
+    candidate->output_selector_kind = step->output_selector_kind;
+    candidate->reference_color = step->reference_color;
+    candidate->render_mode = step->render_mode;
     memcpy(candidate->color_map, step->color_map, sizeof(candidate->color_map));
     candidate->dx = step->dx;
     candidate->dy = step->dy;
@@ -650,17 +686,59 @@ static const char *arc_object_relation_kind_name(size_t kind)
     return "unknown";
 }
 
-static size_t arc_object_relation_selector_kind(size_t relation_kind)
+static const char *arc_object_selector_short_name(uint8_t selector_kind)
 {
-    switch (relation_kind) {
-    case ARC_OBJECT_RELATION_TRANSLATE:
-        return 1;
-    case ARC_OBJECT_RELATION_CONNECT_ALIGNED:
-        return 2;
-    case ARC_OBJECT_RELATION_FILL_ENCLOSED:
-        return 3;
+    switch (selector_kind) {
+    case ARC_OBJECT_SELECTOR_UNIQUE_COLOR:
+        return "uniq";
+    case ARC_OBJECT_SELECTOR_LARGEST_COLOR:
+        return "max";
+    case ARC_OBJECT_SELECTOR_SMALLEST_COLOR:
+        return "min";
+    case ARC_OBJECT_SELECTOR_INTERIOR_COLOR:
+        return "inner";
+    case ARC_OBJECT_SELECTOR_TOUCHING_BORDER_COLOR:
+        return "edge";
+    case ARC_OBJECT_SELECTOR_NEAREST_TO_COLOR:
+        return "near";
+    case ARC_OBJECT_SELECTOR_ALL_COLOR:
+    default:
+        return "all";
     }
-    return 0;
+}
+
+static uint8_t arc_candidate_selector_kind(const ARCTransformCandidate *candidate)
+{
+    if (candidate == NULL) {
+        return ARC_OBJECT_SELECTOR_ALL_COLOR;
+    }
+    if (candidate->selector_kind != 0) {
+        return candidate->selector_kind;
+    }
+    if (candidate->op == ARC_RULE_OBJECT_TRANSLATE ||
+        arc_object_relation_kind(candidate) == ARC_OBJECT_RELATION_TRANSLATE ||
+        candidate->op == ARC_RULE_OBJECT_FILL_ENCLOSED ||
+        arc_object_relation_kind(candidate) == ARC_OBJECT_RELATION_FILL_ENCLOSED) {
+        return ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
+    }
+    return ARC_OBJECT_SELECTOR_ALL_COLOR;
+}
+
+static uint8_t arc_candidate_output_selector_kind(const ARCTransformCandidate *candidate)
+{
+    if (candidate == NULL || candidate->output_selector_kind == 0) {
+        return ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
+    }
+    return candidate->output_selector_kind;
+}
+
+static uint8_t arc_candidate_render_mode(const ARCTransformCandidate *candidate)
+{
+    if (candidate == NULL ||
+        candidate->render_mode >= ARC_OBJECT_RENDER_KIND_COUNT) {
+        return ARC_OBJECT_RENDER_OVERLAY;
+    }
+    return candidate->render_mode;
 }
 
 static int arc_rule_can_end_composition(ARCTransformRule op)
@@ -718,6 +796,10 @@ static int arc_init_composed_candidate(ARCTransformCandidate *candidate,
     candidate->input_color = first->input_color;
     candidate->output_color = second->output_color;
     candidate->background_color = first->background_color;
+    candidate->selector_kind = first->selector_kind;
+    candidate->output_selector_kind = second->output_selector_kind;
+    candidate->reference_color = first->reference_color;
+    candidate->render_mode = second->render_mode;
     candidate->dx = first->dx + second->dx;
     candidate->dy = first->dy + second->dy;
     candidate->scale = second->scale;
@@ -864,15 +946,113 @@ static int arc_objects_same_shape(const ARCObject *lhs, const ARCObject *rhs)
            lhs->shape_hash == rhs->shape_hash;
 }
 
+static size_t arc_scene_count_color_objects(const ARCScene *scene, uint8_t color)
+{
+    size_t count = 0;
+    for (size_t i = 0; i < scene->object_count; ++i) {
+        count += scene->objects[i].color == color ? 1u : 0u;
+    }
+    return count;
+}
+
+static double arc_object_distance2(const ARCObject *lhs, const ARCObject *rhs)
+{
+    double dx = lhs->centroid_x - rhs->centroid_x;
+    double dy = lhs->centroid_y - rhs->centroid_y;
+    return dx * dx + dy * dy;
+}
+
+static int arc_select_scene_object(const ARCScene *scene,
+                                   uint8_t selector_kind,
+                                   uint8_t color,
+                                   uint8_t reference_color,
+                                   ARCObject *object_out)
+{
+    if (selector_kind == ARC_OBJECT_SELECTOR_ALL_COLOR) {
+        selector_kind = ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
+    }
+    if (selector_kind == ARC_OBJECT_SELECTOR_UNIQUE_COLOR) {
+        return arc_scene_unique_color_object(scene, color, object_out);
+    }
+
+    ARCObject reference;
+    if (selector_kind == ARC_OBJECT_SELECTOR_NEAREST_TO_COLOR &&
+        !arc_scene_unique_color_object(scene, reference_color, &reference)) {
+        return 0;
+    }
+
+    int found = 0;
+    int tied = 0;
+    ARCObject best;
+    double best_score = 0.0;
+    memset(&best, 0, sizeof(best));
+    for (size_t i = 0; i < scene->object_count; ++i) {
+        const ARCObject *object = &scene->objects[i];
+        double score = 0.0;
+        if (object->color != color) {
+            continue;
+        }
+        switch (selector_kind) {
+        case ARC_OBJECT_SELECTOR_LARGEST_COLOR:
+            score = (double)object->count;
+            break;
+        case ARC_OBJECT_SELECTOR_SMALLEST_COLOR:
+            score = -(double)object->count;
+            break;
+        case ARC_OBJECT_SELECTOR_INTERIOR_COLOR:
+            if (object->touches_border) {
+                continue;
+            }
+            score = 0.0;
+            break;
+        case ARC_OBJECT_SELECTOR_TOUCHING_BORDER_COLOR:
+            if (!object->touches_border) {
+                continue;
+            }
+            score = 0.0;
+            break;
+        case ARC_OBJECT_SELECTOR_NEAREST_TO_COLOR:
+            if (object->id == reference.id) {
+                continue;
+            }
+            score = -arc_object_distance2(object, &reference);
+            break;
+        default:
+            return 0;
+        }
+        if (!found || score > best_score) {
+            best = *object;
+            best_score = score;
+            found = 1;
+            tied = 0;
+        } else if (fabs(score - best_score) < 1e-9) {
+            tied = 1;
+        }
+    }
+    if (!found || tied) {
+        return 0;
+    }
+    if (object_out != NULL) {
+        *object_out = best;
+    }
+    return 1;
+}
+
 static int arc_build_object_translation_candidate(const ARCTask *task,
                                                   uint8_t background,
                                                   uint8_t input_color,
                                                   uint8_t output_color,
+                                                  uint8_t selector_kind,
+                                                  uint8_t output_selector_kind,
+                                                  uint8_t reference_color,
                                                   ARCTransformCandidate *candidate)
 {
     int have_offset = 0;
     int dx = 0;
     int dy = 0;
+    int selector_used = selector_kind == ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
+    int output_selector_used =
+        output_selector_kind == ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
     for (size_t pair = 0; pair < task->train_count; ++pair) {
         if (!task->train[pair].has_output ||
             !arc_grid_same_shape(&task->train[pair].input, &task->train[pair].output)) {
@@ -884,10 +1064,26 @@ static int arc_build_object_translation_candidate(const ARCTask *task,
         ARCObject output_object;
         if (!arc_extract_scene(&task->train[pair].input, background, &input_scene) ||
             !arc_extract_scene(&task->train[pair].output, background, &output_scene) ||
-            !arc_scene_unique_color_object(&input_scene, input_color, &input_object) ||
-            !arc_scene_unique_color_object(&output_scene, output_color, &output_object) ||
+            !arc_select_scene_object(&input_scene,
+                                     selector_kind,
+                                     input_color,
+                                     reference_color,
+                                     &input_object) ||
+            !arc_select_scene_object(&output_scene,
+                                     output_selector_kind,
+                                     output_color,
+                                     reference_color,
+                                     &output_object) ||
             !arc_objects_same_shape(&input_object, &output_object)) {
             return 0;
+        }
+        if (selector_kind != ARC_OBJECT_SELECTOR_UNIQUE_COLOR &&
+            arc_scene_count_color_objects(&input_scene, input_color) > 1u) {
+            selector_used = 1;
+        }
+        if (output_selector_kind != ARC_OBJECT_SELECTOR_UNIQUE_COLOR &&
+            arc_scene_count_color_objects(&output_scene, output_color) > 1u) {
+            output_selector_used = 1;
         }
         int pair_dx = (int)output_object.min_x - (int)input_object.min_x;
         int pair_dy = (int)output_object.min_y - (int)input_object.min_y;
@@ -902,7 +1098,7 @@ static int arc_build_object_translation_candidate(const ARCTask *task,
             return 0;
         }
     }
-    if (!have_offset) {
+    if (!have_offset || !selector_used || !output_selector_used) {
         return 0;
     }
 
@@ -910,16 +1106,34 @@ static int arc_build_object_translation_candidate(const ARCTask *task,
     candidate->input_color = input_color;
     candidate->output_color = output_color;
     candidate->background_color = background;
+    candidate->selector_kind = selector_kind;
+    candidate->output_selector_kind = output_selector_kind;
+    candidate->reference_color = reference_color;
     candidate->dx = dx;
     candidate->dy = dy;
-    snprintf(candidate->name,
-             sizeof(candidate->name),
-             "object_translate_bg_%u_color_%u_to_%u_%+d_%+d",
-             (unsigned)background,
-             (unsigned)input_color,
-             (unsigned)output_color,
-             dx,
-             dy);
+    if (selector_kind == ARC_OBJECT_SELECTOR_UNIQUE_COLOR &&
+        output_selector_kind == ARC_OBJECT_SELECTOR_UNIQUE_COLOR) {
+        snprintf(candidate->name,
+                 sizeof(candidate->name),
+                 "object_translate_bg_%u_color_%u_to_%u_%+d_%+d",
+                 (unsigned)background,
+                 (unsigned)input_color,
+                 (unsigned)output_color,
+                 dx,
+                 dy);
+    } else {
+        snprintf(candidate->name,
+                 sizeof(candidate->name),
+                 "object_translate_%s_to_%s_ref_%u_bg_%u_color_%u_to_%u_%+d_%+d",
+                 arc_object_selector_short_name(selector_kind),
+                 arc_object_selector_short_name(output_selector_kind),
+                 (unsigned)reference_color,
+                 (unsigned)background,
+                 (unsigned)input_color,
+                 (unsigned)output_color,
+                 dx,
+                 dy);
+    }
     return 1;
 }
 
@@ -957,7 +1171,14 @@ static int arc_apply_object_connect_candidate(const ARCTransformCandidate *candi
         return 0;
     }
 
-    *output = *input;
+    if (arc_candidate_render_mode(candidate) == ARC_OBJECT_RENDER_ONLY) {
+        arc_init_grid(output, input->width, input->height);
+        for (size_t cell = 0; cell < arc_grid_cells(output); ++cell) {
+            output->cells[cell] = candidate->background_color;
+        }
+    } else {
+        *output = *input;
+    }
     if (candidate->dx == ARC_OBJECT_CONNECT_HORIZONTAL ||
         candidate->dx == ARC_OBJECT_CONNECT_BOTH) {
         for (size_t y = 0; y < input->height; ++y) {
@@ -1018,6 +1239,7 @@ static int arc_build_object_connect_candidate(const ARCTask *task,
                                               uint8_t input_color,
                                               uint8_t output_color,
                                               int mode,
+                                              uint8_t render_mode,
                                               ARCTransformCandidate *candidate)
 {
     const char *mode_name = mode == ARC_OBJECT_CONNECT_HORIZONTAL
@@ -1028,13 +1250,26 @@ static int arc_build_object_connect_candidate(const ARCTask *task,
     candidate->output_color = output_color;
     candidate->background_color = background;
     candidate->dx = mode;
-    snprintf(candidate->name,
-             sizeof(candidate->name),
-             "object_connect_bg_%u_color_%u_to_%u_%s",
-             (unsigned)background,
-             (unsigned)input_color,
-             (unsigned)output_color,
-             mode_name);
+    candidate->selector_kind = ARC_OBJECT_SELECTOR_ALL_COLOR;
+    candidate->output_selector_kind = ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
+    candidate->render_mode = render_mode;
+    if (render_mode == ARC_OBJECT_RENDER_ONLY) {
+        snprintf(candidate->name,
+                 sizeof(candidate->name),
+                 "object_connect_bg_%u_color_%u_to_%u_%s_line_only",
+                 (unsigned)background,
+                 (unsigned)input_color,
+                 (unsigned)output_color,
+                 mode_name);
+    } else {
+        snprintf(candidate->name,
+                 sizeof(candidate->name),
+                 "object_connect_bg_%u_color_%u_to_%u_%s",
+                 (unsigned)background,
+                 (unsigned)input_color,
+                 (unsigned)output_color,
+                 mode_name);
+    }
 
     int changed_any = 0;
     for (size_t pair = 0; pair < task->train_count; ++pair) {
@@ -1132,6 +1367,9 @@ static int arc_build_object_fill_enclosed_candidate(const ARCTask *task,
     candidate->input_color = border_color;
     candidate->output_color = fill_color;
     candidate->background_color = 0;
+    candidate->selector_kind = ARC_OBJECT_SELECTOR_ALL_COLOR;
+    candidate->output_selector_kind = ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
+    candidate->render_mode = ARC_OBJECT_RENDER_OVERLAY;
     snprintf(candidate->name,
              sizeof(candidate->name),
              "object_fill_enclosed_%u_to_%u",
@@ -1154,11 +1392,81 @@ static int arc_build_object_fill_enclosed_candidate(const ARCTask *task,
     return changed_any;
 }
 
+static int arc_build_selected_object_candidate(const ARCTask *task,
+                                               ARCTransformRule op,
+                                               uint8_t background,
+                                               uint8_t input_color,
+                                               uint8_t output_color,
+                                               uint8_t selector_kind,
+                                               uint8_t reference_color,
+                                               ARCTransformCandidate *candidate)
+{
+    arc_init_candidate(candidate, op, "");
+    candidate->input_color = input_color;
+    candidate->output_color = output_color;
+    candidate->background_color = background;
+    candidate->selector_kind = selector_kind;
+    candidate->output_selector_kind = ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
+    candidate->reference_color = reference_color;
+    candidate->render_mode = ARC_OBJECT_RENDER_ONLY;
+
+    const char *op_name = op == ARC_RULE_OBJECT_MASK_LARGEST
+                              ? "mask"
+                              : op == ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR ? "crop_recolor"
+                                                                            : "crop";
+    int selector_used = selector_kind == ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
+    int changed_any = 0;
+    for (size_t pair = 0; pair < task->train_count; ++pair) {
+        ARCScene scene;
+        ARCGrid produced;
+        if (!task->train[pair].has_output ||
+            !arc_extract_scene(&task->train[pair].input, background, &scene) ||
+            !arc_apply_candidate(candidate, &task->train[pair].input, &produced) ||
+            !arc_grid_equal(&produced, &task->train[pair].output)) {
+            return 0;
+        }
+        if (selector_kind != ARC_OBJECT_SELECTOR_UNIQUE_COLOR &&
+            arc_scene_count_color_objects(&scene, input_color) > 1u) {
+            selector_used = 1;
+        }
+        changed_any = changed_any || !arc_grid_equal(&task->train[pair].input, &produced);
+    }
+    if (!selector_used || !changed_any) {
+        return 0;
+    }
+
+    if (selector_kind == ARC_OBJECT_SELECTOR_NEAREST_TO_COLOR) {
+        snprintf(candidate->name,
+                 sizeof(candidate->name),
+                 "object_select_%s_%s_ref_%u_bg_%u_color_%u_to_%u",
+                 op_name,
+                 arc_object_selector_short_name(selector_kind),
+                 (unsigned)reference_color,
+                 (unsigned)background,
+                 (unsigned)input_color,
+                 (unsigned)output_color);
+    } else {
+        snprintf(candidate->name,
+                 sizeof(candidate->name),
+                 "object_select_%s_%s_bg_%u_color_%u_to_%u",
+                 op_name,
+                 arc_object_selector_short_name(selector_kind),
+                 (unsigned)background,
+                 (unsigned)input_color,
+                 (unsigned)output_color);
+    }
+    return 1;
+}
+
 static int arc_build_object_relation_candidate(const ARCTask *task,
                                                size_t relation_kind,
                                                uint8_t background,
                                                uint8_t input_color,
                                                uint8_t output_color,
+                                               uint8_t selector_kind,
+                                               uint8_t output_selector_kind,
+                                               uint8_t reference_color,
+                                               uint8_t render_mode,
                                                int mode,
                                                ARCTransformCandidate *candidate)
 {
@@ -1171,18 +1479,37 @@ static int arc_build_object_relation_candidate(const ARCTask *task,
                                                     background,
                                                     input_color,
                                                     output_color,
+                                                    selector_kind,
+                                                    output_selector_kind,
+                                                    reference_color,
                                                     &induced)) {
             return 0;
         }
-        snprintf(induced.name,
-                 sizeof(induced.name),
-                 "object_relation_%s_bg_%u_color_%u_to_%u_%+d_%+d",
-                 arc_object_relation_kind_name(relation_kind),
-                 (unsigned)induced.background_color,
-                 (unsigned)induced.input_color,
-                 (unsigned)induced.output_color,
-                 induced.dx,
-                 induced.dy);
+        if (selector_kind == ARC_OBJECT_SELECTOR_UNIQUE_COLOR &&
+            output_selector_kind == ARC_OBJECT_SELECTOR_UNIQUE_COLOR) {
+            snprintf(induced.name,
+                     sizeof(induced.name),
+                     "object_relation_%s_bg_%u_color_%u_to_%u_%+d_%+d",
+                     arc_object_relation_kind_name(relation_kind),
+                     (unsigned)induced.background_color,
+                     (unsigned)induced.input_color,
+                     (unsigned)induced.output_color,
+                     induced.dx,
+                     induced.dy);
+        } else {
+            snprintf(induced.name,
+                     sizeof(induced.name),
+                     "object_relation_%s_%s_to_%s_ref_%u_bg_%u_color_%u_to_%u_%+d_%+d",
+                     arc_object_relation_kind_name(relation_kind),
+                     arc_object_selector_short_name(selector_kind),
+                     arc_object_selector_short_name(output_selector_kind),
+                     (unsigned)reference_color,
+                     (unsigned)induced.background_color,
+                     (unsigned)induced.input_color,
+                     (unsigned)induced.output_color,
+                     induced.dx,
+                     induced.dy);
+        }
         break;
     case ARC_OBJECT_RELATION_CONNECT_ALIGNED: {
         if (!arc_build_object_connect_candidate(task,
@@ -1190,6 +1517,7 @@ static int arc_build_object_relation_candidate(const ARCTask *task,
                                                 input_color,
                                                 output_color,
                                                 mode,
+                                                render_mode,
                                                 &induced)) {
             return 0;
         }
@@ -1197,14 +1525,25 @@ static int arc_build_object_relation_candidate(const ARCTask *task,
             mode == ARC_OBJECT_CONNECT_HORIZONTAL
                 ? "horizontal"
                 : mode == ARC_OBJECT_CONNECT_VERTICAL ? "vertical" : "both";
-        snprintf(induced.name,
-                 sizeof(induced.name),
-                 "object_relation_%s_bg_%u_color_%u_to_%u_%s",
-                 arc_object_relation_kind_name(relation_kind),
-                 (unsigned)induced.background_color,
-                 (unsigned)induced.input_color,
-                 (unsigned)induced.output_color,
-                 mode_name);
+        if (render_mode == ARC_OBJECT_RENDER_ONLY) {
+            snprintf(induced.name,
+                     sizeof(induced.name),
+                     "object_relation_%s_bg_%u_color_%u_to_%u_%s_line_only",
+                     arc_object_relation_kind_name(relation_kind),
+                     (unsigned)induced.background_color,
+                     (unsigned)induced.input_color,
+                     (unsigned)induced.output_color,
+                     mode_name);
+        } else {
+            snprintf(induced.name,
+                     sizeof(induced.name),
+                     "object_relation_%s_bg_%u_color_%u_to_%u_%s",
+                     arc_object_relation_kind_name(relation_kind),
+                     (unsigned)induced.background_color,
+                     (unsigned)induced.input_color,
+                     (unsigned)induced.output_color,
+                     mode_name);
+        }
         break;
     }
     case ARC_OBJECT_RELATION_FILL_ENCLOSED:
@@ -1392,6 +1731,118 @@ static size_t arc_build_candidates(const ARCTask *task,
                                       relation_backgrounds,
                                       sizeof(relation_backgrounds) /
                                           sizeof(relation_backgrounds[0]));
+    static const uint8_t object_selectors[] = {
+        ARC_OBJECT_SELECTOR_UNIQUE_COLOR,
+        ARC_OBJECT_SELECTOR_LARGEST_COLOR,
+        ARC_OBJECT_SELECTOR_SMALLEST_COLOR,
+        ARC_OBJECT_SELECTOR_INTERIOR_COLOR,
+        ARC_OBJECT_SELECTOR_TOUCHING_BORDER_COLOR,
+    };
+    for (size_t background_index = 0;
+         background_index < relation_background_count;
+         ++background_index) {
+        uint8_t background = relation_backgrounds[background_index];
+        for (uint8_t input_color = 0; input_color < ARC_COLOR_COUNT; ++input_color) {
+            if (input_color == background) {
+                continue;
+            }
+            for (size_t selector_index = 0;
+                 selector_index < sizeof(object_selectors) / sizeof(object_selectors[0]);
+                 ++selector_index) {
+                uint8_t selector = object_selectors[selector_index];
+                if (arc_build_selected_object_candidate(task,
+                                                        ARC_RULE_OBJECT_CROP_LARGEST,
+                                                        background,
+                                                        input_color,
+                                                        input_color,
+                                                        selector,
+                                                        0,
+                                                        &candidate)) {
+                    arc_add_candidate(candidates, capacity, &count, &candidate);
+                }
+                for (uint8_t output_color = 1;
+                     output_color < ARC_COLOR_COUNT;
+                     ++output_color) {
+                    if (arc_build_selected_object_candidate(task,
+                                                            ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR,
+                                                            background,
+                                                            input_color,
+                                                            output_color,
+                                                            selector,
+                                                            0,
+                                                            &candidate)) {
+                        arc_add_candidate(candidates, capacity, &count, &candidate);
+                    }
+                    if (arc_build_selected_object_candidate(task,
+                                                            ARC_RULE_OBJECT_MASK_LARGEST,
+                                                            background,
+                                                            input_color,
+                                                            output_color,
+                                                            selector,
+                                                            0,
+                                                            &candidate)) {
+                        arc_add_candidate(candidates, capacity, &count, &candidate);
+                    }
+                }
+            }
+            for (uint8_t reference_color = 0;
+                 reference_color < ARC_COLOR_COUNT;
+                 ++reference_color) {
+                if (reference_color == background ||
+                    reference_color == input_color) {
+                    continue;
+                }
+                if (arc_build_selected_object_candidate(task,
+                                                        ARC_RULE_OBJECT_CROP_LARGEST,
+                                                        background,
+                                                        input_color,
+                                                        input_color,
+                                                        ARC_OBJECT_SELECTOR_NEAREST_TO_COLOR,
+                                                        reference_color,
+                                                        &candidate)) {
+                    arc_add_candidate(candidates, capacity, &count, &candidate);
+                }
+                for (uint8_t output_color = 1;
+                     output_color < ARC_COLOR_COUNT;
+                     ++output_color) {
+                    if (arc_build_selected_object_candidate(task,
+                                                            ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR,
+                                                            background,
+                                                            input_color,
+                                                            output_color,
+                                                            ARC_OBJECT_SELECTOR_NEAREST_TO_COLOR,
+                                                            reference_color,
+                                                            &candidate)) {
+                        arc_add_candidate(candidates, capacity, &count, &candidate);
+                    }
+                    if (arc_build_selected_object_candidate(task,
+                                                            ARC_RULE_OBJECT_MASK_LARGEST,
+                                                            background,
+                                                            input_color,
+                                                            output_color,
+                                                            ARC_OBJECT_SELECTOR_NEAREST_TO_COLOR,
+                                                            reference_color,
+                                                            &candidate)) {
+                        arc_add_candidate(candidates, capacity, &count, &candidate);
+                    }
+                }
+            }
+        }
+    }
+    static const uint8_t translate_selectors[] = {
+        ARC_OBJECT_SELECTOR_UNIQUE_COLOR,
+        ARC_OBJECT_SELECTOR_LARGEST_COLOR,
+        ARC_OBJECT_SELECTOR_SMALLEST_COLOR,
+        ARC_OBJECT_SELECTOR_INTERIOR_COLOR,
+        ARC_OBJECT_SELECTOR_TOUCHING_BORDER_COLOR,
+    };
+    static const uint8_t translate_output_selectors[] = {
+        ARC_OBJECT_SELECTOR_UNIQUE_COLOR,
+        ARC_OBJECT_SELECTOR_LARGEST_COLOR,
+        ARC_OBJECT_SELECTOR_SMALLEST_COLOR,
+        ARC_OBJECT_SELECTOR_INTERIOR_COLOR,
+        ARC_OBJECT_SELECTOR_TOUCHING_BORDER_COLOR,
+    };
     for (size_t background_index = 0;
          background_index < relation_background_count;
          ++background_index) {
@@ -1404,26 +1855,70 @@ static size_t arc_build_candidates(const ARCTask *task,
                 if (output_color == background) {
                     continue;
                 }
-                if (arc_build_object_relation_candidate(task,
-                                                        ARC_OBJECT_RELATION_TRANSLATE,
-                                                        background,
-                                                        input_color,
-                                                        output_color,
-                                                        0,
-                                                        &candidate)) {
-                    arc_add_candidate(candidates, capacity, &count, &candidate);
+                for (size_t selector_index = 0;
+                     selector_index < sizeof(translate_selectors) /
+                                          sizeof(translate_selectors[0]);
+                     ++selector_index) {
+                    for (size_t output_selector_index = 0;
+                         output_selector_index < sizeof(translate_output_selectors) /
+                                                     sizeof(translate_output_selectors[0]);
+                         ++output_selector_index) {
+                        if (arc_build_object_relation_candidate(
+                                task,
+                                ARC_OBJECT_RELATION_TRANSLATE,
+                                background,
+                                input_color,
+                                output_color,
+                                translate_selectors[selector_index],
+                                translate_output_selectors[output_selector_index],
+                                0,
+                                ARC_OBJECT_RENDER_ONLY,
+                                0,
+                                &candidate)) {
+                            arc_add_candidate(candidates, capacity, &count, &candidate);
+                        }
+                    }
+                }
+                for (uint8_t reference_color = 0;
+                     reference_color < ARC_COLOR_COUNT;
+                     ++reference_color) {
+                    if (reference_color == background ||
+                        reference_color == input_color) {
+                        continue;
+                    }
+                    if (arc_build_object_relation_candidate(task,
+                                                            ARC_OBJECT_RELATION_TRANSLATE,
+                                                            background,
+                                                            input_color,
+                                                            output_color,
+                                                            ARC_OBJECT_SELECTOR_NEAREST_TO_COLOR,
+                                                            ARC_OBJECT_SELECTOR_UNIQUE_COLOR,
+                                                            reference_color,
+                                                            ARC_OBJECT_RENDER_ONLY,
+                                                            0,
+                                                            &candidate)) {
+                        arc_add_candidate(candidates, capacity, &count, &candidate);
+                    }
                 }
                 for (int mode = ARC_OBJECT_CONNECT_HORIZONTAL;
                      mode <= ARC_OBJECT_CONNECT_BOTH;
                      ++mode) {
-                    if (arc_build_object_relation_candidate(task,
-                                                            ARC_OBJECT_RELATION_CONNECT_ALIGNED,
-                                                            background,
-                                                            input_color,
-                                                            output_color,
-                                                            mode,
-                                                            &candidate)) {
-                        arc_add_candidate(candidates, capacity, &count, &candidate);
+                    for (uint8_t render_mode = ARC_OBJECT_RENDER_OVERLAY;
+                         render_mode < ARC_OBJECT_RENDER_KIND_COUNT;
+                         ++render_mode) {
+                        if (arc_build_object_relation_candidate(task,
+                                                                ARC_OBJECT_RELATION_CONNECT_ALIGNED,
+                                                                background,
+                                                                input_color,
+                                                                output_color,
+                                                                ARC_OBJECT_SELECTOR_ALL_COLOR,
+                                                                ARC_OBJECT_SELECTOR_UNIQUE_COLOR,
+                                                                0,
+                                                                render_mode,
+                                                                mode,
+                                                                &candidate)) {
+                            arc_add_candidate(candidates, capacity, &count, &candidate);
+                        }
                     }
                 }
             }
@@ -1437,6 +1932,10 @@ static size_t arc_build_candidates(const ARCTask *task,
                                                     0,
                                                     color,
                                                     fill_color,
+                                                    ARC_OBJECT_SELECTOR_ALL_COLOR,
+                                                    ARC_OBJECT_SELECTOR_UNIQUE_COLOR,
+                                                    0,
+                                                    ARC_OBJECT_RENDER_OVERLAY,
                                                     0,
                                                     &candidate)) {
                 arc_add_candidate(candidates, capacity, &count, &candidate);
@@ -2085,6 +2584,53 @@ static int arc_apply_largest_component_candidate(const ARCTransformCandidate *ca
                                                  const ARCGrid *input,
                                                  ARCGrid *output)
 {
+    if (candidate->selector_kind != ARC_OBJECT_SELECTOR_ALL_COLOR) {
+        ARCScene scene;
+        ARCObject object;
+        if (!arc_extract_scene(input, candidate->background_color, &scene) ||
+            !arc_select_scene_object(&scene,
+                                     arc_candidate_selector_kind(candidate),
+                                     candidate->input_color,
+                                     candidate->reference_color,
+                                     &object)) {
+            return 0;
+        }
+
+        if (candidate->op == ARC_RULE_OBJECT_MASK_LARGEST) {
+            arc_init_grid(output, input->width, input->height);
+            for (size_t cell = 0; cell < arc_grid_cells(output); ++cell) {
+                output->cells[cell] = 0;
+            }
+            for (size_t y = object.min_y; y <= object.max_y; ++y) {
+                for (size_t x = object.min_x; x <= object.max_x; ++x) {
+                    size_t cell = y * input->width + x;
+                    if (input->cells[cell] == candidate->input_color) {
+                        output->cells[cell] = candidate->output_color;
+                    }
+                }
+            }
+            return 1;
+        }
+
+        size_t width = object.max_x - object.min_x + 1u;
+        size_t height = object.max_y - object.min_y + 1u;
+        arc_init_grid(output, width, height);
+        for (size_t y = 0; y < height; ++y) {
+            for (size_t x = 0; x < width; ++x) {
+                size_t source = (object.min_y + y) * input->width + object.min_x + x;
+                size_t target = y * width + x;
+                if (input->cells[source] != candidate->input_color) {
+                    output->cells[target] = 0;
+                } else if (candidate->op == ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR) {
+                    output->cells[target] = candidate->output_color;
+                } else {
+                    output->cells[target] = input->cells[source];
+                }
+            }
+        }
+        return 1;
+    }
+
     ARCComponent component;
     if (!arc_find_largest_component(input, candidate->background_color, &component)) {
         return 0;
@@ -2239,7 +2785,11 @@ static int arc_apply_object_translate_candidate(const ARCTransformCandidate *can
     ARCScene scene;
     ARCObject object;
     if (!arc_extract_scene(input, candidate->background_color, &scene) ||
-        !arc_scene_unique_color_object(&scene, candidate->input_color, &object)) {
+        !arc_select_scene_object(&scene,
+                                 arc_candidate_selector_kind(candidate),
+                                 candidate->input_color,
+                                 candidate->reference_color,
+                                 &object)) {
         return 0;
     }
 
@@ -2591,6 +3141,16 @@ static int arc_candidate_is_object_program(const ARCTransformCandidate *candidat
            candidate->op == ARC_RULE_OBJECT_RELATION_INDUCED;
 }
 
+static int arc_candidate_is_selected_object_program(const ARCTransformCandidate *candidate)
+{
+    return candidate != NULL &&
+           !arc_candidate_is_composed(candidate) &&
+           candidate->selector_kind != ARC_OBJECT_SELECTOR_ALL_COLOR &&
+           (candidate->op == ARC_RULE_OBJECT_CROP_LARGEST ||
+            candidate->op == ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR ||
+            candidate->op == ARC_RULE_OBJECT_MASK_LARGEST);
+}
+
 static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
 {
     switch (candidate->op) {
@@ -2774,8 +3334,20 @@ static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
                              (int64_t)relation_kind);
         nn_program_add_param(&relation,
                              "selector_kind",
-                             (double)arc_object_relation_selector_kind(relation_kind),
-                             (int64_t)arc_object_relation_selector_kind(relation_kind));
+                             (double)arc_candidate_selector_kind(candidate),
+                             (int64_t)arc_candidate_selector_kind(candidate));
+        nn_program_add_param(&relation,
+                             "output_selector_kind",
+                             (double)arc_candidate_output_selector_kind(candidate),
+                             (int64_t)arc_candidate_output_selector_kind(candidate));
+        nn_program_add_param(&relation,
+                             "reference_color",
+                             (double)candidate->reference_color,
+                             candidate->reference_color);
+        nn_program_add_param(&relation,
+                             "render_mode",
+                             (double)arc_candidate_render_mode(candidate),
+                             arc_candidate_render_mode(candidate));
         nn_program_add_param(&relation,
                              "input_color",
                              (double)candidate->input_color,
@@ -2793,8 +3365,16 @@ static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
         nn_program_add_param(&relation, "mode", (double)relation_mode, relation_mode);
         nn_program_add_feature(&relation, (nn_real)((double)relation_kind / 4.0));
         nn_program_add_feature(&relation,
-                               (nn_real)((double)arc_object_relation_selector_kind(relation_kind) /
-                                         4.0));
+                               (nn_real)((double)arc_candidate_selector_kind(candidate) /
+                                         (double)(ARC_OBJECT_SELECTOR_KIND_COUNT - 1)));
+        nn_program_add_feature(
+            &relation,
+            (nn_real)((double)arc_candidate_output_selector_kind(candidate) /
+                      (double)(ARC_OBJECT_SELECTOR_KIND_COUNT - 1)));
+        nn_program_add_feature(&relation,
+                               (nn_real)((double)arc_candidate_render_mode(candidate) /
+                                         (double)(ARC_OBJECT_RENDER_KIND_COUNT - 1)));
+        nn_program_add_feature(&relation, (nn_real)((double)candidate->reference_color / 9.0));
         nn_program_add_feature(&relation, (nn_real)((double)candidate->input_color / 9.0));
         nn_program_add_feature(&relation, (nn_real)((double)candidate->output_color / 9.0));
         nn_program_add_feature(&relation,
@@ -2824,7 +3404,7 @@ static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
                              candidate->background_color);
         nn_program_init(&selector,
                         "arc_agi",
-                        "select_unique_color_object",
+                        "select_object_by_selector",
                         NN_PROGRAM_KIND_SELECTOR,
                         NN_PROGRAM_VALUE_OBJECT_SET,
                         NN_PROGRAM_VALUE_OBJECT,
@@ -2833,6 +3413,14 @@ static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
                              "color",
                              (double)candidate->input_color,
                              candidate->input_color);
+        nn_program_add_param(&selector,
+                             "selector_kind",
+                             (double)arc_candidate_selector_kind(candidate),
+                             arc_candidate_selector_kind(candidate));
+        nn_program_add_param(&selector,
+                             "reference_color",
+                             (double)candidate->reference_color,
+                             candidate->reference_color);
         nn_program_init(&mover,
                         "arc_agi",
                         "translate_object",
@@ -2893,7 +3481,15 @@ static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
                              "color",
                              (double)candidate->input_color,
                              candidate->input_color);
+        nn_program_add_param(&connector,
+                             "output_color",
+                             (double)candidate->output_color,
+                             candidate->output_color);
         nn_program_add_param(&connector, "mode", (double)candidate->dx, candidate->dx);
+        nn_program_add_param(&connector,
+                             "render_mode",
+                             (double)arc_candidate_render_mode(candidate),
+                             arc_candidate_render_mode(candidate));
         if (!nn_program_compose(program, &scene, &connector, candidate->name)) {
             return 0;
         }
@@ -2947,11 +3543,25 @@ static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
                              candidate->background_color);
         nn_program_init(&largest,
                         "arc_agi",
-                        "largest_component",
+                        candidate->selector_kind == ARC_OBJECT_SELECTOR_ALL_COLOR
+                            ? "largest_component"
+                            : "select_object_by_selector",
                         NN_PROGRAM_KIND_SELECTOR,
                         NN_PROGRAM_VALUE_OBJECT_SET,
                         NN_PROGRAM_VALUE_OBJECT,
                         101);
+        nn_program_add_param(&largest,
+                             "selector_kind",
+                             (double)arc_candidate_selector_kind(candidate),
+                             arc_candidate_selector_kind(candidate));
+        nn_program_add_param(&largest,
+                             "color",
+                             (double)candidate->input_color,
+                             candidate->input_color);
+        nn_program_add_param(&largest,
+                             "reference_color",
+                             (double)candidate->reference_color,
+                             candidate->reference_color);
         nn_program_init(&renderer,
                         "arc_agi",
                         candidate->op == ARC_RULE_OBJECT_MASK_LARGEST ? "object_mask" : "object_crop",
@@ -2993,6 +3603,22 @@ static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
                          "background",
                          (double)candidate->background_color,
                          candidate->background_color);
+    nn_program_add_param(program,
+                         "selector_kind",
+                         (double)arc_candidate_selector_kind(candidate),
+                         arc_candidate_selector_kind(candidate));
+    nn_program_add_param(program,
+                         "output_selector_kind",
+                         (double)arc_candidate_output_selector_kind(candidate),
+                         arc_candidate_output_selector_kind(candidate));
+    nn_program_add_param(program,
+                         "reference_color",
+                         (double)candidate->reference_color,
+                         candidate->reference_color);
+    nn_program_add_param(program,
+                         "render_mode",
+                         (double)arc_candidate_render_mode(candidate),
+                         arc_candidate_render_mode(candidate));
     nn_program_add_param(program, "dx", (double)candidate->dx, candidate->dx);
     nn_program_add_param(program, "dy", (double)candidate->dy, candidate->dy);
     nn_program_add_param(program, "scale", (double)candidate->scale, (int64_t)candidate->scale);
@@ -3020,6 +3646,17 @@ static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
     nn_program_add_feature(program,
                            (nn_real)((double)candidate->dy / (double)ARC_MAX_GRID_HEIGHT));
     nn_program_add_feature(program, (nn_real)(arc_candidate_is_object_relation(candidate) ? 1.0 : 0.0));
+    nn_program_add_feature(program,
+                           (nn_real)((double)arc_candidate_selector_kind(candidate) /
+                                     (double)(ARC_OBJECT_SELECTOR_KIND_COUNT - 1)));
+    nn_program_add_feature(
+        program,
+        (nn_real)((double)arc_candidate_output_selector_kind(candidate) /
+                  (double)(ARC_OBJECT_SELECTOR_KIND_COUNT - 1)));
+    nn_program_add_feature(program,
+                           (nn_real)((double)arc_candidate_render_mode(candidate) /
+                                     (double)(ARC_OBJECT_RENDER_KIND_COUNT - 1)));
+    nn_program_add_feature(program, (nn_real)((double)candidate->reference_color / 9.0));
     nn_program_refresh_canonical_id(program);
     return 1;
 }
@@ -3181,6 +3818,12 @@ static double arc_learned_family_score(const ARCProgramLearnedState *state,
     if (family >= sizeof(state->family_score) / sizeof(state->family_score[0])) {
         return 0.0;
     }
+    if (arc_candidate_is_object_relation(candidate)) {
+        return 20.0 * state->family_score[family];
+    }
+    if (arc_candidate_is_selected_object_program(candidate)) {
+        return 10.0 * state->family_score[family];
+    }
     return state->family_score[family];
 }
 
@@ -3192,15 +3835,40 @@ static double arc_learned_relation_score(const ARCProgramLearnedState *state,
         relation_kind == 0 ||
         relation_kind >= ARC_OBJECT_RELATION_KIND_COUNT ||
         candidate->input_color >= ARC_COLOR_COUNT ||
-        candidate->output_color >= ARC_COLOR_COUNT) {
+        candidate->output_color >= ARC_COLOR_COUNT ||
+        arc_candidate_selector_kind(candidate) >= ARC_OBJECT_SELECTOR_KIND_COUNT ||
+        arc_candidate_output_selector_kind(candidate) >= ARC_OBJECT_SELECTOR_KIND_COUNT ||
+        arc_candidate_render_mode(candidate) >= ARC_OBJECT_RENDER_KIND_COUNT) {
         return 0.0;
     }
-    return state->relation_score[relation_kind] +
-           0.5 * state->relation_color_score[relation_kind]
-                                              [candidate->input_color]
-                                              [candidate->output_color] +
-           0.25 * state->relation_background_score[relation_kind]
-                                                [candidate->background_color];
+    return 2.0 * state->relation_score[relation_kind] +
+           state->relation_color_score[relation_kind]
+                                      [candidate->input_color]
+                                      [candidate->output_color] +
+           0.5 * state->relation_background_score[relation_kind]
+                                                [candidate->background_color] +
+           0.5 * state->relation_selector_score[relation_kind]
+                                              [arc_candidate_selector_kind(candidate)] +
+           0.25 * state->relation_output_selector_score[relation_kind]
+                                                     [arc_candidate_output_selector_kind(candidate)] +
+           0.25 * state->relation_render_score[relation_kind]
+                                            [arc_candidate_render_mode(candidate)];
+}
+
+static double arc_learned_object_score(const ARCProgramLearnedState *state,
+                                       const ARCTransformCandidate *candidate)
+{
+    if (state == NULL ||
+        !arc_candidate_is_selected_object_program(candidate) ||
+        arc_candidate_selector_kind(candidate) >= ARC_OBJECT_SELECTOR_KIND_COUNT ||
+        candidate->input_color >= ARC_COLOR_COUNT ||
+        candidate->output_color >= ARC_COLOR_COUNT ||
+        arc_candidate_render_mode(candidate) >= ARC_OBJECT_RENDER_KIND_COUNT) {
+        return 0.0;
+    }
+    return 40.0 * state->object_selector_score[arc_candidate_selector_kind(candidate)] +
+           20.0 * state->object_color_score[candidate->input_color][candidate->output_color] +
+           10.0 * state->object_render_score[arc_candidate_render_mode(candidate)];
 }
 
 static double arc_learned_program_score(ARCProgramLearnedState *state,
@@ -3209,7 +3877,8 @@ static double arc_learned_program_score(ARCProgramLearnedState *state,
 {
     if (state == NULL || state->net == NULL || state->trained_tasks == 0) {
         return arc_learned_family_score(state, candidate) +
-               arc_learned_relation_score(state, candidate);
+               arc_learned_relation_score(state, candidate) +
+               arc_learned_object_score(state, candidate);
     }
     if (arc_candidate_is_composed(candidate)) {
         ARCTransformCandidate first;
@@ -3227,11 +3896,13 @@ static double arc_learned_program_score(ARCProgramLearnedState *state,
                                      features,
                                      ARC_PROGRAM_FEATURE_COUNT)) {
         return arc_learned_family_score(state, candidate) +
-               arc_learned_relation_score(state, candidate);
+               arc_learned_relation_score(state, candidate) +
+               arc_learned_object_score(state, candidate);
     }
     nn_forward(state->net, features, output);
     return (double)output[0] +
-           arc_learned_relation_score(state, candidate);
+           arc_learned_relation_score(state, candidate) +
+           arc_learned_object_score(state, candidate);
 }
 
 static int arc_program_eval_is_exact_success(const ARCProgramEval *eval)
@@ -3603,6 +4274,18 @@ static int arc_program_learned_observe(ARCProgramLearnedState *state,
     size_t relation_color_success[ARC_OBJECT_RELATION_KIND_COUNT][ARC_COLOR_COUNT][ARC_COLOR_COUNT];
     size_t relation_background_seen[ARC_OBJECT_RELATION_KIND_COUNT][ARC_COLOR_COUNT];
     size_t relation_background_success[ARC_OBJECT_RELATION_KIND_COUNT][ARC_COLOR_COUNT];
+    size_t relation_selector_seen[ARC_OBJECT_RELATION_KIND_COUNT][ARC_OBJECT_SELECTOR_KIND_COUNT];
+    size_t relation_selector_success[ARC_OBJECT_RELATION_KIND_COUNT][ARC_OBJECT_SELECTOR_KIND_COUNT];
+    size_t relation_output_selector_seen[ARC_OBJECT_RELATION_KIND_COUNT][ARC_OBJECT_SELECTOR_KIND_COUNT];
+    size_t relation_output_selector_success[ARC_OBJECT_RELATION_KIND_COUNT][ARC_OBJECT_SELECTOR_KIND_COUNT];
+    size_t relation_render_seen[ARC_OBJECT_RELATION_KIND_COUNT][ARC_OBJECT_RENDER_KIND_COUNT];
+    size_t relation_render_success[ARC_OBJECT_RELATION_KIND_COUNT][ARC_OBJECT_RENDER_KIND_COUNT];
+    size_t object_selector_seen[ARC_OBJECT_SELECTOR_KIND_COUNT];
+    size_t object_selector_success[ARC_OBJECT_SELECTOR_KIND_COUNT];
+    size_t object_color_seen[ARC_COLOR_COUNT][ARC_COLOR_COUNT];
+    size_t object_color_success[ARC_COLOR_COUNT][ARC_COLOR_COUNT];
+    size_t object_render_seen[ARC_OBJECT_RENDER_KIND_COUNT];
+    size_t object_render_success[ARC_OBJECT_RENDER_KIND_COUNT];
     memset(family_seen, 0, sizeof(family_seen));
     memset(family_success, 0, sizeof(family_success));
     memset(relation_seen, 0, sizeof(relation_seen));
@@ -3611,6 +4294,18 @@ static int arc_program_learned_observe(ARCProgramLearnedState *state,
     memset(relation_color_success, 0, sizeof(relation_color_success));
     memset(relation_background_seen, 0, sizeof(relation_background_seen));
     memset(relation_background_success, 0, sizeof(relation_background_success));
+    memset(relation_selector_seen, 0, sizeof(relation_selector_seen));
+    memset(relation_selector_success, 0, sizeof(relation_selector_success));
+    memset(relation_output_selector_seen, 0, sizeof(relation_output_selector_seen));
+    memset(relation_output_selector_success, 0, sizeof(relation_output_selector_success));
+    memset(relation_render_seen, 0, sizeof(relation_render_seen));
+    memset(relation_render_success, 0, sizeof(relation_render_success));
+    memset(object_selector_seen, 0, sizeof(object_selector_seen));
+    memset(object_selector_success, 0, sizeof(object_selector_success));
+    memset(object_color_seen, 0, sizeof(object_color_seen));
+    memset(object_color_success, 0, sizeof(object_color_success));
+    memset(object_render_seen, 0, sizeof(object_render_seen));
+    memset(object_render_success, 0, sizeof(object_render_success));
     for (size_t i = 0; i < candidate_count; ++i) {
         if (arc_candidate_is_composed(&candidates[i])) {
             continue;
@@ -3631,13 +4326,36 @@ static int arc_program_learned_observe(ARCProgramLearnedState *state,
             uint8_t input_color = candidates[i].input_color;
             uint8_t output_color = candidates[i].output_color;
             uint8_t background = candidates[i].background_color;
+            uint8_t selector = arc_candidate_selector_kind(&candidates[i]);
+            uint8_t output_selector = arc_candidate_output_selector_kind(&candidates[i]);
+            uint8_t render_mode = arc_candidate_render_mode(&candidates[i]);
             ++relation_seen[relation_kind];
             ++relation_color_seen[relation_kind][input_color][output_color];
             ++relation_background_seen[relation_kind][background];
+            ++relation_selector_seen[relation_kind][selector];
+            ++relation_output_selector_seen[relation_kind][output_selector];
+            ++relation_render_seen[relation_kind][render_mode];
             if (evals[i].train_consistent) {
                 ++relation_success[relation_kind];
                 ++relation_color_success[relation_kind][input_color][output_color];
                 ++relation_background_success[relation_kind][background];
+                ++relation_selector_success[relation_kind][selector];
+                ++relation_output_selector_success[relation_kind][output_selector];
+                ++relation_render_success[relation_kind][render_mode];
+            }
+        }
+        if (arc_candidate_is_selected_object_program(&candidates[i]) &&
+            candidates[i].input_color < ARC_COLOR_COUNT &&
+            candidates[i].output_color < ARC_COLOR_COUNT) {
+            uint8_t selector = arc_candidate_selector_kind(&candidates[i]);
+            uint8_t render_mode = arc_candidate_render_mode(&candidates[i]);
+            ++object_selector_seen[selector];
+            ++object_color_seen[candidates[i].input_color][candidates[i].output_color];
+            ++object_render_seen[render_mode];
+            if (evals[i].train_consistent) {
+                ++object_selector_success[selector];
+                ++object_color_success[candidates[i].input_color][candidates[i].output_color];
+                ++object_render_success[render_mode];
             }
         }
     }
@@ -3679,6 +4397,70 @@ static int arc_program_learned_observe(ARCProgramLearnedState *state,
                 0.85 * state->relation_background_score[relation_kind][background] +
                 0.15 * observation;
         }
+        for (uint8_t selector = 0; selector < ARC_OBJECT_SELECTOR_KIND_COUNT; ++selector) {
+            if (relation_selector_seen[relation_kind][selector] == 0) {
+                continue;
+            }
+            double observation =
+                (double)relation_selector_success[relation_kind][selector] /
+                (double)relation_selector_seen[relation_kind][selector];
+            state->relation_selector_score[relation_kind][selector] =
+                0.85 * state->relation_selector_score[relation_kind][selector] +
+                0.15 * observation;
+        }
+        for (uint8_t selector = 0; selector < ARC_OBJECT_SELECTOR_KIND_COUNT; ++selector) {
+            if (relation_output_selector_seen[relation_kind][selector] == 0) {
+                continue;
+            }
+            double observation =
+                (double)relation_output_selector_success[relation_kind][selector] /
+                (double)relation_output_selector_seen[relation_kind][selector];
+            state->relation_output_selector_score[relation_kind][selector] =
+                0.85 * state->relation_output_selector_score[relation_kind][selector] +
+                0.15 * observation;
+        }
+        for (uint8_t render_mode = 0; render_mode < ARC_OBJECT_RENDER_KIND_COUNT; ++render_mode) {
+            if (relation_render_seen[relation_kind][render_mode] == 0) {
+                continue;
+            }
+            double observation =
+                (double)relation_render_success[relation_kind][render_mode] /
+                (double)relation_render_seen[relation_kind][render_mode];
+            state->relation_render_score[relation_kind][render_mode] =
+                0.85 * state->relation_render_score[relation_kind][render_mode] +
+                0.15 * observation;
+        }
+    }
+    for (uint8_t selector = 0; selector < ARC_OBJECT_SELECTOR_KIND_COUNT; ++selector) {
+        if (object_selector_seen[selector] == 0) {
+            continue;
+        }
+        double observation =
+            (double)object_selector_success[selector] / (double)object_selector_seen[selector];
+        state->object_selector_score[selector] =
+            0.85 * state->object_selector_score[selector] + 0.15 * observation;
+    }
+    for (uint8_t input_color = 0; input_color < ARC_COLOR_COUNT; ++input_color) {
+        for (uint8_t output_color = 0; output_color < ARC_COLOR_COUNT; ++output_color) {
+            if (object_color_seen[input_color][output_color] == 0) {
+                continue;
+            }
+            double observation =
+                (double)object_color_success[input_color][output_color] /
+                (double)object_color_seen[input_color][output_color];
+            state->object_color_score[input_color][output_color] =
+                0.85 * state->object_color_score[input_color][output_color] +
+                0.15 * observation;
+        }
+    }
+    for (uint8_t render_mode = 0; render_mode < ARC_OBJECT_RENDER_KIND_COUNT; ++render_mode) {
+        if (object_render_seen[render_mode] == 0) {
+            continue;
+        }
+        double observation =
+            (double)object_render_success[render_mode] / (double)object_render_seen[render_mode];
+        state->object_render_score[render_mode] =
+            0.85 * state->object_render_score[render_mode] + 0.15 * observation;
     }
     return arc_program_learned_train_task(state,
                                           task,
@@ -4914,9 +5696,9 @@ static int run_arc_task_loader(const ARCConfig *config)
             if (transform.certified) {
                 ARCMetrics transform_metrics = arc_transform_to_metrics(&task, &transform);
                 print_arc_metrics_json(task.id,
-                                       "symbolic-transform-v9",
+                                       "symbolic-transform-v10",
                                        "certified_transform_gate",
-                                       "arc-transform-gate-v9",
+                                       "arc-transform-gate-v10",
                                        &transform_metrics);
             }
         }
@@ -5069,11 +5851,11 @@ int main(int argc, char **argv)
     print_arc_transform_json("0520fde7", &transform);
     ARCMetrics transform_metrics = arc_transform_to_metrics(&builtin_task, &transform);
     print_arc_metrics_json("0520fde7",
-                           "symbolic-transform-v9",
+                           "symbolic-transform-v10",
                            "certified_transform_gate",
-                           "arc-transform-gate-v9",
+                           "arc-transform-gate-v10",
                            &transform_metrics);
-    print_arc_metrics_line("symbolic-transform-v9",
+    print_arc_metrics_line("symbolic-transform-v10",
                            "certified_transform_gate",
                            &transform_metrics);
     arc_emit_builtin_program_summaries(&builtin_task, &config);
