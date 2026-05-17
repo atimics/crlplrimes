@@ -295,7 +295,7 @@ arc-agi-loader: $(ARC_AGI)
 	./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS) --program-budget-grid
 
 arc-agi-induction-smoke: $(ARC_AGI)
-	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 5 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 5
+	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 10 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 10
 
 arc-agi-induction-public: $(ARC_AGI)
 	$(PYTHON) scripts/arc_induction_parity.py --arc-agi ./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS)
