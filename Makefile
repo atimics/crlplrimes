@@ -64,7 +64,7 @@ TUNING_DIR ?= build/$(REAL)/neurosymbolic_tuning
 ARC_AGI_TASK_DIR ?=
 ARC_AGI_MAX_TASKS ?= 400
 
-.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-trace grid-path-replay grid-path-eval multitask-domain symbolic-domains program-synthesis program-synthesis-baselines arc-agi arc-agi-loader arc-agi-induction-smoke results neurosymbolic-tune benchmark test sanitize check clean
+.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-trace grid-path-replay grid-path-eval multitask-domain symbolic-domains program-synthesis program-synthesis-baselines arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public results neurosymbolic-tune benchmark test sanitize check clean
 
 all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(ARC_AGI) $(BENCHMARK)
 
@@ -295,10 +295,13 @@ arc-agi-loader: $(ARC_AGI)
 	./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS) --program-budget-grid
 
 arc-agi-induction-smoke: $(ARC_AGI)
-	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 1 --program-budget-grid --loader-summary-only --induction
+	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 2 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 2
+
+arc-agi-induction-public: $(ARC_AGI)
+	$(PYTHON) scripts/arc_induction_parity.py --arc-agi ./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS)
 
 results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(ARC_AGI)
-	$(PYTHON) scripts/capture_results.py --output-dir $(RESULTS_DIR) --real $(REAL)
+	$(PYTHON) scripts/capture_results.py --output-dir $(RESULTS_DIR) --real $(REAL) --arc-agi-task-dir "$(ARC_AGI_TASK_DIR)" --arc-agi-max-tasks $(ARC_AGI_MAX_TASKS)
 
 neurosymbolic-tune: all
 	$(PYTHON) scripts/neurosymbolic_tuning.py --output-dir $(TUNING_DIR) --real $(REAL) --skip-build

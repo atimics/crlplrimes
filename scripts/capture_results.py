@@ -23,8 +23,17 @@ COMMANDS = (
 )
 
 
-def run_make(repo: Path, real: str, target: str, log_path: Path) -> list[dict[str, object]]:
-    command = ["make", f"REAL={real}", target]
+def run_make(
+    repo: Path,
+    real: str,
+    target: str,
+    log_path: Path,
+    make_vars: dict[str, str] | None = None,
+) -> list[dict[str, object]]:
+    command = ["make", f"REAL={real}"]
+    for key, value in (make_vars or {}).items():
+        command.append(f"{key}={value}")
+    command.append(target)
     print("$ " + " ".join(command), flush=True)
     result = subprocess.run(command, cwd=repo, text=True, capture_output=True, check=False)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -49,6 +58,7 @@ def run_make(repo: Path, real: str, target: str, log_path: Path) -> list[dict[st
             "crlp.arc_transform.summary.v1",
             "crlp.arc_loader.summary.v1",
             "crlp.hypothesis.evidence.v1",
+            "crlp.arc_induction.parity.v1",
         }:
             row["source_target"] = target
             rows.append(row)
@@ -168,6 +178,12 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
         for row in rows
         if row.get("task") == "arc_agi"
         and row.get("schema") == "crlp.hypothesis.evidence.v1"
+    ]
+    arc_induction_parity = [
+        row
+        for row in rows
+        if row.get("task") == "arc_agi"
+        and row.get("schema") == "crlp.arc_induction.parity.v1"
     ]
     grid = [
         row
@@ -377,6 +393,31 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                     "events",
                     "utility",
                     "program hash",
+                ],
+            )
+        )
+    if arc_induction_parity:
+        lines.extend(["", "### ARC Induction Parity", ""])
+        lines.append(
+            markdown_table(
+                [
+                    [
+                        str(row.get("task_dir", "")),
+                        str(row.get("train_baseline_certified", "")),
+                        str(row.get("train_induction_certified", "")),
+                        str(row.get("eval_baseline_certified", "")),
+                        str(row.get("eval_induction_certified", "")),
+                        fmt_bool(row, "parity_holds"),
+                    ]
+                    for row in arc_induction_parity
+                ],
+                [
+                    "task dir",
+                    "train baseline",
+                    "train induction",
+                    "eval baseline",
+                    "eval induction",
+                    "parity",
                 ],
             )
         )
@@ -592,6 +633,8 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path, default=Path("results/latest"))
     parser.add_argument("--real", default="float")
+    parser.add_argument("--arc-agi-task-dir", default="")
+    parser.add_argument("--arc-agi-max-tasks", default="400")
     args = parser.parse_args(argv)
 
     repo = Path(__file__).resolve().parents[1]
@@ -604,6 +647,25 @@ def main(argv: list[str]) -> int:
         for target in targets:
             commands.append(f"make REAL={args.real} {target}")
             all_rows.extend(run_make(repo, args.real, target, output_dir / "logs" / f"{name}.log"))
+    if args.arc_agi_task_dir:
+        target = "arc-agi-induction-public"
+        make_vars = {
+            "ARC_AGI_TASK_DIR": args.arc_agi_task_dir,
+            "ARC_AGI_MAX_TASKS": args.arc_agi_max_tasks,
+        }
+        commands.append(
+            f"make REAL={args.real} ARC_AGI_TASK_DIR={args.arc_agi_task_dir} "
+            f"ARC_AGI_MAX_TASKS={args.arc_agi_max_tasks} {target}"
+        )
+        all_rows.extend(
+            run_make(
+                repo,
+                args.real,
+                target,
+                output_dir / "logs" / "arc_agi_induction_public.log",
+                make_vars,
+            )
+        )
 
     all_rows = dedupe_rows(all_rows)
     write_jsonl(output_dir / "comparison.jsonl", all_rows)
