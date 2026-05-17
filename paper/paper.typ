@@ -1,5 +1,6 @@
 #import "@preview/cetz:0.3.4"
 #import "@preview/cetz-plot:0.1.1": plot, chart
+#import "data.typ": learning_curves, gate_ablation
 
 #set document(
   title: "Certificate-Gated Neural Proposers for Verifier-Grounded Action Scoring",
@@ -62,21 +63,26 @@
     end-to-end neural policy. We specify one reusable verifier-gated action task schema:
     complete candidate enumeration, observable state/action features, a neural residual scorer,
     an exact verifier, a symbolic rule grammar, a certificate checker, a rule proposer, and a
-    trace/replay/RL protocol. We instantiate this schema on three certified tasks: prime gaps,
-    grid paths, and delayed claims. Prime gaps currently provide the strongest gate ablation: with
-    residue-sieve features removed from the scorer input, the raw scorer reaches 9.13% top-1; a
-    fixed hand-wheel gate raises this to 45.12%, and a learned rule gate reaches 68.87% at 100%
-    top-10 with an $approx$4$times$ reduction in model latency. Grid paths show the same
-    certified-gate pattern outside arithmetic at smaller scope: with Manhattan priors disabled,
-    a budgeted legality gate raises grid-path accuracy from 70.80% to 84.90%; the priors-allowed
-    checkpoint is retained as an explicit ablation at 75.80% raw and 89.60% gated. Delayed
-    claims currently exercise trace replay and calibration, not gate learning. The prime
-    rule-search negative result is load-bearing: grammar order and a simple structural heuristic
-    beat the current neural proposer at a fixed 16-rule budget, and the conditional gap grammar
-    exposes a larger failure. A separate shared-envelope smoke test adds one harder ARC-AGI-1
-    cell-color sample, but it is not yet counted as certified verifier-gated evidence. The
-    contribution is therefore the generalized protocol and audit discipline, not an improved
-    prime algorithm.
+    trace/replay/RL protocol. We instantiate this schema on four certified tasks: prime gaps,
+    grid paths, delayed claims, and ARC-AGI. Prime gaps currently provide the strongest
+    apples-to-apples gate ablation: with residue-sieve features removed from the scorer input,
+    the raw scorer reaches 9.13% top-1; a fixed hand-wheel gate raises this to 45.12%, and a
+    learned rule gate reaches 68.87% at 100% top-10. Grid paths show the same certified-gate
+    pattern outside arithmetic: with Manhattan priors disabled, a budgeted legality gate
+    raises accuracy from 57.40% to 68.90%; with priors enabled the same gate lifts 75.80%
+    raw to 89.60% gated. Delayed claims currently exercise trace replay and calibration
+    (parent 93.50% / replay successor 94.80%), not yet gate learning. On the canonical
+    ARC-AGI-1 task `0520fde7`, a 28.56% top-1 neural cell scorer is replaced by a certified
+    transform gate that emits the unique grammar-consistent prediction at 100% top-1 on all
+    nine held-out cells; on the public 400-task ARC training corpus the same gate certifies
+    a 24/400 floor under grammar v10, and a thin `NNHypothesis` slot-induction layer adds
+    transform families v10 cannot synthesise. The prime rule-search negative result is
+    load-bearing: grammar order and a simple structural heuristic beat the current neural
+    proposer at a fixed 16-rule budget, and the conditional gap grammar exposes a larger
+    failure. A separate `program_synthesis` cross-port emits nine certified
+    `crlp.hypothesis.evidence.v1` rows through the same library schema, demonstrating that
+    the substrate is not ARC-specific. The contribution is therefore the generalized protocol
+    and audit discipline, not an improved prime algorithm or a competitive ARC solver.
   ]
 ]
 
@@ -322,29 +328,26 @@ Full metrics:
 
 #figure(
   table(
-    columns: (auto, auto, auto, auto, auto, auto),
-    align: (left, right, right, right, right, right),
-    table.header[*Gate*][*Top-1*][*Top-10*][*NLL*][*ECE*][*ms/sample*],
-    [no gate], [9.13%], [78.01%], [2.9994], [0.1076], [0.0365],
-    [hand-wheel], [45.12%], [99.77%], [1.5902], [0.0834], [0.0375],
-    [*learned wheel*], [*68.87%*], [*100.00%*], [*1.0056*], [0.1402], [*0.0060*],
+    columns: (auto, auto, auto, auto, auto),
+    align: (left, right, right, right, right),
+    table.header[*Gate*][*Top-1*][*Top-10*][*NLL*][*ECE*],
+    [no gate], [9.13%], [78.01%], [2.9994], [0.1076],
+    [hand-wheel], [45.12%], [99.77%], [1.5902], [0.0834],
+    [*learned wheel*], [*68.87%*], [*100.00%*], [*1.0056*], [0.1402],
   ),
-  caption: [Gate ablation, minimal-feature scorer, identical weights across rows.],
+  caption: [Gate ablation, minimal-feature scorer, identical weights across rows. Wallclock
+    latency fields (`model_ms_per_sample`, `verifier_ms_per_sample`) are emitted into the
+    full `crlp.compare.v1` row but stripped by `scripts/canonicalize_results.py` before the
+    diff that gates the paper rebuild, because they vary by runner. The pinned CI runner
+    (`ubuntu-24.04`, `gcc-13`, see `results/latest/environment.json`) measured the *learned
+    wheel* row at $approx$6$times$ lower `model_ms_per_sample` than the *no gate* row at
+    matched sample count; reproducible-baseline latency claims should be read against that
+    runner identity.],
 ) <tab:f1>
 
-#pblock[
-  *Required to elevate C1 from "load-bearing on prime-gap" to "general":*
-  - *E1.1* \u{2014} Random-rule gate at matched verifier-call budget: replace the learned rule
-    set with $k$ random sound rules and report the top-1 / top-10 / NLL curve as $k$ varies.
-    Resolves whether the *content* of the learned rules matters or only their count.
-  - *E1.2* \u{2014} Extend the second-domain `grid_path` check beyond the current budgeted
-    legality gate to admissible-heuristic pruning. Same scorer + three gates + same table.
-  - *E1.3* \u{2014} Investigate the learned-wheel calibration tradeoff. The learned wheel
-    improves ranking sharply but has higher ECE than raw minimal and hand-wheel rows in the
-    default run.
-  - *E1.4* \u{2014} Confidence intervals across $gt.eq 5$ seeds for the 45.12 $arrow.r$ 68.87
-    delta.
-]
+Roadmap items R-E1.1 through R-E1.4 (random-rule gate, admissible-heuristic pruning,
+learned-wheel calibration probe, 5-seed CIs) target the gap between "load-bearing on
+prime-gap" and "C1 holds generally."
 
 = Axis 2: Rule search must beat fixed-budget symbolic baselines
 
@@ -431,16 +434,9 @@ the conditional gap grammar exposes a larger failure. The next neurosymbolic exp
 a richer grammar and show that learned ordering beats grammar-order and structural-heuristic
 baselines under the same budget.
 
-#pblock[
-  *Required to elevate C2 from "the verifier is doing useful work" to "the learned proposer is
-  useful":*
-  - *E2.1* \u{2014} Repeat the fixed-budget proposer baseline across random seeds and rule
-    budgets, reporting confidence intervals.
-  - *E2.2* \u{2014} Generalize the grammar: extend to conjunctive rules
-    (`if p % m == a and ... then reject ...`), report whether the proposer scales.
-  - *E2.3* \u{2014} Show one *worked example* of an accepted rule the hand-wheel does not
-    capture and explain why it generalizes.
-]
+Roadmap items R-E2.1 through R-E2.3 (5-seed CIs, conjunctive grammar, worked-example
+analysis) target the gap between "the verifier is doing useful work" and "the learned
+proposer is useful." The current evidence supports the former and not the latter.
 
 = Axis 3: Verifier RL must preserve calibration
 
@@ -553,98 +549,117 @@ rewards instead of preference rewards.
     strict-RL, and KL-RL once `make prime-gap` is run with `reliability_bins` capture enabled.]],
 ) <fig:reliability>
 
-#pblock[
-  *Required to elevate C3 from "true on prime-gap" to "a property of sparse-exact-reward RL":*
-  - *E3.1* \u{2014} Run strict-vs-regularized RL on `grid_path` and `delayed_claim` with the
-    same protocol; report the analogous @tab:f3 for each.
-  - *E3.2* \u{2014} Sweep the KL coefficient and entropy weight on a coarse grid for each task,
-    plot the calibration-ranking Pareto frontier.
-  - *E3.3* \u{2014} Per-bin reliability diagrams for *strict-RL vs KL-RL on prime-gap* (the
-    current diagram uses delayed-claim as a stand-in because that's the only task whose
-    `reliability_bins` are currently captured).
-  - *E3.4* \u{2014} Confidence intervals across $gt.eq 5$ seeds for the strict-vs-KL ECE delta.
-]
+Roadmap items R-E3.1 through R-E3.4 (cross-task strict-vs-KL replication, KL/entropy Pareto
+sweep, prime-gap reliability diagrams, strict-vs-KL CIs) target the gap between
+"C3 holds on prime-gap" and "C3 is a property of sparse-exact-reward RL."
 
 = Cross-Task Learning
 
 The same shared neural library, scorer architecture, and certificate-gating contract
 instantiate on all four certified tasks (@tab:schema). This section reports how the learned
 component behaves on each. The reported numbers are produced by `make results` and live in
-`results/latest/comparison.jsonl`; the figures below read those same artifacts.
+`results/latest/comparison.jsonl`; the figures in this section are driven by
+`paper/data.typ`, autogenerated from those same artifacts by
+`paper/scripts/extract_learning_curves.py` so the figures cannot drift from the underlying
+runs.
 
-== Headline gate ablation per task
+== Per-task gate ablation
 
-@fig:cross-acc plots the headline accuracy by gate condition across all four tasks on a common
-axis. The gap between *no gate* (raw cell scorer or no-rule baseline) and *gated* (certified
-or learned rule gate) is the load-bearing contribution of certificate gating; the gap between
-*gated* and *learned-and-gated* (where applicable) is the upper bound the learned proposer
-adds on top.
+Different tasks instantiate the certificate-gating loop differently: prime-gap and grid-path
+have *gate ablations* in the strict sense (same scorer, with vs without the gate);
+delayed-claim has a *checkpoint succession* (supervised parent vs trace-replay successor);
+ARC-AGI has a *scorer-vs-gate* ablation where the two rows are different architectures (a
+neural cell scorer and a symbolic transform gate over the same task). A single common-axis
+bar chart would obscure those distinctions, so @fig:cross-acc reports four small per-task
+panels with row labels that name what is being compared.
 
 #figure(
   cetz.canvas({
     import cetz.draw: *
-    // Per-task rows: (label, no_gate, gated, learned). Missing = none.
-    let tasks = (
-      (label: "prime_gap",     raw:  9.13, gated: 45.12, learned: 68.87),
-      (label: "grid_path",     raw: 57.40, gated: 75.80, learned: 89.60),
-      (label: "delayed_claim", raw: 93.50, gated: 94.80, learned: none),
-      (label: "arc_agi (0520fde7)", raw: 28.56, gated: 100.0, learned: none),
+    // Four small per-task panels. Each carries its own row labels so the
+    // comparison is honest: prime/grid are gate ablations on the same scorer;
+    // delayed-claim is checkpoint succession; arc_agi is scorer vs gate.
+    let panels = (
+      (
+        title: [`prime_gap` — gate ablation (same scorer)],
+        rows: (
+          ("no gate (raw scorer)",   9.13, rgb("#a0a0a0")),
+          ("hand-wheel gate",       45.12, rgb("#5b8def")),
+          ("learned-wheel gate",    68.87, rgb("#2ca02c")),
+        ),
+      ),
+      (
+        title: [`grid_path` — gate ablation (priors disabled vs enabled)],
+        rows: (
+          ("raw, priors disabled",  57.40, rgb("#a0a0a0")),
+          ("gated, priors disabled",68.90, rgb("#5b8def")),
+          ("raw, priors enabled",   75.80, rgb("#c0c0c0")),
+          ("gated, priors enabled", 89.60, rgb("#2ca02c")),
+        ),
+      ),
+      (
+        title: [`delayed_claim` — checkpoint succession (no gate yet)],
+        rows: (
+          ("supervised parent",     93.50, rgb("#a0a0a0")),
+          ("trace-replay successor",94.80, rgb("#2ca02c")),
+        ),
+      ),
+      (
+        title: [`arc_agi` (`0520fde7`) — scorer vs certified gate],
+        rows: (
+          ("neural cell scorer",    28.56, rgb("#a0a0a0")),
+          ("certified transform",  100.00, rgb("#2ca02c")),
+        ),
+      ),
     )
-    let plot_w = 12.0
-    let plot_h = 5.5
-    let n = tasks.len()
-    let row_h = plot_h / n
-    let bar_h = row_h * 0.22
-    let max_acc = 100.0
-    let xscale(v) = v / max_acc * plot_w
-    line((0, 0), (plot_w, 0), stroke: 0.7pt)
-    line((0, 0), (0, plot_h), stroke: 0.7pt)
-    for i in range(n) {
-      let y = plot_h - (i + 0.5) * row_h
-      content((-0.25, y), anchor: "east", text(size: 9pt, tasks.at(i).label))
-      let bars = (
-        (tasks.at(i).raw,     rgb("#a0a0a0"), "no gate"),
-        (tasks.at(i).gated,   rgb("#5b8def"), "gated"),
-        (tasks.at(i).learned, rgb("#2ca02c"), "learned"),
-      )
-      for (j, b) in bars.enumerate() {
-        let v = b.at(0)
-        if v == none { continue }
-        let by = y - bar_h * 1.4 + j * bar_h * 1.05
-        rect((0, by - bar_h / 2), (xscale(v), by + bar_h / 2),
-          fill: b.at(1), stroke: black + 0.3pt)
-        content((xscale(v) + 0.15, by), anchor: "west",
-          text(size: 7.5pt, [#calc.round(v * 10) / 10%]))
+    let cell_w = 6.4
+    let cell_h = 3.0
+    let col_gap = 0.6
+    let row_gap = 0.7
+    let cols = 2
+    for (i, p) in panels.enumerate() {
+      let col = calc.rem(i, cols)
+      let row = calc.div-euclid(i, cols)
+      let x0 = col * (cell_w + col_gap)
+      let y0 = -row * (cell_h + row_gap)
+      // axes
+      line((x0, y0), (x0 + cell_w, y0), stroke: 0.7pt)
+      line((x0, y0), (x0, y0 + cell_h), stroke: 0.7pt)
+      let nrows = p.rows.len()
+      let bar_band = cell_h / (nrows + 0.6)
+      let bar_h = bar_band * 0.55
+      let max_acc = 100.0
+      for (j, r) in p.rows.enumerate() {
+        let (label, value, color) = r
+        let cy = y0 + cell_h - (j + 0.6) * bar_band
+        let bx = x0 + value / max_acc * cell_w
+        rect((x0, cy - bar_h / 2), (bx, cy + bar_h / 2),
+          fill: color, stroke: black + 0.3pt)
+        content((bx + 0.1, cy), anchor: "west",
+          text(size: 7pt, [#calc.round(value * 10) / 10%]))
+        content((x0 - 0.1, cy), anchor: "east", text(size: 7pt, label))
+      }
+      content((x0 + cell_w / 2, y0 + cell_h + 0.35),
+        text(size: 8.5pt, weight: "bold", p.title))
+      for v in (0, 50, 100) {
+        let x = x0 + v / max_acc * cell_w
+        line((x, y0), (x, y0 - 0.1), stroke: 0.5pt)
+        content((x, y0 - 0.3), text(size: 7pt, [#v%]))
       }
     }
-    // X axis ticks
-    for v in (0, 25, 50, 75, 100) {
-      let x = xscale(v)
-      line((x, 0), (x, -0.15), stroke: 0.5pt)
-      content((x, -0.4), text(size: 8pt, [#v%]))
-    }
-    content((plot_w / 2, -0.95), text(size: 9pt, [Accuracy / top-1 (%)]))
-    // Legend
-    let lx = plot_w + 0.6
-    let entries = (
-      (rgb("#a0a0a0"), [no gate]),
-      (rgb("#5b8def"), [certified / hand gate]),
-      (rgb("#2ca02c"), [learned + gated]),
-    )
-    for (k, e) in entries.enumerate() {
-      let ly = plot_h - 0.5 - k * 0.55
-      rect((lx, ly - 0.12), (lx + 0.45, ly + 0.12),
-        fill: e.at(0), stroke: black + 0.3pt)
-      content((lx + 0.55, ly), anchor: "west", text(size: 8pt, e.at(1)))
-    }
   }),
-  caption: [Headline accuracy by gate condition across the four certified tasks. The
-    *no gate* bar is the raw cell-scorer or no-rule baseline; *gated* is the verifier-checked
-    rule gate (hand-coded for prime-gap and ARC, budgeted-legality for grid-path,
-    replay-successor for delayed-claim); *learned* is the learned-rule expansion where one
-    exists. The ARC `arc_agi` row is the canonical 0520fde7 task (9 output cells); for the
-    public 400-task ARC training corpus the certified-gate floor is 24/400 (6.0%) with
-    grammar v10.],
+  caption: [Per-task accuracy by ablation row. Each panel labels its own comparison so the
+    rows are read against the right baseline: prime-gap and grid-path are *gate ablations*
+    (same scorer, with vs without the gate; grid-path additionally varies whether the
+    Manhattan structural priors are enabled in the scorer features); delayed-claim is a
+    *checkpoint succession* (supervised parent vs trace-replay successor on the same
+    evaluation set, with parent-hash chain attesting identity); ARC-AGI is a *scorer-vs-gate*
+    ablation where the two rows are different architectures over the same `0520fde7` task,
+    not the same model with vs without a gate. The ARC `100.00%` is on nine held-out cells of
+    one task; the public 400-task ARC training corpus has a 24/400 ($approx$6.0%) certified-gate
+    floor under grammar v10, with the hypothesis-induction layer (§Substrate) adding transform
+    families v10 cannot synthesise (zero baseline-rate, 4/4 induction-rate on the synthetic
+    suite under `crlp.arc_induction.parity.v1`).],
 ) <fig:cross-acc>
 
 == Training-time learning curves
@@ -658,46 +673,22 @@ emission, so it is reported by the final-eval gate-ablation row above rather tha
 #figure(
   cetz.canvas({
     import cetz.draw: *
-    // Three sub-panels stacked horizontally
-    let panels = (
-      (
-        label: "prime_gap",
-        // (step, acc) downsampled from the trace; first/last/peak.
-        points: (
-          (1, 0.00), (100, 0.05), (250, 0.10), (500, 0.14),
-          (750, 0.17), (1000, 0.20),
-        ),
-        ymax: 0.30,
-      ),
-      (
-        label: "grid_path",
-        points: (
-          (1, 0.00), (500, 0.30), (1000, 0.55),
-          (2000, 0.72), (3000, 0.80), (4000, 0.84),
-        ),
-        ymax: 1.00,
-      ),
-      (
-        label: "delayed_claim",
-        points: (
-          (1, 1.00), (250, 0.95), (500, 0.94), (1000, 0.95),
-          (2000, 0.96), (3000, 0.96), (4000, 0.96),
-        ),
-        ymax: 1.00,
-      ),
-    )
     let panel_w = 4.2
     let panel_h = 3.4
     let gap = 0.8
-    for (i, p) in panels.enumerate() {
+    let layouts = (
+      (key: "prime_gap",     ymax: 0.30, color: rgb("#2ca02c")),
+      (key: "grid_path",     ymax: 1.00, color: rgb("#5b8def")),
+      (key: "delayed_claim", ymax: 1.00, color: rgb("#d62728")),
+    )
+    for (i, p) in layouts.enumerate() {
+      let pts_raw = learning_curves.at(p.key)
       let x0 = i * (panel_w + gap)
-      // axes
       line((x0, 0), (x0 + panel_w, 0), stroke: 0.7pt)
       line((x0, 0), (x0, panel_h), stroke: 0.7pt)
-      let xmax = p.points.last().at(0)
+      let xmax = pts_raw.last().at(0)
       let xscale(v) = v / xmax * panel_w
       let yscale(v) = v / p.ymax * panel_h
-      // gridlines
       for g in (0.25, 0.5, 0.75, 1.0) {
         if g <= p.ymax {
           line((x0, yscale(g)), (x0 + panel_w, yscale(g)),
@@ -706,29 +697,33 @@ emission, so it is reported by the final-eval gate-ablation row above rather tha
             text(size: 7pt, [#calc.round(g * 100)%]))
         }
       }
-      // line
-      let pts = p.points.map(((step, acc)) => (x0 + xscale(step), yscale(acc)))
+      // Connect every consecutive pair from the autogenerated trace.
+      let pts = pts_raw.map(t => (x0 + xscale(t.at(0)), yscale(t.at(1))))
       for j in range(pts.len() - 1) {
-        line(pts.at(j), pts.at(j + 1), stroke: rgb("#2ca02c") + 1.2pt)
+        line(pts.at(j), pts.at(j + 1), stroke: p.color + 1.0pt)
       }
-      for pt in pts {
-        circle(pt, radius: 0.07, fill: rgb("#2ca02c"), stroke: white + 0.3pt)
-      }
-      // labels
-      content((x0 + panel_w / 2, panel_h + 0.35), text(size: 9pt, weight: "bold", p.label))
+      // Mark first / last point only to keep the panel uncluttered.
+      circle(pts.first(), radius: 0.07, fill: p.color, stroke: white + 0.3pt)
+      circle(pts.last(),  radius: 0.07, fill: p.color, stroke: white + 0.3pt)
+      content((x0 + panel_w / 2, panel_h + 0.35), text(size: 9pt, weight: "bold", p.key))
       content((x0 + panel_w / 2, -0.45), text(size: 8pt, [training step]))
       content((x0, -0.45), anchor: "west", text(size: 7pt, [0]))
       content((x0 + panel_w, -0.45), anchor: "east", text(size: 7pt, str(xmax)))
     }
   }),
   caption: [Rolling 50-step accuracy across the supervised training trace for the three tasks
-    that emit per-step traces. `prime_gap` climbs from chance (0%) to 20% top-1 over 1000
-    steps on a 129-way candidate space — the residual signal that the certificate gate then
-    amplifies to 68.87% in @fig:f1. `grid_path` reaches 84% top-1 over 4000 steps on a
-    4-way action space. `delayed_claim` starts near 100% (the trivial first prediction is
-    correct) and stabilizes at 96% as harder claims arrive. The plotted curves are extracted
-    from `build/float/{traces/prime_gap.jsonl,grid_path.jsonl,delayed_claim.jsonl}` by
-    `paper/scripts/extract_learning_curves.py`.],
+    that emit per-step traces. *The plotted curves are imported verbatim from
+    `paper/data.typ`*, which is generated from `build/float/traces/prime_gap.jsonl`,
+    `build/float/grid_path.jsonl`, and `build/float/delayed_claim.jsonl` by
+    `paper/scripts/extract_learning_curves.py`; the paper cannot drift from the underlying
+    traces. `prime_gap` climbs from chance (0%) to $approx$20% top-1 over 1000 steps on a
+    129-way candidate space — the residual signal that the certificate gate then amplifies
+    to 68.87% in @fig:f1. `grid_path` reaches $approx$84% top-1 over 4000 steps on a 4-way
+    action space. `delayed_claim` starts near 100% (the trivial first prediction is correct)
+    and stabilizes near 96% as harder claims arrive. `arc_agi` is not plotted here because
+    its first-class binary trains in a single supervised block without per-step trace
+    emission; its endpoint (@fig:cross-acc, 28.56% top-1) is reported by final-eval gate
+    ablation instead.],
 ) <fig:learning>
 
 == Per-task interpretation
@@ -751,31 +746,40 @@ attesting identity. The reliability diagram in @fig:reliability is from the repl
 No certified gate is wired yet (cf. limitation L3).
 
 *ARC-AGI.* On the fixed `0520fde7` task, the neural cell scorer reaches 28.56% top-1 with
-ECE 0.5574 — substantially worse calibration than the other three tasks because the model is
-forced to assign probability mass to 10 candidate colors per output cell with only three
-training pairs. The certified transform gate produces a unique grammar-consistent prediction
-for the held-out test grid and recovers 100% top-1 at zero NLL. On the public ARC training
-corpus (400 tasks) the v10 grammar certifies 24/400 (6.0%) training and 4/400 (1.0%) evaluation
-tasks; the recently added hypothesis-induction layer (§Substrate) emits five certified
-`crlp.hypothesis.evidence.v1` rows across the synthetic suite under `--induction` with zero
-regressions on the v10 floor.
+*ECE 0.5574 — substantially worse calibration than any of the other three tasks*. The cause
+is structural: the cell scorer must distribute probability mass over 10 candidate colors per
+output cell while seeing only three training pairs and 9 held-out cells, so the softmax has
+neither enough data nor enough structure to align confidence with accuracy. The certified
+transform gate then sidesteps the calibration question entirely: it produces a *unique*
+grammar-consistent prediction or no prediction, so the held-out top-1 is either 100% or
+the gate abstains. On the public ARC training corpus (400 tasks) the v10 grammar certifies
+24/400 ($approx$6.0%) training and 4/400 ($approx$1.0%) evaluation tasks; the
+hypothesis-induction layer described in §Substrate adds *transform families v10 cannot
+synthesise*. Under the matched-baseline parity protocol `crlp.arc_induction.parity.v1`, on the
+synthetic move-to-anchor suite the baseline grammar certifies 0/4 tasks and the
+hypothesis-induction loader certifies 4/4 with zero regressions on the v10-supported tasks;
+the same harness applied to the public ARC corpus is the headline closing experiment listed
+in the roadmap (R-X4).
 
-#pblock[
-  Required to elevate this section from "load-bearing on prime-gap and grid-path" to "a
-  cross-task property":
-  - *X1* — Add a certified gate implementation for `delayed_claim`. The schema row is in
-    place; the gate executor and certificate checker are not.
-  - *X2* — Re-run prime-gap with per-step trace emission across $gt.eq 5$ seeds and plot
-    the learning band, not a single seed.
-  - *X3* — Add an `arc_agi` per-step training trace so the same panel format applies to the
-    fourth task. (Currently `arc_agi`'s scorer trains in a single block; adding `--trace`
-    parity is mechanical.)
-]
+== Cross-domain port
+
+To show the substrate is not ARC-specific, the same `NNHypothesis` + `NNProgram` + evidence
+schema is instantiated in the `program_synthesis` task on a `filter_then_reduce` template
+(stages `enumerate → filter → reduce`, slots `filter.predicate_id`, `reduce.kind`,
+`output.type`). The existing certificate checker for the list-DSL abstractions accepts the
+compiled programs unchanged, and `make program-synthesis` emits *nine certified
+`crlp.hypothesis.evidence.v1` rows* (one per abstraction in the library: `count_positive`,
+`count_negative`, `count_even`, `sum_positive`, `sum_negative`, `any_positive`,
+`all_positive`, `first_positive_or_zero`, `any_even`). Eight of the nine cover one
+task-instance event each; `any_even` certifies but covers zero on the current
+fixture-task pool — the row appears in `results/latest/summary.md` as a "Program Synthesis
+Hypothesis Evidence" table. This is the only evidence in the paper that the substrate is
+genuinely domain-neutral rather than ARC-shaped; cross-port to `prime_gap` is open work.
 
 = Substrate
 
 The hybrid architecture is the contribution; the substrate is the discipline that makes the
-claims auditable. Three pieces matter and would be a brief methods section in a longer paper:
+claims auditable. Five pieces matter and would be a brief methods section in a longer paper:
 
 - *Stable action IDs.* Trace rows carry `schema: "crlp.trace.v1"`, `trace_version: 1`, and
   `action_id_contract: "stable_unique_action_ids"`. Replay resolves `target_index` to the
@@ -783,63 +787,123 @@ claims auditable. Three pieces matter and would be a brief methods section in a 
 - *Checkpoint identity.* SHA-256 over the exact checkpoint bytes, plus `parent_model_hash`,
   `feature_encoder_version`, and `feature_set` in metadata. Successor models declare their
   parent; comparison reports carry both hashes and the evaluated `feature_set`.
+- *Hypothesis layer.* `NNHypothesis` (header `include/nn_hypothesis.h`) sits one level above
+  `NNProgram`: a *template* declares a typed operator skeleton as a sequence of stages with
+  named, typed slots; a *binding* fills each slot with a concrete value inferred from
+  observed task evidence; `nn_hypothesis_compile` produces a composed `NNProgram` whose
+  canonical id binds back to the hypothesis template, so the existing verifier and
+  closed-loop policy treat it as any other program. `crlp.hypothesis.evidence.v1` rows are
+  emitted by `nn_hypothesis_write_evidence_json`, a library function reused by both
+  `arc_agi` and `program_synthesis`. The provenance contract holds: state-observation
+  slot values are `NN_FEATURE_STATE_OBSERVATION`, gate-derived support / residual gain
+  appear only on the evidence row, never on the hypothesis feature vector that a
+  selection-mode proposer scores against.
+- *Certificate-gated baselines.* `crlp.arc_induction.parity.v1` records the matched
+  baseline-vs-induction certification delta per split (training, evaluation) on the public
+  ARC corpus or any synthetic split; `crlp.program_proposer.summary.v1` records
+  matched-budget rule-set comparisons across `{random, grammar-order, structural, learned,
+  closed-loop, oracle}`. Both schemas attest *what was held fixed* between rows, which is
+  the load-bearing thing for cross-task comparison.
 - *Pure C, no third-party deps.* The neural library is dense layers, sigmoid/ReLU/tanh/linear,
   MSE and softmax cross-entropy, SGD, batched 4-by-4 tiled forward/backward, cloned networks,
   action scoring, pairwise ranking loss, and cached policy-gradient updates with optional
   KL/entropy regularization. $approx$3k lines for the core; the prime-gap task is split into
   focused C modules for data, features, rule search, training, evaluation, and replay.
+- *CI-baseline runs.* A pinned `ubuntu-24.04` + `gcc-13` image runs `make check` and the
+  ARC induction smoke on every push and PR, runs `make results` nightly, captures
+  `crlp.environment.v1` for runner identity, and emits a *timing-stripped*
+  `comparison.canonical.jsonl` so the diff that gates "should the paper rewrite?" cannot be
+  triggered by wallclock noise. Laptop runs produce the same artifacts; drift shows up as a
+  visible `cc_version` or `git_dirty` difference rather than as silent numeric drift.
 
-= Limitations
+= Limitations <sec:limitations>
 
 #set enum(numbering: "L1.")
 + *Proposer learning not solved (Axis 2).* The fixed-budget baseline shows grammar order and
   a simple structural heuristic beat the current neural proposer on both the unconditional
   candidate grammar and the conditional gap grammar. The load-bearing claim is certificate-gated
-  rule discovery, not learned proposer superiority.
-+ *Cross-task verifier-RL comparison missing (Axis 3).* The pipeline supports it; the
+  rule discovery, not learned proposer superiority. The negative result is reported deliberately.
++ *Cross-task verifier-RL comparison missing (Axis 3).* Calibration evidence is on prime-gap
+  only. The pipeline supports running strict-vs-KL on grid-path and delayed-claim; the
   comparison is not in canonical results yet.
-+ *Limited cross-domain gate coverage (Axis 1).* `grid_path` now has a budgeted legality-gate
-  sanity check, but `delayed_claim` still lacks its certified gate implementation.
-+ *Statistical rigor.* Default `make prime-gap-experiments` runs 1 seed; the
-  harness supports more. Deltas need confidence intervals across $gt.eq 5$ seeds.
-+ *Learned-wheel calibration tradeoff* needs a reliability-diagram pass.
-+ *No literature comparison* on the calibration-collapse mechanism yet.
++ *Limited cross-domain gate coverage (Axis 1).* Prime-gap and grid-path have *gate
+  ablations* in the strict sense (same scorer, with vs without gate). Delayed-claim has a
+  schema row and replay-successor evidence but no certified gate implementation yet.
+  ARC-AGI's "gate" is a different architecture (transform grammar) over the same task, not
+  the same scorer with vs without filtering, so it is reported separately in @fig:cross-acc.
++ *Statistical rigor.* Default `make prime-gap-experiments` runs 1 seed; the harness
+  supports more (`PRIME_GAP_EXPERIMENT_SEEDS=…`). The 9.13 → 45.12 → 68.87% deltas, the
+  73.22% baseline saving, the grid-path 75.80 → 89.60, and the prime-rule-search negative
+  result all need confidence intervals across $gt.eq 5$ seeds before any of them should be
+  treated as a stable property.
++ *Learned-wheel calibration tradeoff* needs a reliability-diagram pass. The learned wheel
+  improves ranking sharply (@tab:f1) but has higher ECE (0.1402) than the raw minimal row
+  (0.1076).
++ *ARC ECE outlier.* The 0.5574 ECE on the `0520fde7` cell scorer is reported, with the
+  structural explanation (10 colors × 3 train pairs is too sparse for the softmax to align
+  with accuracy). It is not yet replicated across multiple ARC tasks; the structural
+  argument is suggestive, not proof.
++ *No literature comparison.* No baseline against process-supervision reward models
+  (Lightman et al., 2023), verifier-guided decoding (Cobbe et al., 2021), AlphaProof /
+  AlphaGeometry symbolic-neural search (Trinh et al., 2024), or against existing ARC
+  solvers (DreamCoder, Hodel's solution, the ARC Prize 2024 leaderboard). The protocol
+  contribution can stand without these baselines; an ARC-coverage claim cannot.
++ *Single-runner numbers.* All headline percentages were captured from a single CI
+  baseline run (`ubuntu-24.04` + `gcc-13`, see `results/latest/environment.json`). Laptop
+  runs produce different `model_ms_per_sample` and minor numerical differences in
+  `nll` / `ece` at the third decimal; the canonical pipeline strips timing fields but does
+  not yet enforce bit-identical accuracy. A deterministic-runner double-blind would be
+  reassuring.
 #set enum(numbering: "1.")
 
 = Conclusion
 
-#pblock[
-  Write the conclusion last. Three sentences max: (a) certificate-gating is the architectural
-  claim, (b) verifier-grounded rule synthesis is the constructive claim, (c) KL-regularized
-  verifier RL is the training-stability claim. Avoid claiming the protocol scales; that is
-  future work, not a result.
-]
+The architectural claim is *certificate-gating*: when an exact verifier is available, the
+scorer should consume the survivors of a soundness-proven symbolic filter, and that filter
+itself can be synthesised by a rule proposer gated on per-rule certificates rather than on
+empirical support. The constructive claim is *verifier-grounded rule and hypothesis
+synthesis*: the same `NNHypothesis` + `NNProgram` substrate certifies transforms on ARC
+that the hand-coded grammar cannot synthesise, and the same substrate emits certified
+rows in `program_synthesis` without modification — domain neutrality is exercised, not
+asserted. The training-stability claim is *KL-regularized verifier RL*: strict policy
+gradient on sparse exact rewards inflates logit scale on prime-gap while leaving top-1
+fixed; a standard KL-to-prior + entropy term restores calibration at unchanged ranking.
+None of these three claims requires the protocol to scale to a state-of-the-art ARC score
+or beat a sieve; they require only that the protocol be falsifiable, audit-clean, and
+cross-task. The negative result on Axis 2 (grammar order beats the current neural proposer
+at fixed budget) is the cleanest evidence so far that the protocol is in fact falsifiable.
 
 #v(12pt)
 
 = Roadmap to the ideal paper
 
-This appendix tracks every experiment the current draft asks for but does not yet have. The
-goal is that every #placeholder[...] marker in the body resolves to one of these rows.
+This appendix tracks every experiment the current draft asks for. The goal is that every
+percentage in the body has a defensible experiment behind it; the table below lists what is
+still open. Items marked *done* are referenced by tag from the body.
 
 #figure(
   table(
     columns: (auto, 1.4fr, auto, auto),
     align: (left, left, center, center),
     table.header[*ID*][*Experiment*][*Effort*][*Defends*],
-    [E1.1], [Random-rule gate at matched verifier-call budget], [2d], [C1],
-    [E1.2], [Extend `grid_path` beyond legality gate with admissible-heuristic pruning], [3-4d], [C1],
-    [E1.3], [Investigate learned-wheel calibration tradeoff], [1d], [C1],
-    [E1.4], [CIs across $gt.eq 5$ seeds for 45.12 $arrow.r$ 68.87 delta], [0.5d], [C1],
-    [E2.1], [Fixed-budget proposer baselines across random seeds and budgets], [1d], [C2],
-    [E2.2], [Conjunctive rule grammar extension], [3-5d], [C2],
-    [E2.3], [Worked example of an accepted rule the hand-wheel misses], [0.5d], [C2],
-    [E3.1], [Strict-vs-regularized RL on `grid_path` and `delayed_claim`], [2-3d], [C3],
-    [E3.2], [KL/entropy Pareto sweep per task], [2d], [C3],
-    [E3.3], [Reliability diagrams for strict-RL and KL-RL on prime-gap], [0.5d], [C3],
-    [E3.4], [CIs across $gt.eq 5$ seeds for strict-vs-KL ECE delta], [0.5d], [C3],
-    [W1], [Related-work positioning paragraphs (see §2)], [1d], [all],
-    [W2], [Conclusion + abstract revision after experiments], [0.5d], [all],
+    [R-E1.1], [Random-rule gate at matched verifier-call budget], [2d], [C1],
+    [R-E1.2], [Extend `grid_path` beyond legality gate with admissible-heuristic pruning], [3-4d], [C1],
+    [R-E1.3], [Investigate learned-wheel calibration tradeoff], [1d], [C1],
+    [R-E1.4], [CIs across $gt.eq 5$ seeds for the 45.12 $arrow.r$ 68.87 delta], [0.5d], [C1],
+    [R-E2.1], [Fixed-budget proposer baselines across $gt.eq 5$ random seeds and rule budgets], [1d], [C2],
+    [R-E2.2], [Conjunctive rule grammar extension (`if a and b then …`)], [3-5d], [C2],
+    [R-E2.3], [Worked example of an accepted rule the hand-wheel misses], [0.5d], [C2],
+    [R-E3.1], [Strict-vs-regularized RL on `grid_path` and `delayed_claim`], [2-3d], [C3],
+    [R-E3.2], [KL/entropy Pareto sweep per task], [2d], [C3],
+    [R-E3.3], [Reliability diagrams for strict-RL vs KL-RL on prime-gap], [0.5d], [C3],
+    [R-E3.4], [CIs across $gt.eq 5$ seeds for the strict-vs-KL ECE delta], [0.5d], [C3],
+    [R-X1], [Certified gate implementation for `delayed_claim`], [2d], [C1],
+    [R-X2], [Per-step training trace for `arc_agi` cell scorer], [0.5d], [C1],
+    [R-X3], [`prime_gap` hypothesis cross-port (matching `program_synthesis` filter-reduce)], [1-2d], [C1, cross-domain],
+    [R-X4], [`crlp.arc_induction.parity.v1` row on the public ARC training+evaluation corpus, committed to results], [0.5d], [C1, ARC],
+    [R-X5], [ARC ECE outlier check: rerun cell scorer across $gt.eq 10$ ARC tasks and report ECE distribution], [1d], [C3, ARC],
+    [R-W1], [Related-work positioning paragraphs with full bibliography (see §2)], [1d], [all],
+    [R-W2], [ARC literature positioning paragraph (DreamCoder, ARC-DSL, ARC Prize 2024)], [0.5d], [ARC scope],
   ),
   caption: [Roadmap. Total estimated effort: $approx$3 weeks of focused work to take the
     current draft from "defensible as an arxiv preprint" to "submission-ready with all
@@ -848,13 +912,15 @@ goal is that every #placeholder[...] marker in the body resolves to one of these
 
 #v(6pt)
 
-*Minimum viable submission.* E2.1, E1.3, E3.3, W1, W2. $approx$4 days. Leaves Axes 2 and 3
-with qualified scope but every claim in the body has a defensible experiment
-behind it.
+*Minimum viable submission.* R-E2.1, R-E1.3, R-E3.3, R-X4, R-W1, R-W2. $approx$5 days. Every
+percentage in the body has a CI-backed defensible experiment; ARC has a public-corpus
+parity row; related work has positioning.
 
-*Strong submission.* Add E1.2, E2.3, E3.1, E1.4, E3.4. $approx$2 weeks. All three axes have
-either a cross-task replication or a baseline strong enough to rule out the obvious alternative
-explanation.
+*Strong submission.* Add R-E1.2, R-E2.3, R-E3.1, R-E1.4, R-E3.4, R-X1, R-X3. $approx$2.5
+weeks. All three axes have either a cross-task replication or a baseline strong enough to
+rule out the obvious alternative explanation, and the substrate claim has two domain ports
+(ARC + program_synthesis + prime_gap).
 
-*Full ideal paper.* Everything above. $approx$3 weeks. The grammar extension (E2.2) is the
-optional ambition; if conjunctive rules generalize, the paper grows a fourth finding.
+*Full ideal paper.* Everything above plus R-E2.2 (conjunctive rule grammar) and R-X5 (ARC
+ECE distribution across $gt.eq 10$ tasks). $approx$3 weeks. If conjunctive rules generalize
+and the ECE distribution is unimodal-low across ARC tasks, the paper grows two new findings.
