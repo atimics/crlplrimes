@@ -829,8 +829,69 @@ compiled programs unchanged, and `make program-synthesis` emits *nine certified
 `all_positive`, `first_positive_or_zero`, `any_even`). Eight of the nine cover one
 task-instance event each; `any_even` certifies but covers zero on the current
 fixture-task pool — the row appears in `results/latest/summary.md` as a "Program Synthesis
-Hypothesis Evidence" table. This is the only evidence in the paper that the substrate is
-genuinely domain-neutral rather than ARC-shaped; cross-port to `prime_gap` is open work.
+Hypothesis Evidence" table. Cross-port to `prime_gap` is open work (R-X3).
+
+== One shared scorer across all four tasks
+
+The cross-task panels in @fig:learning trained a separate `f_theta` for each task. As an
+ablation, we replace the four scorers with *one shared scorer of the same architecture* —
+a single `[96 → 64 → 32 → 1]` MLP that takes a task-tagged action row (a fixed
+96-dimensional envelope with the task id as a one-hot prefix) and softmaxes over each
+task's candidate set. The shared scorer is trained on a *uniform-random* draw across the
+four tasks at matched updates per task; for the same number of total updates we also train
+four single-task baselines. @tab:multitask reports the two columns side by side; both
+columns are produced by `make multitask-domain` and live in
+`results/latest/comparison.jsonl` under `crlp.multitask.summary.v1`.
+
+#figure(
+  table(
+    columns: (auto, auto, auto, auto, auto, auto, auto),
+    align: (left, right, right, right, right, right, right),
+    table.header[*Task*][*Cands*][*Shared top-1*][*Single top-1*][*Δ top-1*][*Shared NLL*][*Single NLL*],
+    ..multitask_shared_vs_single.map(m => {
+      let delta = (m.shared_top1 - m.single_top1) * 100.0
+      let sign = if delta >= 0 { "+" } else { "−" }
+      let mag = calc.round(calc.abs(delta) * 10) / 10
+      let delta_text = if delta >= 0 { [#sign#mag pp] } else { [#sign#mag pp] }
+      let highlight(v) = text(weight: "bold", v)
+      let pct(v) = [#(calc.round(v * 1000) / 10)%]
+      let nll(v) = [#(calc.round(v * 10000) / 10000)]
+      (
+        raw(m.domain),
+        [#calc.round(m.candidate_count)],
+        if m.shared_top1 >= m.single_top1 { highlight(pct(m.shared_top1)) } else { pct(m.shared_top1) },
+        if m.single_top1 > m.shared_top1 { highlight(pct(m.single_top1)) } else { pct(m.single_top1) },
+        delta_text,
+        nll(m.shared_nll),
+        nll(m.single_nll),
+      )
+    }).flatten()
+  ),
+  caption: [Shared *one-MLP-on-all-four-tasks* vs *single-task* baseline, matched architecture
+    and matched per-task updates. Same `[96 → 64 → 32 → 1]` MLP, same task-tagged feature
+    envelope, same learning rate, same seed. *`delayed_claim` shows positive transfer:* the
+    shared scorer reaches 98.4% vs 95.7% single (+2.7pp) and a 31% NLL improvement (0.068 vs
+    0.099). *`arc_agi` shows pronounced negative transfer:* shared 14.2% vs single 42.8%
+    (−28.6pp). *`prime_gap` is unchanged* at 10.9% (the 129-way candidate space exceeds the
+    minimal feature set's residual signal in both regimes; the gate is doing the lift, not
+    the scorer). *`grid_path` is roughly neutral* (−1.3pp top-1, the shared model's NLL is
+    marginally worse). The shared-vs-single split is a *matched-budget protocol* analogous to
+    the prime-gap proposer baseline (Axis 2): both columns trained for $approx$6000 updates
+    each.],
+) <tab:multitask>
+
+The pattern is consistent with what's known about positive vs negative transfer in
+multi-task learning, applied here under exact-verifier supervision. `delayed_claim`'s
+features (claim reliability, evidence, contradiction, age, history, noise) are abstract
+enough to benefit from regularization by the other three tasks. `arc_agi`'s features are
+cell-level and grid-structured; sharing trunk weights with arithmetic and grid-path tasks
+costs the cell scorer 28.6pp. `prime_gap`'s minimal feature set is structurally a poor fit
+for trunk sharing — the gate is what reduces the action space, not the scorer. *This is
+evidence the substrate is multi-task-capable* (the unified envelope works, the certified
+gates remain composable), *but not evidence that joint training is uniformly beneficial*.
+For a paper claim of "one model, four tasks," the headline is positive on
+`delayed_claim`, neutral on `prime_gap` / `grid_path`, and negative on `arc_agi`; an
+honest narrative is that the shared scorer is a *substrate ablation*, not a recipe.
 
 = Substrate
 
