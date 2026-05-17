@@ -54,8 +54,10 @@ jobs:
 
       - name: Run make results
         env:
-          ARC_AGI_TASK_DIR: ${{ inputs.arc_agi_task_dir }}
-          ARC_AGI_MAX_TASKS: ${{ inputs.arc_agi_max_tasks }}
+          # On schedule triggers `inputs.*` is empty; fall back to safe defaults
+          # so capture_results.py receives well-formed CLI args.
+          ARC_AGI_TASK_DIR: ${{ inputs.arc_agi_task_dir || '' }}
+          ARC_AGI_MAX_TASKS: ${{ inputs.arc_agi_max_tasks || '400' }}
         run: make results
 
       - name: Canonicalize comparison.jsonl
