@@ -165,18 +165,6 @@ static const char *sfr_controller_name(sfr_controller_t controller)
     }
 }
 
-static const char *sfr_hypothesis_name(sfr_hypothesis_kind_t kind)
-{
-    switch (kind) {
-    case SFR_HYPOTHESIS_DIRECT: return "direct_goal";
-    case SFR_HYPOTHESIS_NAV_PATH: return "nav_path";
-    case SFR_HYPOTHESIS_LEFT_BYPASS: return "left_bypass";
-    case SFR_HYPOTHESIS_RIGHT_BYPASS: return "right_bypass";
-    case SFR_HYPOTHESIS_BRAKE_ESCAPE: return "brake_escape";
-    default: return "unknown";
-    }
-}
-
 static uint32_t sfr_rng_next(uint32_t *state)
 {
     uint32_t x = *state;
@@ -416,6 +404,213 @@ static void sfr_init_episode(const sfr_config_t *config,
     world_cleanup(&template_world);
 }
 
+static double sfr_control_alignment(vec2 pos, vec2 goal, vec2 control_target)
+{
+    vec2 to_goal = v2_sub(goal, pos);
+    vec2 to_control = v2_sub(control_target, pos);
+    float goal_len = sqrtf(v2_len_sq(to_goal));
+    float control_len = sqrtf(v2_len_sq(to_control));
+    if (goal_len <= 0.001f || control_len <= 0.001f) {
+        return 1.0;
+    }
+    return sfr_clip(v2_dot(to_goal, to_control) / (double)(goal_len * control_len), -1.0, 1.0);
+}
+
+static void sfr_certify_hypothesis(const world_t *w,
+                                   const server_player_t *sp,
+                                   vec2 goal,
+                                   float clearance,
+                                   sfr_hypothesis_t *hyp)
+{
+    vec2 pos = sp->ship.pos;
+    vec2 to_control = v2_sub(hyp->control_target, pos);
+    float control_dist = sqrtf(v2_len_sq(to_control));
+    float control_heading = control_dist > 0.001f
+                          ? atan2f(to_control.y, to_control.x)
+                          : sp->ship.angle;
+    float speed = sqrtf(v2_len_sq(sp->ship.vel));
+    float vel_heading = speed > 0.5f
+                      ? atan2f(sp->ship.vel.y, sp->ship.vel.x)
+                      : sp->ship.angle;
+    float fwd_clear = sfr_forward_clearance(w,
+                                            pos,
+                                            sp->ship.vel,
+                                            clearance,
+                                            control_heading);
+    float vel_clear = sfr_forward_clearance(w,
+                                            pos,
+                                            sp->ship.vel,
+                                            clearance,
+                                            vel_heading);
+    int segment_clear = nav_segment_clear(w, pos, hyp->control_target, clearance);
+    double alignment = sfr_control_alignment(pos, goal, hyp->control_target);
+    int danger = speed > 70.0f && (fwd_clear < 0.25f || vel_clear < 0.25f);
+
+    hyp->alignment = alignment;
+    hyp->clearance = fminf(fwd_clear, vel_clear);
+    hyp->certified = 0;
+    hyp->certificate_score = -1000.0;
+
+    if (control_dist < 25.0f || !segment_clear) {
+        return;
+    }
+    if (hyp->kind == SFR_HYPOTHESIS_BRAKE_ESCAPE) {
+        if (!danger) {
+            return;
+        }
+        hyp->certified = 1;
+        hyp->certificate_score = 2.0 + (double)hyp->clearance - sfr_scale(speed, 300.0);
+        return;
+    }
+    if (alignment < -0.35 || fwd_clear < 0.08f) {
+        return;
+    }
+
+    hyp->certified = 1;
+    hyp->certificate_score =
+        alignment +
+        0.55 * (double)hyp->clearance -
+        0.10 * sfr_scale(control_dist, 1200.0);
+    if (hyp->kind == SFR_HYPOTHESIS_DIRECT) {
+        hyp->certificate_score += 0.20;
+    } else if (hyp->kind == SFR_HYPOTHESIS_NAV_PATH) {
+        hyp->certificate_score += 0.30;
+    } else if (danger) {
+        hyp->certificate_score += 0.25;
+    }
+}
+
+static size_t sfr_enumerate_hypotheses(const world_t *w,
+                                       const server_player_t *sp,
+                                       vec2 goal,
+                                       nav_path_t *nav_path,
+                                       sfr_hypothesis_t *out,
+                                       size_t capacity)
+{
+    const hull_def_t *hull = ship_hull_def(&sp->ship);
+    float clearance = hull->ship_radius + 30.0f;
+    vec2 pos = sp->ship.pos;
+    vec2 to_goal = v2_sub(goal, pos);
+    float goal_dist = sqrtf(v2_len_sq(to_goal));
+    float speed = sqrtf(v2_len_sq(sp->ship.vel));
+    vec2 goal_dir = sfr_safe_unit(to_goal, ship_forward(sp->ship.angle));
+    vec2 side = v2(-goal_dir.y, goal_dir.x);
+    float leg = fminf(fmaxf(goal_dist * 0.25f, 420.0f), 1100.0f);
+    float offset = fminf(fmaxf(goal_dist * 0.18f, 360.0f), 850.0f);
+    size_t count = 0;
+
+    if (capacity < SFR_HYPOTHESIS_COUNT) {
+        return 0;
+    }
+
+    out[count] = (sfr_hypothesis_t){
+        .kind = SFR_HYPOTHESIS_DIRECT,
+        .control_target = goal,
+    };
+    count++;
+
+    nav_follow_path(w, nav_path, pos, goal, clearance, SFR_SIM_DT);
+    vec2 nav_target = goal;
+    if (nav_path->count > 0 && nav_path->current < nav_path->count) {
+        nav_target = nav_path->waypoints[nav_path->current];
+    }
+    out[count] = (sfr_hypothesis_t){
+        .kind = SFR_HYPOTHESIS_NAV_PATH,
+        .control_target = nav_target,
+        .path = *nav_path,
+    };
+    count++;
+
+    out[count] = (sfr_hypothesis_t){
+        .kind = SFR_HYPOTHESIS_LEFT_BYPASS,
+        .control_target = v2_add(pos, v2_add(v2_scale(goal_dir, leg),
+                                             v2_scale(side, offset))),
+    };
+    sfr_set_single_waypoint(&out[count].path, out[count].control_target, goal);
+    count++;
+
+    out[count] = (sfr_hypothesis_t){
+        .kind = SFR_HYPOTHESIS_RIGHT_BYPASS,
+        .control_target = v2_add(pos, v2_add(v2_scale(goal_dir, leg),
+                                             v2_scale(side, -offset))),
+    };
+    sfr_set_single_waypoint(&out[count].path, out[count].control_target, goal);
+    count++;
+
+    vec2 brake_dir = speed > 0.5f
+                   ? sfr_safe_unit(v2_scale(sp->ship.vel, -1.0f),
+                                   v2_scale(ship_forward(sp->ship.angle), -1.0f))
+                   : v2_scale(ship_forward(sp->ship.angle), -1.0f);
+    float brake_leg = fminf(fmaxf(speed * 2.5f, 320.0f), 900.0f);
+    out[count] = (sfr_hypothesis_t){
+        .kind = SFR_HYPOTHESIS_BRAKE_ESCAPE,
+        .control_target = v2_add(pos, v2_scale(brake_dir, brake_leg)),
+    };
+    sfr_set_single_waypoint(&out[count].path, out[count].control_target, goal);
+    count++;
+
+    for (size_t i = 0; i < count; i++) {
+        if (out[i].kind == SFR_HYPOTHESIS_DIRECT) {
+            memset(&out[i].path, 0, sizeof(out[i].path));
+        } else if (out[i].kind == SFR_HYPOTHESIS_NAV_PATH && out[i].path.count == 0) {
+            sfr_set_single_waypoint(&out[i].path, out[i].control_target, goal);
+        }
+        sfr_certify_hypothesis(w, sp, goal, clearance, &out[i]);
+    }
+
+    return count;
+}
+
+static void sfr_select_hypothesis(const world_t *w,
+                                  const server_player_t *sp,
+                                  vec2 goal,
+                                  nav_path_t *nav_path,
+                                  nav_path_t *out_path,
+                                  sfr_episode_result_t *result)
+{
+    sfr_hypothesis_t hypotheses[SFR_HYPOTHESIS_COUNT];
+    size_t count = sfr_enumerate_hypotheses(w,
+                                            sp,
+                                            goal,
+                                            nav_path,
+                                            hypotheses,
+                                            SFR_HYPOTHESIS_COUNT);
+    size_t selected = 0;
+    int selected_set = 0;
+    int certified_count = 0;
+
+    for (size_t i = 0; i < count; i++) {
+        if (hypotheses[i].certified) {
+            certified_count++;
+            if (!selected_set ||
+                hypotheses[i].certificate_score > hypotheses[selected].certificate_score) {
+                selected = i;
+                selected_set = 1;
+            }
+        }
+    }
+    if (!selected_set && count > 0) {
+        for (size_t i = 0; i < count; i++) {
+            if (hypotheses[i].kind == SFR_HYPOTHESIS_NAV_PATH) {
+                selected = i;
+                break;
+            }
+        }
+    }
+
+    memset(out_path, 0, sizeof(*out_path));
+    if (count > 0) {
+        *out_path = hypotheses[selected].path;
+        result->hypothesis_ticks++;
+        result->hypothesis_candidates += (int)count;
+        result->hypothesis_certified_candidates += certified_count;
+        result->hypothesis_selected_certified += hypotheses[selected].certified ? 1 : 0;
+        if ((unsigned)hypotheses[selected].kind < SFR_HYPOTHESIS_COUNT) {
+            result->hypothesis_selected[hypotheses[selected].kind]++;
+        }
+    }
+}
+
 static void sfr_fill_state(const world_t *w,
                            const server_player_t *sp,
                            const nav_path_t *path,
@@ -643,6 +838,7 @@ static sfr_episode_result_t sfr_run_episode(const sfr_episode_init_t *init,
 
     for (int tick = 0; tick < max_ticks; tick++) {
         sfr_state_t state;
+        nav_path_t control_path = path;
         size_t action = 0;
         float dist = sqrtf(v2_dist_sq(sp->ship.pos, init->goal));
         if (dist < result.min_dist) result.min_dist = dist;
@@ -659,15 +855,9 @@ static sfr_episode_result_t sfr_run_episode(const sfr_episode_init_t *init,
 
         if (controller == SFR_CONTROLLER_NEURAL_RAW ||
             controller == SFR_CONTROLLER_NEURAL_GUARDED) {
-            const hull_def_t *hull = ship_hull_def(&sp->ship);
-            nav_follow_path(&w,
-                            &path,
-                            sp->ship.pos,
-                            init->goal,
-                            hull->ship_radius + 30.0f,
-                            SFR_SIM_DT);
+            sfr_select_hypothesis(&w, sp, init->goal, &path, &control_path, &result);
         }
-        sfr_fill_state(&w, sp, &path, init->goal, &state);
+        sfr_fill_state(&w, sp, &control_path, init->goal, &state);
         switch (controller) {
         case SFR_CONTROLLER_GOAL:
             action = sfr_goal_heading_action(&state);
@@ -752,6 +942,13 @@ static void sfr_summary_add(sfr_summary_t *summary, const sfr_episode_result_t *
     summary->hull_loss += episode->hull_loss;
     summary->min_hull_ratio_sum += episode->min_hull_ratio;
     summary->utility += episode->utility;
+    summary->hypothesis_ticks += episode->hypothesis_ticks;
+    summary->hypothesis_candidates += episode->hypothesis_candidates;
+    summary->hypothesis_certified_candidates += episode->hypothesis_certified_candidates;
+    summary->hypothesis_selected_certified += episode->hypothesis_selected_certified;
+    for (size_t i = 0; i < SFR_HYPOTHESIS_COUNT; i++) {
+        summary->hypothesis_selected[i] += episode->hypothesis_selected[i];
+    }
 }
 
 static double sfr_rate(int value, int denom)
@@ -793,6 +990,16 @@ static void sfr_write_summary_line(FILE *out,
             "\"avg_damage_amount\":%.9f,"
             "\"avg_hull_loss\":%.9f,"
             "\"avg_min_hull_ratio\":%.9f,"
+            "\"hypothesis_layer\":\"certified_control_target_v1\","
+            "\"hypothesis_ticks\":%d,"
+            "\"hypothesis_candidate_count\":%d,"
+            "\"hypothesis_certified_candidate_rate\":%.9f,"
+            "\"hypothesis_selected_certified_rate\":%.9f,"
+            "\"hypothesis_direct_rate\":%.9f,"
+            "\"hypothesis_nav_path_rate\":%.9f,"
+            "\"hypothesis_left_bypass_rate\":%.9f,"
+            "\"hypothesis_right_bypass_rate\":%.9f,"
+            "\"hypothesis_brake_escape_rate\":%.9f,"
             "\"avg_utility\":%.9f}\n",
             SFR_SUMMARY_SCHEMA,
             sfr_controller_name(controller),
@@ -815,6 +1022,15 @@ static void sfr_write_summary_line(FILE *out,
             sfr_mean(summary->damage_amount, n),
             sfr_mean(summary->hull_loss, n),
             sfr_mean(summary->min_hull_ratio_sum, n),
+            summary->hypothesis_ticks,
+            summary->hypothesis_candidates,
+            sfr_rate(summary->hypothesis_certified_candidates, summary->hypothesis_candidates),
+            sfr_rate(summary->hypothesis_selected_certified, summary->hypothesis_ticks),
+            sfr_rate(summary->hypothesis_selected[SFR_HYPOTHESIS_DIRECT], summary->hypothesis_ticks),
+            sfr_rate(summary->hypothesis_selected[SFR_HYPOTHESIS_NAV_PATH], summary->hypothesis_ticks),
+            sfr_rate(summary->hypothesis_selected[SFR_HYPOTHESIS_LEFT_BYPASS], summary->hypothesis_ticks),
+            sfr_rate(summary->hypothesis_selected[SFR_HYPOTHESIS_RIGHT_BYPASS], summary->hypothesis_ticks),
+            sfr_rate(summary->hypothesis_selected[SFR_HYPOTHESIS_BRAKE_ESCAPE], summary->hypothesis_ticks),
             sfr_mean(summary->utility, n));
 }
 
