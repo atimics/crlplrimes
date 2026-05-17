@@ -43,6 +43,10 @@ enum {
     ARC_HYPOTHESIS_PROPOSAL_CAPACITY = 256,
     ARC_HYPOTHESIS_TOP_K = 32,
     ARC_HYPOTHESIS_STRUCTURAL_SCORE = 130,
+    ARC_HYPOTHESIS_LOG_ODDS_WEIGHT = 12,
+    ARC_HYPOTHESIS_NEURAL_WEIGHT = 24,
+    ARC_HYPOTHESIS_COLD_START_WEIGHT = 8,
+    ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY = 8,
     ARC_HYPOTHESIS_TEMPLATE_BUCKETS = 8,
     ARC_HYPOTHESIS_SLOT_TYPE_BUCKETS = 9,
     ARC_HYPOTHESIS_SLOT_VALUE_BUCKETS = 32,
@@ -460,6 +464,7 @@ typedef struct {
 } ARCProgramLearnedState;
 
 typedef struct ARCHypothesisTemplateBinding ARCHypothesisTemplateBinding;
+typedef struct ARCHypothesisSelectionStats ARCHypothesisSelectionStats;
 
 typedef const NNHypothesisTemplate *(*ARCHypothesisTemplateFn)(void);
 typedef size_t (*ARCHypothesisInduceFn)(const ARCHypothesisTemplateBinding *binding,
@@ -469,12 +474,41 @@ typedef size_t (*ARCHypothesisInduceFn)(const ARCHypothesisTemplateBinding *bind
                                         size_t existing_count,
                                         ARCHypothesisProposal *proposals,
                                         size_t proposal_capacity,
-                                        size_t proposal_count);
+                                        size_t proposal_count,
+                                        ARCHypothesisSelectionStats *stats,
+                                        size_t template_index);
 typedef int (*ARCHypothesisToCandidateFn)(const NNHypothesis *hypothesis,
                                           ARCTransformCandidate *candidate);
 typedef int (*ARCHypothesisApplyFn)(const NNHypothesis *hypothesis,
                                     const ARCGrid *input,
                                     ARCGrid *output);
+
+struct ARCHypothesisSelectionStats {
+    size_t registered_templates;
+    size_t proposals_attempted;
+    size_t proposals_retained;
+    size_t proposals_generated;
+    size_t proposals_train_consistent_pre_cap;
+    size_t proposals_train_consistent;
+    size_t proposals_duplicate_existing;
+    size_t proposals_train_rejected;
+    size_t proposals_heap_dropped;
+    size_t proposals_heap_replaced;
+    size_t proposals_selected;
+    size_t proposals_selected_by_coverage;
+    size_t proposals_selected_by_score_fallback;
+    size_t proposal_capacity;
+    int proposal_cap_hit;
+    int coverage_used;
+    int coverage_fallback;
+    size_t coverage_events;
+    size_t template_attempted[ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY];
+    size_t template_generated[ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY];
+    size_t template_train_consistent_pre_cap[ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY];
+    size_t template_train_consistent_retained[ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY];
+    size_t template_heap_dropped[ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY];
+    size_t template_selected[ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY];
+};
 
 struct ARCHypothesisTemplateBinding {
     const char *name;
@@ -579,7 +613,9 @@ static size_t arc_induce_translate_hypotheses(const ARCHypothesisTemplateBinding
                                               size_t existing_count,
                                               ARCHypothesisProposal *proposals,
                                               size_t proposal_capacity,
-                                              size_t proposal_count);
+                                              size_t proposal_count,
+                                              ARCHypothesisSelectionStats *stats,
+                                              size_t template_index);
 static size_t arc_induce_move_to_anchor_hypotheses(const ARCHypothesisTemplateBinding *binding,
                                                    const ARCTask *task,
                                                    ARCProgramLearnedState *learned,
@@ -587,7 +623,9 @@ static size_t arc_induce_move_to_anchor_hypotheses(const ARCHypothesisTemplateBi
                                                    size_t existing_count,
                                                    ARCHypothesisProposal *proposals,
                                                    size_t proposal_capacity,
-                                                   size_t proposal_count);
+                                                   size_t proposal_count,
+                                                   ARCHypothesisSelectionStats *stats,
+                                                   size_t template_index);
 
 static int parse_size_text(const char *text, size_t *out_value)
 {
@@ -4708,26 +4746,67 @@ static double arc_hypothesis_slot_proposal_score(ARCProgramLearnedState *learned
         }
     }
 
-    return structural + 12.0 * slot_log_odds + 24.0 * neural_score + 8.0 * cold_start;
+    return structural +
+           (double)ARC_HYPOTHESIS_LOG_ODDS_WEIGHT * slot_log_odds +
+           (double)ARC_HYPOTHESIS_NEURAL_WEIGHT * neural_score +
+           (double)ARC_HYPOTHESIS_COLD_START_WEIGHT * cold_start;
 }
 
-static void arc_hypothesis_insert_proposal(ARCHypothesisProposal *proposals,
-                                           size_t *proposal_count,
-                                           const ARCHypothesisProposal *proposal)
+typedef enum {
+    ARC_HYPOTHESIS_INSERT_DROPPED = 0,
+    ARC_HYPOTHESIS_INSERT_ADDED = 1,
+    ARC_HYPOTHESIS_INSERT_REPLACED = 2,
+} ARCHypothesisInsertResult;
+
+static void arc_hypothesis_record_pre_cap_proposal(ARCHypothesisSelectionStats *stats,
+                                                   size_t template_index,
+                                                   const ARCTask *task,
+                                                   const ARCTransformCandidate *candidate)
 {
-    if (proposals == NULL || proposal_count == NULL || proposal == NULL) {
+    if (stats == NULL || task == NULL || candidate == NULL) {
         return;
+    }
+    ++stats->proposals_attempted;
+    if (template_index < ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY) {
+        ++stats->template_attempted[template_index];
+    }
+    size_t checked_cells = 0;
+    size_t mismatches = 0;
+    size_t unsupported = 0;
+    if (arc_candidate_matches_train(task,
+                                    candidate,
+                                    &checked_cells,
+                                    &mismatches,
+                                    &unsupported)) {
+        ++stats->proposals_train_consistent_pre_cap;
+        if (template_index < ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY) {
+            ++stats->template_train_consistent_pre_cap[template_index];
+        }
+    }
+}
+
+static ARCHypothesisInsertResult arc_hypothesis_insert_proposal(
+    ARCHypothesisProposal *proposals,
+    size_t *proposal_count,
+    size_t proposal_capacity,
+    const ARCHypothesisProposal *proposal)
+{
+    if (proposals == NULL || proposal_count == NULL ||
+        proposal_capacity == 0 || proposal == NULL) {
+        return ARC_HYPOTHESIS_INSERT_DROPPED;
     }
     size_t count = *proposal_count;
     size_t pos = count;
-    if (count < ARC_HYPOTHESIS_PROPOSAL_CAPACITY) {
+    ARCHypothesisInsertResult result = ARC_HYPOTHESIS_INSERT_ADDED;
+    if (count < proposal_capacity) {
         proposals[pos] = *proposal;
         ++count;
     } else if (proposal->score > proposals[count - 1u].score) {
         proposals[count - 1u] = *proposal;
         pos = count - 1u;
+        result = ARC_HYPOTHESIS_INSERT_REPLACED;
     } else {
-        return;
+        return ARC_HYPOTHESIS_INSERT_DROPPED;
     }
 
     while (pos > 0 && proposals[pos].score > proposals[pos - 1u].score) {
@@ -4737,6 +4816,7 @@ static void arc_hypothesis_insert_proposal(ARCHypothesisProposal *proposals,
         --pos;
     }
     *proposal_count = count;
+    return result;
 }
 
 static size_t arc_induce_translate_hypotheses(const ARCHypothesisTemplateBinding *binding,
@@ -4746,13 +4826,15 @@ static size_t arc_induce_translate_hypotheses(const ARCHypothesisTemplateBinding
                                               size_t existing_count,
                                               ARCHypothesisProposal *proposals,
                                               size_t proposal_capacity,
-                                              size_t proposal_count)
+                                              size_t proposal_count,
+                                              ARCHypothesisSelectionStats *stats,
+                                              size_t template_index)
 {
     if (binding == NULL || binding->template_fn == NULL ||
         binding->to_candidate == NULL ||
         task == NULL || task->train_count == 0 ||
         existing_candidates == NULL || proposals == NULL ||
-        proposal_count >= proposal_capacity) {
+        proposal_capacity == 0) {
         return proposal_count;
     }
 
@@ -4764,12 +4846,10 @@ static size_t arc_induce_translate_hypotheses(const ARCHypothesisTemplateBinding
                                       backgrounds,
                                       sizeof(backgrounds) / sizeof(backgrounds[0]));
     for (size_t background_index = 0;
-         background_index < background_count && proposal_count < proposal_capacity;
+         background_index < background_count;
          ++background_index) {
         uint8_t background = backgrounds[background_index];
-        for (size_t train_pair = 0;
-             train_pair < task->train_count && proposal_count < proposal_capacity;
-             ++train_pair) {
+        for (size_t train_pair = 0; train_pair < task->train_count; ++train_pair) {
             ARCScene input_scene;
             ARCScene output_scene;
             if (!task->train[train_pair].has_output ||
@@ -4782,7 +4862,7 @@ static size_t arc_induce_translate_hypotheses(const ARCHypothesisTemplateBinding
                 continue;
             }
             for (size_t input_index = 0;
-                 input_index < input_scene.object_count && proposal_count < proposal_capacity;
+                 input_index < input_scene.object_count;
                  ++input_index) {
                 const ARCObject *input_object = &input_scene.objects[input_index];
                 uint8_t selector_kind = ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
@@ -4797,7 +4877,7 @@ static size_t arc_induce_translate_hypotheses(const ARCHypothesisTemplateBinding
                 int reference_color_used =
                     selector_kind == ARC_OBJECT_SELECTOR_NEAREST_TO_COLOR;
                 for (size_t output_index = 0;
-                     output_index < output_scene.object_count && proposal_count < proposal_capacity;
+                     output_index < output_scene.object_count;
                      ++output_index) {
                     const ARCObject *output_object = &output_scene.objects[output_index];
                     if (output_object->color == background ||
@@ -4871,9 +4951,25 @@ static size_t arc_induce_translate_hypotheses(const ARCHypothesisTemplateBinding
                                                                         input_object,
                                                                         output_object,
                                                                         &task_features);
-                    arc_hypothesis_insert_proposal(proposals,
-                                                   &proposal_count,
-                                                   &proposal);
+                    arc_hypothesis_record_pre_cap_proposal(stats,
+                                                           template_index,
+                                                           task,
+                                                           &candidate);
+                    ARCHypothesisInsertResult insert_result =
+                        arc_hypothesis_insert_proposal(proposals,
+                                                       &proposal_count,
+                                                       proposal_capacity,
+                                                       &proposal);
+                    if (stats != NULL) {
+                        if (insert_result == ARC_HYPOTHESIS_INSERT_REPLACED) {
+                            ++stats->proposals_heap_replaced;
+                        } else if (insert_result == ARC_HYPOTHESIS_INSERT_DROPPED) {
+                            ++stats->proposals_heap_dropped;
+                            if (template_index < ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY) {
+                                ++stats->template_heap_dropped[template_index];
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -4885,11 +4981,14 @@ static size_t arc_induce_translate_hypotheses(const ARCHypothesisTemplateBinding
 static void arc_consider_move_to_anchor_proposal(
     const ARCHypothesisTemplateBinding *binding,
     ARCProgramLearnedState *learned,
+    const ARCTask *task,
     const ARCTransformCandidate *existing_candidates,
     size_t existing_count,
     ARCHypothesisProposal *proposals,
     size_t *proposal_count,
     size_t proposal_capacity,
+    ARCHypothesisSelectionStats *stats,
+    size_t template_index,
     const ARCProgramTaskFeatures *task_features,
     uint8_t background,
     const ARCObject *subject,
@@ -4902,8 +5001,8 @@ static void arc_consider_move_to_anchor_proposal(
 {
     if (binding == NULL || binding->template_fn == NULL ||
         binding->to_candidate == NULL || proposals == NULL ||
-        proposal_count == NULL || *proposal_count >= proposal_capacity ||
-        task_features == NULL ||
+        proposal_count == NULL || proposal_capacity == 0 ||
+        task == NULL || task_features == NULL ||
         subject == NULL || anchor == NULL || output_object == NULL) {
         return;
     }
@@ -4960,7 +5059,22 @@ static void arc_consider_move_to_anchor_proposal(
                                                         subject,
                                                         output_object,
                                                         task_features);
-    arc_hypothesis_insert_proposal(proposals, proposal_count, &proposal);
+    arc_hypothesis_record_pre_cap_proposal(stats, template_index, task, &candidate);
+    ARCHypothesisInsertResult insert_result =
+        arc_hypothesis_insert_proposal(proposals,
+                                       proposal_count,
+                                       proposal_capacity,
+                                       &proposal);
+    if (stats != NULL) {
+        if (insert_result == ARC_HYPOTHESIS_INSERT_REPLACED) {
+            ++stats->proposals_heap_replaced;
+        } else if (insert_result == ARC_HYPOTHESIS_INSERT_DROPPED) {
+            ++stats->proposals_heap_dropped;
+            if (template_index < ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY) {
+                ++stats->template_heap_dropped[template_index];
+            }
+        }
+    }
 }
 
 static size_t arc_induce_move_to_anchor_hypotheses(const ARCHypothesisTemplateBinding *binding,
@@ -4970,13 +5084,15 @@ static size_t arc_induce_move_to_anchor_hypotheses(const ARCHypothesisTemplateBi
                                                    size_t existing_count,
                                                    ARCHypothesisProposal *proposals,
                                                    size_t proposal_capacity,
-                                                   size_t proposal_count)
+                                                   size_t proposal_count,
+                                                   ARCHypothesisSelectionStats *stats,
+                                                   size_t template_index)
 {
     if (binding == NULL || binding->template_fn == NULL ||
         binding->to_candidate == NULL ||
         task == NULL || task->train_count == 0 ||
         existing_candidates == NULL || proposals == NULL ||
-        proposal_count >= proposal_capacity) {
+        proposal_capacity == 0) {
         return proposal_count;
     }
 
@@ -4988,12 +5104,10 @@ static size_t arc_induce_move_to_anchor_hypotheses(const ARCHypothesisTemplateBi
                                       backgrounds,
                                       sizeof(backgrounds) / sizeof(backgrounds[0]));
     for (size_t background_index = 0;
-         background_index < background_count && proposal_count < proposal_capacity;
+         background_index < background_count;
          ++background_index) {
         uint8_t background = backgrounds[background_index];
-        for (size_t train_pair = 0;
-             train_pair < task->train_count && proposal_count < proposal_capacity;
-             ++train_pair) {
+        for (size_t train_pair = 0; train_pair < task->train_count; ++train_pair) {
             ARCScene input_scene;
             ARCScene output_scene;
             if (!task->train[train_pair].has_output ||
@@ -5006,7 +5120,7 @@ static size_t arc_induce_move_to_anchor_hypotheses(const ARCHypothesisTemplateBi
                 continue;
             }
             for (size_t subject_index = 0;
-                 subject_index < input_scene.object_count && proposal_count < proposal_capacity;
+                 subject_index < input_scene.object_count;
                  ++subject_index) {
                 const ARCObject *subject = &input_scene.objects[subject_index];
                 uint8_t subject_selector_kind = ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
@@ -5018,7 +5132,7 @@ static size_t arc_induce_move_to_anchor_hypotheses(const ARCHypothesisTemplateBi
                     continue;
                 }
                 for (size_t anchor_index = 0;
-                     anchor_index < input_scene.object_count && proposal_count < proposal_capacity;
+                     anchor_index < input_scene.object_count;
                      ++anchor_index) {
                     const ARCObject *anchor = &input_scene.objects[anchor_index];
                     uint8_t anchor_selector_kind = ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
@@ -5032,7 +5146,7 @@ static size_t arc_induce_move_to_anchor_hypotheses(const ARCHypothesisTemplateBi
                         continue;
                     }
                     for (size_t output_index = 0;
-                         output_index < output_scene.object_count && proposal_count < proposal_capacity;
+                         output_index < output_scene.object_count;
                          ++output_index) {
                         const ARCObject *output_object =
                             &output_scene.objects[output_index];
@@ -5047,11 +5161,14 @@ static size_t arc_induce_move_to_anchor_hypotheses(const ARCHypothesisTemplateBi
                         if (output_object->min_y == subject->min_y) {
                             arc_consider_move_to_anchor_proposal(binding,
                                                                  learned,
+                                                                 task,
                                                                  existing_candidates,
                                                                  existing_count,
                                                                  proposals,
                                                                  &proposal_count,
                                                                  proposal_capacity,
+                                                                 stats,
+                                                                 template_index,
                                                                  &task_features,
                                                                  background,
                                                                  subject,
@@ -5065,11 +5182,14 @@ static size_t arc_induce_move_to_anchor_hypotheses(const ARCHypothesisTemplateBi
                         if (output_object->min_x == subject->min_x) {
                             arc_consider_move_to_anchor_proposal(binding,
                                                                  learned,
+                                                                 task,
                                                                  existing_candidates,
                                                                  existing_count,
                                                                  proposals,
                                                                  &proposal_count,
                                                                  proposal_capacity,
+                                                                 stats,
+                                                                 template_index,
                                                                  &task_features,
                                                                  background,
                                                                  subject,
@@ -5083,11 +5203,14 @@ static size_t arc_induce_move_to_anchor_hypotheses(const ARCHypothesisTemplateBi
                         if (offset_x == offset_y) {
                             arc_consider_move_to_anchor_proposal(binding,
                                                                  learned,
+                                                                 task,
                                                                  existing_candidates,
                                                                  existing_count,
                                                                  proposals,
                                                                  &proposal_count,
                                                                  proposal_capacity,
+                                                                 stats,
+                                                                 template_index,
                                                                  &task_features,
                                                                  background,
                                                                  subject,
@@ -5107,10 +5230,22 @@ static size_t arc_induce_move_to_anchor_hypotheses(const ARCHypothesisTemplateBi
     return proposal_count;
 }
 
-static void arc_hypothesis_set_test_coverage(const ARCTask *task,
-                                             const ARCTransformCandidate *candidate,
-                                             NNProgramCoverage *coverage,
-                                             size_t program_index)
+static size_t arc_task_test_input_cells(const ARCTask *task)
+{
+    size_t cells = 0;
+    if (task == NULL) {
+        return 0;
+    }
+    for (size_t pair = 0; pair < task->test_count; ++pair) {
+        cells += arc_grid_cells(&task->test[pair].input);
+    }
+    return cells;
+}
+
+static void arc_hypothesis_set_predicted_change_coverage(const ARCTask *task,
+                                                         const ARCTransformCandidate *candidate,
+                                                         NNProgramCoverage *coverage,
+                                                         size_t program_index)
 {
     ARCGrid predictions[ARC_MAX_PAIRS];
     size_t unsupported = 0;
@@ -5121,16 +5256,17 @@ static void arc_hypothesis_set_test_coverage(const ARCTask *task,
 
     size_t event = 0;
     for (size_t pair = 0; pair < task->test_count; ++pair) {
-        if (!task->test[pair].has_output) {
-            continue;
-        }
-        size_t cells = arc_grid_cells(&task->test[pair].output);
-        if (!arc_grid_same_shape(&predictions[pair], &task->test[pair].output)) {
+        const ARCGrid *input = &task->test[pair].input;
+        size_t cells = arc_grid_cells(input);
+        if (!arc_grid_same_shape(&predictions[pair], input)) {
+            for (size_t cell = 0; cell < cells; ++cell) {
+                nn_program_coverage_set(coverage, program_index, event + cell);
+            }
             event += cells;
             continue;
         }
         for (size_t cell = 0; cell < cells; ++cell) {
-            if (predictions[pair].cells[cell] == task->test[pair].output.cells[cell]) {
+            if (predictions[pair].cells[cell] != input->cells[cell]) {
                 nn_program_coverage_set(coverage, program_index, event);
             }
             ++event;
@@ -5138,12 +5274,28 @@ static void arc_hypothesis_set_test_coverage(const ARCTask *task,
     }
 }
 
+static size_t arc_hypothesis_registry_index_for_template_id(uint32_t template_id)
+{
+    size_t binding_count = 0;
+    const ARCHypothesisTemplateBinding *bindings =
+        arc_hypothesis_template_registry(&binding_count);
+    for (size_t i = 0;
+         i < binding_count && i < ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY;
+         ++i) {
+        if (bindings[i].template_id == template_id) {
+            return i;
+        }
+    }
+    return ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY;
+}
+
 static size_t arc_select_hypothesis_proposals(const ARCTask *task,
                                               const ARCHypothesisProposal *proposals,
                                               size_t proposal_count,
                                               ARCTransformCandidate *candidates,
                                               size_t capacity,
-                                              size_t base_count)
+                                              size_t base_count,
+                                              ARCHypothesisSelectionStats *stats)
 {
     if (task == NULL || proposals == NULL || candidates == NULL ||
         base_count >= capacity || proposal_count == 0) {
@@ -5156,12 +5308,20 @@ static size_t arc_select_hypothesis_proposals(const ARCTask *task,
         size_t checked_cells = 0;
         size_t mismatches = 0;
         size_t unsupported = 0;
-        if (arc_candidate_name_exists(candidates, base_count, proposals[i].candidate.name) ||
-            !arc_candidate_matches_train(task,
+        if (arc_candidate_name_exists(candidates, base_count, proposals[i].candidate.name)) {
+            if (stats != NULL) {
+                ++stats->proposals_duplicate_existing;
+            }
+            continue;
+        }
+        if (!arc_candidate_matches_train(task,
                                          &proposals[i].candidate,
                                          &checked_cells,
                                          &mismatches,
                                          &unsupported)) {
+            if (stats != NULL) {
+                ++stats->proposals_train_rejected;
+            }
             continue;
         }
         valid[valid_count] = proposals[i];
@@ -5169,13 +5329,25 @@ static size_t arc_select_hypothesis_proposals(const ARCTask *task,
         valid[valid_count].hypothesis.evidence_residual_gain =
             checked_cells == 0 ? 0.0 : 1.0 - (double)mismatches / (double)checked_cells;
         ++valid_count;
+        if (stats != NULL) {
+            ++stats->proposals_train_consistent;
+            size_t template_index =
+                arc_hypothesis_registry_index_for_template_id(
+                    proposals[i].candidate.hypothesis_template_id);
+            if (template_index < ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY) {
+                ++stats->template_train_consistent_retained[template_index];
+            }
+        }
     }
     if (valid_count == 0) {
         return base_count;
     }
 
     size_t count = base_count;
-    size_t task_cells = arc_task_test_cells(task);
+    size_t task_cells = arc_task_test_input_cells(task);
+    if (stats != NULL) {
+        stats->coverage_events = task_cells;
+    }
     NNProgramCoverage coverage;
     memset(&coverage, 0, sizeof(coverage));
     uint64_t *covered = NULL;
@@ -5190,10 +5362,13 @@ static size_t arc_select_hypothesis_proposals(const ARCTask *task,
     }
     if (have_coverage) {
         for (size_t i = 0; i < valid_count; ++i) {
-            arc_hypothesis_set_test_coverage(task,
-                                             &valid[i].candidate,
-                                             &coverage,
-                                             i);
+            arc_hypothesis_set_predicted_change_coverage(task,
+                                                         &valid[i].candidate,
+                                                         &coverage,
+                                                         i);
+        }
+        if (stats != NULL) {
+            stats->coverage_used = 1;
         }
     }
 
@@ -5228,17 +5403,40 @@ static size_t arc_select_hypothesis_proposals(const ARCTask *task,
             nn_program_coverage_add_program_to_residual(&coverage, best, covered);
             if (!arc_candidate_name_exists(candidates, count, valid[best].candidate.name)) {
                 arc_add_candidate(candidates, capacity, &count, &valid[best].candidate);
+                if (stats != NULL) {
+                    ++stats->proposals_selected;
+                    ++stats->proposals_selected_by_coverage;
+                    size_t template_index =
+                        arc_hypothesis_registry_index_for_template_id(
+                            valid[best].candidate.hypothesis_template_id);
+                    if (template_index < ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY) {
+                        ++stats->template_selected[template_index];
+                    }
+                }
             }
         }
     }
 
     if (selected_count == 0) {
+        if (stats != NULL) {
+            stats->coverage_fallback = 1;
+        }
         size_t proposal_limit = valid_count < ARC_HYPOTHESIS_TOP_K
                                     ? valid_count
                                     : ARC_HYPOTHESIS_TOP_K;
         for (size_t i = 0; i < proposal_limit && count < capacity; ++i) {
             if (!arc_candidate_name_exists(candidates, count, valid[i].candidate.name)) {
                 arc_add_candidate(candidates, capacity, &count, &valid[i].candidate);
+                if (stats != NULL) {
+                    ++stats->proposals_selected;
+                    ++stats->proposals_selected_by_score_fallback;
+                    size_t template_index =
+                        arc_hypothesis_registry_index_for_template_id(
+                            valid[i].candidate.hypothesis_template_id);
+                    if (template_index < ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY) {
+                        ++stats->template_selected[template_index];
+                    }
+                }
             }
         }
     }
@@ -5254,18 +5452,24 @@ static size_t arc_build_candidate_set(const ARCTask *task,
                                       ARCProgramLearnedState *learned,
                                       ARCTransformCandidate *candidates,
                                       size_t capacity,
-                                      int include_hypothesis_induction)
+                                      int include_hypothesis_induction,
+                                      ARCHypothesisSelectionStats *hypothesis_stats)
 {
     size_t count = arc_build_candidates(task, candidates, capacity);
+    if (hypothesis_stats != NULL) {
+        memset(hypothesis_stats, 0, sizeof(*hypothesis_stats));
+        hypothesis_stats->proposal_capacity = ARC_HYPOTHESIS_PROPOSAL_CAPACITY;
+    }
     if (include_hypothesis_induction) {
         ARCHypothesisProposal proposals[ARC_HYPOTHESIS_PROPOSAL_CAPACITY];
         size_t proposal_count = 0;
         size_t binding_count = 0;
         const ARCHypothesisTemplateBinding *bindings =
             arc_hypothesis_template_registry(&binding_count);
-        for (size_t i = 0;
-             i < binding_count && proposal_count < ARC_HYPOTHESIS_PROPOSAL_CAPACITY;
-             ++i) {
+        if (hypothesis_stats != NULL) {
+            hypothesis_stats->registered_templates = binding_count;
+        }
+        for (size_t i = 0; i < binding_count; ++i) {
             if (bindings[i].induce == NULL) {
                 continue;
             }
@@ -5276,14 +5480,36 @@ static size_t arc_build_candidate_set(const ARCTask *task,
                                                 count,
                                                 proposals,
                                                 ARC_HYPOTHESIS_PROPOSAL_CAPACITY,
-                                                proposal_count);
+                                                proposal_count,
+                                                hypothesis_stats,
+                                                i);
+        }
+        if (hypothesis_stats != NULL) {
+            memset(hypothesis_stats->template_generated,
+                   0,
+                   sizeof(hypothesis_stats->template_generated));
+            for (size_t proposal_index = 0;
+                 proposal_index < proposal_count;
+                 ++proposal_index) {
+                size_t template_index =
+                    arc_hypothesis_registry_index_for_template_id(
+                        proposals[proposal_index].candidate.hypothesis_template_id);
+                if (template_index < ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY) {
+                    ++hypothesis_stats->template_generated[template_index];
+                }
+            }
+            hypothesis_stats->proposals_retained = proposal_count;
+            hypothesis_stats->proposals_generated = proposal_count;
+            hypothesis_stats->proposal_cap_hit =
+                proposal_count >= ARC_HYPOTHESIS_PROPOSAL_CAPACITY;
         }
         count = arc_select_hypothesis_proposals(task,
                                                 proposals,
                                                 proposal_count,
                                                 candidates,
                                                 capacity,
-                                                count);
+                                                count,
+                                                hypothesis_stats);
     }
     return arc_add_learned_compositions(task, learned, candidates, capacity, count);
 }
@@ -6290,7 +6516,8 @@ static void arc_emit_builtin_program_summaries(const ARCTask *task, const ARCCon
                                                      &learned,
                                                      candidates,
                                                      ARC_RULE_CANDIDATE_COUNT,
-                                                     config != NULL && config->induction_smoke);
+                                                     config != NULL && config->induction_smoke,
+                                                     NULL);
     arc_evaluate_program_candidates(task, candidates, candidate_count, evals);
     for (size_t budget_index = 0; budget_index < budget_count; ++budget_index) {
         for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
@@ -7198,7 +7425,8 @@ static int arc_pretrain_program_proposer(ARCProgramLearnedState *learned_state,
                                                                learned_state,
                                                                candidates,
                                                                ARC_RULE_CANDIDATE_COUNT,
-                                                               1)
+                                                               1,
+                                                               NULL)
                                      : arc_build_candidates(&task,
                                                             candidates,
                                                             ARC_RULE_CANDIDATE_COUNT);
@@ -7342,6 +7570,94 @@ static void print_arc_loader_summary_json(const char *task_dir, const ARCLoaderS
            (double)summary->test_correct_cells / cells);
 }
 
+static void print_arc_hypothesis_selection_json(const char *task_id,
+                                                const ARCHypothesisSelectionStats *stats)
+{
+    if (stats == NULL) {
+        return;
+    }
+    printf("{\"schema\":\"crlp.arc_hypothesis.selection.v1\",\"report_version\":1,"
+           "\"task\":\"arc_agi\",\"task_instance\":");
+    print_json_string(task_id == NULL ? "unknown" : task_id);
+    printf(",\"grammar_version\":%d,"
+           "\"coverage_mode\":\"test_input_predicted_change\","
+           "\"top_k\":%d,\"proposal_capacity\":%d,"
+           "\"score_weights\":{\"structural\":%d,\"log_odds\":%d,"
+           "\"neural\":%d,\"cold_start\":%d},"
+           "\"registered_templates\":%zu,"
+           "\"proposals_attempted\":%zu,"
+           "\"proposals_retained\":%zu,"
+           "\"proposals_generated\":%zu,"
+           "\"proposals_train_consistent_pre_cap\":%zu,"
+           "\"proposals_train_consistent\":%zu,"
+           "\"proposals_duplicate_existing\":%zu,"
+           "\"proposals_train_rejected\":%zu,"
+           "\"proposals_heap_dropped\":%zu,"
+           "\"proposals_heap_replaced\":%zu,"
+           "\"proposals_selected\":%zu,"
+           "\"proposals_selected_by_coverage\":%zu,"
+           "\"proposals_selected_by_score_fallback\":%zu,"
+           "\"proposal_cap_hit\":%s,"
+           "\"coverage_used\":%s,"
+           "\"coverage_fallback\":%s,"
+           "\"coverage_events\":%zu,"
+           "\"templates\":[",
+           ARC_GRAMMAR_VERSION,
+           ARC_HYPOTHESIS_TOP_K,
+           ARC_HYPOTHESIS_PROPOSAL_CAPACITY,
+           ARC_HYPOTHESIS_STRUCTURAL_SCORE,
+           ARC_HYPOTHESIS_LOG_ODDS_WEIGHT,
+           ARC_HYPOTHESIS_NEURAL_WEIGHT,
+           ARC_HYPOTHESIS_COLD_START_WEIGHT,
+           stats->registered_templates,
+           stats->proposals_attempted,
+           stats->proposals_retained,
+           stats->proposals_generated,
+           stats->proposals_train_consistent_pre_cap,
+           stats->proposals_train_consistent,
+           stats->proposals_duplicate_existing,
+           stats->proposals_train_rejected,
+           stats->proposals_heap_dropped,
+           stats->proposals_heap_replaced,
+           stats->proposals_selected,
+           stats->proposals_selected_by_coverage,
+           stats->proposals_selected_by_score_fallback,
+           stats->proposal_cap_hit ? "true" : "false",
+           stats->coverage_used ? "true" : "false",
+           stats->coverage_fallback ? "true" : "false",
+           stats->coverage_events);
+    size_t binding_count = 0;
+    const ARCHypothesisTemplateBinding *bindings =
+        arc_hypothesis_template_registry(&binding_count);
+    int first = 1;
+    for (size_t i = 0;
+         i < binding_count && i < ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY;
+         ++i) {
+        if (!first) {
+            fputc(',', stdout);
+        }
+        first = 0;
+        printf("{\"template_id\":%u,\"name\":",
+               (unsigned)bindings[i].template_id);
+        print_json_string(bindings[i].name);
+        printf(",\"attempted\":%zu,"
+               "\"generated\":%zu,"
+               "\"retained\":%zu,"
+               "\"train_consistent_pre_cap\":%zu,"
+               "\"train_consistent_retained\":%zu,"
+               "\"heap_dropped\":%zu,"
+               "\"selected\":%zu}",
+               stats->template_attempted[i],
+               stats->template_generated[i],
+               stats->template_generated[i],
+               stats->template_train_consistent_pre_cap[i],
+               stats->template_train_consistent_retained[i],
+               stats->template_heap_dropped[i],
+               stats->template_selected[i]);
+    }
+    printf("]}\n");
+}
+
 static void print_arc_metrics_line(const char *model_hash,
                                    const char *evaluation_mode,
                                    const ARCMetrics *metrics)
@@ -7442,16 +7758,19 @@ static int run_arc_task_loader(const ARCConfig *config)
         }
         ARCTransformCandidate candidates[ARC_RULE_CANDIDATE_COUNT];
         ARCProgramEval evals[ARC_RULE_CANDIDATE_COUNT];
+        ARCHypothesisSelectionStats hypothesis_stats;
         size_t candidate_count = arc_build_candidate_set(&task,
                                                          &learned_state,
                                                          candidates,
                                                          ARC_RULE_CANDIDATE_COUNT,
-                                                         config->induction_smoke);
+                                                         config->induction_smoke,
+                                                         &hypothesis_stats);
         ARCTransformMetrics transform =
             evaluate_arc_transform_gate_candidates(&task, candidates, candidate_count);
         arc_loader_summary_add(&summary, &task, &transform);
         arc_evaluate_program_candidates(&task, candidates, candidate_count, evals);
         if (config->induction_smoke) {
+            print_arc_hypothesis_selection_json(task.id, &hypothesis_stats);
             induction_evidence_rows +=
                 arc_emit_induction_smoke(&task, candidates, evals, candidate_count);
         }

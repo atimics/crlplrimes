@@ -424,6 +424,8 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                         if isinstance(row.get("eval_regressions"), list)
                         else "",
                         fmt_bool(row, "parity_holds"),
+                        fmt_bool(row, "eval_gain_holds"),
+                        fmt_bool(row, "phase4_holds"),
                     ]
                     for row in arc_induction_parity
                 ],
@@ -437,6 +439,8 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                     "eval added",
                     "eval regressions",
                     "parity",
+                    "eval gain",
+                    "phase4",
                 ],
             )
         )

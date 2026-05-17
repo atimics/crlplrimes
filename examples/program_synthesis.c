@@ -1279,14 +1279,38 @@ static size_t ps_selected_covered(const NNRuleCoverage *coverage,
     return out;
 }
 
-static size_t ps_rule_covered_events(const NNRuleCoverage *coverage, size_t rule_index)
+static size_t ps_rule_target_events(const PSContext *context,
+                                    const NNRuleCoverage *coverage,
+                                    PSSplit split,
+                                    size_t rule_index,
+                                    PSOp target_op,
+                                    size_t *events_out)
 {
-    if (coverage == NULL || rule_index >= coverage->rule_count) {
+    size_t covered = 0;
+    size_t events = 0;
+    size_t event_index = 0;
+    if (context == NULL || coverage == NULL || rule_index >= coverage->rule_count) {
+        if (events_out != NULL) {
+            *events_out = 0;
+        }
         return 0;
     }
-    size_t covered = 0;
-    for (size_t event = 0; event < coverage->event_count; ++event) {
-        covered += nn_rule_coverage_get(coverage, rule_index, event) ? 1u : 0u;
+    for (size_t task_index = 0; task_index < context->task_count; ++task_index) {
+        const PSTask *task = &context->tasks[task_index];
+        if (task->split != split) {
+            continue;
+        }
+        if (task->target_op == target_op) {
+            ++events;
+            if (event_index < coverage->event_count &&
+                nn_rule_coverage_get(coverage, rule_index, event_index)) {
+                ++covered;
+            }
+        }
+        ++event_index;
+    }
+    if (events_out != NULL) {
+        *events_out = events;
     }
     return covered;
 }
@@ -1314,12 +1338,29 @@ static int ps_emit_hypothesis_evidence(const PSContext *context,
             !nn_hypothesis_compile(&hypothesis, &program)) {
             continue;
         }
-        size_t covered = ps_rule_covered_events(train_coverage, i) +
-                         ps_rule_covered_events(validation_coverage, i) +
-                         ps_rule_covered_events(test_coverage, i);
-        size_t events = train_coverage->event_count +
-                        validation_coverage->event_count +
-                        test_coverage->event_count;
+        size_t train_events = 0;
+        size_t validation_events = 0;
+        size_t test_events = 0;
+        size_t covered =
+            ps_rule_target_events(context,
+                                  train_coverage,
+                                  PS_SPLIT_TRAIN,
+                                  i,
+                                  spec->op,
+                                  &train_events) +
+            ps_rule_target_events(context,
+                                  validation_coverage,
+                                  PS_SPLIT_VALIDATION,
+                                  i,
+                                  spec->op,
+                                  &validation_events) +
+            ps_rule_target_events(context,
+                                  test_coverage,
+                                  PS_SPLIT_TEST,
+                                  i,
+                                  spec->op,
+                                  &test_events);
+        size_t events = train_events + validation_events + test_events;
         NNHypothesisEvidence evidence = {
             .task = "program_synthesis",
             .task_instance = spec->name,
