@@ -19,12 +19,20 @@ This is intentionally read-only and deterministic; it never re-runs experiments.
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 import sys
 from pathlib import Path
 
 WINDOW = 50  # smoothing window for rolling accuracy
 
 ROOT = Path(__file__).resolve().parents[2]
+ARC_AGI = ROOT / "build" / "float" / "arc_agi"
+PRIME_GAP = ROOT / "build" / "float" / "prime_gap"
+SEED = 20240516
+PRIME_SEED = 20240511
+ARC_EPOCH_GRID = (1, 2, 4, 8)
+PRIME_EPOCHS = 8
 
 
 def rolling(values: list[float], w: int) -> list[float]:
@@ -128,6 +136,68 @@ def reliability(rows: list[dict], task: str, prefer_mode: str | None = None) -> 
     return best or []
 
 
+def arc_per_epoch_eval() -> list[tuple[int, float, float]]:
+    """Run arc_agi once per epoch count in ARC_EPOCH_GRID, capture (epoch, top1, nll)."""
+    if not ARC_AGI.exists():
+        return []
+    out: list[tuple[int, float, float]] = []
+    for epochs in ARC_EPOCH_GRID:
+        proc = subprocess.run(
+            [
+                str(ARC_AGI),
+                "--epochs", str(epochs),
+                "--test-samples", "900",
+                "--seed", str(SEED),
+            ],
+            capture_output=True, text=True, check=False, timeout=180,
+        )
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if row.get("evaluation_mode") == "neural_cell_scorer":
+                out.append((epochs, float(row["top1"]), float(row["nll"])))
+                break
+    return out
+
+
+def prime_gap_per_epoch_loss() -> list[tuple[int, float, float]]:
+    """Single 8-epoch prime_gap run; parse per-epoch (epoch, raw_loss, gated_loss)."""
+    if not PRIME_GAP.exists():
+        return []
+    proc = subprocess.run(
+        [
+            str(PRIME_GAP),
+            "100000", "200000",  # train/test limits
+            str(PRIME_EPOCHS), "0",  # supervised + RL epochs
+            "8000", "1500",  # train/test states
+            "1.20", "0.12",  # reg coefficients
+            str(PRIME_SEED),
+        ],
+        capture_output=True, text=True, check=False, timeout=300,
+    )
+    raw: dict[int, float] = {}
+    gated: dict[int, float] = {}
+    raw_re = re.compile(r"^model supervised epoch (\d+) loss=([0-9.]+)")
+    gated_re = re.compile(r"^model learned-wheel supervised epoch (\d+) loss=([0-9.]+)")
+    for line in proc.stdout.splitlines():
+        m = raw_re.match(line)
+        if m:
+            raw[int(m.group(1))] = float(m.group(2))
+            continue
+        m = gated_re.match(line)
+        if m:
+            gated[int(m.group(1))] = float(m.group(2))
+    out: list[tuple[int, float, float]] = []
+    for epoch in sorted(set(raw) | set(gated)):
+        out.append((epoch, raw.get(epoch, float("nan")), gated.get(epoch, float("nan"))))
+    return out
+
+
 def main() -> int:
     traces = {
         "prime_gap": ROOT / "build/float/traces/prime_gap.jsonl",
@@ -151,8 +221,13 @@ def main() -> int:
     }
     hyp = arc_hypothesis(rows)
 
+    arc_curve = arc_per_epoch_eval()
+    prime_loss = prime_gap_per_epoch_loss()
+
     blob = {
         "learning_curves": curves,
+        "arc_epoch_eval": arc_curve,
+        "prime_gap_epoch_loss": prime_loss,
         "gate_ablation": gates,
         "reliability": rel,
         "arc_hypothesis": hyp,
@@ -172,6 +247,16 @@ def main() -> int:
             for step, acc, loss in pts:
                 f.write(f"    ({step}, {acc:.6f}, {loss:.6f}),\n")
             f.write("  ),\n")
+        f.write(")\n\n")
+        f.write("#let arc_epoch_eval = (\n")
+        for epoch, top1, nll in arc_curve:
+            f.write(f"  ({epoch}, {top1:.6f}, {nll:.6f}),\n")
+        f.write(")\n\n")
+        f.write("#let prime_gap_epoch_loss = (\n")
+        for epoch, raw_loss, gated_loss in prime_loss:
+            raw_str = "0.0" if raw_loss != raw_loss else f"{raw_loss:.6f}"  # NaN check
+            gated_str = "0.0" if gated_loss != gated_loss else f"{gated_loss:.6f}"
+            f.write(f"  ({epoch}, {raw_str}, {gated_str}),\n")
         f.write(")\n\n")
         f.write("#let gate_ablation = (\n")
         for task, gs in gates.items():
