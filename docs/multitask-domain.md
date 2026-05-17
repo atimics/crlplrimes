@@ -191,11 +191,19 @@ The interpretation is deliberately conservative:
 
 ## Next Steps
 
+Multitask-specific open work is tracked in `docs/multitask-transfer-research-plan.md`
+(operational) and the paper Roadmap appendix (`paper/paper.typ`, items R-MT.1
+through R-MT.8; defensibility). The unfinished items local to this document are:
+
 1. Expand the ARC loader grammar beyond the current hand-coded geometry/recolor
-   family.
+   family (parallel substrate track; cross-listed as R-S.3 in the paper
+   Roadmap as the synthetic-task bootstrapping idea borrowed from
+   AlphaGeometry).
 2. Add task-family metadata so ARC tasks with different transformations can be
-   evaluated without changing the scorer code.
+   evaluated without changing the scorer code (precondition for R-MT.2).
 3. Promote loader-backed symbolic ARC evidence into matched grammar/proposer
-   comparisons before treating ARC as production verifier-gated ARC evidence.
+   comparisons before treating ARC as production verifier-gated ARC evidence
+   (cross-listed as R-X4 in the paper Roadmap).
 4. Track transfer with held-out task families, not only held-out domains from
-   the same compiled set.
+   the same compiled set (cross-listed as R-MT.2 in the paper Roadmap, the
+   same-envelope OOD scorer test).

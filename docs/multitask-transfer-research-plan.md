@@ -415,3 +415,14 @@ The research track is ready to affect the paper when:
   not only cell accuracy;
 - failures are turned into limitations rather than patched with mismatched
   architectures or feature envelopes.
+
+## Cross-reference
+
+The paper's Roadmap appendix (`paper/paper.typ` `tab:roadmap`) is the canonical
+list of experiments that defend a paper claim. The E-MT.x / I-MT.x / E-ARC.x
+items in this document map 1:1 onto R-MT.x in the paper Roadmap; this doc is
+the *operational* plan (ground rules, instrumentation, success criteria),
+while the paper Roadmap is the *defensibility* plan (effort estimate, which
+claim each experiment defends, submission tiers). Keep this document
+authoritative for *how* to run the experiments and the paper Roadmap
+authoritative for *which* experiments must land before submission.

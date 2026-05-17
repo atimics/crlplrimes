@@ -1019,25 +1019,48 @@ still open. Items marked *done* are referenced by tag from the body.
     [R-X3], [`prime_gap` hypothesis cross-port (matching `program_synthesis` filter-reduce)], [1-2d], [C1, cross-domain],
     [R-X4], [`crlp.arc_induction.parity.v1` row on the public ARC training+evaluation corpus, committed to results], [0.5d], [C1, ARC],
     [R-X5], [ARC ECE outlier check: rerun cell scorer across $gt.eq 10$ ARC tasks and report ECE distribution], [1d], [C3, ARC],
-    [R-W1], [Related-work positioning paragraphs with full bibliography (see §2)], [1d], [all],
-    [R-W2], [ARC literature positioning paragraph (DreamCoder, ARC-DSL, ARC Prize 2024)], [0.5d], [ARC scope],
+    [R-MT.1], [Longer shared and single multitask runs ($gt.eq$192k total updates, three seeds) per `docs/multitask-transfer-research-plan.md` E-MT.1], [1-2d], [C1, multitask],
+    [R-MT.2], [Same-envelope ARC OOD scorer test: train shared and single on `0520fde7`, eval each on $gt.eq$10 held-out ARC tasks under the same 96-feature envelope; answers the "is single-task memorizing?" question. E-MT.2], [2d], [C1, ARC, multitask],
+    [R-MT.3], [Delayed-claim leave-one-out: train shared on {all four} \ {X} for X in {prime_gap, grid_path, arc_agi}; identify which siblings carry the +2.7pp gain. E-MT.3], [2d], [multitask, transfer],
+    [R-MT.4], [Adapter-headed sharing: shared `[96→64→32]` trunk + per-task `[32→1]` heads; same training budget. Tests whether ARC's −28.6pp recovers while delayed_claim's gain holds. E-MT.4], [3-4d], [C1, multitask, architecture],
+    [R-MT.5], [Per-task multitask calibration audit: ECE + reliability_bins from each shared and single eval in `crlp.multitask.summary.v1`. E-MT.5], [0.5d], [C3, multitask],
+    [R-MT.6], [Multitask trunk capacity sweep: `[96→32→16]`, `[96→64→32]`, `[96→128→64]`, `[96→256→128]`; plot shared-vs-single Δ vs capacity. E-MT.6], [2d], [multitask, capacity],
+    [R-MT.7], [Certificate-gate invariance under shared scorer: confirm the certified rule set, gate predictions, and budgeted proposer aggregates are unchanged when the scorer is shared vs single. E-MT.7], [1d], [C1, multitask],
+    [R-MT.8], [Task-ordering ablation: uniform random / round-robin / arc-heavy / prime-light; tests whether negative transfer is about sampling rate or loss-landscape collision. E-MT.8], [2d], [multitask],
+    [R-S.1], [Library learning over the hypothesis registry (DreamCoder pattern): promote successful slot bindings to first-class templates by frequency or coverage. See `paper/references.md` §"Ideas worth borrowing"], [3-5d], [substrate, hypothesis],
+    [R-S.2], [Per-instance test-time adaptation of the hypothesis prior (Akyürek pattern): update slot-prior log-odds tables at inference from the test task's train pairs], [3-5d], [substrate, ARC],
+    [R-S.3], [Synthetic-data bootstrapping of hypothesis-induced transforms (AlphaGeometry pattern): generate ARC-shape synthetic tasks against the grammar; use as training data for the slot prior], [1w], [substrate, hypothesis],
+    [R-S.4], [Active selection of hypotheses under verification budget (PRM800K active-learning pattern): choose the next hypothesis to certify by maximum expected residual gain], [3-4d], [substrate, ARC],
+    [R-S.5], [NL-hypothesis bridge (Hypothesis Search pattern): allow templates to be authored in natural language and compiled to slot specs via an external LM. Probably not worth the lift; here for completeness], [1-2w], [substrate, optional],
+    [R-W1], [Related-work positioning paragraphs with full bibliography (see §2). `paper/references.md` is the synthesis input; `paper/references.bib` is the BibTeX], [1d], [all],
+    [R-W2], [ARC literature positioning paragraph (Chollet 2019 + 2024 ARC Prize report, Akyürek TTT, ARChitects/MindsAI 2024 winners)], [0.5d], [ARC scope],
+    [R-W3], [DeepSeek-R1 / RLVR positioning paragraph: cite as contemporary confirmation of the verifier-over-learned-reward thesis at scale, contrast scale and audit posture], [0.5d], [verifier line],
   ),
-  caption: [Roadmap. Total estimated effort: $approx$3 weeks of focused work to take the
+  caption: [Roadmap. Total estimated effort: $approx$6 weeks of focused work to take the
     current draft from "defensible as an arxiv preprint" to "submission-ready with all
-    headline claims independently supported."],
+    headline claims independently supported." Items are grouped by prefix: R-Ex.x defend
+    paper axes, R-Xn close near-term gaps the current draft already named, R-MT.x close
+    the multitask-transfer gap, R-S.x mine the public-corpus synthesis for substrate
+    extensions, R-Wn close related-work gaps.],
 ) <tab:roadmap>
 
 #v(6pt)
 
-*Minimum viable submission.* R-E2.1, R-E1.3, R-E3.3, R-X4, R-W1, R-W2. $approx$5 days. Every
-percentage in the body has a CI-backed defensible experiment; ARC has a public-corpus
-parity row; related work has positioning.
+*Minimum viable submission.* R-E2.1, R-E1.3, R-E3.3, R-X4, R-W1, R-W2, R-W3. $approx$1 week.
+Every percentage in the body has a CI-backed defensible experiment; ARC has a public-corpus
+parity row; related work positions against AlphaGeometry, DeepSeek-R1, DreamCoder, and the
+2024 ARC Prize at minimum.
 
-*Strong submission.* Add R-E1.2, R-E2.3, R-E3.1, R-E1.4, R-E3.4, R-X1, R-X3. $approx$2.5
-weeks. All three axes have either a cross-task replication or a baseline strong enough to
-rule out the obvious alternative explanation, and the substrate claim has two domain ports
-(ARC + program_synthesis + prime_gap).
+*Strong submission.* Add R-E1.2, R-E2.3, R-E3.1, R-E1.4, R-E3.4, R-X1, R-X3, *R-MT.1, R-MT.2,
+R-MT.5*. $approx$3 weeks. All three axes have either a cross-task replication or a baseline
+strong enough to rule out the obvious alternative explanation; the substrate claim has two
+or three domain ports; the multitask experiment has $gt.eq$3-seed CIs, a same-envelope OOD
+test, and a per-task calibration audit.
 
-*Full ideal paper.* Everything above plus R-E2.2 (conjunctive rule grammar) and R-X5 (ARC
-ECE distribution across $gt.eq 10$ tasks). $approx$3 weeks. If conjunctive rules generalize
-and the ECE distribution is unimodal-low across ARC tasks, the paper grows two new findings.
+*Full ideal paper.* Everything above plus R-E2.2 (conjunctive rule grammar), R-X5 (ARC ECE
+distribution across $gt.eq$10 tasks), R-MT.3 / R-MT.4 / R-MT.6 (leave-one-out, adapter
+heads, capacity sweep), and at least one R-S.x corpus-derived substrate extension that
+lands a new finding. $approx$6 weeks. If the adapter-heads experiment recovers ARC's
+single-task accuracy while preserving delayed-claim's transfer gain, the paper grows a
+"shared trunk + per-task adapters + certified gate" recipe rather than reporting a substrate
+ablation.

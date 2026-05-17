@@ -286,20 +286,34 @@ production learned-gate evaluation table is open work.
 
 ## Next Build Targets
 
+Substrate-engineering work that is *not* defending a paper claim and so does
+not appear in the paper Roadmap (`paper/paper.typ` `tab:roadmap`). For
+experiment-level items see that table; for the multitask operational plan see
+`docs/multitask-transfer-research-plan.md`.
+
 1. Move `grid_path` and `delayed_claim` out of monolithic examples into task
-   modules with the same shape as `src/prime_gap/`.
+   modules with the same shape as `src/prime_gap/` (refactoring; precondition
+   for richer per-task targets).
 2. Promote the delayed-claim certified gate from symbolic-domain smoke into the
-   production delayed-claim evaluation.
-3. Extend grid-path gates beyond simple legality to admissible pruning rules.
-4. Run proposer baselines for every task at matched rule budgets.
-5. Run strict versus KL/entropy verifier RL on the certified tasks.
+   production delayed-claim evaluation (cross-listed as R-X1 in the paper
+   Roadmap).
+3. Extend grid-path gates beyond simple legality to admissible pruning rules
+   (cross-listed as R-E1.2).
+4. Run proposer baselines for every task at matched rule budgets (Axis 2's
+   protocol applied to grid-path and delayed-claim; cross-listed under R-E2.1).
+5. Run strict versus KL/entropy verifier RL on the certified tasks
+   (cross-listed as R-E3.1).
 6. Report one cross-task table keyed by the shared schema:
    no gate, spec gate, learned gate, random gate, grammar-order gate,
-   structural-heuristic gate, oracle gate, replay successor, strict RL, KL RL.
+   structural-heuristic gate, oracle gate, replay successor, strict RL, KL RL
+   (substrate-level reporting deliverable that uses the existing schemas).
 7. Add metric-provenance rows for random ranking, strongest non-neural
-   heuristic, and oracle ranking on the same gated candidate set.
+   heuristic, and oracle ranking on the same gated candidate set (substrate-level
+   reporting deliverable).
 8. Report random-normalized and gate-marginal skill in cross-task tables; keep
    raw top-1 in task-specific sections.
 9. Extend ARC beyond the current `NNProgram` ranking experiment into actual
    object-relation, tiling, and transform-induction candidates before treating
-   it as production verifier-gated ARC evidence.
+   it as production verifier-gated ARC evidence (parallel substrate track;
+   cross-listed under R-S.3 for the synthetic-bootstrapping flavor and R-X4
+   for the public-corpus parity row).
