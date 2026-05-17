@@ -1,0 +1,15 @@
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks claim --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240516 --no-task-baselines
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks grid,claim,arc --eval-tasks claim --epochs 16 --steps-per-epoch 9000 --eval-samples 1000 --hidden 64x32 --seed 20240516 --no-task-baselines
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks prime,claim,arc --eval-tasks claim --epochs 16 --steps-per-epoch 9000 --eval-samples 1000 --hidden 64x32 --seed 20240516 --no-task-baselines
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks prime,grid,claim --eval-tasks claim --epochs 16 --steps-per-epoch 9000 --eval-samples 1000 --hidden 64x32 --seed 20240516 --no-task-baselines
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks claim --eval-tasks claim --epochs 16 --steps-per-epoch 3000 --eval-samples 1000 --hidden 64x32 --seed 20240516 --no-task-baselines
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks claim --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240517 --no-task-baselines
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks grid,claim,arc --eval-tasks claim --epochs 16 --steps-per-epoch 9000 --eval-samples 1000 --hidden 64x32 --seed 20240517 --no-task-baselines
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks prime,claim,arc --eval-tasks claim --epochs 16 --steps-per-epoch 9000 --eval-samples 1000 --hidden 64x32 --seed 20240517 --no-task-baselines
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks prime,grid,claim --eval-tasks claim --epochs 16 --steps-per-epoch 9000 --eval-samples 1000 --hidden 64x32 --seed 20240517 --no-task-baselines
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks claim --eval-tasks claim --epochs 16 --steps-per-epoch 3000 --eval-samples 1000 --hidden 64x32 --seed 20240517 --no-task-baselines
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks claim --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240518 --no-task-baselines
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks grid,claim,arc --eval-tasks claim --epochs 16 --steps-per-epoch 9000 --eval-samples 1000 --hidden 64x32 --seed 20240518 --no-task-baselines
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks prime,claim,arc --eval-tasks claim --epochs 16 --steps-per-epoch 9000 --eval-samples 1000 --hidden 64x32 --seed 20240518 --no-task-baselines
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks prime,grid,claim --eval-tasks claim --epochs 16 --steps-per-epoch 9000 --eval-samples 1000 --hidden 64x32 --seed 20240518 --no-task-baselines
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks claim --eval-tasks claim --epochs 16 --steps-per-epoch 3000 --eval-samples 1000 --hidden 64x32 --seed 20240518 --no-task-baselines

@@ -1,0 +1,924 @@
+                                         Published as a conference paper at COLM 2024
+
+
+
+
+                                         V-STaR: Training Verifiers for Self-Taught Reasoners
+
+                                             Arian Hosseini ∗ Xingdi Yuan    Nikolay Malkin
+                                             Aaron Courville  Alessandro Sordoni     Rishabh Agarwal
+
+                                              Mila, Université de Montréal
+                                              Microsoft Research
+                                              University of Edinburgh
+                                              Google Deepmind
+arXiv:2402.06457v2 [cs.LG] 14 Aug 2024
+
+
+
+
+                                                                                       Abstract
+                                                   Common self-improvement approaches for large language models (LLMs),
+                                                   such as STaR, iteratively fine-tune LLMs on self-generated solutions to
+                                                   improve their problem-solving ability. However, these approaches discard
+                                                   the large amounts of incorrect solutions generated during this process,
+                                                   potentially neglecting valuable information in such solutions. To address
+                                                   this shortcoming, we propose V-STaR that utilizes both the correct and
+                                                   incorrect solutions generated during the self-improvement process to train
+                                                   a verifier using DPO that judges correctness of model-generated solutions.
+                                                   This verifier is used at inference time to select one solution among many
+                                                   candidate solutions. Running V-STaR for multiple iterations results in
+                                                   progressively better reasoners and verifiers, delivering a 4% to 17% test
+                                                   accuracy improvement over existing self-improvement and verification
+                                                   approaches on common code generation and math reasoning benchmarks
+                                                   with LLaMA2 models.
+
+
+                                         1     Introduction
+                                         Learning to recognize and correct mistakes is a feature of human intelligence (Metcalfe,
+                                         2017). When dealing with complex tasks, such as coding or solving a math problem, we can
+                                         recognize errors in reasoning and explore alternative paths to a solution. To improve the
+                                         reasoning performance of LLMs, several approaches exploit the ability of LLMs to produce
+                                         solutions and check the correctness of these solutions during training, for example, using
+                                         test cases for code generation. These self-improvement approaches, such as STaR Zelikman
+                                         et al. (2022), RFT (Yuan et al., 2023), and ReSTEM (Singh et al., 2023), improve LLMs by
+                                         fine-tuning them on their self-generated solutions and optionally iteratively running this
+                                         process. However, all these approaches are data-inefficient in that they use only correct
+                                         solutions, and discard incorrect solutions, which is often a large portion of model-generated
+                                         solutions, especially for challenging reasoning tasks.
+                                         Orthogonal to self-improvement, another promising direction to improve LLM reasoning is
+                                         to use learned LLM verifiers at test time (Cobbe et al., 2021; Wang et al., 2023b). Specifically,
+                                         the LLM generates multiple candidate solutions and the verifier ranks these solutions
+                                         and selects the best one. Such verifiers are trained by fine-tuning an LLM on a dataset of
+                                         solutions generated from a frozen LLM, labeled with either final correctness (ORM, Cobbe
+                                         et al., 2021) or step-by-step human annotations (Lightman et al., 2024). Using such verifiers
+                                         allows LLMs to trade-off additional test-time compute for better performance.
+                                         We propose Verification for Self-Taught Reasoners (V-STaR). The key idea in V-STaR is
+                                         to utilize both the correct and incorrect LLM-generated solutions during the iterative self-
+                                         improvement process to train a verifier using DPO1 (Rafailov et al., 2023), in addition to
+                                         training a LLM as generator using correct solutions (Fig. 1). The iterative self-improvement
+                                         process yields progressively improved generators, trained on augmented data, which leads
+                                              ∗ Correspondence to: <arian.hosseini9@gmail.com> and <rishabhagarwal@google.com>
+                                              1We also considered using this DPO setup to train a generator in §4.6.
+
+
+
+                                                                                            1
+Published as a conference paper at COLM 2024
+
+
+
+
+    𝒟GEN               Union
+                                           (𝑥1 , 𝑦ො1𝑡 )           (𝑥1 , 𝑦ො1𝑡 ,   )                (𝑥1 , 𝑦ො1𝑡 ,   )
+ (𝑥, 𝑦ො <𝑡 )                               (𝑥2 , 𝑦ො2𝑡 )           (𝑥2 , 𝑦ො2𝑡 ,   )                                               (𝑥, 𝑦ො1 )
+                     𝐺𝑡                                                                           (𝑥3 , 𝑦ො3𝑡 ,   )
+
+     …
+               SFT        Generate         (𝑥3 , 𝑦ො3𝑡 )   Label   (𝑥3 , 𝑦ො3𝑡 ,   )   Filter                              𝑇       (𝑥, 𝑦ො 2 )          (𝑥, 𝑦ො ∗ )
+                                                                                                                     𝐺
+
+
+
+
+                                                                                                         …
+                                                                                                                                 (𝑥, 𝑦ො 3 )
+
+
+
+
+                                                                         …
+                                                …
+
+
+
+
+                                                                                                                                    …
+                     {𝑥1 , 𝑥2 , 𝑥3 , … }                                                                                     𝑥
+ (𝑥, 𝑦ො <𝑡 )                                                                                                                                  𝑉𝑇
+                   𝑉𝑡
+     …
+
+
+               DPO
+    𝒟VER                               Union
+                                                                                         Training iteration 𝒕                                      Inference
+
+
+Figure 1: Generator and verifier training in V-STaR. Left: In each training iteration,
+the generator G t is fine-tuned (from a pretrained LLM) on the current buffer of problem
+instances and correct solutions DGEN . Generated solutions that yielded a correct answer are
+added to DGEN to be used in future iterations, and all the generated solutions (correct and
+incorrect) are added to DVER . The verifier V t is trained using DPO with a preference dataset
+constructed from pairs of correct and incorrect solutions from DVER . Right: At test time,
+the verifier is used to rank solutions produced by the generator. Such iterative training and
+inference-time ranking yields large improvements over generator-only self-improvement.
+
+
+to higher quality completions and more challenging negative examples for the verifier
+training. At test time, the verifier ranks multiple candidate solutions from the generator
+and selects the best one.
+We empirically evaluate V-STaR to improve reasoning capabilities of LLMs: (1) Math
+problem-solving using GSM8K (Cobbe et al., 2021) and a subset of MATH (Hendrycks et al.,
+2021), and (2) Code-generation using MBPP (Austin et al., 2021) and HumanEval (Chen et al.,
+2021). Fine-tuning LLaMA2 (Touvron et al., 2023) and CodeLLaMA (Rozière et al., 2023),
+we compare V-STaR to other self-improvement (RFT, STaR) and verification-based meth-
+ods (ORM), self-consistency (Wang et al., 2023a), and a non-iterative V-STaR baseline (RFT
++ Verifier) that uses the same number of generation samples to bootstrap a generator and
+verifier. V-STaR works remarkably well, leading to 6% to 17% absolute improvement in test
+accuracy over prior self-improvement and verification-based methods for math reasoning,
+and 4% to 12% in code generation. Notably, 7B V-STaR surpasses base LLaMA2 70B (8-shot)
+on GSM8K, and nearly match CodeLLaMA 34B (zero-shot) on HumanEval.
+Our contributions are:
+• We propose V-STaR, a simple and effective approach, which uses iteratively generated
+  correct and incorrect solutions from an LLM to train a better generator and verifier.
+  V-STaR outperforms prior self-improvement approaches (RFT, STaR) as well as ORM
+  verification (Cobbe et al., 2021) for math reasoning and code generation (Fig. 2). V-
+  STaR better utilizes adaptive test-time compute for improving performance than strong
+  baselines – ORM verification, RFT + verifier (Fig. 5), and self-consistency (Fig. 6, left).
+• As a secondary contribution, we find DPO to be more effective for training verifiers
+  than the prevalent ORM approach by Cobbe et al. (2021). We also propose a formula for
+  Best-of-k (§4.2), akin to Pass@k, to reliably evaluate test performance with verification.
+
+
+2      Preliminaries
+Given a pretrained language model G and the original training data of a task DSFT =
+{( x1 , y1 ), ( x2 , y2 ), · · · ( x N , y N )}, where x is typically a description of a problem and y is the
+solution, such as chain-of-thought rationale or generated code. The de facto approach for
+such tasks with causal language models is supervised fine-tuning (SFT) with the negative
+log-likelihood objective on the training data:
+                                                                                              T
+                                           LSFT ( G ) = − E(x,y)∼DSFT ∑ log G (yt | y<t , x )                                                                (1)
+                                                                                          t =1
+where G is also referred to as generator in reasoning tasks. LLMs can be used to generate
+high quality chain-of-thought rationales or solutions for a range of tasks. This observation
+
+
+                                                                                     2
+Published as a conference paper at COLM 2024
+
+
+
+
+Table 1: Comparison of self-improvement and verification methods, showing the data used
+to train the generator and verifier (if applicable), and whether or not the method is iterative.
+M ETHOD                     G ENERATOR D ATA                           V ERIFIER D ATA                I TERATIVE
+SFT                         DSFT                                       ✗                                        ✗
+V ERIFICATION               DSFT                                       DSFT ∪ G ENERATED                        ✗
+STA R                       C ORRECT G ENERATED t−1                    ✗                                        ✓
+RFT (STA R † [1 ITER ])     DSFT ∪ C ORRECT G ENERATED                 ✗                                        ✗
+STA R †                     DSFT ∪ C ORRECT G ENERATED <t              ✗                                        ✓
+V-STA R [1 I TER ]          DSFT ∪ C ORRECT G ENERATED                 DSFT ∪ G ENERATED                        ✗
+V-STA R                     D SFT ∪ C ORRECT G ENERATED <t             D SFT ∪ G ENERATED <t                    ✓
+
+
+
+has motivated using correct generations from the model itself to bootstrap problem-solving
+and reasoning abilities (Zelikman et al., 2022; Singh et al., 2023; Yuan et al., 2023).
+
+2.1   Self-improvement approaches
+Self-Taught Reasoner (STaR; Zelikman et al., 2022) corresponds to an iterative approach
+where a language model improves itself using correctness feedback. In each iteration, one so-
+lution ŷ is generated using greedy decoding from the generator G for each problem x in train-
+ing dataset D . Having access to test cases or ground truth answers, generated solutions can
+be checked for their binary correctness label z by z = is correct( x, ŷ),          z ∈ {0, 1}. A com-
+pletion ŷ is labeled correct if it has the same final answer as the ground truth answer for math
+problems, or if it passes all the test cases for code generation problems. Only correct solutions
+(z = 1) are included in the dataset at iteration j where D j = {( x1 , ŷ1 ), ( x2 , ŷ2 ), · · · ( x N , ŷ N )}.
+Then, the generator is fine-tuned on this new dataset using (Eq. 1) where DSFT = D j . This
+fine-tuned generator is used in subsequent iterations.
+Rejection Sampling Fine-tuning (RFT; Yuan et al., 2023) first fine-tunes a pretrained LM
+on the training dataset DSFT to obtain G. For each problem xi , k solutions are sampled
+{ŷi,j ∼ G (y| xi )}kj=1 and similar to STaR, only correct generated solutions (z = 1) are kept.
+In RFT, the original dataset is then augmented with the correct completions to D j , and G is
+fine-tuned on the new D j to obtain GRFT . Unlike STaR, RFT is not an iterative approach.
+STaR† . Each STaR iteration can be performed similarly to RFT, akin to ReSTEM (Singh et al.,
+2023). Since there could be multiple correct solutions for a problem, one could sample k
+solutions per problem at each STaR iteration, but this is not prescribed in the original STaR
+paper, which we will denote as STaR† for the rest of the paper.
+
+2.2   Test-time verification
+Cobbe et al. (2021) trained verifiers, which they refer as outcome-supervised reward model
+(ORM), that assess the probability that a candidate solution is correct for a given problem.
+At test time, the language model G generates many candidate solutions and the one ranked
+highest by the verifier is selected, also known as Best-of-k. To train a verifier V, similar to
+RFT, k candidate solutions are sampled from a generator G for each training problem and
+labeled for their correctness z to make the verifier training data DVER = {( xi , ŷi,j , zi,j )}iN=1 ,
+where zi,j is a binary label indicating whether ŷi,j is a correct or incorrect solution.
+To train the verifier V, Cobbe et al. (2021) fine-tune a LLM on DVER using a combination
+of language modeling (Eq. 1) and binary classification. The model is trained to predict ŷi,j
+given xi and zi,j given { xi ; ŷi,j } with the language modeling and the classification objective,
+respectively. See §5 for more details.
+
+2.3   Preference learning with DPO
+Fine-tuning pretrained LLMs with human feedback can result in large performance gains in
+downstream tasks Ouyang et al. (2022); Bai et al. (2022). The typical framework to do so is to
+
+
+                                                        3
+Published as a conference paper at COLM 2024
+
+
+
+
+Figure 2: Test accuracy of 7B V-STaR compared to self-improvement and verification
+baselines. We report Best-of-64 for verification-based methods and Pass@1 for others. All
+methods, except SFT, have access to the SFT baseline model and K = 48 output generations
+per problem. STaR† and V-STaR are run for 3 iterations, where each iteration uses K/3 = 16
+samples. Verification corresponds to using a test-time verifier trained on K generated com-
+pletions from the SFT generator. Numbers above each bar show the absolute improvement
+over SFT. (Left) Test accuracy on tasks used for V-STaR training. (Right) Transfer evaluation
+of GSM8K and MBPP trained models on MATH subset and HumanEval respectively.
+
+collect paired human preferences for a set of input prompts Dpref = {( xi , yi+ , yi− )}iN=1 , train
+a reward model using Dpref , and fine-tune the LLM using this reward (Stiennon et al., 2020).
+More recently, Rafailov et al. (2023) proposed Direct Preference Optimization (DPO), which
+does not use a separately trained reward model during fine-tuning. DPO requires supervised
+fine-tuning (SFT) a pretrained LLM on the downstream task to obtain GSFT , which is also
+used as a reference policy. Given the preference dataset Dpref and GSFT , DPO’s objective
+increases the log likelihood, relative to the reference policy, of preferred y+ to dispreferred
+y− completions. We present the DPO loss later in Eq. 2, in the context of training verifiers.
+
+3   V-STaR: Verifiers for self-taught reasoners
+Existing self-improvement methods, such as RFT, STaR, and ReSTEM , throw away incorrect
+model-generated solutions. However, incorrect solutions can also contain valuable infor-
+mation: a language model could learn from discrepancies between correct and incorrect
+solutions for a given problem, and identify error patterns in generations, enhancing its abil-
+ity to provide more accurate solutions. In this work, we propose V-STaR that utilizes both
+incorrect and correct generated solutions in an iterative process to train a better generator
+and verifier (see algorithm 1 in appendix).
+• First, we fine-tune a pretrained LLM Gbase on the original training data DSFT to obtain
+  generator GSFT .
+• Next, we sample k completions for each problem in the training data from the generator
+  {ŷi,j ∼ G (y| xi )}kj=1 , where x ∈ Dquery (see §D for an example).
+• Generated solutions are labeled for their correctness z using ground truth answers or
+  test cases. We use only correct generated solutions (z = 1) to augment the generator
+  training data DGEN as ( xi , ŷi,j ). Both correct and incorrect generated solutions are added
+  to verifier data DVER with their correctness label as ( xi , ŷi,j , zi,j ), so the verifier can learn
+  from generator’s mistakes.
+• In the next iteration t, the generator G t is obtained by fine-tuning the pretrained model
+  Gbase on the augmented DGEN . We can sample solutions again from this generator G t .
+  This process is repeated for up to T iterations to augment DGEN and DVER iteratively.
+• The final generator G T is obtained by using DGEN to fine-tune a pretrained model Gbase .
+  The verifier V T is obtained by using DVER to further train a model GSFT which was
+  fine-tuned on the original DSFT .
+
+
+                                                   4
+Published as a conference paper at COLM 2024
+
+
+
+
+          (a) GSM8K for 7B and 13B sizes                          (b) MBPP for 7B and 13B sizes
+
+Figure 3: Pass@1 and Best-of-64 scores for generator-only and verifier-based methods.
+Numbers above each bar represent the absolute improvement over RFT. V-STaR[1 Iter]
+baseline is trained with data consisting of 3 × 16 completions per query for one iteration
+only. STaR† and V-STaR are trained using iterative data collection (i.e. 16 completions
+generated per query at each iteration). At test time, Best-of-64 is calculated using Eq. 3 on
+128 candidate answers sampled per problem from the generators. V-STaR 7B performs on
+par with CodeLLaMA 34B, which has a zero-shot Pass@1 of 55% on MBPP.
+
+
+In our approach, the original training data is also included as correct solutions in both
+generator data and verifier data. The difference between V-STaR training and Cobbe et al.
+(2021) is that our verifier training data is collected iteratively, each iteration from a better
+generator, while ORM only collects data from a fixed generator that is only fine-tuned on
+the original SFT data. We compare to this ORM approach as a baseline, as discussed in §4.1.
+
+3.1   Training verifiers with DPO
+Following Cobbe et al. (2021), current LLM verifiers are trained with a combination of
+language modeling and binary classification loss (§2.2). These two objectives can be unified
+via offline preference learning methods, such as DPO (Rafailov et al., 2023), where the
+proximity to the reference policy is a proxy for the language modeling objective while the
+classification loss is a proxy for reward modelling. Empirically, we found DPO verifiers to
+be better than ORM-style verifiers (§4.4), when using LoRA adapters (Hu et al., 2022).
+To use DPO for training verifiers, we construct a preference pair dataset using collected solu-
+tions in DVER . We treat correct solutions as preferred and incorrect solutions as not preferred
+                                                                + −                         +      −
+completions given the problem. Specifically, DVER = {( xi , yi,1  , yi,1 ), · · · , ( xi , yi,m , yi,m )}iN=1 ,
+where m is the number of preference pairs which are from the Cartesian product of correct
+and incorrect solutions. We train our verifier V using this constructed DVER and the SFT
+policy GSFT using the DPO objective, LDPO (V; GSFT ):
+                                                                                             V (y| x )
+       − E(x,y+ ,y− )∼DVER log σ r̂ ( x, y+ ) − r̂ ( x, y− ) ,
+                                                           
+                                                                  with r̂ ( x, y) = β log                  (2)
+                                                                                            GSFT (y| x )
+where σ is the logistic function, and β is a hyper-parameter controlling the proximity to
+the reference policy GSFT . The DPO objective steers the verifier towards increasing the
+likelihood of correct solutions y+ and decreasing the likelihood of incorrect solutions y− for
+a problem x. At inference, we use the likelihood of a generated solution given a problem
+under the trained DPO verifier (i.e. V (ŷ| x )) as scores to rank candidate solutions.
+
+4     Empirical results
+To demonstrate the effectiveness of V-STaR, we conduct experiments on two widely used
+datasets: GSM8K (Cobbe et al., 2021) for solving math problems, and MBPP (Austin et al.,
+2021) for code-generation problems. We also evaluate the transfer generalization perfor-
+mance of V-STaR using Hendrycks’ MATH (Hendrycks et al., 2021) and HumanEval (Chen
+et al., 2021). Specifically, for math reasoning, we only train our generators and verifiers
+
+
+                                                      5
+Published as a conference paper at COLM 2024
+
+
+
+
+          (a) GSM8K → MATH Subset                               (b) MBPP → HumanEval
+
+Figure 4: Out-of-domain transfer evaluation: Pass@1 and Best-of-64 for generators and
+verifiers with absolute improvement over RFT shown above each bar. Models trained on
+GSM8K are evaluated on a subset of MATH test set (§4), and models trained on MBPP are
+evaluate on HumanEval test set. V-STaR 7B performs close to CodeLLaMA 34B which has a
+zero-shot Pass@1 of 48% on HumanEval.
+using GSM8K training data and evaluate them on the whole GSM8K test set and a subset of
+MATH test set2 . For code generation, we train our models using the MBPP training data
+and evaluate them on the full test sets of MBPP and HumanEval.
+
+Models For experiments, we fine-tune LLaMA2 (Touvron et al., 2023) and CodeLLaMA
+(Rozière et al., 2023) 7B and 13B models using LoRA (Hu et al., 2022). Generators are trained
+with a causal language modeling objective, and our baseline (V-STaR[1 Iter]) and V-STaR
+verifiers are trained using DPO. The reference policy GSFT for DPO is trained on the original
+training data for 2 and 3 epochs for GSM8K and MBPP, respectively. See §3.1 for details.
+
+Data generation For each iteration, k = 16 completions are sampled per query from the
+previous iteration’s generator. For GSM8K, the first iteration samples are from a generator
+trained solely on the original GSM8K training data for 2 epochs. For MBPP, this data is
+from a 3-shot pretrained CodeLLaMA (see §B). Completions are labeled for correctness by
+checking the final answer for math problems and running test cases for coding problems.
+
+4.1   Baselines and metrics
+We run V-STaR for 3 iterations and sample k = 16 solutions at each iteration to augment
+DGEN and DVER . To assess the gains from our iterative approach, we compare against a
+number of baselines (Table 1):
+1. SFT: Standard fine-tuning (Eq. 1) on training data without any self-improvement or
+   test-time verification.
+2. STaR† : Bootstrapping a generator by sampling k = 16 completions per query for 3
+   iterations, see §2.1.
+3. RFT: Running STaR† by sampling 3 × 16 completions for only 1 iteration, see §2.1.
+4. Verification (SFT + Verifier): Generating 3 × 16 completions using SFT generator to train
+   a verifier, as described in §2.3. This is similar to ORM verification approach by (Cobbe
+   et al., 2021) but empirically performs better (Fig. 5).
+5. V-STaR [1 Iter]: Bootstrapping a generator and training a verifier for 1 iteration with
+   k = 3 × 16 completions from GSFT , so that the total generation budget matches V-STaR.
+   This baseline also corresponds to RFT + Verifier.
+6. Self-consistency / Majority Voting (Wang et al., 2023a): An alternative to use test-time
+   compute without verifiers: sample multiple solutions from STaR† generator and pick the
+   majority-vote answer.
+   2 This subset includes a total 150 problems of Level 1 difficulty in MATH with question types of
+algebra, Counting & probability, prealgebra and number theory where the final answer is a number and no
+latex exists in the question.
+
+
+                                                  6
+Published as a conference paper at COLM 2024
+
+
+
+
+               (a) GSM8K Best-of-k                                (b) MBPP Best-of-k
+
+Figure 5: Best-of-k test accuracy of V-STaR, V-STaR [1 Iter], and outcome-supervised reward
+model (ORM) style verifier 7B models, measured by Eq. 3. Best-of-1 is equivalent to not
+having a verifier and is equal to Pass@1 of the generator.
+At inference, we generate 128 candidate solutions for each test problem using the generator.
+We report Pass@1 accuracy for the generators, which estimates the probability that an
+answer randomly sampled from the generator is correct. Best-of-64 accuracy is used for all
+verifier-based methods, using the formula in (Eq. 3), as well as the self-consistency baseline.
+
+4.2   Reliable estimation of Best-of-k accuracy
+To estimate accuracy with test-time verifiers, Cobbe et al. (2021); Lightman et al. (2024)
+repeat the following procedure several times and average the results: sample k solutions,
+rank them using a verifier and take the top scoring one as the predicted answer. However,
+computing this best-of-k accuracy can have high variance and is expensive. Instead, to
+measure the best-of-k accuracy reliably, we propose two methods, akin to how Pass@k is
+computed (Chen et al., 2021). To do so, we estimate the probability that out of k samples
+drawn without replacement from a fixed set of N (for N > k) samples, the one with the
+highest verifier score is correct. The best-of-k is calculated by repeating this process M times
+and taking the average. Assuming there are no duplicate verifier scores this can be done
+efficiently (see §E in appendix), using the following formula:
+
+                                              1 N −k N − i − 1
+                                                                
+                              Best-of-k := N ∑                     αi                         (3)
+                                            ( k ) i =0    k−1
+where [α0 , . . . , α N −1 ] are the binary correctness values (0 or 1) for the N candidates yi sorted
+in decreasing order by their verifier score. The numerator here can be derived by considering
+subsets where the top-ranked candidate is yi for all possible values of i ∈ {0, . . . , N − k − 1}.
+
+4.3   V-STaR on Math Reasoning and Code Generation
+As shown in Fig. 2, V-STaR shows consistent gains across GSM8K, MBPP, MATH subset
+and HumanEval test sets for LLaMA2 7B and 13B models (Fig. 8) over baselines. In math,
+we report absolute improvement of 6 to 17% in test accuracy over STaR† and Verification,
+and 4 to 12% in code generation tasks. The gains over V-STaR [1 iter] in Fig. 3 show that
+iteratively generating solutions to collect verifier training data results in a better distribution
+and quality compared to a non-iterative approach with the same generation budget. We
+show gains in each iteration of generator and verifier on MBPP in Fig. 7. We also trained a
+4th iteration of generator and verifier on MBPP which led to a marginal gain of 0.3%.
+Out-of-domain performance of V-STaR. The generators and verifiers trained on MBPP
+are evaluated on HumanEval, while those trained on GSM8K are evaluated on a subset
+of MATH test set (see Fig. 2 and Fig. 4). In general, we observe lower absolute Pass@1 and
+Best-of-64 scores for all methods as these two tasks are considered to be more difficult than
+GSM8K and MBPP. That said, Iterative V-STaR outperforms baselines, and V-STaR [1 iter]
+on both tasks and across model sizes. Utilizing incorrect solutions to train verifiers results in
+large improvements than just bootstrapping with correct model generated solutions using
+
+
+                                                  7
+Published as a conference paper at COLM 2024
+
+
+
+
+Figure 6: Left: Best-of-k test accuracy of 7B V-STaR compared to V-STaR[1 Iter] and self-
+consistency (Wang et al., 2023c) across different numbers of candidate solutions generated
+on GSM8K. We subsample solutions from N = 1000 generations. V-STaR can rank over a
+reasonably large number of candidate solutions. We compute 95% CIs for self-consistency
+using 256 trials. Right: Comparing DPO-based generator and verifier for V-STaR 7B,
+measured by Pass@1 and Best-of-64 respectively on GSM8K. Best-of-64 accuracy rises
+significantly while the generation ability of DPO verifier degrades with only 2k updates.
+
+
+STaR† or RFT. While we use LoRA adapters due to compute constraints, we hypothesize
+that gains from V-STaR could potentially be larger with full parameter fine-tuning.
+Best-of-k accuracy. Fig. 5 shows test accuracy for k = 1 to k = 64, calculated from 128
+candidate solutions per test problem, for 7B models on both tasks. Best-of-1 is equivalent
+to Pass@1 and ignores verifier scores. Best-of-k saturates for k ≥ 16 and the gap between
+V-STaR [1 Iter] and V-STaR stays consistent.
+
+4.4   Comparing DPO vs. ORM verifiers
+We trained ORM style verifiers, as described in §2.2, with LoRA adapters. These verifiers
+did seem to achieve relatively poor performance compared to DPO-based verifiers. Fig. 5a
+shows the comparison between the V-STaR [1 Iter] trained with DPO and an ORM style
+verifier on the same training data. ORM fails to effectively search through generated
+candidate solutions for number of candidates above 4 in the GSM8K task. The ORM style
+verifier is also performing worse than our DPO based verifier in MBPP for number of
+candidate solutions above 16.
+
+4.5   How many completions can V-STaR be extended to?
+Fig. 6 shows the Best-of-K accuracy of V-STaR 7B on GSM8K, measured by Eq. 3 as a function
+of k. V-STaR outperforms majority voting (Wang et al., 2023c) at searching over a large
+number of candidate solutions (see §F in appendix). While V-STaR is far more effective than
+majority voting for k ≤ 64, the performance gap starts to slightly decrease for larger value
+of k, similar to performance decay reported in Cobbe et al. (2021). Furthermore, V-STaR can
+be used for any problem solving task where we can verify correctness while majority voting
+is not applicable to tasks such as code generation. We also tried combining verifier scores
+with reranking strategies, such as weighted reranking and weighted majority voting Liu
+et al. (2023), but did not observe performance gains.
+
+4.6   Evaluating DPO verifier as a generator
+Since DPO fine-tuned models can also be used as generators, we evaluate how good is the
+generation ability of DPO verifiers. Fig. 6 shows Pass@1 and Best-of-64 for V-STaR verifier
+over training updates, for three different β coefficients for proximity to SFT policy in DPO
+objective (§3.1). The verifier’s solving ability starts degrading only after a small number of
+training updates. In contrast, using the DPO objective for verification seems to be sample
+efficient as the model’s Best-of-64 increases significantly with only 2k training updates.
+
+
+                                              8
+Published as a conference paper at COLM 2024
+
+
+
+
+4.7   Should the verifier be in the training loop?
+Optionally, one could train intermediate verifiers at each iteration and filter correct solutions
+to include in DGEN and DVER to provide feedback. This step seems more reasonable
+with sufficient exploration, that is larger values of k, when sampling k solutions from the
+generator in each iteration.
+We tried putting the verifier in the training loop to filter correct solutions from the generator
+for the next training iteration. To do so, we sampled k = 64 completions per query from the
+generator, labeled their correctness, and took only the top 8 based on their verifier score. We
+take as many samples from the incorrect set so that the total number of correct and incorrect
+completions per query is 16 or less. After running three iterations with verifier in the loop
+for MBPP, the final Best-of-64 accuracy and Pass@1 are 53.2 and 46.34 respectively.
+Our results suggest that having the verifier
+in the training loop does not provide a sub-
+stantial gain for this task. V-STaR is simpler
+without the verifier in the loop and there is
+no need to train a verifier at each iteration;
+however we did not experiment with other
+tasks and different sampling strategies from
+the generator at each iteration. We leave a
+more detailed study of this question to fu-
+ture work.
+
+4.8   Gains across V-STaR iteration
+Fig. 7 shows the improvements achieved
+from each iteration of the generator and ver-    Figure 7: Best-of-64 for each V-STaR iteration
+ifier on MBPP. The gains are larger across       on MBPP. The performance gets better with
+iterations of verifiers (from Ver.1 to Ver.3)    each iteration of generator and verifier with-
+than iterations of generators which high-        out showing signs of collapsing.
+lights the importance of verifiers.
+
+5     Related work
+Challenging multi-step reasoning tasks has driven innovative research on LLMs, such as
+generating answers given questions via intermediate steps (Wei et al., 2022; Kojima et al.,
+2022). A large volume of recent work studies ways to improve the correctness of these
+intermediate steps and reducing the cost of arriving at a correct solution.
+
+Self-training and self-improvement. One family of methods, beginning with STaR (Zelik-
+man et al., 2022), reinforced self-training (Gulcehre et al., 2023), and rejection fine-tuning
+(Yuan et al., 2023), relies on solutions generated by the LLM to update itself. These methods
+fine-tune the model on generated solutions that yield a correct answer. ReSTEM (Singh
+et al., 2023) view this fine-tuning as expectation-maximization based RL fine-tuning of a
+solution-generating agent. Wang et al. (2023a) propose a contrastive loss to make correct
+solutions more likely than incorrect ones, while Ni et al. (2023a) propose to use intermediate
+states of successful solutions as supervision to improve credit assignment. Discovery of
+successful solutions is a difficult exploration problem, and Luong et al. (2024) has shown
+that RL-based fine-tuning of a LLM is difficult unless it is initialized by some steps of super-
+vised fine-tuning. In An et al. (2023), a more powerful LLM was used to edit the incorrect
+rationales generated by a smaller model and provide positive data for its fine-tuning. How-
+ever, Huang et al. (2023) argued that LLMs are limited in their ability to correct their own
+reasoning. V-STaR is similar to self-improvement methods in that it uses its self-generated
+solutions for fine-tuning, but also trains a verifier using these solutions, including both
+correct and incorrect ones.
+
+Training verifiers. Verifiers – models that score or rank reasoning chains with the aim
+of favouring successful rationales – were introduced for mathematical reasoning tasks by
+Cobbe et al. (2021), who proposed to collect correct and incorrect rationales from a tuned
+
+
+                                                 9
+Published as a conference paper at COLM 2024
+
+
+
+
+generator and train a verifier. They noted the importance of a large training set for the
+success of the method. Uesato et al. (2022) found that process supervision – correctness of the
+rationale – enhances the performance of fine-tuned LLMs relative to outcome supervision
+– whether the answer is correct or not. Subsequent work correspondingly studied ways
+of deriving reward signals for individual reasoning steps (Li et al., 2023; Lightman et al.,
+2024; Yu et al., 2023), combining solution-level and step-level verifiers (Zhu et al., 2023), and
+augmenting verifiers with auxiliary information, such as results of program execution (Ni
+et al., 2023b). In Ma et al. (2023); Wang et al. (2023b), rationale generation is treated as a
+graph search problem, either using a stepwise verifier to guide the search or estimating
+the quality of steps by Monte Carlo rollouts. In V-STaR, the verifier is trained with DPO,
+which enjoys a high sample efficiency (see Fig. 6), and is used for ranking LLM-generated
+solutions at test-time.
+The manner of training the verifier varies between works. The verifier can be viewed a
+reward model trained on human annotations – making the training of a generator that
+satisfies the verifier as an instance of RL with human feedback (Ziegler et al., 2019) – or on
+synthetic data, leading to forms of RL with AI feedback (Bai et al., 2022; Yang et al., 2023).
+The verifier can alternatively be viewed as a generative model, such as by conditioning on
+control tokens indicating a positive or negative label of a solution (Korbak et al., 2023) or by
+extracting the score as the likelihood of a special token following the candidate solution (Liu
+et al., 2023). V-STaR takes the unique approach of using DPO (Rafailov et al., 2023) to
+contrast the likelihoods of correct and incorrect solutions under the verifier (see §3.1).
+
+6   Conclusion
+We propose V-STaR, a data-efficient and simple to implement approach that utilizes correct
+and incorrect generated solutions from an iteratively trained generator to train a strong
+verifier. We find training verifiers with DPO to be more effective than the common method
+by Cobbe et al. (2021). Our empirical results show the effectiveness of V-STaR over existing
+self-improvement and verification-based methods. V-STaR has the potential to improve
+existing self-improvement loops on a wide range of problems with access to correctness
+feedback during training.
+
+References
+Shengnan An, Zexiong Ma, Zeqi Lin, Nanning Zheng, Jian-Guang Lou, and Weizhu Chen.
+  Learning from mistakes makes llm better reasoner. arXiv preprint arXiv:2310.20689, 2023.
+Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David
+  Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, et al. Program synthesis with
+  large language models. arXiv preprint arXiv:2108.07732, 2021.
+Yuntao Bai, Saurav Kadavath, Sandipan Kundu, Amanda Askell, Jackson Kernion, Andy
+  Jones, Anna Chen, Anna Goldie, Azalia Mirhoseini, Cameron McKinnon, Carol Chen,
+  Catherine Olsson, Christopher Olah, Danny Hernandez, Dawn Drain, Deep Ganguli,
+  Dustin Li, Eli Tran-Johnson, Ethan Perez, Jamie Kerr, Jared Mueller, Jeffrey Ladish, Joshua
+  Landau, Kamal Ndousse, Kamile Lukosuite, Liane Lovitt, Michael Sellitto, Nelson Elhage,
+  Nicholas Schiefer, Noemi Mercado, Nova DasSarma, Robert Lasenby, Robin Larson, Sam
+  Ringer, Scott Johnston, Shauna Kravec, Sheer El Showk, Stanislav Fort, Tamera Lanham,
+  Timothy Telleen-Lawton, Tom Conerly, Tom Henighan, Tristan Hume, Samuel R Bowman,
+  Zac Hatfield-Dodds, Ben Mann, Dario Amodei, Nicholas Joseph, Sam McCandlish, Tom
+  Brown, and Jared Kaplan. Constitutional AI: Harmlessness from AI feedback. arXiv
+  preprint arXiv:2212.08073, 2022.
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de Oliveira Pinto,
+ Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, Alex Ray,
+ Raul Puri, Gretchen Krueger, Michael Petrov, Heidy Khlaaf, Girish Sastry, Pamela Mishkin,
+ Brooke Chan, Scott Gray, Nick Ryder, Mikhail Pavlov, Alethea Power, Lukasz Kaiser, Mo-
+ hammad Bavarian, Clemens Winter, Philippe Tillet, Felipe Petroski Such, Dave Cummings,
+ Matthias Plappert, Fotios Chantzis, Elizabeth Barnes, Ariel Herbert-Voss, William Hebgen
+ Guss, Alex Nichol, Alex Paino, Nikolas Tezak, Jie Tang, Igor Babuschkin, Suchir Balaji,
+
+
+                                               10
+Published as a conference paper at COLM 2024
+
+
+
+
+  Shantanu Jain, William Saunders, Christopher Hesse, Andrew N. Carr, Jan Leike, Josh
+  Achiam, Vedant Misra, Evan Morikawa, Alec Radford, Matthew Knight, Miles Brundage,
+  Mira Murati, Katie Mayer, Peter Welinder, Bob McGrew, Dario Amodei, Sam McCandlish,
+  Ilya Sutskever, and Wojciech Zaremba. Evaluating large language models trained on code.
+  arXiv preprint arXiv:2107.03374, 2021.
+
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz
+  Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher
+  Hesse, and John Schulman. Training verifiers to solve math word problems. arXiv preprint
+  arXiv:2110.14168, 2021.
+
+Caglar Gulcehre, Tom Le Paine, Srivatsan Srinivasan, Ksenia Konyushkova, Lotte Weerts,
+ Abhishek Sharma, Aditya Siddhant, Alex Ahern, Miaosen Wang, Chenjie Gu, et al.
+  Reinforced self-training (rest) for language modeling. arXiv preprint arXiv:2308.08998,
+  2023.
+
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang,
+ Dawn Song, and Jacob Steinhardt. Measuring mathematical problem solving with the
+ MATH dataset. Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks,
+ 2021.
+
+Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang,
+  Lu Wang, and Weizhu Chen. LoRA: Low-rank adaptation of large language models.
+  International Conference on Learning Representations (ICLR), 2022.
+
+Jie Huang, Xinyun Chen, Swaroop Mishra, Huaixiu Steven Zheng, Adams Wei Yu, Xinying
+   Song, and Denny Zhou. Large language models cannot self-correct reasoning yet. arXiv
+   preprint arXiv:2310.01798, 2023.
+
+Takeshi Kojima, Shixiang Shane Gu, Machel Reid, Yutaka Matsuo, and Yusuke Iwasawa.
+  Large language models are zero-shot reasoners. Neural Information Processing Systems
+  (NeurIPS), 2022.
+
+Tomasz Korbak, Kejian Shi, Angelica Chen, Rasika Bhalerao, Christopher L. Buckley, Jason
+  Phang, Samuel R. Bowman, and Ethan Perez. Pretraining language models with human
+  preferences. International Conference on Machine Learning (ICML), 2023.
+
+Yifei Li, Zeqi Lin, Shizhuo Zhang, Qiang Fu, Bei Chen, Jian-Guang Lou, and Weizhu Chen.
+  Making language models better reasoners with step-aware verifier. In Anna Rogers,
+  Jordan Boyd-Graber, and Naoaki Okazaki (eds.), Proceedings of the 61st Annual Meeting of
+  the Association for Computational Linguistics (Volume 1: Long Papers), pp. 5315–5333, Toronto,
+  Canada, July 2023. Association for Computational Linguistics. doi: 10.18653/v1/2023.
+  acl-long.291. URL https://aclanthology.org/2023.acl-long.291.
+
+Hunter Lightman, Vineet Kosaraju, Yura Burda, Harrison Edwards, Bowen Baker, Teddy
+ Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step.
+ International Conference on Learning Representations (ICLR), 2024.
+
+Yixin Liu, Avi Singh, C. Daniel Freeman, John D. Co-Reyes, and Peter J. Liu. Improving large
+  language model fine-tuning for solving math problems. arXiv preprint arXiv:2310.10047,
+  2023.
+
+Trung Quoc Luong, Xinbo Zhang, Zhanming Jie, Peng Sun, Xiaoran Jin, and Hang Li. ReFT:
+  Reasoning with reinforced fine-tuning. arXiv preprint arXiv:2401.08967, 2024.
+
+Qianli Ma, Haotian Zhou, Tingkai Liu, Jianbo Yuan, Pengfei Liu, Yang You, and Hongxia
+  Yang. Let’s reward step by step: Step-level reward model as the navigators for reasoning.
+  arXiv preprint arXiv:2310.10080, 2023.
+
+Janet Metcalfe. Learning from errors. Annual Review of Psychology, 68(1):465–489, 2017.
+
+
+                                              11
+Published as a conference paper at COLM 2024
+
+
+
+
+Ansong Ni, Jeevana Priya Inala, Chenglong Wang, Oleksandr Polozov, Christopher Meek,
+ Dragomir Radev, and Jianfeng Gao. Learning math reasoning from self-sampled correct
+ and partially-correct solutions. International Conference on Learning Representations (ICLR),
+ 2023a.
+Ansong Ni, Srini Iyer, Dragomir Radev, Ves Stoyanov, Wen-tau Yih, Sida I Wang, and
+ Xi Victoria Lin. LEVER: Learning to verify language-to-code generation with execution.
+ International Conference on Machine Learning (ICML), 2023b.
+Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, Pamela Mishkin,
+  Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton,
+  Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welinder, Paul F.
+  Christiano, Jan Leike, and Ryan Lowe. Training language models to follow instructions
+  with human feedback. Neural Information Processing Systems (NeurIPS), 2022.
+Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D Manning, Stefano Ermon, and
+  Chelsea Finn. Direct preference optimization: Your language model is secretly a reward
+  model. Neural Information Processing Systems (NeurIPS), 2023.
+Baptiste Rozière, Jonas Gehring, Fabian Gloeckle, Sten Sootla, Itai Gat, Xiaoqing Ellen Tan,
+  Yossi Adi, Jingyu Liu, Tal Remez, Jérémy Rapin, Artyom Kozhevnikov, Ivan Evtimov,
+  Joanna Bitton, Manish Bhatt, Cristian Canton-Ferrer, Aaron Grattafiori, Wenhan Xiong,
+  Alexandre Défossez, Jade Copet, Faisal Azhar, Hugo Touvron, Louis Martin, Nicolas
+  Usunier, Thomas Scialom, and Gabriel Synnaeve. Code llama: Open foundation models
+  for code. arXiv preprint arXiv:2308.12950, 2023.
+Avi Singh, John D. Co-Reyes, Rishabh Agarwal, Ankesh Anand, Piyush Patil, Xavier Garcia,
+  Peter J. Liu, James Harrison, Jaehoon Lee, Kelvin Xu, Aaron Parisi, Abhishek Kumar, Alex
+  Alemi, Alex Rizkowsky, Azade Nova, Ben Adlam, Bernd Bohnet, Gamaleldin Elsayed,
+  Hanie Sedghi, Igor Mordatch, Isabelle Simpson, Izzeddin Gur, Jasper Snoek, Jeffrey
+  Pennington, Jiri Hron, Kathleen Kenealy, Kevin Swersky, Kshiteej Mahajan, Laura Culp,
+  Lechao Xiao, Maxwell L. Bileschi, Noah Constant, Roman Novak, Rosanne Liu, Tris
+  Warkentin, Yundi Qian, Yamini Bansal, Ethan Dyer, Behnam Neyshabur, Jascha Sohl-
+  Dickstein, and Noah Fiedel. Beyond human data: Scaling self-training for problem-solving
+  with language models. arXiv preprint arXiv:2312.06585, 2023.
+Nisan Stiennon, Long Ouyang, Jeff Wu, Daniel M. Ziegler, Ryan Lowe, Chelsea Voss, Alec
+  Radford, Dario Amodei, and Paul F. Christiano. Learning to summarize from human
+  feedback. Neural Information Processing Systems (NeurIPS), 2020.
+Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei,
+ Nikolay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, Dan Bikel, Lukas
+ Blecher, Cristian Canton-Ferrer, Moya Chen, Guillem Cucurull, David Esiobu, Jude
+ Fernandes, Jeremy Fu, Wenyin Fu, Brian Fuller, Cynthia Gao, Vedanuj Goswami, Naman
+ Goyal, Anthony Hartshorn, Saghar Hosseini, Rui Hou, Hakan Inan, Marcin Kardas,
+ Viktor Kerkez, Madian Khabsa, Isabel Kloumann, Artem Korenev, Punit Singh Koura,
+ Marie-Anne Lachaux, Thibaut Lavril, Jenya Lee, Diana Liskovich, Yinghai Lu, Yuning
+ Mao, Xavier Martinet, Todor Mihaylov, Pushkar Mishra, Igor Molybog, Yixin Nie, Andrew
+ Poulton, Jeremy Reizenstein, Rashi Rungta, Kalyan Saladi, Alan Schelten, Ruan Silva,
+ Eric Michael Smith, Ranjan Subramanian, Xiaoqing Ellen Tan, Binh Tang, Ross Taylor,
+ Adina Williams, Jian Xiang Kuan, Puxin Xu, Zheng Yan, Iliyan Zarov, Yuchen Zhang,
+ Angela Fan, Melanie Kambadur, Sharan Narang, Aurélien Rodriguez, Robert Stojnic,
+ Sergey Edunov, and Thomas Scialom. Llama 2: Open foundation and fine-tuned chat
+ models. arXiv preprint arXiv:2307.09288, 2023.
+Jonathan Uesato, Nate Kushman, Ramana Kumar, H. Francis Song, Noah Y. Siegel, Lisa
+  Wang, Antonia Creswell, Geoffrey Irving, and Irina Higgins. Solving math word problems
+  with process- and outcome-based feedback. arXiv preprint arXiv:2211.14275, 2022.
+Peiyi Wang, Lei Li, Liang Chen, Feifan Song, Binghuai Lin, Yunbo Cao, Tianyu Liu, and
+  Zhifang Sui. Making large language models better reasoners with alignment. arXiv
+  preprint arXiv:2309.02144, 2023a.
+
+
+                                             12
+Published as a conference paper at COLM 2024
+
+
+
+
+Peiyi Wang, Lei Li, Zhihong Shao, R. X. Xu, Damai Dai, Yifei Li, Deli Chen, Y. Wu, and
+  Zhifang Sui. Math-shepherd: Verify and reinforce LLMs step-by-step without human
+  annotations. arXiv preprint arXiv:2312.08935, 2023b.
+Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc V. Le, Ed H. Chi, Sharan Narang,
+ Aakanksha Chowdhery, and Denny Zhou. Self-consistency improves chain of thought
+  reasoning in language models. International Conference on Learning Representations (ICLR),
+  2023c.
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei Xia, Ed H.
+  Chi, Quoc V. Le, and Denny Zhou. Chain-of-thought prompting elicits reasoning in large
+  language models. Neural Information Processing Systems (NeurIPS), 2022.
+Kevin Yang, Dan Klein, Asli Celikyilmaz, Nanyun Peng, and Yuandong Tian. RLCD:
+  Reinforcement learning from contrast distillation for language model alignment. arXiv
+  preprint arXiv:2307.12950, 2023.
+Fei Yu, Anningzhe Gao, and Benyou Wang. Outcome-supervised verifiers for planning in
+  mathematical reasoning. arXiv preprint arXiv:2311.09724, 2023.
+Zheng Yuan, Hongyi Yuan, Chengpeng Li, Guanting Dong, Keming Lu, Chuanqi Tan,
+  Chang Zhou, and Jingren Zhou. Scaling relationship on learning mathematical reasoning
+ with large language models. arXiv preprint arXiv:2308.01825, 2023.
+Eric Zelikman, Yuhuai Wu, Jesse Mu, and Noah D. Goodman. Star: Bootstrapping reasoning
+  with reasoning. Neural Information Processing Systems (NeurIPS), 2022.
+Xinyu Zhu, Junjie Wang, Lin Zhang, Yuxiang Zhang, Yongfeng Huang, Ruyi Gan, Jiaxing
+  Zhang, and Yujiu Yang. Solving math word problems via cooperative reasoning induced
+  language models. In Anna Rogers, Jordan Boyd-Graber, and Naoaki Okazaki (eds.),
+  Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume
+  1: Long Papers), pp. 4471–4485, Toronto, Canada, July 2023. Association for Computational
+  Linguistics. doi: 10.18653/v1/2023.acl-long.245. URL https://aclanthology.org/2023.
+  acl-long.245.
+Daniel M Ziegler, Nisan Stiennon, Jeffrey Wu, Tom B Brown, Alec Radford, Dario Amodei,
+ Paul Christiano, and Geoffrey Irving. Fine-tuning language models from human prefer-
+ ences. arXiv preprint arXiv:1909.08593, 2019.
+
+
+
+
+                                              13
+Published as a conference paper at COLM 2024
+
+
+
+
+A       Algorithm
+
+
+Algorithm 1: V-STaR
+  Input: Original data DSFT , Training queries Dquery , base model Gbase , Num generations k,
+  Num iterations T
+  DGEN ← DSFT
+  GSFT ← SFT( Gbase , DSFT )
+  for iter = 1 to T do
+    G ← SFT( Gbase , DGEN )                                             {fine-tune generator}
+    S ← sample(G, Dquery , k)                                          {generate candidates}
+    D ′ ← label correctness(S )                                  {score candidates to get z}
+    DGEN ← DGEN ∪ D[′z=1]                                      {correct solutions → buffer}
+    DVER ← DVER ∪ D ′                                          {all solutions → DPO buffer}
+  end for
+  Dpref ← preference pairs(DVER )
+  V ← DPO(GSFT , Dpref )
+
+
+
+
+B      The prompt used for MBPP few-shot generation.
+
+Following Ni et al. (2023b), we use the following prompt to sample completions per problem
+for data generation during training.
+
+
+# W r i t e Python f u n c t i o n t o c o m p l e t e t h e t a s k and p a s s t h e a s s e r t i o n t e s t s .
+
+# ## T a s k S t a r t ###
+# These a r e t h e a s s e r t i o n s f o r your f u n c t i o n :
+a s s e r t s i m i l a r e l e m e n t s ( ( 3 , 4 , 5 , 6 ) , ( 5 , 7 , 4 , 1 0 ) ) == ( 4 , 5 )
+
+””” W r i t e a f u n c t i o n t o f i n d t h e s i m i l a r e l e m e n t s f r o m t h e g i v e n two t u p l e l i s t s . ”””
+def s i m i l a r e l e m e n t s ( t e s t t u p 1 , t e s t t u p 2 ) :
+     res = tuple ( set ( t e s t t u p 1 ) & set ( t e s t t u p 2 ) )
+     return ( res )
+# ## T a s k End ###
+
+# ## T a s k S t a r t ###
+# These a r e t h e a s s e r t i o n s f o r your f u n c t i o n :
+a s s e r t i s n o t p r i m e ( 2 ) == F a l s e
+
+””” W r i t e a p y t h o n f u n c t i o n t o i d e n t i f y non− p r i m e numbers . ”””
+import math
+def i s n o t p r i m e ( n ) :
+     result = False
+     f o r i in range ( 2 , i n t ( math . s q r t ( n ) ) + 1 ) :
+            i f n % i == 0 :
+                 r e s u l t = True
+     return r e s u l t
+# ## T a s k End ###
+
+# ## T a s k S t a r t ###
+# These a r e t h e a s s e r t i o n s f o r your f u n c t i o n :
+a s s e r t heap queue largest ( [25 , 35 , 22 , 85 , 14 , 65 , 75 , 22 , 58] ,3)==[85 , 75 , 65]
+
+””” W r i t e a f u n c t i o n t o f i n d t h e l a r g e s t i n t e g e r s f r o m a g i v e n l i s t o f numbers u s i n g
+h e a p q u e u e a l g o r i t h m . ”””
+import heapq as hq
+def h e a p q u e u e l a r g e s t ( nums , n ) :
+       l a r g e s t n u m s = hq . n l a r g e s t ( n , nums )
+       return largest nums
+# ## T a s k End ###
+
+
+
+
+                                                                          14
+Published as a conference paper at COLM 2024
+
+
+
+
+C   Test accuracy of 13B V-STaR and baselines
+
+
+
+
+Figure 8: Test accuracy of 13B V-STaR compared to baselines. We report Best-of-64 for
+verification-based methods and Pass@1 for others. (Left) Test accuracy for training tasks.
+(Right) Transfer evaluation of GSM8K and MBPP trained models on MATH subset and
+HumanEval respectively.
+
+
+D    Candidate solutions ŷ1 and ŷ2 for a GSM8K problem x
+        x = Andy walks 50 meters from his house to school. After school, he comes
+        back to the house and goes to the market. If he walks 140 meters in total,
+        how many meters is the distance between the house and the market?
+        ŷ1 = He walks to school and back, which is 2 × 50 meters = 100 meters. So
+        he walks 140 meters - 100 meters = 40 meters to the market. Answer=40
+        ŷ2 = If he walks 50 meters from his house to school, and 140 meters in total,
+        he walks 140 - 50 = 90 meters from the school to the market. Answer=90
+
+E   Example for Best-of-k using Eq. 3
+
+
+
+
+Figure 9: An example showing how Eq. 3 estimates Best-of-k accuracy efficiently and
+without variance for k = 4 from N = 10 candidate solutions.
+
+
+
+
+                                             15
+Published as a conference paper at COLM 2024
+
+
+
+
+F   V-STaR vs. majority voting example
+        x = Every day, Wendi feeds each of her chickens three cups of mixed
+        chicken feed, containing seeds, mealworms and vegetables to help keep
+        them healthy. She gives the chickens their feed in three separate meals.
+        In the morning, she gives her flock of chickens 15 cups of feed. In the
+        afternoon, she gives her chickens another 25 cups of feed. How many cups
+        of feed does she need to give her chickens in the final meal of the day if the
+        size of Wendi’s flock is 20 chickens?
+
+        V-STaR solution = Wendi feeds each of her 20 chickens 3 cups of feed per
+        day for a total of 20x3=60 cups of feed. She gives the chickens 15 cups
+        in the morning and 25 cups in the afternoon for a total of 15+25=40 cups.
+        Therefore, she needs to give the chickens 60-40=20 cups of feed in the final
+        meal of the day. Answer=20
+
+        Majority voting solution = The total amount of feed Wendi gives the
+        chickens is 15 + 25 = 40 cups of feed. Wendi has 20 chickens so she needs to
+        give each chicken 40 / 20 = 2 cups of feed. Answer=2
+
+G    Best-of-k using Eq. 3 vs. Best-of-k from Lightman et al. (2024)
+
+
+
+
+Figure 10: Eq. 3 estimates Best-of-k accuracy efficiently and without variance. For Best-of-K
+accuracy without the formula, the process is repeated 32 times.
+
+
+
+
+                                             16
+

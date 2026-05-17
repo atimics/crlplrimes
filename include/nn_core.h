@@ -22,6 +22,12 @@ typedef struct NeuralNet NeuralNet;
 #define NN_TRACE_SCHEMA "crlp.trace.v1"
 #define NN_TRACE_VERSION 1u
 #define NN_TRACE_ACTION_ID_CONTRACT "stable_unique_action_ids"
+#define NN_RANKING_POLICY "score_desc_action_id_tiebreak_epsilon"
+#if NN_REAL_IS_FLOAT
+#define NN_RANK_SCORE_EPSILON ((nn_real)1e-6f)
+#else
+#define NN_RANK_SCORE_EPSILON ((nn_real)1e-12)
+#endif
 
 typedef enum {
     NN_ACTIVATION_SIGMOID = 0,
@@ -96,6 +102,11 @@ typedef struct {
     size_t candidate_count;
     size_t selected_index;
     size_t target_index;
+    uint32_t selected_action_id;
+    uint32_t target_action_id;
+    nn_real selected_score_margin;
+    nn_real rank_score_epsilon;
+    char ranking_policy[64];
     nn_real loss;
     char verifier_result[32];
     uint64_t seed;
@@ -130,6 +141,12 @@ int nn_score_action_rows(NeuralNet *net,
                          nn_real *scores,
                          nn_real *probabilities);
 int nn_rank_action_scores(const nn_real *scores, size_t count, size_t *ranked_indices);
+int nn_rank_action_scores_with_ids(const nn_real *scores,
+                                   const uint32_t *action_ids,
+                                   size_t count,
+                                   size_t *ranked_indices,
+                                   nn_real score_epsilon);
+nn_real nn_action_score_margin(const nn_real *scores, size_t count, size_t selected_index);
 
 int nn_save_checkpoint(const NeuralNet *net,
                        const char *path,

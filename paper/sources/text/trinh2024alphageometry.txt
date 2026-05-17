@@ -1,0 +1,938 @@
+Article
+
+Solving olympiad geometry without human
+demonstrations
+
+https://doi.org/10.1038/s41586-023-06747-5                 Trieu H. Trinh1,2 ✉, Yuhuai Wu1, Quoc V. Le1, He He2 & Thang Luong1 ✉
+
+Received: 30 April 2023
+
+Accepted: 13 October 2023                                  Proving mathematical theorems at the olympiad level represents a notable milestone
+Published online: 17 January 2024                          in human-level automated reasoning1–4, owing to their reputed difficulty among the
+                                                           world’s best talents in pre-university mathematics. Current machine-learning
+Open access
+                                                           approaches, however, are not applicable to most mathematical domains owing to the
+    Check for updates                                      high cost of translating human proofs into machine-verifiable format. The problem is
+                                                           even worse for geometry because of its unique translation challenges1,5, resulting in
+                                                           severe scarcity of training data. We propose AlphaGeometry, a theorem prover for
+                                                           Euclidean plane geometry that sidesteps the need for human demonstrations by
+                                                           synthesizing millions of theorems and proofs across different levels of complexity.
+                                                           AlphaGeometry is a neuro-symbolic system that uses a neural language model,
+                                                           trained from scratch on our large-scale synthetic data, to guide a symbolic deduction
+                                                           engine through infinite branching points in challenging problems. On a test set of
+                                                           30 latest olympiad-level problems, AlphaGeometry solves 25, outperforming the
+                                                           previous best method that only solves ten problems and approaching the performance
+                                                           of an average International Mathematical Olympiad (IMO) gold medallist. Notably,
+                                                           AlphaGeometry produces human-readable proofs, solves all geometry problems in
+                                                           the IMO 2000 and 2015 under human expert evaluation and discovers a generalized
+                                                           version of a translated IMO theorem in 2004.
+
+
+
+Proving theorems showcases the mastery of logical reasoning and the                      By using existing symbolic engines on a diverse set of random theo-
+ability to search through an infinitely large space of actions towards a                 rem premises, we extracted 100 million synthetic theorems and their
+target, signifying a remarkable problem-solving skill. Since the 1950s                   proofs, many with more than 200 proof steps, four times longer than
+(refs. 6,7), the pursuit of better theorem-proving capabilities has been                 the average proof length of olympiad theorems. We further define and
+a constant focus of artificial intelligence (AI) research8. Mathematical                 use the concept of dependency difference in synthetic proof genera-
+olympiads are the most reputed theorem-proving competitions in                           tion, allowing our method to produce nearly 10 million synthetic proof
+the world, with a similarly long history dating back to 1959, playing an                 steps that construct auxiliary points, reaching beyond the scope of pure
+instrumental role in identifying exceptional talents in problem solving.                 symbolic deduction. Auxiliary construction is geometry’s instance of
+Matching top human performances at the olympiad level has become                         exogenous term generation, representing the infinite branching fac-
+a notable milestone of AI research2–4.                                                   tor of theorem proving, and widely recognized in other mathematical
+   Theorem proving is difficult for learning-based methods because                       domains as the key challenge to proving many hard theorems1,2. Our
+training data of human proofs translated into machine-verifiable lan-                    work therefore demonstrates a successful case of generating synthetic
+guages are scarce in most mathematical domains. Geometry stands out                      data and learning to solve this key challenge. With this solution, we
+among other olympiad domains because it has very few proof exam-                         present a general guiding framework and discuss its applicability to
+ples in general-purpose mathematical languages such as Lean9 owing                       other domains in Methods section ‘AlphaGeometry framework and
+to translation difficulties unique to geometry1,5. Geometry-specific                     applicability to other domains’.
+languages, on the other hand, are narrowly defined and thus unable to                       We pretrain a language model on all generated synthetic data and
+express many human proofs that use tools beyond the scope of geom-                       fine-tune it to focus on auxiliary construction during proof search, del-
+etry, such as complex numbers (Extended Data Figs. 3 and 4). Overall,                    egating all deduction proof steps to specialized symbolic engines. This
+this creates a data bottleneck, causing geometry to lag behind in recent                 follows standard settings in the literature, in which language models
+progress that uses human demonstrations2–4. Current approaches                           such as GPT-f (ref. 15), after being trained on human proof examples,
+to geometry, therefore, still primarily rely on symbolic methods and                     can generate exogenous proof terms as inputs to fast and accurate
+human-designed, hard-coded search heuristics10–14.                                       symbolic engines such as nlinarith or ring2,3,16, using the best of both
+   We present an alternative method for theorem proving using syn-                       worlds. Our geometry theorem prover AlphaGeometry, illustrated in
+thetic data, thus sidestepping the need for translating human-provided                   Fig. 1, produces human-readable proofs, substantially outperforms
+proof examples. We focus on Euclidean plane geometry and exclude                         the previous state-of-the-art geometry-theorem-proving computer
+topics such as geometric inequalities and combinatorial geometry.                        program and approaches the performance of an average IMO gold
+
+Google Deepmind, Mountain View, CA, USA. 2Computer Science Department, New York University, New York, NY, USA. ✉e-mail: thtrieu@google.com; thangluong@google.com
+1
+
+
+
+
+476 | Nature | Vol 625 | 18 January 2024
+a A simple problem                                                         b AlphaGeometry                                                               d Solution
+                                                                                           Symbolic                                                                         A
+                      A
+                                                                                           deduce                                      Solved!
+                                                                                                                        Not
+                                                                                                                     solved
+                                                                               Construct
+
+        B                           C                                                                                                                       B               D                   C
+
+   “Let ABC be any triangle with AB = AC.
+    Prove that ∠ABC = ∠BCA.”
+                                                                               c Language model
+
+e IMO 2015 P3                                                                                                         f Solution
+                                                                                                                                                                                              A
+   “Let ABC be an acute triangle. Let                 A
+   (O) be its circumcircle, H its                                                                                                                                                                              Q
+   orthocenter, and F the foot of the                              Q                                                                                                                                  O2
+                                                     O1
+   altitude from A. Let M be the                              O2                                                                                                                           O1                         K
+   midpoint of BC. Let Q be the point             O
+                                                                           K
+                                                                                   Alpha-                                                                                                 O
+
+   on (O) such that QH ⊥ QA and let K
+   be the point on (O) such that KH ⊥
+                                                                                  Geometry                                                                                            D
+                                                                                                                                                                                              H
+                                                     H                                                                                                                                                     E
+   KQ. Prove that the circumcircles
+                                                                                                                                                                             B                             G
+   (O1) and (O2) of triangles FKM and            M        F            C                                                                                                                  M       F               C
+   KQH are tangent to each other.”
+
+
+Fig. 1 | Overview of our neuro-symbolic AlphaGeometry and how it solves                      midpoint of BC”. The proof consists of two other steps, both of which make use
+both a simple problem and the IMO 2015 Problem 3. The top row shows how                      of the midpoint properties: “BD = DC” and “B, D, C are collinear”, highlighted in
+AlphaGeometry solves a simple problem. a, The simple example and its diagram.                blue. The bottom row shows how AlphaGeometry solves the IMO 2015 Problem
+b, AlphaGeometry initiates the proof search by running the symbolic deduction                3 (IMO 2015 P3). e, The IMO 2015 P3 problem statement and diagram. f, The
+engine. The engine exhaustively deduces new statements from the theorem                      solution of IMO 2015 P3 has three auxiliary points. In both solutions, we arrange
+premises until the theorem is proven or new statements are exhausted.                        language model outputs (blue) interleaved with symbolic engine outputs to
+c, Because the symbolic engine fails to find a proof, the language model                     reflect their execution order. Note that the proof for IMO 2015 P3 in f is greatly
+constructs one auxiliary point, growing the proof state before the symbolic                  shortened and edited for illustration purposes. Its full version is in the
+engine retries. The loop continues until a solution is found. d, For the simple              Supplementary Information.
+example, the loop terminates after the first auxiliary construction “D as the
+
+
+
+medallist on a test set of 30 classical geometry problems translated
+from the IMO as shown in Fig. 2.
+                                                                                                                                                 Number of solved problems in IMO-AG-30
+                                                                                                                          30
+
+Synthetic theorems and proofs generation                                                                                                                                              25.0
+                                                                                                                                                                                                           25.9
+
+Our method for generating synthetic data is shown in Fig. 3. We                                                                                                           22.9
+                                                                                              Number of solved problems
+
+
+
+
+first sample a random set of theorem premises, serving as the input                                                       20
+                                                                                                                                                                19.3
+
+to the symbolic deduction engine to generate its derivations. A full                                                                   Average IMO
+                                                                                                                                        contestant
+list of actions used for this sampling can be found in Extended Data                                                           15.2
+Table 1. In our work, we sampled nearly 1 billion of such premises in                                                                             14.3
+                                                                                                                                      10.0
+a highly parallelized setting, described in Methods. Note that we do                                                      10
+not make use of any existing theorem premises from human-designed
+problem sets and sampled the eligible constructions uniformly
+randomly.
+                                                                                                                           0
+   Next we use a symbolic deduction engine on the sampled prem-                                                                   Previous      Honorable    Bronze       Silver AlphaGeometry Gold
+ises. The engine quickly deduces new true statements by following                                                              state of the art mentions     medallist   medallist            medallist
+                                                                                                                               (Wu’s method)
+forward inference rules as shown in Fig. 3b. This returns a directed
+acyclic graph of all reachable conclusions. Each node in the directed                        Fig. 2 | AlphaGeometry advances the current state of geometry theorem
+acyclic graph is a reachable conclusion, with edges connecting to its                        prover from below human level to near gold-medallist level. The test
+parent nodes thanks to the traceback algorithm described in Methods.                         benchmark includes official IMO problems from 2000 to the present that
+This allows a traceback process to run recursively starting from any                         can be represented in the geometry environment used in our work. Human
+                                                                                             performance is estimated by rescaling their IMO contest scores between 0 and
+node N, at the end returning its dependency subgraph G(N), with its
+                                                                                             7 to between 0 and 1, to match the binary outcome of failure/success of the
+root being N and its leaves being a subset of the sampled premises.
+                                                                                             machines. For example, a contestant’s score of 4 out of 7 will be scaled to 0.57
+Denoting this subset as P, we obtained a synthetic training example
+                                                                                             problems in this comparison. On the other hand, the score for AlphaGeometry
+(premises, conclusion, proof) = (P, N, G(N)).                                                and other machine solvers on any problem is either 0 (not solved) or 1 (solved).
+   In geometry, the symbolic deduction engine is deductive database                          Note that this is only an approximate comparison with humans on classical
+(refs. 10,17), with the ability to efficiently deduce new statements from                    geometry, who operate on natural-language statements rather than narrow,
+the premises by means of geometric rules. DD follows deduction rules                         domain-specific translations. Further, the general IMO contest also includes
+in the form of definite Horn clauses, that is, Q(x) ← P1(x),…, Pk(x), in                     other types of problem, such as geometric inequality or combinatorial geometry,
+which x are points objects, whereas P1,…, Pk and Q are predicates                            and other domains of mathematics, such as algebra, number theory and
+such as ‘equal segments’ or ‘collinear’. A full list of deduction rules                      combinatorics.
+
+
+                                                                                                                                                            Nature | Vol 625 | 18 January 2024 | 477
+Article
+ a                Sample                          b              Symbolic deduction                           c           Synthetic
+             random premises                                       and traceback                                     problems and proofs
+                                                                                                                                 …
+                                                                                                                         A
+                                                                                 …
+                                                                                                                                     D
+
+                                                      cyclic(E,A,D,H)
+                                                                                                                E
+                                                                                                                                             D
+         A
+                                                      …               ∠EAH = ∠EDH
+                                                                                                                         E
+
+                       D
+                                                                                                                                                     C
+                                                          ∠EDH = ∠ECB                                                B
+                                                                                                                                         A
+                 G
+     E
+                                               cyclic(E,B,C,D)                                                                                   D
+                                                                                       HA ⊥ BC                                   E
+                 H
+                                                            EC ⊥ EA
+                                                                                                                                             H
+  B          F                            C
+                                                                                …
+                                                                                                                             B                            C
+
+Fig. 3 | AlphaGeometry synthetic-data-generation process. a, We first sample     for the rightmost node ‘HA ⊥ BC’, traceback returns the green subgraph.
+a large set of random theorem premises. b, We use the symbolic deduction         c, The minimal premise and the corresponding subgraph constitute a synthetic
+engine to obtain a deduction closure. This returns a directed acyclic graph      problem and its solution. In the bottom example, points E and D took part in the
+of statements. For each node in the graph, we perform traceback to find its      proof despite being irrelevant to the construction of HA and BC; therefore, they
+minimal set of necessary premise and dependency deductions. For example,         are learned by the language model as auxiliary constructions.
+
+
+
+
+can be found in ref. 10. To widen the scope of the generated synthetic
+theorems and proofs, we also introduce another component to the                  Training a language model on synthetic data
+symbolic engine that can deduce new statements through algebraic                 The transformer18 language model is a powerful deep neural network
+rules (AR), as described in Methods. AR is necessary to perform angle,           that learns to generate text sequences through next-token predic-
+ratio and distance chasing, as often required in many olympiad-                  tion, powering substantial advances in generative AI technology. We
+level proofs. We included concrete examples of AR in Extended Data               serialize (P, N, G(N)) into a text string with the structure ‘<premises>
+Table 2. The combination DD + AR, which includes both their for-                 <conclusion><proof>’. By training on such sequences of symbols, a
+ward deduction and traceback algorithms, is a new contribution in                language model effectively learns to generate the proof, conditioning
+our work and represents a new state of the art in symbolic reasoning             on theorem premises and conclusion.
+in geometry.
+
+                                                                                 Combining language modelling and symbolic engines
+Generating proofs beyond symbolic deduction                                      On a high level, proof search is a loop in which the language model and
+So far, the generated proofs consist purely of deduction steps that are          the symbolic deduction engine take turns to run, as shown in Fig. 1b,c.
+already reachable by the highly efficient symbolic deduction engine              Proof search terminates whenever the theorem conclusion is found or
+DD + AR. To solve olympiad-level problems, however, the key missing              when the loop reaches a maximum number of iterations. The language
+piece is generating new proof terms. In the above algorithm, it can be           model is seeded with the problem statement string and generates one
+seen that such terms form the subset of P that N is independent of. In           extra sentence at each turn, conditioning on the problem statement
+other words, these terms are the dependency difference between the               and past constructions, describing one new auxiliary construction
+conclusion statement and the conclusion objects. We move this dif-               such as “construct point X so that ABCX is a parallelogram”. Each time
+ference from P to the proof so that a generative model that learns to            the language model generates one such construction, the symbolic
+generate the proof can learn to construct them, as illustrated in Fig. 3c.       engine is provided with new inputs to work with and, therefore, its
+Such proof steps perform auxiliary constructions that symbolic deduc-            deduction closure expands, potentially reaching the conclusion. We
+tion engines are not designed to do. In the general theorem-proving              use beam search to explore the top k constructions generated by the
+context, auxiliary construction is an instance of exogenous term gen-            language model and describe the parallelization of this proof-search
+eration, a notable challenge to all proof-search algorithms because it           algorithm in Methods.
+introduces infinite branching points to the search tree. In geometry
+theorem proving, auxiliary constructions are the longest-standing
+subject of study since inception of the field in 1959 (refs. 6,7). Previ-        Empirical evaluation
+ous methods to generate them are based on hand-crafted templates                 An olympiad-level benchmark for geometry
+and domain-specific heuristics8–12, and are, therefore, limited by a             Existing benchmarks of olympiad mathematics do not cover geometry
+subset of human experiences expressible in hard-coded rules. Any                 because of a focus on formal mathematics in general-purpose lan-
+neural solver trained on our synthetic data, on the other hand, learns           guages1,9, whose formulation poses great challenges to representing
+to perform auxiliary constructions from scratch without human                    geometry. Solving these challenges requires deep expertise and large
+demonstrations.                                                                  research investment that are outside the scope of our work, which
+
+
+478 | Nature | Vol 625 | 18 January 2024
+                                                                                                                                                               With auxiliary
+                                                                                                                                                               construction
+                                                                              Distribution of synthetic data
+                       107
+
+                                                      Average IMO proof length from AlphaGeometry                                    Pure deduction          91%
+
+                       105
+   Count (log scale)
+
+
+
+
+                                                      0.05% data
+                                                                                       IMO 2015 P3 AlphaGeometry proof
+                                                                                       length: 112
+                       103
+                                                                                        0.001% data
+                                                                                                                                    IMO 2019 P6 AlphaGeometry proof
+                                                                                                                                    length: 187
+                       101
+
+
+                             1           40                      80                       120                  160                     200                   240
+                                                                                 Synthetic proof length
+
+                                                                                                                                                     E
+                                                         A
+                                                                                                                                            H
+                                                                                                                                                     G
+                                                                      E                                                                      J
+                                                             N                                                                     A
+                                                                                                                                        I
+                                                                                                                         D
+                   A
+                                                                                                                                                         O
+                                                                                                                                                 C
+                                                  F
+                                                                                                                               B
+                                     D
+                                                          H
+                                                                                                                                                                   F
+     B                                                                                                     M                  K
+                                 C            B
+                                                                          D                     C
+
+               Trivial theorem                           Well-known theorem                                              Most complex synthetic theorem
+               Proof length = 1                           Proof length = 20                                                    Proof length = 247
+
+Fig. 4 | Analysis of the generated synthetic data. Of the generated synthetic                    of 247 with two auxiliary constructions. Most synthetic theorem premises tend
+proofs, 9% are with auxiliary constructions. Only roughly 0.05% of the synthetic                 not to be symmetrical like human-discovered theorems, as they are not biased
+training proofs are longer than the average AlphaGeometry proof for the                          towards any aesthetic standard.
+test-set problems. The most complex synthetic proof has an impressive length
+
+
+
+focuses on a methodology for theorem proving. For this reason, we                                   AlphaGeometry belongs to the second category of solvers, often
+adapted geometry problems from the IMO competitions since 2000                                   described as search/axiomatic or sometimes ‘synthetic’ methods. These
+to a narrower, specialized environment for classical geometry used in                            methods treat the problem of theorem proving as a step-by-step search
+interactive graphical proof assistants13,17,19, as discussed in Methods.                         problem using a set of geometry axioms. Thanks to this, they typically
+Among all non-combinatorial geometry-related problems, 75% can be                                return highly interpretable proofs accessible to human readers. Base-
+represented, resulting in a test set of 30 classical geometry problems.                          lines in this category generally include symbolic engines equipped
+Geometric inequality and combinatorial geometry, for example, can-                               with human-designed heuristics. For example, Chou et al. provided 18
+not be translated, as their formulation is markedly different to classical                       heuristics such as “If OA ⊥ OB and OA = OB, construct C on the oppo-
+geometry. We include the full list of statements and translations for                            site ray of OA such that OC = OA”, besides 75 deduction rules for the
+all 30 problems in the Supplementary Information. The final test set                             symbolic engine. Large language models22–24 such as GPT-4 (ref. 25)
+is named IMO-AG-30, highlighting its source, method of translation                               can be considered to be in this category. Large language models have
+and its current size.                                                                            demonstrated remarkable reasoning ability on a variety of reasoning
+                                                                                                 tasks26–29. When producing full natural-language proofs on IMO-AG-30,
+                                                                                                 however, GPT-4 has a success rate of 0%, often making syntactic and
+Geometry theorem prover baselines                                                                semantic errors throughout its outputs, showing little understanding
+Geometry theorem provers in the literature fall into two categories.                             of geometry knowledge and of the problem statements itself. Note that
+The first category is computer algebra methods, which treats geom-                               the performance of GPT-4 performance on IMO problems can also be
+etry statements as polynomial equations of its point coordinates.                                contaminated by public solutions in its training data. A better GPT-4 per-
+Proving is accomplished with specialized transformations of large                                formance is therefore still not comparable with other solvers. In general,
+polynomials. Gröbner bases20 and Wu’s method21 are representative                                search methods have no theoretical guarantee in their proving perfor-
+approaches in this category, with theoretical guarantees to success-                             mance and are known to be weaker than computer algebra methods13.
+fully decide the truth value of all geometry theorems in IMO-AG-30,
+albeit without a human-readable proof. Because these methods often                               Synthetic data generation rediscovers known theorems and
+have large time and memory complexity, especially when processing                                beyond
+IMO-sized problems, we report their result by assigning success to any                           We find that our synthetic data generation can rediscover some fairly
+problem that can be decided within 48 h using one of their existing                              complex theorems and lemmas known to the geometry literature,
+implementations17.                                                                               as shown in Fig. 4, despite starting from randomly sampled theorem
+
+
+                                                                                                                               Nature | Vol 625 | 18 January 2024 | 479
+Article
+Table 1 | Main results on our IMO-AG-30 test benchmark                                          solved 18 problems, making use of the algebraic reasoning engine devel-
+                                                                                                oped in this work and the human heuristics designed by Chou et al.17. To
+Method                                                                Problems solved           match the test time compute of AlphaGeometry, this strongest baseline
+                                                                      (out of 30)
+                                                                                                makes use of 250 parallel workers running for 1.5 h, each attempting
+Computer algebra          Wu’s method21 (previous state of            10                        different sets of auxiliary constructions suggested by human-designed
+                          the art)
+                                                                                                heuristics in parallel, until success or timeout. Other baselines such
+                          Gröbner basis20                             4                         as Wu’s method or the full-angle method are not affected by parallel
+Search (human-like)       GPT-4 (ref. 25)                             0                         compute resources as they carry out fixed, step-by-step algorithms
+                          Full-angle method30                         2                         until termination.
+                          Deductive database (DD)10                   7                            Measuring the improvements made on top of the base symbolic
+                          DD + human-designed heuristics17            9
+                                                                                                deduction engine (DD), we found that incorporating algebraic deduc-
+                                                                                                tion added seven solved problems to a total of 14 (DD + AR), whereas the
+                          DD + AR (ours)                              14
+                                                                                                language model’s auxiliary construction remarkably added another 11
+                          DD + AR + GPT-4 auxiliary                   15                        solved problems, resulting in a total of 25. As reported in Extended Data
+                          constructions
+                                                                                                Fig. 6, we find that, using only 20% of the training data, AlphaGeometry
+                          DD + AR + human-designed heuristics 18
+                                                                                                still achieves state-of-the-art results with 21 problems solved. Similarly,
+                          AlphaGeometry                               25                        using less than 2% of the search budget (beam size of 8 versus 512) dur-
+                          • Without pretraining                       21                        ing test time, AlphaGeometry can still solve 21 problems. On a larger
+                          • Without fine-tuning                       23                        and more diverse test set of 231 geometry problems, which covers
+We compare AlphaGeometry to other state-of-the-art methods (computer algebra and search
+                                                                                                textbook exercises, regional olympiads and famous theorems, we find
+approaches), most notably Wu’s method. We also show the results of DD + AR (our contribution)   that baselines in Table 1 remain at the same performance rankings, with
+and its variants, resulting in the strongest baseline DD + AR + human-designed heuristics.      AlphaGeometry solving almost all problems (98.7%), whereas Wu’s
+Finally, we include ablation settings for AlphaGeometry without pretraining and fine-tuning.    method solved 75% and DD + AR + human-designed heuristics solved
+                                                                                                92.2%, as reported in Extended Data Fig. 6b.
+                                                                                                   Notably, AlphaGeometry solved both geometry problems of the
+premises. This can be attributed to the use of composite actions                                same year in 2000 and 2015, a threshold widely considered difficult
+described in Extended Data Table 1, such as ‘taking centroid’ or ‘tak-                          to the average human contestant at the IMO. Further, the traceback
+ing excentre’, which—by chance—sampled a superset of well-known                                 process of AlphaGeometry found an unused premise in the translated
+theorem premises, under our large-scale exploration setting described                           IMO 2004 P1, as shown in Fig. 5, therefore discovering a more general
+in Methods. To study the complexity of synthetic proofs, Fig. 4 shows                           version of the translated IMO theorem itself. We included AlphaGeo-
+a histogram of synthetic proof lengths juxtaposed with proof lengths                            metry solutions to all problems in IMO-AG-30 in the Supplementary
+found on the test set of olympiad problems. Although the synthetic                              Information and manually analysed some notable AlphaGeometry
+proof lengths are skewed towards shorter proofs, a small number of                              solutions and failures in Extended Data Figs. 2–5. Overall, we find that
+them still have lengths up to 30% longer than the hardest problem in the                        AlphaGeometry operates with a much lower-level toolkit for proving
+IMO test set. We find that synthetic theorems found by this process are                         than humans do, limiting the coverage of the synthetic data, test-time
+not constrained by human aesthetic biases such as being symmetrical,                            performance and proof readability.
+therefore covering a wider set of scenarios known to Euclidean geom-
+etry. We performed deduplication as described in Methods, resulting                             Human expert evaluation of AlphaGeometry outputs
+in more than 100 millions unique theorems and proofs, and did not find                          Because AlphaGeometry outputs highly interpretable proofs, we
+any IMO-AG-30 theorems, showing that the space of possible geometry                             used a simple template to automatically translate its solutions to
+theorems is still much larger than our discovered set.                                          natural language. To obtain an expert evaluation in 2000 and 2015,
+                                                                                                during which AlphaGeometry solves all geometry problems and
+Language model pretraining and fine-tuning                                                      potentially passes the medal threshold, we submit these solutions
+We first pretrained the language model on all 100 million synthetically                         to the USA IMO team coach, who is experienced in grading mathe-
+generated proofs, including ones of pure symbolic deduction. We then                            matical olympiads and has authored books for olympiad geometry
+fine-tuned the language model on the subset of proofs that requires                             training. AlphaGeometry solutions are recommended to receive
+auxiliary constructions, accounting for roughly 9% of the total pre-                            full scores, thus passing the medal threshold of 14/42 in the corre-
+training data, that is, 9 million proofs, to better focus on its assigned                       sponding years. We note that IMO tests also evaluate humans under
+task during proof search.                                                                       three other mathematical domains besides geometry and under
+                                                                                                human-centric constraints, such as no calculator use or 4.5-h time
+                                                                                                limits. We study time-constrained settings with 4.5-h and 1.5-h limits
+Proving results on IMO-AG-30                                                                    for AlphaGeometry in Methods and report the results in Extended
+The performance of ten different solvers on the IMO-AG-30 benchmark                             Data Fig. 1.
+is reported in Table 1, of which eight, including AlphaGeometry, are
+search-based methods. Besides prompting GPT-4 to produce full proofs                            Learning to predict the symbolic engine’s output improves the
+in natural language with several rounds of reflections and revisions, we                        language model’s auxiliary construction
+also combine GPT-4 with DD + AR as another baseline to enhance its                              In principle, auxiliary construction strategies must depend on the
+deduction accuracy. To achieve this, we use detailed instructions and                           details of the specific deduction engine they work with during proof
+few-shot examples in the prompt to help GPT-4 successfully interface                            search. We find that a language model without pretraining only
+with DD + AR, providing auxiliary constructions in the correct gram-                            solves 21 problems. This suggests that pretraining on pure deduction
+mar. Prompting details of baselines involving GPT-4 is included in the                          proofs generated by the symbolic engine DD + AR improves the suc-
+Supplementary Information.                                                                      cess rate of auxiliary constructions. On the other hand, a language
+   AlphaGeometry achieves the best result, with 25 problems solved in                           model without fine-tuning also degrades the performance but not as
+total. The previous state of the art (Wu’s method) solved ten problems,                         severely, with 23 problems solved compared with AlphaGeometry’s full
+whereas the strongest baseline (DD + AR + human-designed heuristics)                            setting at 25.
+
+
+480 | Nature | Vol 625 | 18 January 2024
+                                                              IMO 2004 P1:
+                                                              “Let ABC be an acute-angled triangle with AB ≠ AC.                             R
+                                                              The circle with diameter BC intersects the sides AB and AC at
+                                                              M and N respectively. Denote by O the midpoint of the side
+                                                              BC. The bisectors of the angles ∠BAC and ∠MON intersect
+                                                              at R. Prove that the circumcircles of the triangles BMR and
+                                                              CNR have a common point lying on the side BC.”                                                  M
+
+                                                                                                                                         N
+                                                                                       Translate                                                  A
+                                                                                                                                                          O
+                                                              Premise                                                                B                                C
+                                                                                                                                                 P
+
+
+
+
+                                                                                                                                                 Generalize
+
+                                                                                          Solve
+                                                              Proof                                                                                   R
+                                               Traceback
+
+
+
+
+                                                                                                                                N
+                                                                                                                                             O
+
+                                                                                                                                                                  M
+                                                                                                                                                              A
+                                                                                                                                     P            B                       C
+
+
+
+
+                                                                 Unused premise
+                                                                 Used premises
+                                                                 Neural net output
+                                                                 Symbolic solver output
+
+Fig. 5 | AlphaGeometry discovers a more general theorem than the                                                   midpoint of BC for P, B, C to be collinear. Right, top, the original theorem
+translated IMO 2004 P1. Left, top to bottom, the IMO 2004 P1 stated in natural                                     diagram; bottom, the generalized theorem diagram, in which O is freed from its
+language, its translated statement and AlphaGeometry solution. Thanks to the                                       midpoint position and P still stays on line BC. Note that the original problem
+traceback algorithm necessary to extract the minimal premises, AlphaGeometry                                       requires P to be between B and C, a condition where the generalized theorem
+identifies a premise unnecessary for the proof to work: O does not have to be the                                  and solution does not guarantee.
+
+
+
+
+                                    Difficulty of IMO problems for AlphaGeometry versus humans                     Hard problems are reflected in AlphaGeometry proof length
+                              200                                                                                  Figure 6 measures the difficulty of solved problems using public scores
+                                                                                             Need construction
+                                    2019 P6                                                  Deduction only        of human contestants at the IMO and plots them against the corre-
+ AlphaGeometry proof length
+
+
+
+
+                                                                                                                   sponding AlphaGeometry proof lengths. The result shows that, for
+                              150      2000 P6 Harder
+                                               for AlphaGeometry                                                   the three problems with the lowest human score, AlphaGeometry also
+                                    2015 P3
+                                                                                                                   requires exceptionally long proofs and the help of language-model
+                              100                                            2009 P2                               constructions to reach its solution. For easier problems (average human
+                                    Harder                                                                         score > 3.5), however, we observe no correlation (p = −0.06) between
+                                    for humans              2012 P5
+                                                                                  2004 P1                          the average human score and AlphaGeometry proof length.
+                               50
+                                                                2010 P2
+                                                                                                   2007 P4
+                                                                                                                   Conclusion
+                                0
+                                           1                  2        3        4       5         6          7     AlphaGeometry is the first computer program to surpass the per-
+                                                           Average score of IMO human contestants                  formance of the average IMO contestant in proving Euclidean plane
+Fig. 6 | AlphaGeometry proof length versus the average score of IMO
+                                                                                                                   geometry theorems, outperforming strong computer algebra and
+participants on different problems. Among the solved problems, 2000 P6,                                            search baselines. Notably, we demonstrated through AlphaGeometry a
+2015 P3 and 2019 P6 are the hardest for IMO participants. They also require                                        neuro-symbolic approach for theorem proving by means of large-scale
+the longest proofs from AlphaGeometry. For easier problems, however,                                               exploration from scratch, sidestepping the need for human-annotated
+there is little correlation between AlphaGeometry proof length and human                                           proof examples and human-curated problem statements. Our method
+score.                                                                                                             to generate and train language models on purely synthetic data provides
+
+
+                                                                                                                                                      Nature | Vol 625 | 18 January 2024 | 481
+Article
+a general guiding framework for mathematical domains that are facing                                     16.   Han, J. M., Rute, J., Wu, Y., Ayers, E. W., & Polu, S. Proof artifact co-training for theorem
+                                                                                                               proving with language models. Preprint at https://doi.org/10.48550/arXiv.2102.06203
+the same data-scarcity problem.                                                                                (2022).
+                                                                                                         17.   Ye, Z., Chou, S. C. & Gao, X. S. in Proc. Automated Deduction in Geometry: 7th International
+                                                                                                               Workshop, ADG 2008 (eds Sturm, T. & Zengler, C.) 189–195 (Springer, 2011).
+Online content                                                                                           18.   Vaswani, A. et al. Attention is all you need. Adv. Neural Inf. Process. Syst. 30 (2017).
+                                                                                                         19.   Olšák, M. in Proc. 7th International Conference on Mathematical Software – ICMS 2020
+Any methods, additional references, Nature Portfolio reporting summa-                                          (eds Bigatti, A., Carette, J., Davenport, J., Joswig, M. & de Wolff, T.) 263–271 (Springer, 2020).
+ries, source data, extended data, supplementary information, acknowl-                                    20.   Bose, N. K. in Multidimensional Systems Theory and Applications 89–127 (Springer, 1995).
+                                                                                                         21.   Wu, W.-T. On the decision problem and the mechanization of theorem-proving in elementary
+edgements, peer review information; details of author contributions                                            geometry. Sci. Sin. 21, 159–172 (1978).
+and competing interests; and statements of data and code availability                                    22.   Radford, A., Narasimhan, K., Salimans, T. & Sutskever, I. Improving language understanding
+are available at https://doi.org/10.1038/s41586-023-06747-5.                                                   by generative pre-training. Preprint at https://paperswithcode.com/paper/improving-
+                                                                                                               language-understanding-by (2018).
+                                                                                                         23.   Radford, A. et al. Better language models and their implications. OpenAI Blog https://
+                                                                                                               openai.com/blog/better-language-models (2019).
+1.    Zheng, K., Han, J. M. & Polu, S. MiniF2F: a cross-system benchmark for formal olympiad-
+                                                                                                         24.   Brown, T. et al. Language models are few-shot learners. Adv. Neural Inf. Process. Syst. 33,
+      level mathematics. Preprint at https://doi.org/10.48550/arXiv.2109.00110 (2022).
+                                                                                                               1877–1901 (2020).
+2.    Polu, S. et al. Formal mathematics statement curriculum learning. Preprint at https://
+                                                                                                         25.   Bubeck, S. et al. Sparks of artificial general intelligence: early experiments with GPT-4.
+      doi.org/10.48550/arXiv.2202.01344 (2023).
+                                                                                                               Preprint at https://arxiv.org/abs/2303.12712 (2023).
+3.    Lample, G. et al. Hypertree proof search for neural theorem proving. Adv. Neural Inf. Process.
+                                                                                                         26.   Lewkowycz, A. et al. Solving quantitative reasoning problems with language models.
+      Syst. 35, 26337–26349 (2022).
+                                                                                                               Adv. Neural Inf. Process. Syst. 35, 3843–3857 (2022).
+4.    Potapov, A. et al. in Proc. 13th International Conference on Artificial General Intelligence,
+                                                                                                         27.   Liang, P. et al. Holistic evaluation of language models. Transact. Mach. Learn. Res. https://
+      AGI 2020 (eds Goertzel, B., Panov, A., Potapov, A. & Yampolskiy, R.) 279–289 (Springer,
+                                                                                                               doi.org/10.48550/arXiv.2211.09110 (2023).
+      2020).
+                                                                                                         28.   Srivastava, A. et al. Beyond the imitation game: quantifying and extrapolating the
+5.    Marić, F. Formalizing IMO problems and solutions in Isabelle/HOL. Preprint at https://
+                                                                                                               capabilities of language models. Transact. Mach. Learn. Res. https://doi.org/10.48550/
+      arxiv.org/abs/2010.16015 (2020).
+                                                                                                               arXiv.2206.04615 (2023).
+6.    Gelernter, H. L. in Proc. First International Conference on Information Processing (IFIP)
+                                                                                                         29.   Wei, J. et al. Emergent abilities of large language models. Transact. Mach. Learn. Res.
+      273–281 (UNESCO, 1959).
+                                                                                                               https://doi.org/10.48550/arXiv.2206.07682 (2022).
+7.    Gelernter, H., Hansen, J. R. & Loveland, D. W. in Papers presented at the May 3–5, 1960,
+                                                                                                         30.   Chou, S. C., Gao, X. S. & Zhang, J. Z. Automated generation of readable proofs with
+      western joint IRE-AIEE-ACM computer conference 143–149 (ACM, 1960).
+                                                                                                               geometric invariants: II. Theorem proving with full-angles. J. Autom. Reason. 17, 349–370
+8.    Harrison, J., Urban, J. & Wiedijk, F. in Handbook of the History of Logic Vol. 9
+                                                                                                               (1996).
+      (ed. Siekmann, J. H.) 135–214 (North Holland, 2014).
+9.    van Doorn, F., Ebner, G. & Lewis, R. Y. in Proc. 13th International Conference on Intelligent
+      Computer Mathematics, CICM 2020 (eds Benzmüller, C. & Miller, B.) 251–267 (Springer,               Publisher’s note Springer Nature remains neutral with regard to jurisdictional claims in
+      2020).                                                                                             published maps and institutional affiliations.
+10.   Chou, S. C., Gao, X. S. & Zhang, J. Z. A deductive database approach to automated
+      geometry theorem proving and discovering. J. Autom. Reason. 25, 219–246 (2000).                                       Open Access This article is licensed under a Creative Commons Attribution
+11.   Matsuda, N. & Vanlehn, K. GRAMY: a geometry theorem prover capable of construction.                                   4.0 International License, which permits use, sharing, adaptation, distribution
+      J. Autom. Reason. 32, 3–33 (2004).                                                                                    and reproduction in any medium or format, as long as you give appropriate
+12.   Wang, K. & Su, Z. in Proc. Twenty-Fourth International Joint Conference on Artificial              credit to the original author(s) and the source, provide a link to the Creative Commons licence,
+      Intelligence (IJCAI 2015) (ACM, 2015).                                                             and indicate if changes were made. The images or other third party material in this article are
+13.   Gao, X. S. & Lin, Q. in Proc. Automated Deduction in Geometry: 4th International Workshop,         included in the article’s Creative Commons licence, unless indicated otherwise in a credit line
+      ADG 2002 (ed. Winkler, F.) 44–66 (Springer, 2004).                                                 to the material. If material is not included in the article’s Creative Commons licence and your
+14.   Zhou, M. & Yu, X. in Proc. 2nd International Conference on Artificial Intelligence in Education:   intended use is not permitted by statutory regulation or exceeds the permitted use, you will
+      Emerging Technologies, Models and Applications, AIET 2021 (eds Cheng, E. C. K., Koul, R. B.,       need to obtain permission directly from the copyright holder. To view a copy of this licence,
+      Wang, T. & Yu, X.) 151–161 (Springer, 2022).                                                       visit http://creativecommons.org/licenses/by/4.0/.
+15.   Polu, S. & Sutskever, I. Generative language modeling for automated theorem proving.
+      Preprint at https://arxiv.org/abs/2009.03393 (2020).                                               © The Author(s) 2024, corrected publication 2024
+
+
+
+
+482 | Nature | Vol 625 | 18 January 2024
+Methods                                                                         algebraic manipulations are not covered. DD (ref. 17) handles algebraic
+                                                                                deductions by expressing them under a few limited deduction rules,
+Geometry representation                                                         therefore, it is unable to express more complex manipulations, leaving
+General-purpose formal languages such as Lean31 still require a large           arithmetic inferences not covered. The most general treatment so far
+amount of groundwork to describe most IMO geometry problems                     is a process similar that in ref. 34 for angle-only theorem discovery and
+at present. We do not directly address this challenge as it requires            implemented in GeoLogic19 for both angle and ratios. We expanded this
+deep expertise and substantial research outside the scope of                    formulation to cover all reasoning about angles, ratios and distances
+theorem-proving methodologies. To sidestep this barrier, we instead             between points and also arithmetic reasoning with geometric constants
+adopted a more specialized language used in GEX10, JGEX17, MMP/                 such as ‘pi’ or ‘1:2’. Concrete examples of algebraic reasoning are given
+Geometer13 and GeoLogic19, a line of work that aims to provide a logi-          in Extended Data Table 2.
+cal and graphical environment for synthetic geometry theorems with                 On a high level, we first convert the input linear equations to a matrix
+human-like non-degeneracy and topological assumptions. Examples                 of their coefficients. In particular, we create a coefficient matrix A ∈ RM×N
+of this language are shown in Fig. 1d,f. Owing to its narrow formulation,       in which N is the number of variables and M is the number of input equa-
+75% of all IMO geometry problems can be adapted to this representa-             tions. In geometry, any equality is of the form a − b = c − d ⇔ a − b − c
+tion. In this type of geometry environment, each proof step is logically        + d = 0. For example, the angle equality ∠ABC = ∠XYZ is represented
+and numerically verified and can also be evaluated by a human reader            as s(AB) − s(BC) = s(XY) − s(YZ), in which s(AB) is the angle between
+as if it is written by IMO contestants, thanks to the highly natural gram-      AB and the x-direction, modulo pi. Similarly, ratios AB:CD = EF:GH are
+mar of the language. To cover more expressive algebraic and arithmetic          represented as log(AB) − log(CD) = log(EF) − log(GH), in which log(AB)
+reasoning, we also add integers, fractions and geometric constants to           is the log of the length of segment AB. For distances, each variable is a
+the vocabulary of this language. We do not push further for a complete          (point, line) pair, representing a specific point on a specific line.
+solution to geometry representation as it is a separate and extremely              Because all equalities are of the form ‘a − b − c + d = 0’, we populate
+challenging research topic that demands substantial investment from             the row for each equality with values +1, −1, −1, +1 at columns corre-
+the mathematical formalization community.                                       sponding to variables a, b, c and d. Running Gaussian elimination on
+                                                                                A returns a new matrix with leading 1s at each of the columns, essen-
+Sampling consistent theorem premises                                            tially representing each variable as a unique linear combination of all
+We developed a constructive diagram builder language similar to that            remaining variables. As an example, suppose we have ‘a − b = b − c’,
+used by JGEX17 to construct one object in the premise at a time, instead        ‘d − c = a − d’ and ‘b − c = c − e’ as input equalities, running the Gaussian
+of freely sampling many premises that involve several objects, there-           elimination process (denoted GE in the following equation) returns
+fore avoiding the generation of a self-contradicting set of premises.           the following result:
+An exhaustive list of construction actions is shown in Extended Data
+Table 1. These actions include constructions to create new points that          a b    c d e   a                b   c  d    e  
+                                                                                 1 −2 1 0 0 GE  1                                  a = 1.5d − 0.5e
+are related to others in a certain way, that is, collinear, incentre/excentre                                      0   0 −1.5 0.5  
+                                                                                              →                                ⇒      b=d
+etc., as well as constructions that take a number as its parameter, for         −1 0 −1 2 0    0                1   0 −1    0  
+                                                                                                                                     c = 0.5d + 0.5e
+example, “construct point X such that given a number α, ∠ABX = α”. One          0   1 −2 0 1   0                0   1 −0.5 −0.5
+can extend this list with more sophisticated actions to describe a more
+expressive set of geometric scenarios, improving both the synthetic                From this result, we can deterministically and exhaustively deduce
+data diversity and the test-set coverage. A more general and expressive         all new equalities by checking if x1 = x2 or x1 − x2 = x2 − x3 or x1 − x2 = x3 − x4,
+diagram builder language can be found in ref. 32. We make use of a              in which {x1, x2, x3, x4} is any 4-permutation of all variables. In the above
+simpler language that is sufficient to describe problems in IMO-AG-30           Gaussian Elimination, for example, AR deduced that b = d from the
+and can work well with the symbolic engine DD.                                  three input equalities. To handle geometric constants such as ‘0.5 pi’
+                                                                                or ‘5:12’, we included ‘pi’ and ‘1’ as default variables to all coefficient
+The symbolic deduction engine                                                   matrices.
+The core functionality of the engine is deducing new true statements
+given the theorem premises. Deduction can be performed by means                 Deductive database implementation
+of geometric rules such as ‘If X then Y’, in which X and Y are sets of geo-     Unlike the original implementation of DD, we use a graph data structure
+metric statements such as ‘A, B, C are collinear’. We use the method of         to capture the symmetries of geometry, rather than using strings of
+structured DD10,17 for this purpose as it can find the deduction closure        canonical forms. With a graph data structure, we captured not only
+in just seconds on standard non-accelerator hardware. To further                the symmetrical permutations of function arguments but also the
+enhance deduction, we also built into AlphaGeometry the ability to              transitivity of equality, collinearity and concyclicity. This graph data
+perform deduction through AR. AR enable proof steps that perform                structure bakes into itself some deduction rules explicitly stated in the
+angle/ratio/distance chasing. Detailed examples of AR are shown in              geometric rule list used in DD. These deduction rules from the original
+Extended Data Table 2. Such proof steps are ubiquitous in geometry              list are therefore not used anywhere in exploration but implicitly used
+proofs, yet not covered by geometric rules. We expand the Gaussian              and explicitly spelled out on-demand when the final proof is serialized
+elimination process implemented in GeoLogic19 to find the deduction             into text.
+closure for all possible linear operators in just seconds. Our symbolic
+deduction engine is an intricate integration of DD and AR, which we             Traceback to find minimal proofs. Each deduction step needs to
+apply alternately to expand the joint closure of known true state-              be coupled with a traceback algorithm, which returns the minimal
+ments until expansion halts. This process typically finishes within a           set of immediate ancestor statements that is necessary to deduce
+few seconds to at most a few minutes on standard non-accelerator                the conclusion statement of the step. This is the core building block
+hardware.                                                                       for extracting proof graphs and minimal premises described in the
+                                                                                main text. A minimal-premise-extraction algorithm is necessary to
+Algebraic reasoning                                                             avoid superfluous auxiliary constructions that contribute to the
+There has not been a complete treatment for algebraic deduction                 proof through unnecessary transitivity. For example, ‘a = b’ and ‘b = c’
+in the literature of geometry theorem proving. For example, in                  might not be necessary if ‘a = c’ can be obtained directly through other
+iGeoTutor12, Z3 (ref. 33) is used to handle arithmetic inferences but           reasoning chains.
+Article
+                                                                                both during synthetic data generation and after each successful proof
+Traceback for geometric-rule deduction                                          search during test time.
+To do this, we record the equality transitivity graph. For example, if
+‘a = b’, ‘b = c’, ‘c = d’ and ‘a = d’ are deduced, which results in nodes a,    Parallelized data generation and deduplication
+b, c and d being connected to the same ‘equality node’ e, we maintain           We run our synthetic-data-generation process on a large number
+a graph within e that has edges [(a, b), (b, c), (c, d), (a, d)]. This allows   of parallel CPU workers, each seeded with a different random seed
+the traceback algorithm to perform a breadth-first search to find the           to reduce duplications. After running this process on 100,000 CPU
+shortest path of transitivity of equality between any pair of variables         workers for 72 h, we obtained roughly 500 million synthetic proof
+among a, b, c and d. For collinearity and concyclicity, however, the            examples. We reformat the proof statements to their canonical form
+representation is more complex. In these cases, hypergraphs G(V, E)             (for example, sorting arguments of individual terms and sorting terms
+with 3-edges or 4-edges are used as the equality transitivity graph.            within the same proof step, etc.) to avoid shallow deduplication against
+The traceback is now equivalent to finding a minimum spanning tree              itself and against the test set. At the end, we obtain 100 million unique
+(denoted MST in the following equation) for the target set S of nodes           theorem–proof examples. A total of 9 million examples involves at
+(three collinear nodes or four concyclic nodes) whose weight is the             least one auxiliary construction. We find no IMO-AG-30 problems
+cardinality of the union of its hyperedges e′:                                  in the synthetic data. On the set of geometry problems collected in
+                                                                                JGEX17, which consists mainly of problems with moderate difficulty and
+                MST(S) = minT ⊂E ⋃e ′⊂T w(e ′) s.t. S ⊂ T                       well-known theorems, we find nearly 20 problems in the synthetic data.
+                                                                                This suggests that the training data covered a fair amount of common
+  Such optimization is NP-hard, as it is a reduction from the decision          knowledge in geometry, but the space of more sophisticated theorems
+version of vertex cover. We simply use a greedy algorithm in this case          is still much larger.
+to find a best-effort minimum spanning tree.
+                                                                                Language model architecture and training
+Traceback for algebraic deduction                                               We use the Meliad library35 for transformer training with its base
+Traceback through Gaussian elimination can be done by recogniz-                 settings. The transformer has 12 layers, embedding dimension of 1,024,
+ing that it is equivalent to a mixed integer linear programming                 eight heads of attention and an inter-attention dense layer of dimension
+problem. Given the coefficient matrix of input equations A con-                 4,096 with ReLU activation. Overall, the transformer has 151 million
+structed as described in the previous sections and a target equa-               parameters, excluding embedding layers at its input and output
+tion with coefficients vector b ∈ RN, we determine the minimal set              heads. Our customized tokenizer is trained with ‘word’ mode using
+of premises for b by defining non-negative integer decision vectors             SentencePiece36 and has a vocabulary size of 757. We limit the maxi-
+x, y ∈ ZM and solve the following mixed-integer linear programming              mum context length to 1,024 tokens and use T5-style relative posi-
+problem:                                                                        tion embedding37. Sequence packing38,39 is also used because more
+                                                                                than 90% of our sequences are under 200 in length. During training, a
+                x , y = minx , y   ∑i (xi + yi ) s.t. AT (x − y) = b            dropout40 rate of 5% is applied pre-attention and post-dense. A 4 × 4
+                                                                                slice of TPUv3 (ref. 41) is used as its hardware accelerator. For pre-
+  The minimum set of immediate parent nodes for the equality repre-             training, we train the transformer with a batch size of 16 per core
+sented by b will be the ith equations (ith rows in A) whose corresponding       and a cosine learning-rate schedule that decays from 0.01 to 0.001
+decision value (xi − yi) is non-zero.                                           in 10,000,000 steps. For fine-tuning, we maintain the final learn-
+                                                                                ing rate of 0.001 for another 1,000,000 steps. For the set-up with
+Integrating DD and AR                                                           no pretraining, we decay the learning rate from 0.01 to 0.001 in
+DD and AR are applied alternately to expand their joint deduction clo-          1,000,000 steps. We do not perform any hyperparameter tuning.
+sure. The output of DD, which consists of new statements deduced                These hyperparameter values are either selected to be a large round
+with deductive rules, is fed into AR and vice versa. For example, if DD         number (training steps) or are provided by default in the Meliad
+deduced ‘AB is parallel to CD’, the slopes of lines AB and CD will be           codebase.
+updated to be equal variables in AR’s coefficient matrix A, defined in
+the ‘Algebraic reasoning’ section. Namely, a new row will be added to A         Parallelized proof search. Because the language model decoding
+with ‘1’ at the column corresponding to the variable slope(AB) and ‘−1’ at      process returns k different sequences describing k alternative auxiliary
+the column of slope(CD). Gaussian elimination and mixed-integer linear          constructions, we perform a beam search over these k options, using
+programming is run again as AR executes, producing new equalities               the score of each beam as its value function. This set-up is highly paral-
+as inputs to the next iteration of DD. This loop repeats until the joint        lelizable across beams, allowing substantial speed-up when there are
+deduction closure stops expanding. Both DD and AR are deterministic             parallel computational resources. In our experiments, we use a beam
+processes that only depend on the theorem premises, therefore they              size of k = 512, the maximum number of iterations is 16 and the branch-
+do not require any design choices in their implementation.                      ing factor for each node, that is, the decoding batch size, is 32. This is
+                                                                                the maximum inference-time batch size that can fit in the memory of a
+Proof pruning                                                                   GPU V100 for our transformer size. Scaling up these factors to examine
+Although the set of immediate ancestors to any node is minimal, this            a larger fraction of the search space might improve AlphaGeometry
+does not guarantee that the fully traced back dependency subgraph               results even further.
+G(N) and the necessary premise P are minimal. Here we define minimal-              For each problem, we used a pool of four GPU workers, each hosting
+ity to be the property that G(N) and P cannot be further pruned without         a copy of the transformer language model to divide the work between
+losing conclusion reachability. Without minimality, we obtained many            alternative beams, and a pool of 10,000 CPU workers to host the sym-
+synthetic proofs with vacuous auxiliary constructions, having shallow           bolic solvers, shared across all beams across all 30 problems. This way,
+relation to the actual proof and can be entirely discarded. To solve            a problem that terminates early can contribute its share of computing
+this, we perform exhaustive trial and error, discarding each subset of          power to longer-running problems. We record the running time of the
+the auxiliary points and rerunning DD + AR on the smaller subset of             symbolic solver on each individual problem, which—by design—stays
+premises to verify goal reachability. At the end, we return the minimum         roughly constant across all beams. We use this and the language model
+proof obtainable across all trials. This proof-pruning procedure is done        decoding speed to infer the necessary parallelism needed for each
+problem, in isolation, to stay under different time limits at the IMO in      demonstrating great successes in premise selection and proof guid-
+Extended Data Fig. 1.                                                         ance46–49, as well as SAT solving50. On the other hand, transformer18
+                                                                              exhibits outstanding reasoning capabilities across a variety of tasks51–53.
+The effect of data and search                                                 The first success in applying transformer language models to theorem
+We trained AlphaGeometry on smaller fractions of the original training        proving is GPT-f (ref. 15). Its follow up extensions2,16 further developed
+data (20%, 40%, 60% and 80%) and found that, even at 20% of training          this direction, allowing machines to solve some olympiad-level prob-
+data, AlphaGeometry still solves 21 problems, more than the strong-           lems for the first time. Innovation in the proof-search algorithm and
+est baseline (DD + AR + human-designed heuristics) with 18 problems           online training3 also improves transformer-based methods, solving
+solved, as shown in Extended Data Fig. 6a. To study the effect of beam        a total of ten (adapted) IMO problems in algebra and number theory.
+search on top of the language model, we reduced the beam size and             These advances, however, are predicated on a substantial amount of
+search depth separately during proof search and reported the results          human proof examples and standalone problem statements designed
+in Extended Data Fig. 6c,d. We find that, with a beam size of 8, that is, a   and curated by humans.
+64 times reduction from the original beam size of 512, AlphaGeometry
+still solves 21 problems. A similar result of 21 problems can be obtained     Geometry theorem proving. Geometry theorem proving evolves in
+by reducing the search depth from 16 to only two, while keeping the           an entirely separate space. Its literature is divided into two branch-
+beam size constant at 512.                                                    es, one of computer algebra methods and one of search methods.
+                                                                              The former is largely considered solved since the introduction of
+Evaluation on a larger test set                                               Wu’s method21, which can theoretically decide the truth value of
+We evaluated AlphaGeometry and other baselines on a larger test set           any geometrical statement of equality type, building on specialized
+of 231 geometry problems, curated in ref. 17. This set covers a wider         algebraic tools introduced in earlier works54,55. Even though com-
+range of sources outside IMO competitions: textbook examples and              puter algebra has strong theoretical guarantees, its performance
+exercises, regional olympiads and famous geometry theorems; some              can be limited in practice owing to their large time and space com-
+are even more complex than typical IMO problems, such as the five             plexity56. Further, the methodology of computer algebra is not
+circles theorem, Morley’s theorem or Sawayama and Thébault’s theo-            of interest to AI research, which instead seeks to prove theorems
+rem. The results are reported in Extended Data Fig. 6b. The overall           using search methods, a more human-like and general-purpose
+rankings of different approaches remained the same as in Table 1, with        process.
+AlphaGeometry solving almost all problems (98.7%). The strongest                 Search methods also started as early as the 1950s (refs. 6,7) and
+baseline DD + AR + human-designed heuristics solves 92.2%, whereas            continued to develop throughout the twentieth century57–60. With
+the previous state of the art solves 75%.                                     the introduction of DD10,17, area methods61 and full-angle methods30,
+                                                                              geometry solvers use higher-level deduction rules than Tarski’s or
+AlphaGeometry framework and applicability to other domains. The               Hilbert’s axioms and are able to prove a larger number of more com-
+strength of AlphaGeometry’s neuro-symbolic set-up lies in its ability         plex theorems than those operating in formal languages. Geometry
+to generate auxiliary constructions, which is an important ingredient         theorem proving of today, however, is still relying on human-designed
+across many mathematical domains. In Extended Data Table 3, we give           heuristics for auxiliary constructions10–14. Geometry theorem proving
+examples in four other mathematical domains in which coming up with           falls behind the recent advances made by machine learning because its
+auxiliary constructions is key to the solution. In Extended Data Table 4,     presence in formal mathematical libraries such as Lean31 or Isabelle62
+we give a line-by-line comparison of a geometry proof and an inequality       is extremely limited.
+proof for the IMO 1964 Problem 2, highlighting how they both fit into
+the same framework.                                                           Synthetic data in theorem proving. Synthetic data has long been
+   Our paper shows that language models can learn to come up with aux-        recognized and used as an important ingredient in theorem prov-
+iliary constructions from synthetic data, in which problem statements         ing63–66. State-of-the-art machine learning methods make use of
+and auxiliary constructions are randomly generated together and then          expert iteration to generate a curriculum of synthetic proofs2,3,15.
+separated using the traceback algorithm to identify the dependency            Their methods, however, only generate synthetic proofs for a fixed
+difference. Concretely, the AlphaGeometry framework requires the              set of predefined problems, designed and selected by humans. Our
+following ingredients:                                                        method, on the other hand, generates both synthetic problems and
+(1) An implementation of the domain’s objects and definitions.                proofs entirely from scratch. Aygun et al.67 similarly generated synthetic
+(2) A random premise sampler.                                                 proofs with hindsight experience replay68, providing a smooth range
+(3) The symbolic engine(s) that operate within the implementation (1).        of theorem difficulty to aid learning similar to our work. AlphaGeo-
+(4) A traceback procedure for the symbolic engine.                            metry, however, is not trained on existing conjectures curated by
+                                                                              humans and does not learn from proof attempts on the target theo-
+   Using these four ingredients and the algorithm described in the main       rems. Their approach is thus orthogonal and can be used to further
+text, one can generate synthetic data for any target domain. As shown         improve AlphaGeometry. Most similar to our work is Firoiu et al.69,
+in our paper, there are non-trivial engineering challenges in building        whose method uses a forward proposer to generate synthetic data by
+each ingredient. For example, current formalizations of combinatorics         depth-first exploration and trains a neural network purely on these
+are very nascent, posing challenges to (1) and (2). Also, building pow-       synthetic data. Our work, on the other hand, uses breadth-first explora-
+erful symbolic engines for different domains requires deep domain             tion, necessary to obtain the minimal proofs and premises, and uses a
+expertise, posing challenges to (3) and (4). We consider applying this        traceback algorithm to identify auxiliary constructions, thus introduc-
+framework to a wider scope as future work and look forward to further         ing new symbols and hypotheses that the forward proposer cannot
+innovations that tackle these challenges.                                     propose.
+
+Transformer in theorem proving
+Research in automated theorem proving has a long history dating back          Data availability
+to the 1950s (refs. 6,42,43), resulting in highly optimized first-order       The data supporting the findings of this work are available in the
+logic solvers such as E (ref. 44) or Vampire45. In the 2010s, deep learn-     Extended Data and the Supplementary Information. Source data are
+ing matured as a new powerful tool for automated theorem proving,             provided with this paper.
+Article
+                                                                                                             55. Ritt, J. F. Differential Algebra (Colloquium Publications, 1950).
+Code availability                                                                                            56. Chou, S. C. Proving Elementary Geometry Theorems Using Wu’s Algorithm. Doctoral
+                                                                                                                 dissertation, Univ. Texas at Austin (1985).
+Our code and model checkpoint is available at https://github.com/                                            57. Nevins, A. J. Plane geometry theorem proving using forward chaining. Artif. Intell. 6, 1–23
+google-deepmind/alphageometry.                                                                                   (1975).
+                                                                                                             58. Coelho, H. & Pereira, L. M. Automated reasoning in geometry theorem proving with Prolog.
+                                                                                                                 J. Autom. Reason. 2, 329–390 (1986).
+31.   de Moura, L. & Ullrich, S. in Proc. 28th International Conference on Automated Deduction,
+                                                                                                             59. Quaife, A. Automated development of Tarski’s geometry. J. Autom. Reason. 5, 97–118
+      CADE 28 (eds Platzer, A. & Sutcliffe, G.) 625–635 (Springer, 2021).
+                                                                                                                 (1989).
+32.   Krueger, R., Han, J. M. & Selsam, D. in Proc. 28th International Conference on Automated
+                                                                                                             60. McCharen, J. D., Overbeek, R. A. & Lawrence, T. in The Collected Works of Larry Wos 166–196
+      Deduction, CADE 28 (eds Platzer, A. & Sutcliffe, G.) 577–588 (Springer, 2021).
+                                                                                                                 (2000).
+33.   de Moura, L. & Bjørner, N. in Proc. 14th International Conference on Tools and Algorithms
+                                                                                                             61. Chou, S. C., Gao, X. S. & Zhang, J. Machine Proofs in Geometry: Automated Production of
+      for the Construction and Analysis of Systems, TACAS 2008 (eds Ramakrishnan, C. R. &
+                                                                                                                 Readable Proofs for Geometry Theorems (World Scientific, 1994).
+      Rehof, J.) 337–340 (Springer, 2008).
+                                                                                                             62. Paulson, L. C. (ed.) Isabelle: A Generic Theorem Prover (Springer, 1994).
+34.   Todd, P. A method for the automated discovery of angle theorems. EPTCS 352, 148–155
+                                                                                                             63. Wu, Y., Jiang, A. Q., Ba, J. & Grosse, R. INT: an inequality benchmark for evaluating
+      (2021).
+                                                                                                                 generalization in theorem proving. Preprint at https://doi.org/10.48550/arXiv.2007.02924
+35.   Hutchins, D., Rabe, M., Wu, Y., Schlag, I. & Staats, C. Meliad. Github https://github.com/
+                                                                                                                 (2021).
+      google-research/meliad (2022).
+                                                                                                             64. Zombori, Z., Csiszárik, A., Michalewski, H., Kaliszyk, C. & Urban, J. in Proc. 30th International
+36.   Kudo, T. & Richardson, J. SentencePiece: a simple and language independent subword
+                                                                                                                 Conference on Automated Reasoning with Analytic Tableaux and Related Methods (eds
+      tokenizer and detokenizer for neural text processing. Preprint at https://arxiv.org/abs/
+                                                                                                                 Das, A. & Negri, S.) 167–186 (Springer, 2021).
+      1808.06226 (2018).
+                                                                                                             65. Fawzi, A., Malinowski, M., Fawzi, H., Fawzi, O. Learning dynamic polynomial proofs. Adv.
+37.   Raffel, C. et al. Exploring the limits of transfer learning with a unified text-to-text transformer.
+                                                                                                                 Neural Inf. Process. Syst. https://doi.org/10.48550/arXiv.1906.01681 (2019).
+      J. Mach. Learn. Res. 21, 5485–5551 (2020).
+                                                                                                             66. Wang, M. & Deng, J. Learning to prove theorems by learning to generate theorems. Adv.
+38.   Kosec, M., Fu, S. & Krell, M. M. Packing: towards 2x NLP BERT acceleration. Preprint at
+                                                                                                                 Neural Inf. Process. Syst. 33, 18146–18157 (2020).
+      https://openreview.net/forum?id=3_MUAtqR0aA (2021).
+                                                                                                             67. Aygün, E. et al. in Proc. 39th International Conference on Machine Learning 1198–1210
+39.   Krell, M. M., Kosec, M., Perez, S. P. & Iyer, M., Fitzgibbon A. W. Efficient sequence packing
+                                                                                                                 (PMLR, 2022).
+      without cross-contamination: accelerating large language models without impacting
+                                                                                                             68. Andrychowicz, M. et al. Hindsight experience replay. Adv. Neural Inf. Process. Syst.
+      performance. Preprint at https://arxiv.org/abs/2107.02027 (2022).
+                                                                                                                 https://doi.org/10.48550/arXiv.1707.01495 (2017).
+40.   Srivastava, N., Hinton, G., Krizhevsky, A., Sutskever, I. & Salakhutdinov, R. Dropout: a simple
+                                                                                                             69. Firoiu, V. et al. Training a first-order theorem prover from synthetic data. Preprint at
+      way to prevent neural networks from overfitting. J. Mach. Learn. Res. 15, 1929–1958 (2014).
+                                                                                                                 https://doi.org/10.48550/arXiv.2103.03798 (2021).
+41.   Norrie, T. et al. The design process for Google’s training chips: TPUv2 and TPUv3. IEEE
+      Micro. 41, 56–63 (2021) Feb 9.
+42.   Gilmore, P. C. A proof method for quantification theory: its justification and realization.            Acknowledgements This project is a collaboration between the Google Brain team and the
+      IBM J. Res. Dev. 4, 28–35 (1960).                                                                      Computer Science Department of New York University. We thank R. A. Saurous, D. Zhou,
+43.   Davis, M. & Putnam, H. A computing procedure for quantification theory. J. ACM. 7, 201–215             C. Szegedy, D. Hutchins, T. Kipf, H. Pham, P. Veličković, E. Lockhart, D. Dwibedi, K. Cho,
+      (1960).                                                                                                L. Pinto, A. Canziani, T. Wies, H. He’s research group, E. Chen (the USA’s IMO team coach),
+44.   Schulz, S. E – a brainiac theorem prover. AI Commun. 15, 111–126 (2002).                               M. Olsak and P. Bak.
+45.   Riazanov, A. & Voronkov, A. in Proc. First International Joint Conference on Automated
+      Reasoning, IJCAR 2001 (eds Goré, R., Leitsch, A. & Nipkow, T.) 376–380 (Springer, 2001).
+                                                                                                             Author contributions T.H.T. conceived the project, built the codebase, carried out experiments,
+46.   Irving, G. et al. DeepMath - deep sequence models for premise selection. Adv. Neural Inf.
+                                                                                                             requested manual evaluation from experts and drafted the manuscript. Y.W. advocated for the
+      Process. Syst. https://doi.org/10.48550/arXiv.1606.04442 (2016).
+                                                                                                             neuro-symbolic setting and advised on data/training/codebase choices. Q.V.L. advised on
+47.   Wang, M., Tang, Y., Wang, J. & Deng, J. Premise selection for theorem proving by deep graph
+                                                                                                             scientific methodology and revised the manuscript. H.H. advised on scientific methodology,
+      embedding. Adv. Neural Inf. Process. Syst. https://doi.org/10.48550/arXiv.1709.09994
+                                                                                                             experimental set-ups and the manuscript. T.L. is the PI of the project, advised on model
+      (2017).
+                                                                                                             designs/implementations/experiments and helped with manuscript structure and writing.
+48.   Loos, S., Irving, G., Szegedy, C. & Kaliszyk, C. Deep network guided proof search. Preprint
+      at https://arxiv.org/abs/1701.06972 (2017).
+49.   Bansal, K., Loos, S., Rabe, M., Szegedy, C. & Wilcox S. in Proc. 36th International                    Competing interests The following US patent is related to this work: “Training language model
+      Conference on Machine Learning 454–463 (PMLR, 2019).                                                   neural networks using synthetic reasoning data”, filed in the United States Patent and Trademark
+50.   Selsam, D. et al. Learning a SAT solver from single-bit supervision. Preprint at https://doi.          Office (USPTO) on 1 May 2023 as application no. 63/499,469.
+      org/10.48550/arXiv.1802.03685 (2019).
+51.   Saxton, D., Grefenstette, E., Hill, F. & Kohli, P. Analysing mathematical reasoning abilities          Additional information
+      of neural models. Preprint at https://doi.org/10.48550/arXiv.1904.01557 (2019).                        Supplementary information The online version contains supplementary material available at
+52.   Lample, G. & Charton F. Deep learning for symbolic mathematics. Preprint at https://doi.               https://doi.org/10.1038/s41586-023-06747-5.
+      org/10.48550/arXiv.1912.01412 (2019).                                                                  Correspondence and requests for materials should be addressed to Trieu H. Trinh
+53.   Charton, F., Hayat, A. & Lample, G. Learning advanced mathematical computations from                   or Thang Luong.
+      examples. Preprint at https://doi.org/10.48550/arXiv.2006.06462 (2021).                                Peer review information Nature thanks the anonymous reviewers for their contribution to the
+54.   Collins, G. E. in Proc. 2nd GI Conference on Automata Theory and Formal Languages                      peer review of this work.
+      (ed. Barkhage, H.) 134–183 (Springer, 1975).                                                           Reprints and permissions information is available at http://www.nature.com/reprints.
+Extended Data Fig. 1 | The minimum number of parallel CPU workers to         closure. We observed that running time does not correlate with the difficulty of
+solve all 25 problems and stay under the time limit, given four parallel     the problem. For example, IMO 2019 P6 is much harder than IMO 2008 P1a, yet
+copies of the GPU V100-accelerated language model. Each problem has          it requires far less parallelization to reach a solution within IMO time limits.
+a different running time resulting from their unique size of the deduction
+Article
+
+
+
+
+Extended Data Fig. 2 | Side-by-side comparison of AlphaGeometry proof           symmetrical axis of both LN and AM) to obtain a broad set of conclusions all
+versus human proof on the translated IMO 2004 P1. Both the AlphaGeometry        at once. For algebraic deductions, AlphaGeometry cannot flesh out its
+and human solutions recognize the axis of symmetry between M and N through      intermediate derivations, which is implicitly carried out by Gaussian elimination,
+O. AlphaGeometry constructs point K to materialize this axis, whereas humans    therefore leading to low readability. Overall, this comparison points to the use
+simply use the existing point R for the same purpose. This is a case in which   of higher-level tools to improve the synthetic data, proof search and readability
+proof pruning itself cannot remove K and a sign of similar redundancy in our    of AlphaGeometry. Note that in the original IMO 2004 P1, the point P is proven
+synthetic data. To prove five-point concyclicity, AlphaGeometry outputs very    to be between B and C. The generalized version needs further contraints on the
+lengthy, low-level steps, whereas humans use a high-level insight (OR is the    position of O to satisfy this betweenness requirement.
+Extended Data Fig. 3 | Side-by-side comparison of human proof and                than 100 deduction steps, with many low-level steps that are extremely tedious
+AlphaGeometry proof for the IMO 2000 P6. This is a harder problem                to a human reader. This is a case in which the search-based solution is much less
+(average human score = 1.05/7), with a large number of objects in the problem    readable and much less intuitive than coordinate bashing. A more structural
+statements, resulting in a very crowded diagram. Left, the human solution uses   organization, that is, a high-level proof outline, can improve readability of the
+complex numbers. With a well-chosen coordinate system, the problem is greatly    AlphaGeometry solution substantially. Again, this suggests building into
+simplified and a solution follows naturally through algebraic manipulation.      AlphaGeometry many higher-level deduction rules to encapsulate large groups
+Right, AlphaGeometry solution involves two auxiliary constructions and more      of low-level deductions into fewer proof steps.
+Article
+
+
+
+
+Extended Data Fig. 4 | Side-by-side comparison of human proof and               quickly with the knowledge of Reim’s theorem, which is not included in the
+AlphaGeometry proof for the IMO 2019 P2. This is one out of five unsolved       deduction rule list used by the symbolic engine during synthetic data
+problems by AlphaGeometry. Left, the human solution uses both auxiliary         generation. Including such high-level theorems into the synthetic data
+constructions and barycentric coordinates. With a well-chosen coordinate        generation can greatly improve the coverage of synthetic data and thus
+system, a solution becomes available through advanced algebraic manipulation.   improve auxiliary construction capability. Further, higher-level steps using
+Right, AlphaGeometry solution when provided with the ground-truth auxiliary     Reim’s theorem also cut down the current proof length by a factor of 3.
+construction for a synthetic proof. This auxiliary construction can be found
+Extended Data Fig. 5 | Human proof for the IMO 2008 P6. This is an unsolved        with the auxiliary constructions used in this human proof also does not yield
+problem by AlphaGeometry and also the hardest one among all 30 problems,           any solution. There is also no guarantee that a synthetic solution exists for
+with an average human score of only 0.28/7. This human proof uses four auxiliary   AlphaGeometry, across all possible auxiliary constructions, without enhancing
+constructions (diameters of circles W1 and W2) and high-level theorems such        its symbolic deduction with more powerful rules. Again, this suggests that
+as the Pitot theorem and the notion of homothety. These high-level concepts        enhancing the symbolic engine with more powerful tools that IMO contestants
+are not available to our current version of the symbolic deduction engine both     are trained to use can improve both the synthetic data and the test-time
+during synthetic data generation and proof search. Supplying AlphaGeometry         performance of AlphaGeometry.
+Article
+
+
+
+
+Extended Data Fig. 6 | Analysis of AlphaGeometry performance under                 in Table 1, with AlphaGeometry solving almost all problems. c, The effect of
+changes made to its training and testing. a, The effect of reducing training       reducing beam size during test time on AlphaGeometry performance. At beam
+data on AlphaGeometry performance. At 20% of training data, AlphaGeometry          size 8, that is, a 64 times reduction from its full setting, AlphaGeometry still
+still solves 21 problems, outperforming all other baselines. b, Evaluation on a    solves 21 problems, outperforming all other baselines. d, The effect of reducing
+larger set of 231 geometry problems, covering a diverse range of sources outside   search depth on AlphaGeometry performance. At depth 2, AlphaGeometry still
+IMO competitions. The rankings of different machine solvers stays the same as      solves 21 problems, outperforming all other baselines.
+Extended Data Table 1 | List of actions to construct the random premises
+
+
+
+
+These actions include constructions to create new points that are related to others in a certain way, for example, collinear, incentre/excentre etc., and constructions that take a number as its
+parameter.
+Article
+Extended Data Table 2 | Three examples of algebraic reasoning (AR) in geometry theorem proving, with AR proof steps
+between the two tags <AR></AR>
+
+
+
+
+In AlphaGeometry, the engine AR can execute all three examples efficiently, under a unified procedure of Gaussian elimination.
+Extended Data Table 3 | Examples of auxiliary constructions in four different domains
+
+
+
+
+In these examples, the construction is key to the proof, whereas the remaining proof is relatively more mechanical. In AlphaGeometry, the mechanical portion is efficiently handled by the
+symbolic engine DD + AR.
+Article
+Extended Data Table 4 | A comparison between a geometry proof and an IMO inequality proof through the lens of the
+AlphaGeometry framework
+
+
+
+
+We assume AM-GM to be a symbolic engine capable of (1) algebraic rewrites and simplification and (2) applying the inequality rule of arithmetic means–geometric means. With the original
+premises, directly applying AM-GM fails to deliver a solution, which is similar to the geometry example, for which DD + AR fails to solve the simple problem. Some correct auxiliary constructions
+are necessary for both symbolic engines (DD + AR in the case of geometry and AM-GM in the case of inequality) to succeed, as shown in the last two rows of the table. Note that there are ten
+more common inequalities typically used at mathematical olympiads besides AM-GM, just as DD + AR itself encapsulates more than 50 different deduction rules for geometry commonly used at
+the olympiads.
+

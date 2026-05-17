@@ -1,13 +1,26 @@
 # Generalized Experiment Schema
 
 The project is one verifier-gated action-scoring architecture with first-class
-task schemas plus case-study discovery schemas. Prime gaps, grid paths, delayed
-claims, program synthesis, and the ARC-AGI sample/loader path must all be described
-with the same contract before they are used as evidence. The evidence maturity
-differs by task: prime has the complete production learned-gate table, grid has
-a budgeted legality gate, delayed-claim still needs a production learned-gate
-evaluation, and ARC is a fixed-sample scorer plus a narrow corpus-loader
-transform gate rather than a full ARC solver.
+task schemas plus case-study discovery schemas. Certified modular gate search,
+currently instantiated as `prime_gap`, grid paths, delayed claims, Signal flight
+control, program synthesis, and the ARC-AGI sample/loader path must all be
+described with the same contract before they are used as evidence.
+The evidence maturity
+differs by task: the `prime_gap` certified modular gate instance has the
+complete production learned-gate table, grid has budgeted certified cheap-local
+and exact-distance gate families, delayed-claim has parent-hash trace replay plus a
+production threshold+direct/indirect-margin gate/proposer loop with shifted/noisy
+stress rows, and ARC is a
+fixed-sample scorer plus a narrow corpus-loader transform gate. Signal flight now has a counterfactual generated
+trace path: each sampled state enumerates WASD hypotheses, replays them through
+Signal's authoritative simulator, and trains around certified progress,
+hull-loss, damage, and death outcomes. Signal also has a closed-loop rollout
+evaluator that runs trained checkpoints against `goal_heading_no_safety`,
+`flight_steer_to`, `neural_raw`, and `neural_guarded` controllers on identical
+deterministic episodes. The external websocket pilot remains available with no
+hand rock-avoidance safety wrapper. The summary rows report neural
+utility/regret/damage/death metrics beside primitive and deterministic flight
+baselines.
 
 There is also a separate shared-envelope multitask probe that includes the same
 ARC-AGI-1 sample. That probe is useful for testing whether the core C scorer can
@@ -96,6 +109,7 @@ cannot silently add verifier-derived inputs. Comparison rows also carry
 7. Every gate-learning claim needs matched-budget neural, random, grammar-order,
    structural-heuristic, and oracle orderings.
 8. Every replay claim uses stable action ids.
+9. Trace-producing rankers declare their deterministic ranking policy and emit action-id plus score-margin guards so float-sensitive ties are visible instead of silently changing replay semantics.
 
 ## Current Instantiations
 
@@ -103,10 +117,11 @@ Verifier-backed first-class task schemas:
 
 | Task | State | Actions | Verifier | Grammar | Certificate | Production gate status |
 | --- | --- | --- | --- | --- | --- | --- |
-| `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | modular rejection predicates | algebraic divisibility proof | learned-rule gate plus matched baselines |
-| `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality predicates; admissible pruning planned | cannot reject an optimal move | budgeted legality gate; richer baselines pending |
-| `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold predicates; richer claim rules planned | finite-generator safety check in symbolic smoke | production learned-gate table pending |
-| `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | copy/mask/intersection/geometric/object transform grammar | train-pair consistency plus unique grammar-consistent test prediction | fixed-sample certified transform gate plus ARC JSON directory loader and matched `NNProgram` proposer rows for narrow geometry/object evidence |
+| `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | modular rejection predicates | algebraic divisibility proof | certified modular gate search instance with learned-rule gate plus matched baselines |
+| `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality, local-dead-end, component-trap, clear-path admissible-bound, and distance-dominance predicates | cannot reject an optimal move | budgeted certified gate with family/budget proposer sweep |
+| `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold predicates plus direct utility-margin and indirect risk-margin predicates | finite-generator safety check over train+validation support | production threshold+margin gate plus matched proposer baselines and shifted/noisy stress rows; direct clean residual resolved, proxy/noisy frontier exposed |
+| `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | copy/mask/intersection/layer-relation/geometric/object transform grammar | train-pair consistency plus unique grammar-consistent test prediction | fixed-sample certified transform gate plus ARC JSON directory loader and matched `NNProgram` proposer rows for narrow geometry/object evidence |
+| `signal_flight` | Signal ship kinematics, hull, path, clearance observations, and target/control-point geometry | WASD key combinations | deterministic replay of WASD hypotheses in Signal's authoritative simulator | WASD control hypotheses now; richer flight predicates planned | replay-certified progress, hull loss, damage, and death outcomes | counterfactual utility scorer, closed-loop rollout evaluator, and external websocket pilot |
 
 Verifier-backed case-study discovery schemas:
 
@@ -123,22 +138,52 @@ Leakage status today:
 | `delayed_claim` | `forbidden` | 10 enabled observations |
 | `program_synthesis` | `priors_allowed` | 18 enabled structural-prior DSL abstraction features |
 | `arc_agi` | `forbidden` | 49 enabled observations over grid cells, output coordinate, candidate color, and action one-hot |
+| `signal_flight` | `forbidden` | 48 enabled observations over WASD candidate controls, kinematics, clearances, path state, hull, and heading |
+
+## Certified Modular Gate Search
+
+`prime_gap` is the current production member of a broader certified modular gate
+search family. A task belongs to this family when candidate rejection can be
+expressed as residue, divisibility, period, or congruence rules and every
+accepted rule can be checked by a deterministic certificate. The current
+prime-gap grammar proves that rejected `p + g` candidates are composite. Future
+members should keep the same schema surface while changing the arithmetic
+substrate: prime constellations for depth inside prime residues, k-free or
+polynomial-value filters for divisibility gates outside next-prime search, and
+Fibonacci/Lucas gates for recurrence-period structure.
+
+`examples/modular_gate_search.c` is the first implementation of that broader
+family boundary. It emits `crlp.modular_gate.summary.v1` and
+`crlp.modular_gate.rule_trace.v1` rows for three smoke-level domains:
+`prime_constellation`, `kfree_squarefree`, and `fibonacci_lucas`. The selector is
+matched-budget across `grammar_order`, `random`, `structural_heuristic`,
+`learned_structural`, `train_marginal_oracle`, and
+`validation_marginal_oracle` rows. The learned row is structural-only and trains
+against train-set rule coverage labels; support, marginal utility, and
+false-rejection counts stay labels or diagnostics. The smoke target requires
+zero held-out false rejections. These rows are extension evidence for the family
+definition; they are not yet a replacement for the production `prime_gap`
+learned-gate table.
 
 The first-class `arc_agi` default schema is still one fixed ARC-AGI-1 task. It
 emits both a neural cell-scorer comparison row and a certified transform-gate
 row. The same binary can also scan ARC-format JSON directories with `--task-dir`
 and emit per-task `crlp.arc_transform.summary.v1` rows plus a
-`crlp.arc_loader.summary.v1` aggregate. It also maps transform candidates into
-typed `NNProgram` rows and emits `crlp.program_proposer.summary.v1` for
+`crlp.arc_loader.summary.v1` aggregate. Transform rows include both
+`accepted_rules` and a deterministic `prediction_hash`, which lets invariance
+checks compare rule identity and predicted outputs without expanding every grid
+cell into CSV. It also maps transform candidates into typed `NNProgram` rows and
+emits `crlp.program_proposer.summary.v1` for
 grammar-order, structural, random, learned-program, and oracle orderings across
 matched program-budget curves. The learned proposer uses the shared
 `nn_program_encode_features()` encoder plus ARC task-level shape/color/object
 descriptors, and can be pretrained with `--program-train-dir` before evaluating
 another split. The loader evidence is intentionally narrow: grammar
-version 4 covers two same-height panel masks, same-shape color maps,
-foreground/object crops, rotations, flips, transposes, small integer scales,
-bbox drawing, small foreground translations, and largest connected-component
-crop/mask transforms. The multitask binary uses a separate fixed 96-wide
+version 14 covers two same-height panel masks, explicit layer-relation priors,
+same-shape color maps, foreground/object crops, separator/background line
+compression, separator-grid motif repeat, rotations, flips, transposes, small
+integer scales, bbox drawing, small foreground translations, and largest
+connected-component crop/mask transforms. The multitask binary uses a separate fixed 96-wide
 action-row envelope documented in
 [multitask-domain.md](multitask-domain.md).
 
@@ -226,6 +271,9 @@ Capacity and truncation-sensitive comparisons are machine-readable through:
 | `parameters`, `forward_flops` | actual model capacity from `nn_parameter_count` and `nn_forward_flop_count` when a neural proposer constructs a net |
 | `unified_action_updates`, `unified_rule_updates` | cross-role sampling counts for unified scorer rows |
 | `coverage_cache_hits`, `coverage_cache_misses`, `coverage_cache_writes` | coverage-blob reuse counters for rule-search runs that use `--coverage-cache-dir` |
+| `train_rejects`, `validation_rejects`, `test_rejects` | summed support over accepted rules; overlapping rules can credit the same state-action rejection more than once |
+| `train_marginal_rejects`, `validation_marginal_rejects`, `test_marginal_rejects` | accepted-order non-overlapping rejects credited only to the first accepted rule that rejects an action |
+| `train_marginal_false_rejections`, `validation_marginal_false_rejections`, `test_marginal_false_rejections` | accepted-order non-overlapping false rejections, using the same first-rejecting-rule attribution |
 
 Unified scorer rows in `prime_rule_search` are Phase 1 cross-role-transfer
 rows. They train one 96-wide shared scorer with action rows from the existing
@@ -239,8 +287,10 @@ mask/intersection, union, object-select-overlap, and color-map transforms. Its
 checker accepts a rule only when it matches all train pairs and every
 grammar-consistent rule agrees on the test output. That smoke path's
 object-select-overlap rule remains an alias for intersection. The standalone
-ARC loader is the path that now carries typed `NNProgram` rows and the largest
-connected-component primitive. Neither path is a general ARC solver claim.
+ARC loader is the path that now carries typed `NNProgram` rows, largest
+connected-component primitives, layer/compression priors, and separator-grid
+motif repeat. Both paths report transform-grammar coverage and certificate
+evidence.
 
 ## Shared Multitask Summary Rows
 
@@ -263,44 +313,67 @@ Fields:
 | `sample_count`, `candidate_count` | evaluation size and mean action count |
 | `top1`, `top5`, `top10`, `nll`, `ece`, `reliability_bins`, `confidence_mean`, `correct_confidence_mean`, `incorrect_confidence_mean`, `mean_rank` | ranking and calibration metrics |
 | `decision_utility`, `baseline_steps` | task-specific utility/probe fields when available |
+| `arc_fixed_grid_exact`, `arc_fixed_cell_accuracy`, `arc_fixed_prediction_hash`, `arc_fixed_targets`, `arc_fixed_predictions` | fixed `0520fde7` grid diagnostics on ARC summary rows |
+| `arc_fixed_confidence`, `arc_fixed_target_probability`, `arc_fixed_target_color_count`, `arc_fixed_predicted_color_count`, `arc_fixed_correct_target_color_count` | fixed-ARC per-cell/per-color diagnostics for distinguishing cell-mode failures from smooth scorer drift |
 
 The removed `prime_features` key should not reappear in multitask outputs.
 Prime residue predicates are intentionally outside the shared multitask envelope.
 
+The same binary also emits `crlp.multitask.epoch.v1` rows during shared training.
+Each row reports one domain's per-epoch mean loss, epoch update count, cumulative
+domain updates, hidden size, learning rate, seed, task set, feature envelope, and
+training order. These rows are diagnostics for curriculum/order and optimization
+experiments; they are not aggregate evaluation rows.
+
 ## Evidence Status
 
 `prime_gap` has the most complete gate ablation: no gate, fixed hand gate,
-learned certified gate, and fixed-budget proposer baselines. It should not be
-described as the project goal.
+learned certified gate, and fixed-budget proposer baselines. It should be
+described as the first certified modular gate search instance, not as the
+project goal.
 
-`grid_path` has raw versus budgeted certified legality-gate evaluation under
-two visible feature regimes: `no_manhattan_priors` for the clean scorer row and
-`with_manhattan_priors` as a priors-allowed ablation. The next version should
-add a richer admissible-pruning grammar and the same fixed-budget proposer
-baselines used by `prime_gap`.
+`grid_path` has raw versus budgeted certified gate evaluation under two visible
+feature regimes: `no_manhattan_priors` for the clean scorer row and
+`with_manhattan_priors` as a priors-allowed ablation. Its gate rows now split
+cheap-local predicates, bound-only clear-path predicates, cheap topology+bound
+predicates, the exact-distance oracle rule, and the mixed family. `--baseline-sweep`
+compares neural, random, grammar-order, structural-heuristic, and
+validation-oracle rule ordering under one budget, while `--budget-sweep`
+runs the family/budget grid with repeated neural and random seeds. Default neural
+selection is now marginal-aware: it targets train/validation residual utility, so
+the straight-line bound cannot consume budget after the two-segment bound has
+already covered its rejects. The raw support/marginal split remains in the result
+rows as an overlap diagnostic.
 
-`delayed_claim` supports supervised training, trace replay, and calibration
-evaluation in its production binary. Its threshold grammar carries a
-finite-generator certificate in the shared symbolic-domain smoke; the
-production learned-gate evaluation table is open work.
+`delayed_claim` supports supervised training, trace replay, calibration
+evaluation, matched-budget certified gate evaluation, and shifted/noisy stress
+evaluation in its production binary. Its direct threshold+margin grammar
+carries a finite-generator certificate: threshold rules prune dominated actions,
+while trust/request utility-margin rules resolve the clean and shifted
+deterministic residual with zero false rejections. The indirect risk-margin
+grammar is less decisive but safer under the observation-noise row. The next
+open work is noise-aware certification or abstaining bands for the hard
+uncertainty+noise slice, not basic gate wiring.
 
 ## Next Build Targets
 
 Substrate-engineering work that is *not* defending a paper claim and so does
 not appear in the paper Roadmap (`paper/paper.typ` `tab:roadmap`). For
 experiment-level items see that table; for the multitask operational plan see
-`docs/multitask-transfer-research-plan.md`.
+`docs/multitask-transfer-research-plan.md`. For the code-to-PDF claim layer
+that turns evidence rows into generated paper claims and gap reports, see
+`docs/self-authoring-paper-roadmap.md`.
 
 1. Move `grid_path` and `delayed_claim` out of monolithic examples into task
    modules with the same shape as `src/prime_gap/` (refactoring; precondition
    for richer per-task targets).
-2. Promote the delayed-claim certified gate from symbolic-domain smoke into the
-   production delayed-claim evaluation (cross-listed as R-X1 in the paper
-   Roadmap).
-3. Extend grid-path gates beyond simple legality to admissible pruning rules
-   (cross-listed as R-E1.2).
-4. Run proposer baselines for every task at matched rule budgets (Axis 2's
-   protocol applied to grid-path and delayed-claim; cross-listed under R-E2.1).
+2. Add noise-aware delayed-claim certificates or abstaining margin bands, then
+   repeat the stress rows across seeds.
+3. Port the grid-path family/budget-sweep discipline to delayed-claim
+   and report accepted-order marginal utility alongside per-rule support
+   (cross-listed as R-E1.2/R-E2.1 follow-up).
+4. Run repeated-seed proposer baselines for delayed-claim at matched rule
+   budgets, matching the grid-path budget sweep (cross-listed under R-E2.1).
 5. Run strict versus KL/entropy verifier RL on the certified tasks
    (cross-listed as R-E3.1).
 6. Report one cross-task table keyed by the shared schema:

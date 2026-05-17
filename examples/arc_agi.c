@@ -37,7 +37,7 @@ enum {
     ARC_ACCEPTED_RULES_BYTES = 2048,
     ARC_TRANSFORM_NAME_BYTES = 128,
     ARC_RULE_CANDIDATE_COUNT = 4096,
-    ARC_GRAMMAR_VERSION = 10,
+    ARC_GRAMMAR_VERSION = 15,
     ARC_LEARNED_COMPOSE_TOP = 16,
     ARC_LEARNED_COMPOSE_LIMIT = 256,
     ARC_HYPOTHESIS_PROPOSAL_CAPACITY = 256,
@@ -52,6 +52,7 @@ enum {
     ARC_HYPOTHESIS_SLOT_VALUE_BUCKETS = 32,
     ARC_HYPOTHESIS_PRIOR_MIN_PROPOSALS = 3,
     ARC_HYPOTHESIS_PRIOR_FEATURE_COUNT = NN_HYPOTHESIS_FEATURE_COUNT,
+    ARC_HYPOTHESIS_PRIOR_DEFAULT_HIDDEN = 24,
     ARC_HYPOTHESIS_PRIOR_EPOCHS = 32,
     ARC_PROGRAM_PROPOSER_BUDGET = 64,
     ARC_PROGRAM_BUDGET_GRID_COUNT = 4,
@@ -95,6 +96,13 @@ static const size_t ARC_PROGRAM_BUDGET_GRID[ARC_PROGRAM_BUDGET_GRID_COUNT] = {
     64,
 };
 
+static const size_t ARC_PROGRAM_BUDGET_TIGHT_GRID[ARC_PROGRAM_BUDGET_GRID_COUNT] = {
+    1,
+    2,
+    4,
+    8,
+};
+
 typedef enum {
     ARC_RULE_COPY_LEFT = 0,
     ARC_RULE_COPY_RIGHT = 1,
@@ -128,6 +136,13 @@ typedef enum {
     ARC_RULE_OBJECT_FILL_ENCLOSED = 29,
     ARC_RULE_OBJECT_RELATION_INDUCED = 30,
     ARC_RULE_HYPOTHESIS_APPLIED = 31,
+    ARC_RULE_LAYER_OVERLAP = 32,
+    ARC_RULE_LAYER_UNION = 33,
+    ARC_RULE_LAYER_XOR = 34,
+    ARC_RULE_LAYER_LEFT_ONLY = 35,
+    ARC_RULE_LAYER_RIGHT_ONLY = 36,
+    ARC_RULE_COMPRESS_COLOR_LINES = 37,
+    ARC_RULE_TILE_MOTIF_PARITY_REPEAT = 38,
 } ARCTransformRule;
 
 /* ARC-AGI-1 training task 0520fde7, reduced to balanced output-cell color scoring. */
@@ -238,7 +253,8 @@ static const NNExperimentSpec ARC_AGI_EXPERIMENT_SPEC = {
     .verifier_feedback = "target color, top-k correctness, NLL, calibration bins, and proposal rank",
     .rule_grammar =
         "copy_left, copy_right, mask_intersection, mask_union, object_select_overlap, "
-        "color_map, same_grid_color_map, crop, rotate, flip, transpose, scale, bbox, translate, "
+        "layer_overlap, layer_union, layer_xor, layer_left_only, layer_right_only, "
+        "color_map, same_grid_color_map, crop, compress_color_lines, tile_motif_parity_repeat, rotate, flip, transpose, scale, bbox, translate, "
         "connected_component_largest, object_relation_induced, learned_scale_composition",
     .certificate_checker =
         "train-pair consistency plus unique grammar-consistent test prediction, reported against compiled test output",
@@ -267,15 +283,26 @@ typedef struct {
     size_t program_budget;
     size_t program_train_max_tasks;
     size_t min_induction_evidence;
+    size_t hypothesis_prior_hidden;
+    size_t hypothesis_top_k;
     uint64_t seed;
     nn_real learning_rate;
     nn_real program_learning_rate;
     const char *save_path;
     const char *task_dir;
     const char *program_train_dir;
+    const char *hypothesis_library_prior_path;
+    const char *task_ids;
+    const char *exclude_task_ids;
     int loader_summary_only;
     int program_budget_grid;
     int induction_smoke;
+    int hypothesis_neural_prior_enabled;
+    int hypothesis_slot_prior_enabled;
+    int hypothesis_cold_start_enabled;
+    int hypothesis_structural_score_enabled;
+    int hypothesis_coverage_selection_enabled;
+    int hypothesis_train_filter_enabled;
 } ARCConfig;
 
 typedef struct {
@@ -454,6 +481,18 @@ typedef struct {
     size_t hypothesis_prior_samples;
     size_t hypothesis_prior_updates;
     double hypothesis_prior_loss;
+    size_t hypothesis_prior_hidden;
+    size_t hypothesis_top_k;
+    int hypothesis_neural_prior_enabled;
+    int hypothesis_slot_prior_enabled;
+    int hypothesis_cold_start_enabled;
+    int hypothesis_structural_score_enabled;
+    int hypothesis_coverage_selection_enabled;
+    int hypothesis_train_filter_enabled;
+    size_t hypothesis_library_entries;
+    size_t hypothesis_library_slot_rows;
+    size_t hypothesis_library_seeded_proposals;
+    size_t hypothesis_library_seeded_certified;
     double family_score[32];
     double relation_score[ARC_OBJECT_RELATION_KIND_COUNT];
     double relation_color_score[ARC_OBJECT_RELATION_KIND_COUNT][ARC_COLOR_COUNT][ARC_COLOR_COUNT];
@@ -511,6 +550,18 @@ struct ARCHypothesisSelectionStats {
     int coverage_used;
     int coverage_fallback;
     size_t coverage_events;
+    size_t hypothesis_prior_hidden;
+    size_t hypothesis_top_k;
+    int hypothesis_neural_prior_enabled;
+    int hypothesis_slot_prior_enabled;
+    int hypothesis_cold_start_enabled;
+    int hypothesis_structural_score_enabled;
+    int hypothesis_coverage_selection_enabled;
+    int hypothesis_train_filter_enabled;
+    size_t library_prior_entries;
+    size_t library_prior_slot_rows;
+    size_t library_prior_seeded_proposals;
+    size_t library_prior_seeded_certified;
     size_t template_attempted[ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY];
     size_t template_generated[ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY];
     size_t template_train_consistent_pre_cap[ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY];
@@ -596,6 +647,10 @@ static int arc_scene_unique_color_object(const ARCScene *scene,
 static int arc_apply_candidate(const ARCTransformCandidate *candidate,
                                const ARCGrid *input,
                                ARCGrid *output);
+static int arc_build_tile_motif_parity_repeat_candidate(const ARCTask *task,
+                                                        uint8_t background,
+                                                        size_t period,
+                                                        ARCTransformCandidate *candidate);
 static int arc_apply_hypothesis_candidate(const ARCTransformCandidate *candidate,
                                           const ARCGrid *input,
                                           ARCGrid *output);
@@ -606,6 +661,7 @@ static const NNHypothesisTemplate *arc_hypothesis_template_connect_aligned(void)
 static const NNHypothesisTemplate *arc_hypothesis_template_fill_enclosed(void);
 static const NNHypothesisTemplate *arc_hypothesis_template_object_extract(void);
 static const NNHypothesisTemplate *arc_hypothesis_template_extend_aligned_sequence(void);
+static const NNHypothesisTemplate *arc_hypothesis_template_tile_motif_repeat(void);
 static const ARCHypothesisTemplateBinding *arc_hypothesis_template_registry(size_t *count);
 static const ARCHypothesisTemplateBinding *arc_hypothesis_binding_for_template_id(uint32_t template_id);
 static int arc_hypothesis_from_candidate(const ARCTransformCandidate *candidate,
@@ -624,6 +680,8 @@ static int arc_candidate_from_extract_hypothesis(const NNHypothesis *hypothesis,
                                                  ARCTransformCandidate *candidate);
 static int arc_candidate_from_sequence_hypothesis(const NNHypothesis *hypothesis,
                                                   ARCTransformCandidate *candidate);
+static int arc_candidate_from_tile_motif_hypothesis(const NNHypothesis *hypothesis,
+                                                    ARCTransformCandidate *candidate);
 static int arc_apply_translate_hypothesis(const NNHypothesis *hypothesis,
                                           const ARCGrid *input,
                                           ARCGrid *output);
@@ -645,6 +703,9 @@ static int arc_apply_extract_hypothesis(const NNHypothesis *hypothesis,
 static int arc_apply_sequence_hypothesis(const NNHypothesis *hypothesis,
                                          const ARCGrid *input,
                                          ARCGrid *output);
+static int arc_apply_tile_motif_hypothesis(const NNHypothesis *hypothesis,
+                                           const ARCGrid *input,
+                                           ARCGrid *output);
 static size_t arc_induce_translate_hypotheses(const ARCHypothesisTemplateBinding *binding,
                                               const ARCTask *task,
                                               ARCProgramLearnedState *learned,
@@ -715,6 +776,16 @@ static size_t arc_induce_sequence_hypotheses(const ARCHypothesisTemplateBinding 
                                              size_t proposal_count,
                                              ARCHypothesisSelectionStats *stats,
                                              size_t template_index);
+static size_t arc_induce_tile_motif_hypotheses(const ARCHypothesisTemplateBinding *binding,
+                                               const ARCTask *task,
+                                               ARCProgramLearnedState *learned,
+                                               const ARCTransformCandidate *existing_candidates,
+                                               size_t existing_count,
+                                               ARCHypothesisProposal *proposals,
+                                               size_t proposal_capacity,
+                                               size_t proposal_count,
+                                               ARCHypothesisSelectionStats *stats,
+                                               size_t template_index);
 
 static int parse_size_text(const char *text, size_t *out_value)
 {
@@ -743,6 +814,21 @@ static int parse_u64_text(const char *text, uint64_t *out_value)
         return 0;
     }
     *out_value = (uint64_t)value;
+    return 1;
+}
+
+static int parse_i64_text(const char *text, int64_t *out_value)
+{
+    if (text == NULL || text[0] == '\0') {
+        return 0;
+    }
+    errno = 0;
+    char *end = NULL;
+    long long value = strtoll(text, &end, 10);
+    if (end == text || *end != '\0' || errno == ERANGE) {
+        return 0;
+    }
+    *out_value = (int64_t)value;
     return 1;
 }
 
@@ -920,6 +1006,52 @@ static int arc_candidate_is_object_relation(const ARCTransformCandidate *candida
             candidate->op == ARC_RULE_OBJECT_FILL_ENCLOSED);
 }
 
+static int arc_candidate_is_layer_program(const ARCTransformCandidate *candidate)
+{
+    return candidate != NULL &&
+           (candidate->op == ARC_RULE_LAYER_OVERLAP ||
+            candidate->op == ARC_RULE_LAYER_UNION ||
+            candidate->op == ARC_RULE_LAYER_XOR ||
+            candidate->op == ARC_RULE_LAYER_LEFT_ONLY ||
+            candidate->op == ARC_RULE_LAYER_RIGHT_ONLY);
+}
+
+static int arc_layer_relation_value(ARCTransformRule op, int left_on, int right_on)
+{
+    switch (op) {
+    case ARC_RULE_LAYER_OVERLAP:
+        return left_on && right_on;
+    case ARC_RULE_LAYER_UNION:
+        return left_on || right_on;
+    case ARC_RULE_LAYER_XOR:
+        return left_on != right_on;
+    case ARC_RULE_LAYER_LEFT_ONLY:
+        return left_on && !right_on;
+    case ARC_RULE_LAYER_RIGHT_ONLY:
+        return right_on && !left_on;
+    default:
+        return 0;
+    }
+}
+
+static const char *arc_layer_relation_name(ARCTransformRule op)
+{
+    switch (op) {
+    case ARC_RULE_LAYER_OVERLAP:
+        return "overlap";
+    case ARC_RULE_LAYER_UNION:
+        return "union";
+    case ARC_RULE_LAYER_XOR:
+        return "xor";
+    case ARC_RULE_LAYER_LEFT_ONLY:
+        return "left_only";
+    case ARC_RULE_LAYER_RIGHT_ONLY:
+        return "right_only";
+    default:
+        return "unknown";
+    }
+}
+
 static size_t arc_object_relation_kind(const ARCTransformCandidate *candidate)
 {
     if (candidate == NULL) {
@@ -1018,6 +1150,8 @@ static int arc_rule_can_end_composition(ARCTransformRule op)
     case ARC_RULE_CROP_BACKGROUND_RECOLOR:
     case ARC_RULE_CROP_COLOR:
     case ARC_RULE_CROP_COLOR_MASK:
+    case ARC_RULE_COMPRESS_COLOR_LINES:
+    case ARC_RULE_TILE_MOTIF_PARITY_REPEAT:
     case ARC_RULE_ROTATE90:
     case ARC_RULE_ROTATE180:
     case ARC_RULE_ROTATE270:
@@ -1042,6 +1176,11 @@ static int arc_rule_can_end_composition(ARCTransformRule op)
     case ARC_RULE_INTERSECTION:
     case ARC_RULE_UNION:
     case ARC_RULE_OBJECT_SELECT:
+    case ARC_RULE_LAYER_OVERLAP:
+    case ARC_RULE_LAYER_UNION:
+    case ARC_RULE_LAYER_XOR:
+    case ARC_RULE_LAYER_LEFT_ONLY:
+    case ARC_RULE_LAYER_RIGHT_ONLY:
     case ARC_RULE_COLOR_MAP_LEFT:
     case ARC_RULE_COMPOSED:
         return 0;
@@ -1923,6 +2062,11 @@ static size_t arc_build_candidates(const ARCTask *task,
         {ARC_RULE_INTERSECTION, "mask_intersection_color_"},
         {ARC_RULE_UNION, "mask_union_color_"},
         {ARC_RULE_OBJECT_SELECT, "object_select_overlap_color_"},
+        {ARC_RULE_LAYER_OVERLAP, "layer_overlap_color_"},
+        {ARC_RULE_LAYER_UNION, "layer_union_color_"},
+        {ARC_RULE_LAYER_XOR, "layer_xor_color_"},
+        {ARC_RULE_LAYER_LEFT_ONLY, "layer_left_only_color_"},
+        {ARC_RULE_LAYER_RIGHT_ONLY, "layer_right_only_color_"},
     };
 
     for (size_t template_id = 0;
@@ -2059,6 +2203,38 @@ static size_t arc_build_candidates(const ARCTask *task,
                      "crop_color_%u_mask_to_%u",
                      (unsigned)input_color,
                      (unsigned)output_color);
+            arc_add_candidate(candidates, capacity, &count, &candidate);
+        }
+    }
+
+    static const struct {
+        int dx;
+        int dy;
+        const char *suffix;
+    } compress_modes[] = {
+        {0, 1, "rows"},
+        {1, 0, "cols"},
+        {1, 1, "rows_cols"},
+    };
+    for (uint8_t color = 0; color < ARC_COLOR_COUNT; ++color) {
+        for (size_t mode = 0; mode < sizeof(compress_modes) / sizeof(compress_modes[0]); ++mode) {
+            arc_init_candidate(&candidate, ARC_RULE_COMPRESS_COLOR_LINES, "");
+            candidate.background_color = color;
+            candidate.dx = compress_modes[mode].dx;
+            candidate.dy = compress_modes[mode].dy;
+            snprintf(candidate.name,
+                     sizeof(candidate.name),
+                     "compress_color_%u_%s",
+                     (unsigned)color,
+                     compress_modes[mode].suffix);
+            arc_add_candidate(candidates, capacity, &count, &candidate);
+        }
+    }
+    for (uint8_t background = 0; background < ARC_COLOR_COUNT; ++background) {
+        if (arc_build_tile_motif_parity_repeat_candidate(task,
+                                                         background,
+                                                         2,
+                                                         &candidate)) {
             arc_add_candidate(candidates, capacity, &count, &candidate);
         }
     }
@@ -3041,6 +3217,15 @@ static int arc_apply_split_panel_candidate(const ARCTransformCandidate *candidat
             case ARC_RULE_OBJECT_SELECT:
                 output->cells[out] = left_on && right_on ? candidate->output_color : 0;
                 break;
+            case ARC_RULE_LAYER_OVERLAP:
+            case ARC_RULE_LAYER_UNION:
+            case ARC_RULE_LAYER_XOR:
+            case ARC_RULE_LAYER_LEFT_ONLY:
+            case ARC_RULE_LAYER_RIGHT_ONLY:
+                output->cells[out] = arc_layer_relation_value(candidate->op, left_on, right_on)
+                                         ? candidate->output_color
+                                         : 0;
+                break;
             case ARC_RULE_COLOR_MAP_LEFT:
                 output->cells[out] = left;
                 break;
@@ -3116,6 +3301,378 @@ static int arc_apply_crop_color(const ARCTransformCandidate *candidate,
     return 1;
 }
 
+static int arc_apply_compress_color_lines(const ARCTransformCandidate *candidate,
+                                          const ARCGrid *input,
+                                          ARCGrid *output)
+{
+    int keep_rows[ARC_MAX_GRID_HEIGHT];
+    int keep_cols[ARC_MAX_GRID_WIDTH];
+    size_t kept_rows = 0;
+    size_t kept_cols = 0;
+    int remove_rows = candidate->dy != 0;
+    int remove_cols = candidate->dx != 0;
+    if (!remove_rows && !remove_cols) {
+        return 0;
+    }
+
+    for (size_t y = 0; y < input->height; ++y) {
+        int all_color = 1;
+        for (size_t x = 0; x < input->width; ++x) {
+            if (input->cells[y * input->width + x] != candidate->background_color) {
+                all_color = 0;
+                break;
+            }
+        }
+        keep_rows[y] = !(remove_rows && all_color);
+        kept_rows += keep_rows[y] ? 1u : 0u;
+    }
+    for (size_t x = 0; x < input->width; ++x) {
+        int all_color = 1;
+        for (size_t y = 0; y < input->height; ++y) {
+            if (input->cells[y * input->width + x] != candidate->background_color) {
+                all_color = 0;
+                break;
+            }
+        }
+        keep_cols[x] = !(remove_cols && all_color);
+        kept_cols += keep_cols[x] ? 1u : 0u;
+    }
+    if (kept_rows == 0 || kept_cols == 0 ||
+        kept_rows > ARC_MAX_GRID_HEIGHT || kept_cols > ARC_MAX_GRID_WIDTH ||
+        kept_rows * kept_cols > ARC_MAX_GRID_CELLS) {
+        return 0;
+    }
+
+    arc_init_grid(output, kept_cols, kept_rows);
+    size_t out_y = 0;
+    for (size_t y = 0; y < input->height; ++y) {
+        if (!keep_rows[y]) {
+            continue;
+        }
+        size_t out_x = 0;
+        for (size_t x = 0; x < input->width; ++x) {
+            if (!keep_cols[x]) {
+                continue;
+            }
+            output->cells[out_y * output->width + out_x] =
+                input->cells[y * input->width + x];
+            ++out_x;
+        }
+        ++out_y;
+    }
+    return 1;
+}
+
+typedef struct {
+    size_t min;
+    size_t max;
+} ARCRange;
+
+static size_t arc_full_color_rows(const ARCGrid *grid,
+                                  uint8_t color,
+                                  size_t *rows,
+                                  size_t capacity)
+{
+    size_t count = 0;
+    for (size_t y = 0; y < grid->height; ++y) {
+        int all_color = 1;
+        for (size_t x = 0; x < grid->width; ++x) {
+            if (grid->cells[y * grid->width + x] != color) {
+                all_color = 0;
+                break;
+            }
+        }
+        if (all_color && count < capacity) {
+            rows[count++] = y;
+        }
+    }
+    return count;
+}
+
+static size_t arc_full_color_cols(const ARCGrid *grid,
+                                  uint8_t color,
+                                  size_t *cols,
+                                  size_t capacity)
+{
+    size_t count = 0;
+    for (size_t x = 0; x < grid->width; ++x) {
+        int all_color = 1;
+        for (size_t y = 0; y < grid->height; ++y) {
+            if (grid->cells[y * grid->width + x] != color) {
+                all_color = 0;
+                break;
+            }
+        }
+        if (all_color && count < capacity) {
+            cols[count++] = x;
+        }
+    }
+    return count;
+}
+
+static size_t arc_ranges_from_separators(size_t extent,
+                                         const size_t *separators,
+                                         size_t separator_count,
+                                         ARCRange *ranges,
+                                         size_t capacity)
+{
+    size_t count = 0;
+    size_t start = 0;
+    for (size_t i = 0; i < separator_count; ++i) {
+        size_t separator = separators[i];
+        if (separator > start && count < capacity) {
+            ranges[count].min = start;
+            ranges[count].max = separator - 1u;
+            ++count;
+        }
+        start = separator + 1u;
+    }
+    if (start < extent && count < capacity) {
+        ranges[count].min = start;
+        ranges[count].max = extent - 1u;
+        ++count;
+    }
+    return count;
+}
+
+static size_t arc_regular_tile_extent(const ARCRange *ranges, size_t count)
+{
+    if (count == 0) {
+        return 0;
+    }
+    size_t base = ranges[0].max - ranges[0].min + 1u;
+    for (size_t i = 0; i < count; ++i) {
+        size_t extent = ranges[i].max - ranges[i].min + 1u;
+        if (extent != base && !(i + 1u == count && extent <= base)) {
+            return 0;
+        }
+    }
+    return base;
+}
+
+static int arc_find_tile_motif_lattice(const ARCGrid *input,
+                                       uint8_t background,
+                                       uint8_t *separator_out,
+                                       ARCRange *row_ranges,
+                                       size_t *row_count_out,
+                                       ARCRange *col_ranges,
+                                       size_t *col_count_out,
+                                       size_t *tile_height_out,
+                                       size_t *tile_width_out)
+{
+    uint8_t separator = 0;
+    size_t found = 0;
+    ARCRange found_rows[ARC_MAX_GRID_HEIGHT];
+    ARCRange found_cols[ARC_MAX_GRID_WIDTH];
+    size_t found_row_count = 0;
+    size_t found_col_count = 0;
+    size_t found_tile_height = 0;
+    size_t found_tile_width = 0;
+
+    for (uint8_t color = 0; color < ARC_COLOR_COUNT; ++color) {
+        if (color == background) {
+            continue;
+        }
+        size_t full_rows[ARC_MAX_GRID_HEIGHT];
+        size_t full_cols[ARC_MAX_GRID_WIDTH];
+        size_t full_row_count =
+            arc_full_color_rows(input, color, full_rows, ARC_MAX_GRID_HEIGHT);
+        size_t full_col_count =
+            arc_full_color_cols(input, color, full_cols, ARC_MAX_GRID_WIDTH);
+        if (full_row_count == 0 || full_col_count == 0) {
+            continue;
+        }
+
+        ARCRange candidate_rows[ARC_MAX_GRID_HEIGHT];
+        ARCRange candidate_cols[ARC_MAX_GRID_WIDTH];
+        size_t candidate_row_count =
+            arc_ranges_from_separators(input->height,
+                                       full_rows,
+                                       full_row_count,
+                                       candidate_rows,
+                                       ARC_MAX_GRID_HEIGHT);
+        size_t candidate_col_count =
+            arc_ranges_from_separators(input->width,
+                                       full_cols,
+                                       full_col_count,
+                                       candidate_cols,
+                                       ARC_MAX_GRID_WIDTH);
+        size_t tile_height =
+            arc_regular_tile_extent(candidate_rows, candidate_row_count);
+        size_t tile_width =
+            arc_regular_tile_extent(candidate_cols, candidate_col_count);
+        if (candidate_row_count < 2 || candidate_col_count < 2 ||
+            tile_height == 0 || tile_width == 0) {
+            continue;
+        }
+
+        separator = color;
+        found_row_count = candidate_row_count;
+        found_col_count = candidate_col_count;
+        found_tile_height = tile_height;
+        found_tile_width = tile_width;
+        memcpy(found_rows, candidate_rows, sizeof(candidate_rows));
+        memcpy(found_cols, candidate_cols, sizeof(candidate_cols));
+        ++found;
+    }
+
+    if (found != 1) {
+        return 0;
+    }
+    if (separator_out != NULL) {
+        *separator_out = separator;
+    }
+    if (row_ranges != NULL) {
+        memcpy(row_ranges, found_rows, sizeof(found_rows));
+    }
+    if (col_ranges != NULL) {
+        memcpy(col_ranges, found_cols, sizeof(found_cols));
+    }
+    if (row_count_out != NULL) {
+        *row_count_out = found_row_count;
+    }
+    if (col_count_out != NULL) {
+        *col_count_out = found_col_count;
+    }
+    if (tile_height_out != NULL) {
+        *tile_height_out = found_tile_height;
+    }
+    if (tile_width_out != NULL) {
+        *tile_width_out = found_tile_width;
+    }
+    return 1;
+}
+
+static int arc_tile_has_motif(const ARCGrid *input,
+                              const ARCRange *row_range,
+                              const ARCRange *col_range,
+                              uint8_t background,
+                              uint8_t separator)
+{
+    for (size_t y = row_range->min; y <= row_range->max; ++y) {
+        for (size_t x = col_range->min; x <= col_range->max; ++x) {
+            uint8_t value = input->cells[y * input->width + x];
+            if (value != background && value != separator) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static int arc_apply_tile_motif_parity_repeat_candidate(const ARCTransformCandidate *candidate,
+                                                        const ARCGrid *input,
+                                                        ARCGrid *output)
+{
+    uint8_t separator = 0;
+    ARCRange row_ranges[ARC_MAX_GRID_HEIGHT];
+    ARCRange col_ranges[ARC_MAX_GRID_WIDTH];
+    size_t row_count = 0;
+    size_t col_count = 0;
+    size_t tile_height = 0;
+    size_t tile_width = 0;
+    size_t period = candidate->scale == 0 ? 2u : candidate->scale;
+    if (period < 2 ||
+        !arc_find_tile_motif_lattice(input,
+                                     candidate->background_color,
+                                     &separator,
+                                     row_ranges,
+                                     &row_count,
+                                     col_ranges,
+                                     &col_count,
+                                     &tile_height,
+                                     &tile_width)) {
+        return 0;
+    }
+
+    size_t source_row = 0;
+    size_t source_col = 0;
+    size_t motif_count = 0;
+    for (size_t tile_y = 0; tile_y < row_count; ++tile_y) {
+        for (size_t tile_x = 0; tile_x < col_count; ++tile_x) {
+            if (!arc_tile_has_motif(input,
+                                    &row_ranges[tile_y],
+                                    &col_ranges[tile_x],
+                                    candidate->background_color,
+                                    separator)) {
+                continue;
+            }
+            source_row = tile_y;
+            source_col = tile_x;
+            ++motif_count;
+        }
+    }
+    if (motif_count != 1 ||
+        row_ranges[source_row].max - row_ranges[source_row].min + 1u != tile_height ||
+        col_ranges[source_col].max - col_ranges[source_col].min + 1u != tile_width) {
+        return 0;
+    }
+
+    *output = *input;
+    int changed = 0;
+    const ARCRange *source_y = &row_ranges[source_row];
+    const ARCRange *source_x = &col_ranges[source_col];
+    for (size_t tile_y = 0; tile_y < row_count; ++tile_y) {
+        if (tile_y % period != source_row % period) {
+            continue;
+        }
+        size_t out_height = row_ranges[tile_y].max - row_ranges[tile_y].min + 1u;
+        size_t copy_height = out_height < tile_height ? out_height : tile_height;
+        for (size_t tile_x = 0; tile_x < col_count; ++tile_x) {
+            if (tile_x % period != source_col % period) {
+                continue;
+            }
+            size_t out_width = col_ranges[tile_x].max - col_ranges[tile_x].min + 1u;
+            size_t copy_width = out_width < tile_width ? out_width : tile_width;
+            for (size_t dy = 0; dy < copy_height; ++dy) {
+                for (size_t dx = 0; dx < copy_width; ++dx) {
+                    size_t source_cell =
+                        (source_y->min + dy) * input->width + source_x->min + dx;
+                    size_t output_cell =
+                        (row_ranges[tile_y].min + dy) * output->width +
+                        col_ranges[tile_x].min + dx;
+                    uint8_t value = input->cells[source_cell];
+                    if (output->cells[output_cell] != value) {
+                        output->cells[output_cell] = value;
+                        changed = 1;
+                    }
+                }
+            }
+        }
+    }
+    return changed;
+}
+
+static int arc_build_tile_motif_parity_repeat_candidate(const ARCTask *task,
+                                                        uint8_t background,
+                                                        size_t period,
+                                                        ARCTransformCandidate *candidate)
+{
+    arc_init_candidate(candidate, ARC_RULE_TILE_MOTIF_PARITY_REPEAT, "");
+    candidate->background_color = background;
+    candidate->scale = period;
+    snprintf(candidate->name,
+             sizeof(candidate->name),
+             "tile_motif_parity_repeat_bg_%u_period_%zu",
+             (unsigned)background,
+             period);
+
+    int changed_any = 0;
+    for (size_t pair = 0; pair < task->train_count; ++pair) {
+        ARCGrid produced;
+        if (!task->train[pair].has_output ||
+            !arc_grid_same_shape(&task->train[pair].input, &task->train[pair].output) ||
+            !arc_apply_tile_motif_parity_repeat_candidate(candidate,
+                                                          &task->train[pair].input,
+                                                          &produced) ||
+            !arc_grid_equal(&produced, &task->train[pair].output)) {
+            return 0;
+        }
+        changed_any = changed_any || !arc_grid_equal(&task->train[pair].input, &produced);
+    }
+    return changed_any;
+}
+
 static int arc_apply_object_translate_candidate(const ARCTransformCandidate *candidate,
                                                 const ARCGrid *input,
                                                 ARCGrid *output)
@@ -3174,6 +3731,11 @@ static int arc_apply_candidate(const ARCTransformCandidate *candidate,
     case ARC_RULE_INTERSECTION:
     case ARC_RULE_UNION:
     case ARC_RULE_OBJECT_SELECT:
+    case ARC_RULE_LAYER_OVERLAP:
+    case ARC_RULE_LAYER_UNION:
+    case ARC_RULE_LAYER_XOR:
+    case ARC_RULE_LAYER_LEFT_ONLY:
+    case ARC_RULE_LAYER_RIGHT_ONLY:
     case ARC_RULE_COLOR_MAP_LEFT:
         return arc_apply_split_panel_candidate(candidate, input, output);
     case ARC_RULE_GRID_IDENTITY:
@@ -3200,6 +3762,10 @@ static int arc_apply_candidate(const ARCTransformCandidate *candidate,
         return arc_apply_crop_color(candidate, input, output, 0);
     case ARC_RULE_CROP_COLOR_MASK:
         return arc_apply_crop_color(candidate, input, output, 1);
+    case ARC_RULE_COMPRESS_COLOR_LINES:
+        return arc_apply_compress_color_lines(candidate, input, output);
+    case ARC_RULE_TILE_MOTIF_PARITY_REPEAT:
+        return arc_apply_tile_motif_parity_repeat_candidate(candidate, input, output);
     case ARC_RULE_OBJECT_CROP_LARGEST:
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
@@ -3511,7 +4077,10 @@ static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
     case ARC_RULE_CROP_BACKGROUND_RECOLOR:
     case ARC_RULE_CROP_COLOR:
     case ARC_RULE_CROP_COLOR_MASK:
+    case ARC_RULE_COMPRESS_COLOR_LINES:
         return 4;
+    case ARC_RULE_TILE_MOTIF_PARITY_REPEAT:
+        return 16;
     case ARC_RULE_OBJECT_CROP_LARGEST:
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
@@ -3531,6 +4100,11 @@ static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
     case ARC_RULE_INTERSECTION:
     case ARC_RULE_UNION:
     case ARC_RULE_OBJECT_SELECT:
+    case ARC_RULE_LAYER_OVERLAP:
+    case ARC_RULE_LAYER_UNION:
+    case ARC_RULE_LAYER_XOR:
+    case ARC_RULE_LAYER_LEFT_ONLY:
+    case ARC_RULE_LAYER_RIGHT_ONLY:
         return 6;
     case ARC_RULE_BBOX_OUTLINE:
     case ARC_RULE_BBOX_FILL:
@@ -3575,6 +4149,11 @@ static double arc_structural_program_score(const ARCTransformCandidate *candidat
     case ARC_RULE_INTERSECTION:
     case ARC_RULE_UNION:
     case ARC_RULE_OBJECT_SELECT:
+    case ARC_RULE_LAYER_OVERLAP:
+    case ARC_RULE_LAYER_UNION:
+    case ARC_RULE_LAYER_XOR:
+    case ARC_RULE_LAYER_LEFT_ONLY:
+    case ARC_RULE_LAYER_RIGHT_ONLY:
         return 104.0;
     case ARC_RULE_COPY_LEFT:
     case ARC_RULE_COPY_RIGHT:
@@ -3582,7 +4161,10 @@ static double arc_structural_program_score(const ARCTransformCandidate *candidat
         return 102.0;
     case ARC_RULE_CROP_BACKGROUND:
     case ARC_RULE_CROP_COLOR:
+    case ARC_RULE_COMPRESS_COLOR_LINES:
         return 100.0;
+    case ARC_RULE_TILE_MOTIF_PARITY_REPEAT:
+        return 106.0 - (double)candidate->scale;
     case ARC_RULE_OBJECT_CROP_LARGEST:
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
@@ -3623,6 +4205,136 @@ static double arc_structural_program_score(const ARCTransformCandidate *candidat
         return -40.0;
     }
     return 0.0;
+}
+
+static int arc_task_has_split_panel_shape(const ARCTask *task)
+{
+    if (task == NULL || task->train_count == 0) {
+        return 0;
+    }
+    for (size_t pair = 0; pair < task->train_count; ++pair) {
+        const ARCGrid *input = &task->train[pair].input;
+        const ARCGrid *output = &task->train[pair].output;
+        if (!task->train[pair].has_output ||
+            input->height == 0 ||
+            input->height != output->height ||
+            input->width != (2u * output->width + 1u) ||
+            output->width == 0) {
+            return 0;
+        }
+        size_t separator_x = output->width;
+        uint8_t separator = input->cells[separator_x];
+        if (separator == 0) {
+            return 0;
+        }
+        for (size_t y = 0; y < input->height; ++y) {
+            if (input->cells[y * input->width + separator_x] != separator) {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+static uint8_t arc_task_dominant_output_color(const ARCTask *task)
+{
+    size_t counts[ARC_COLOR_COUNT] = {0};
+    if (task == NULL) {
+        return 0;
+    }
+    for (size_t pair = 0; pair < task->train_count; ++pair) {
+        if (!task->train[pair].has_output) {
+            continue;
+        }
+        const ARCGrid *output = &task->train[pair].output;
+        size_t cells = arc_grid_cells(output);
+        for (size_t cell = 0; cell < cells; ++cell) {
+            uint8_t color = output->cells[cell];
+            if (color != 0 && color < ARC_COLOR_COUNT) {
+                ++counts[color];
+            }
+        }
+    }
+
+    uint8_t best_color = 0;
+    size_t best_count = 0;
+    for (uint8_t color = 1; color < ARC_COLOR_COUNT; ++color) {
+        if (counts[color] > best_count) {
+            best_count = counts[color];
+            best_color = color;
+        }
+    }
+    return best_color;
+}
+
+static size_t arc_layer_relation_count(const ARCTransformCandidate *candidate,
+                                       const ARCGrid *input,
+                                       const ARCGrid *output)
+{
+    if (candidate == NULL || input == NULL || output == NULL ||
+        input->width != 2u * output->width + 1u ||
+        input->height != output->height) {
+        return 0;
+    }
+    size_t right_offset = output->width + 1u;
+    size_t count = 0;
+    for (size_t y = 0; y < output->height; ++y) {
+        for (size_t x = 0; x < output->width; ++x) {
+            int left_on = input->cells[y * input->width + x] != 0;
+            int right_on = input->cells[y * input->width + right_offset + x] != 0;
+            count += arc_layer_relation_value(candidate->op, left_on, right_on) ? 1u : 0u;
+        }
+    }
+    return count;
+}
+
+static double arc_task_layer_count_error(const ARCTask *task,
+                                         const ARCTransformCandidate *candidate)
+{
+    if (task == NULL || candidate == NULL || !arc_candidate_is_layer_program(candidate) ||
+        !arc_task_has_split_panel_shape(task) || task->train_count == 0) {
+        return 1.0e9;
+    }
+    double error = 0.0;
+    size_t pairs = 0;
+    for (size_t pair = 0; pair < task->train_count; ++pair) {
+        if (!task->train[pair].has_output) {
+            continue;
+        }
+        size_t predicted = arc_layer_relation_count(candidate,
+                                                    &task->train[pair].input,
+                                                    &task->train[pair].output);
+        size_t observed = arc_count_non_background(&task->train[pair].output, 0);
+        error += fabs((double)predicted - (double)observed);
+        ++pairs;
+    }
+    return pairs == 0 ? 1.0e9 : error / (double)pairs;
+}
+
+static double arc_task_conditioned_program_score(const ARCTask *task,
+                                                 const ARCTransformCandidate *candidate)
+{
+    double score = arc_structural_program_score(candidate);
+    if (!arc_candidate_is_layer_program(candidate)) {
+        return score;
+    }
+    if (!arc_task_has_split_panel_shape(task)) {
+        return score - 24.0;
+    }
+
+    score += 60.0;
+    uint8_t output_color = arc_task_dominant_output_color(task);
+    score += output_color != 0 && candidate->output_color == output_color ? 40.0 : -40.0;
+
+    double count_error = arc_task_layer_count_error(task, candidate);
+    if (count_error <= 0.0) {
+        score += 35.0;
+    } else if (count_error < 8.0) {
+        score += 24.0 / (1.0 + count_error);
+    } else {
+        score -= 16.0;
+    }
+    return score;
 }
 
 static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
@@ -3743,6 +4455,47 @@ static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
         nn_program_add_feature(&relation,
                                (nn_real)((double)candidate->dy / (double)ARC_MAX_GRID_HEIGHT));
         if (!nn_program_compose(program, &scene, &relation, candidate->name)) {
+            return 0;
+        }
+    } else if (arc_candidate_is_layer_program(candidate)) {
+        NNProgram layers;
+        NNProgram relation;
+        char relation_name[NN_PROGRAM_MAX_NAME];
+        snprintf(relation_name,
+                 sizeof(relation_name),
+                 "render_layer_%s",
+                 arc_layer_relation_name(candidate->op));
+        nn_program_init(&layers,
+                        "arc_agi",
+                        "split_panel_layers",
+                        NN_PROGRAM_KIND_TRANSFORM,
+                        NN_PROGRAM_VALUE_GRID,
+                        NN_PROGRAM_VALUE_OBJECT_SET,
+                        120);
+        nn_program_add_param(&layers, "background", 0.0, 0);
+        nn_program_init(&relation,
+                        "arc_agi",
+                        relation_name,
+                        NN_PROGRAM_KIND_TRANSFORM,
+                        NN_PROGRAM_VALUE_OBJECT_SET,
+                        NN_PROGRAM_VALUE_GRID,
+                        121);
+        nn_program_add_param(&relation,
+                             "relation",
+                             (double)(candidate->op - ARC_RULE_LAYER_OVERLAP),
+                             (int64_t)(candidate->op - ARC_RULE_LAYER_OVERLAP));
+        nn_program_add_param(&relation,
+                             "output_color",
+                             (double)candidate->output_color,
+                             candidate->output_color);
+        nn_program_add_param(&relation,
+                             "relation_name_hash",
+                             (double)(candidate->op - ARC_RULE_LAYER_OVERLAP),
+                             (int64_t)(candidate->op - ARC_RULE_LAYER_OVERLAP));
+        nn_program_add_feature(&relation,
+                               (nn_real)((double)(candidate->op - ARC_RULE_LAYER_OVERLAP) / 4.0));
+        nn_program_add_feature(&relation, (nn_real)((double)candidate->output_color / 9.0));
+        if (!nn_program_compose(program, &layers, &relation, candidate->name)) {
             return 0;
         }
     } else if (candidate->op == ARC_RULE_OBJECT_TRANSLATE) {
@@ -3993,8 +4746,8 @@ static int arc_candidate_to_program(const ARCTransformCandidate *candidate,
                                  candidate->color_map[color]);
         }
     }
-    nn_program_add_feature(program, (nn_real)((double)candidate->op / 32.0));
-    nn_program_add_feature(program, (nn_real)((double)arc_candidate_family(candidate) / 16.0));
+    nn_program_add_feature(program, (nn_real)((double)candidate->op / 39.0));
+    nn_program_add_feature(program, (nn_real)((double)arc_candidate_family(candidate) / 17.0));
     nn_program_add_feature(program, (nn_real)((double)candidate->background_color / 9.0));
     nn_program_add_feature(program, (nn_real)((double)candidate->output_color / 9.0));
     nn_program_add_feature(program, (nn_real)(arc_candidate_is_object_program(candidate) ? 1.0 : 0.0));
@@ -4153,12 +4906,15 @@ static NeuralNet *create_arc_program_model(unsigned int seed)
     return nn_create_config(&config);
 }
 
-static NeuralNet *create_arc_hypothesis_prior_model(unsigned int seed)
+static NeuralNet *create_arc_hypothesis_prior_model(unsigned int seed, size_t hidden)
 {
-    static const size_t layers[] = {ARC_HYPOTHESIS_PRIOR_FEATURE_COUNT, 24, 1};
+    size_t layers[3] = {ARC_HYPOTHESIS_PRIOR_FEATURE_COUNT, hidden, 1};
     NNConfig config;
     config.layer_sizes = layers;
-    config.layer_count = sizeof(layers) / sizeof(layers[0]);
+    config.layer_count = hidden == 0 ? 2u : 3u;
+    if (hidden == 0) {
+        layers[1] = 1;
+    }
     config.seed = seed ^ 0x9e43a71bu;
     config.hidden_activation = NN_ACTIVATION_RELU;
     config.output_activation = NN_ACTIVATION_LINEAR;
@@ -4166,12 +4922,36 @@ static NeuralNet *create_arc_hypothesis_prior_model(unsigned int seed)
     return nn_create_config(&config);
 }
 
-static int arc_program_learned_init(ARCProgramLearnedState *state, unsigned int seed)
+static int arc_program_learned_init(ARCProgramLearnedState *state,
+                                    const ARCConfig *config,
+                                    unsigned int seed)
 {
     memset(state, 0, sizeof(*state));
+    state->hypothesis_prior_hidden =
+        config == NULL ? ARC_HYPOTHESIS_PRIOR_DEFAULT_HIDDEN
+                       : config->hypothesis_prior_hidden;
+    state->hypothesis_top_k =
+        config == NULL ? ARC_HYPOTHESIS_TOP_K : config->hypothesis_top_k;
+    state->hypothesis_neural_prior_enabled =
+        config == NULL ? 1 : config->hypothesis_neural_prior_enabled;
+    state->hypothesis_slot_prior_enabled =
+        config == NULL ? 1 : config->hypothesis_slot_prior_enabled;
+    state->hypothesis_cold_start_enabled =
+        config == NULL ? 1 : config->hypothesis_cold_start_enabled;
+    state->hypothesis_structural_score_enabled =
+        config == NULL ? 1 : config->hypothesis_structural_score_enabled;
+    state->hypothesis_coverage_selection_enabled =
+        config == NULL ? 1 : config->hypothesis_coverage_selection_enabled;
+    state->hypothesis_train_filter_enabled =
+        config == NULL ? 1 : config->hypothesis_train_filter_enabled;
     state->net = create_arc_program_model(seed);
-    state->hypothesis_prior_net = create_arc_hypothesis_prior_model(seed);
-    if (state->net == NULL || state->hypothesis_prior_net == NULL) {
+    if (state->hypothesis_neural_prior_enabled) {
+        state->hypothesis_prior_net =
+            create_arc_hypothesis_prior_model(seed, state->hypothesis_prior_hidden);
+    }
+    if (state->net == NULL ||
+        (state->hypothesis_neural_prior_enabled &&
+         state->hypothesis_prior_net == NULL)) {
         nn_free(state->net);
         nn_free(state->hypothesis_prior_net);
         memset(state, 0, sizeof(*state));
@@ -4207,6 +4987,8 @@ static size_t arc_hypothesis_template_bucket(uint32_t template_id)
         return 5;
     case 1030:
         return 6;
+    case 1031:
+        return 7;
     default:
         return (size_t)(template_id % ARC_HYPOTHESIS_TEMPLATE_BUCKETS);
     }
@@ -4237,18 +5019,187 @@ static uint64_t arc_hypothesis_prior_mix(uint64_t hash, uint64_t value)
     return hash;
 }
 
-static size_t arc_hypothesis_slot_value_bucket(const NNHypothesis *hypothesis,
-                                               const NNHypothesisSlotValue *slot)
+static size_t arc_hypothesis_slot_value_bucket_for(uint32_t template_id,
+                                                   const char *slot_name,
+                                                   NNHypothesisSlotType slot_type,
+                                                   int64_t slot_integer)
 {
-    uint64_t hash = hypothesis != NULL && hypothesis->template_ref != NULL
-                        ? hypothesis->template_ref->template_id
-                        : 0;
-    hash = arc_hypothesis_prior_mix(hash, (uint64_t)slot->type);
-    hash = arc_hypothesis_prior_mix(hash, (uint64_t)slot->integer);
-    for (const unsigned char *p = (const unsigned char *)slot->name; *p != '\0'; ++p) {
+    uint64_t hash = template_id;
+    hash = arc_hypothesis_prior_mix(hash, (uint64_t)slot_type);
+    hash = arc_hypothesis_prior_mix(hash, (uint64_t)slot_integer);
+    for (const unsigned char *p = (const unsigned char *)slot_name;
+         p != NULL && *p != '\0';
+         ++p) {
         hash = arc_hypothesis_prior_mix(hash, *p);
     }
     return (size_t)(hash % ARC_HYPOTHESIS_SLOT_VALUE_BUCKETS);
+}
+
+static size_t arc_hypothesis_slot_value_bucket(const NNHypothesis *hypothesis,
+                                               const NNHypothesisSlotValue *slot)
+{
+    uint32_t template_id = hypothesis != NULL && hypothesis->template_ref != NULL
+                               ? hypothesis->template_ref->template_id
+                               : 0;
+    return arc_hypothesis_slot_value_bucket_for(template_id,
+                                                slot->name,
+                                                slot->type,
+                                                slot->integer);
+}
+
+static int arc_hypothesis_slot_type_from_name(const char *name,
+                                              NNHypothesisSlotType *type_out)
+{
+    if (name == NULL || type_out == NULL) {
+        return 0;
+    }
+    if (strcmp(name, "integer") == 0) {
+        *type_out = NN_HYPOTHESIS_SLOT_INTEGER;
+    } else if (strcmp(name, "color") == 0) {
+        *type_out = NN_HYPOTHESIS_SLOT_COLOR;
+    } else if (strcmp(name, "offset") == 0) {
+        *type_out = NN_HYPOTHESIS_SLOT_OFFSET;
+    } else if (strcmp(name, "selector_kind") == 0) {
+        *type_out = NN_HYPOTHESIS_SLOT_SELECTOR_KIND;
+    } else if (strcmp(name, "relation_kind") == 0) {
+        *type_out = NN_HYPOTHESIS_SLOT_RELATION_KIND;
+    } else if (strcmp(name, "render_mode") == 0) {
+        *type_out = NN_HYPOTHESIS_SLOT_RENDER_MODE;
+    } else if (strcmp(name, "reference_color") == 0) {
+        *type_out = NN_HYPOTHESIS_SLOT_REFERENCE_COLOR;
+    } else if (strcmp(name, "scalar") == 0) {
+        *type_out = NN_HYPOTHESIS_SLOT_SCALAR;
+    } else if (strcmp(name, "boolean") == 0) {
+        *type_out = NN_HYPOTHESIS_SLOT_BOOLEAN;
+    } else if (strcmp(name, "custom") == 0) {
+        *type_out = NN_HYPOTHESIS_SLOT_CUSTOM;
+    } else {
+        return 0;
+    }
+    return 1;
+}
+
+static void arc_hypothesis_seed_slot_prior(ARCProgramLearnedState *state,
+                                           uint32_t template_id,
+                                           const char *slot_name,
+                                           NNHypothesisSlotType slot_type,
+                                           int64_t slot_integer,
+                                           size_t proposal_count,
+                                           size_t certified_count)
+{
+    if (state == NULL || slot_name == NULL || proposal_count == 0) {
+        return;
+    }
+    if (certified_count > proposal_count) {
+        certified_count = proposal_count;
+    }
+    size_t template_bucket = arc_hypothesis_template_bucket(template_id);
+    size_t type_bucket = arc_hypothesis_slot_type_bucket(slot_type);
+    size_t value_bucket = arc_hypothesis_slot_value_bucket_for(template_id,
+                                                               slot_name,
+                                                               slot_type,
+                                                               slot_integer);
+    state->hypothesis_slot_proposal_count[template_bucket]
+                                         [type_bucket]
+                                         [value_bucket] += proposal_count;
+    state->hypothesis_slot_certified_count[template_bucket]
+                                          [type_bucket]
+                                          [value_bucket] += certified_count;
+    ++state->hypothesis_library_slot_rows;
+    state->hypothesis_library_seeded_proposals += proposal_count;
+    state->hypothesis_library_seeded_certified += certified_count;
+}
+
+static size_t arc_split_tab_fields(char *line, char **fields, size_t capacity)
+{
+    if (line == NULL || fields == NULL || capacity == 0) {
+        return 0;
+    }
+    line[strcspn(line, "\r\n")] = '\0';
+    size_t count = 0;
+    char *cursor = line;
+    while (count < capacity) {
+        fields[count++] = cursor;
+        char *tab = strchr(cursor, '\t');
+        if (tab == NULL) {
+            break;
+        }
+        *tab = '\0';
+        cursor = tab + 1;
+    }
+    return count;
+}
+
+static int arc_program_learned_load_hypothesis_library_prior(
+    ARCProgramLearnedState *state,
+    const char *path)
+{
+    if (state == NULL || path == NULL || path[0] == '\0') {
+        return 0;
+    }
+    FILE *fp = fopen(path, "r");
+    if (fp == NULL) {
+        fprintf(stderr, "failed to open hypothesis library prior: %s\n", path);
+        return 0;
+    }
+
+    char line[2048];
+    char last_library_id[ARC_TRANSFORM_NAME_BYTES];
+    last_library_id[0] = '\0';
+    size_t line_no = 0;
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        ++line_no;
+        if (line[0] == '\0' || line[0] == '\n' || line[0] == '#') {
+            continue;
+        }
+        if (strncmp(line, "schema_version\t", strlen("schema_version\t")) == 0) {
+            continue;
+        }
+        char *fields[13];
+        size_t field_count = arc_split_tab_fields(line, fields, sizeof(fields) / sizeof(fields[0]));
+        if (field_count != 13 ||
+            strcmp(fields[0], "crlp.hypothesis_library.prior.v1") != 0) {
+            fprintf(stderr,
+                    "invalid hypothesis library prior row at %s:%zu\n",
+                    path,
+                    line_no);
+            fclose(fp);
+            return 0;
+        }
+
+        size_t template_id_size = 0;
+        int64_t slot_integer = 0;
+        size_t proposal_count = 0;
+        size_t certified_count = 0;
+        NNHypothesisSlotType slot_type = NN_HYPOTHESIS_SLOT_CUSTOM;
+        if (!parse_size_text(fields[1], &template_id_size) ||
+            !arc_hypothesis_slot_type_from_name(fields[5], &slot_type) ||
+            !parse_i64_text(fields[7], &slot_integer) ||
+            !parse_size_text(fields[8], &proposal_count) ||
+            !parse_size_text(fields[9], &certified_count)) {
+            fprintf(stderr,
+                    "invalid hypothesis library prior fields at %s:%zu\n",
+                    path,
+                    line_no);
+            fclose(fp);
+            return 0;
+        }
+
+        arc_hypothesis_seed_slot_prior(state,
+                                       (uint32_t)template_id_size,
+                                       fields[4],
+                                       slot_type,
+                                       slot_integer,
+                                       proposal_count,
+                                       certified_count);
+        if (strcmp(last_library_id, fields[3]) != 0) {
+            snprintf(last_library_id, sizeof(last_library_id), "%s", fields[3]);
+            ++state->hypothesis_library_entries;
+        }
+    }
+
+    fclose(fp);
+    return 1;
 }
 
 static void arc_hypothesis_prior_observe(ARCProgramLearnedState *state,
@@ -4430,9 +5381,7 @@ static int arc_program_learned_train_hypothesis_prior(ARCProgramLearnedState *st
                                                       size_t candidate_count,
                                                       nn_real learning_rate)
 {
-    if (state == NULL || state->hypothesis_prior_net == NULL ||
-        candidates == NULL || evals == NULL || candidate_count == 0 ||
-        learning_rate <= (nn_real)0) {
+    if (state == NULL || candidates == NULL || evals == NULL || candidate_count == 0) {
         return 0;
     }
 
@@ -4444,13 +5393,20 @@ static int arc_program_learned_train_hypothesis_prior(ARCProgramLearnedState *st
         return 1;
     }
 
-    nn_real *features =
-        calloc(sample_count * ARC_HYPOTHESIS_PRIOR_FEATURE_COUNT, sizeof(*features));
-    nn_real *targets = calloc(sample_count, sizeof(*targets));
-    if (features == NULL || targets == NULL) {
-        free(features);
-        free(targets);
-        return 0;
+    int train_neural = state->hypothesis_neural_prior_enabled &&
+                       state->hypothesis_prior_net != NULL &&
+                       learning_rate > (nn_real)0;
+    nn_real *features = NULL;
+    nn_real *targets = NULL;
+    if (train_neural) {
+        features = calloc(sample_count * ARC_HYPOTHESIS_PRIOR_FEATURE_COUNT,
+                          sizeof(*features));
+        targets = calloc(sample_count, sizeof(*targets));
+        if (features == NULL || targets == NULL) {
+            free(features);
+            free(targets);
+            return 0;
+        }
     }
 
     size_t row = 0;
@@ -4459,22 +5415,28 @@ static int arc_program_learned_train_hypothesis_prior(ARCProgramLearnedState *st
             continue;
         }
         NNHypothesis hypothesis;
-        size_t encoded_count = 0;
-        if (!arc_hypothesis_from_candidate(&candidates[i], &hypothesis) ||
-            !nn_hypothesis_encode_features(&hypothesis,
-                                           &features[row * ARC_HYPOTHESIS_PRIOR_FEATURE_COUNT],
-                                           ARC_HYPOTHESIS_PRIOR_FEATURE_COUNT,
-                                           &encoded_count) ||
-            encoded_count != ARC_HYPOTHESIS_PRIOR_FEATURE_COUNT) {
+        if (!arc_hypothesis_from_candidate(&candidates[i], &hypothesis)) {
             continue;
         }
         int certified = evals[i].train_consistent ? 1 : 0;
         arc_hypothesis_prior_observe(state, &hypothesis, certified);
+        if (!train_neural) {
+            continue;
+        }
+        size_t encoded_count = 0;
+        if (!nn_hypothesis_encode_features(
+                &hypothesis,
+                &features[row * ARC_HYPOTHESIS_PRIOR_FEATURE_COUNT],
+                ARC_HYPOTHESIS_PRIOR_FEATURE_COUNT,
+                &encoded_count) ||
+            encoded_count != ARC_HYPOTHESIS_PRIOR_FEATURE_COUNT) {
+            continue;
+        }
         targets[row] = certified ? (nn_real)1 : (nn_real)0;
         ++row;
     }
 
-    if (row != 0) {
+    if (train_neural && row != 0) {
         nn_real loss = nn_train_batched(state->hypothesis_prior_net,
                                         features,
                                         targets,
@@ -4577,7 +5539,7 @@ static void arc_build_program_ranks(const ARCTask *task,
     for (size_t i = 0; i < candidate_count; ++i) {
         ranks[i].candidate_index = i;
         ranks[i].primary = 0.0;
-        ranks[i].secondary = arc_structural_program_score(&candidates[i]);
+        ranks[i].secondary = arc_task_conditioned_program_score(task, &candidates[i]);
         ranks[i].tie_breaker = arc_hash_mix(task_hash, evals[i].program_hash ^ (uint64_t)i);
         switch (strategy) {
         case ARC_PROGRAM_STRATEGY_GRAMMAR:
@@ -4807,21 +5769,31 @@ static double arc_hypothesis_slot_proposal_score(ARCProgramLearnedState *learned
                                                  const ARCObject *output_object,
                                                  const ARCProgramTaskFeatures *task_features)
 {
-    double structural =
-        arc_hypothesis_structural_proposal_score(learned,
-                                                 candidate,
-                                                 input_object,
-                                                 output_object,
-                                                 task_features);
-    if (learned == NULL || hypothesis == NULL || learned->hypothesis_prior_net == NULL) {
+    double structural = 0.0;
+    if (learned == NULL || learned->hypothesis_structural_score_enabled) {
+        structural = arc_hypothesis_structural_proposal_score(learned,
+                                                              candidate,
+                                                              input_object,
+                                                              output_object,
+                                                              task_features);
+    }
+    if (learned == NULL || hypothesis == NULL) {
         return structural;
     }
 
     size_t proposal_support = 0;
-    double slot_log_odds =
-        arc_hypothesis_slot_log_odds(learned, hypothesis, &proposal_support);
-    if (proposal_support < ARC_HYPOTHESIS_PRIOR_MIN_PROPOSALS &&
-        learned->hypothesis_prior_samples < ARC_HYPOTHESIS_PRIOR_MIN_PROPOSALS) {
+    double slot_log_odds = 0.0;
+    if (learned->hypothesis_slot_prior_enabled) {
+        slot_log_odds =
+            arc_hypothesis_slot_log_odds(learned, hypothesis, &proposal_support);
+    }
+    int slot_ready = learned->hypothesis_slot_prior_enabled &&
+                     proposal_support >= ARC_HYPOTHESIS_PRIOR_MIN_PROPOSALS;
+    int neural_ready = learned->hypothesis_neural_prior_enabled &&
+                       learned->hypothesis_prior_net != NULL &&
+                       learned->hypothesis_prior_samples >=
+                           ARC_HYPOTHESIS_PRIOR_MIN_PROPOSALS;
+    if (!slot_ready && !neural_ready) {
         return structural;
     }
 
@@ -4829,7 +5801,7 @@ static double arc_hypothesis_slot_proposal_score(ARCProgramLearnedState *learned
     size_t feature_count = 0;
     nn_real output[1] = {0};
     double neural_score = 0.0;
-    if (learned->hypothesis_prior_samples >= ARC_HYPOTHESIS_PRIOR_MIN_PROPOSALS &&
+    if (neural_ready &&
         nn_hypothesis_encode_features(hypothesis,
                                       features,
                                       ARC_HYPOTHESIS_PRIOR_FEATURE_COUNT,
@@ -4841,7 +5813,8 @@ static double arc_hypothesis_slot_proposal_score(ARCProgramLearnedState *learned
 
     double cold_start = 0.0;
     uint8_t selector = arc_candidate_selector_kind(candidate);
-    if (selector < ARC_OBJECT_SELECTOR_KIND_COUNT) {
+    if (learned->hypothesis_cold_start_enabled &&
+        selector < ARC_OBJECT_SELECTOR_KIND_COUNT) {
         cold_start += learned->object_selector_score[selector];
         for (size_t relation = 1; relation < ARC_OBJECT_RELATION_KIND_COUNT; ++relation) {
             cold_start += 0.25 * learned->relation_selector_score[relation][selector];
@@ -4849,8 +5822,8 @@ static double arc_hypothesis_slot_proposal_score(ARCProgramLearnedState *learned
     }
 
     return structural +
-           (double)ARC_HYPOTHESIS_LOG_ODDS_WEIGHT * slot_log_odds +
-           (double)ARC_HYPOTHESIS_NEURAL_WEIGHT * neural_score +
+           (slot_ready ? (double)ARC_HYPOTHESIS_LOG_ODDS_WEIGHT * slot_log_odds : 0.0) +
+           (neural_ready ? (double)ARC_HYPOTHESIS_NEURAL_WEIGHT * neural_score : 0.0) +
            (double)ARC_HYPOTHESIS_COLD_START_WEIGHT * cold_start;
 }
 
@@ -4863,7 +5836,8 @@ typedef enum {
 static int arc_hypothesis_record_pre_cap_proposal(ARCHypothesisSelectionStats *stats,
                                                   size_t template_index,
                                                   const ARCTask *task,
-                                                  const ARCTransformCandidate *candidate)
+                                                  const ARCTransformCandidate *candidate,
+                                                  int train_filter_enabled)
 {
     if (task == NULL || candidate == NULL) {
         return 0;
@@ -4883,7 +5857,7 @@ static int arc_hypothesis_record_pre_cap_proposal(ARCHypothesisSelectionStats *s
             ++stats->template_train_consistent_pre_cap[template_index];
         }
     }
-    return train_consistent;
+    return train_filter_enabled ? train_consistent : 1;
 }
 
 static ARCHypothesisInsertResult arc_hypothesis_insert_proposal(
@@ -4965,7 +5939,10 @@ static size_t arc_try_add_hypothesis_proposal(
     if (!arc_hypothesis_record_pre_cap_proposal(stats,
                                                 template_index,
                                                 task,
-                                                candidate)) {
+                                                candidate,
+                                                learned == NULL
+                                                    ? 1
+                                                    : learned->hypothesis_train_filter_enabled)) {
         return proposal_count;
     }
     ARCHypothesisProposal proposal;
@@ -6101,6 +7078,96 @@ static size_t arc_induce_sequence_hypotheses(const ARCHypothesisTemplateBinding 
     return proposal_count;
 }
 
+static size_t arc_induce_tile_motif_hypotheses(const ARCHypothesisTemplateBinding *binding,
+                                               const ARCTask *task,
+                                               ARCProgramLearnedState *learned,
+                                               const ARCTransformCandidate *existing_candidates,
+                                               size_t existing_count,
+                                               ARCHypothesisProposal *proposals,
+                                               size_t proposal_capacity,
+                                               size_t proposal_count,
+                                               ARCHypothesisSelectionStats *stats,
+                                               size_t template_index)
+{
+    if (binding == NULL || binding->template_fn == NULL ||
+        binding->to_candidate == NULL ||
+        task == NULL || task->train_count == 0 ||
+        existing_candidates == NULL || proposals == NULL ||
+        proposal_capacity == 0) {
+        return proposal_count;
+    }
+
+    ARCProgramTaskFeatures task_features;
+    arc_program_task_features(task, &task_features);
+    uint8_t backgrounds[2];
+    size_t background_count =
+        arc_task_relation_backgrounds(task,
+                                      backgrounds,
+                                      sizeof(backgrounds) / sizeof(backgrounds[0]));
+    for (size_t background_index = 0;
+         background_index < background_count;
+         ++background_index) {
+        uint8_t background = backgrounds[background_index];
+        for (size_t period = 2; period <= 3; ++period) {
+            NNHypothesis hypothesis;
+            ARCTransformCandidate candidate;
+            if (!nn_hypothesis_init(&hypothesis, binding->template_fn())) {
+                continue;
+            }
+            int ok = nn_hypothesis_bind(&hypothesis,
+                                        "lattice.background",
+                                        (double)background,
+                                        background);
+            ok = ok && nn_hypothesis_bind(&hypothesis,
+                                          "repeat.period",
+                                          (double)period,
+                                          (int64_t)period);
+            if (!ok || !binding->to_candidate(&hypothesis, &candidate)) {
+                continue;
+            }
+
+            int has_pair_evidence = 0;
+            for (size_t train_pair = 0;
+                 train_pair < task->train_count;
+                 ++train_pair) {
+                ARCGrid produced;
+                if (!task->train[train_pair].has_output ||
+                    !arc_grid_same_shape(&task->train[train_pair].input,
+                                         &task->train[train_pair].output) ||
+                    !arc_apply_candidate(&candidate,
+                                         &task->train[train_pair].input,
+                                         &produced) ||
+                    !arc_grid_equal(&produced,
+                                    &task->train[train_pair].output)) {
+                    continue;
+                }
+                has_pair_evidence = 1;
+                break;
+            }
+            if (!has_pair_evidence) {
+                continue;
+            }
+
+            proposal_count =
+                arc_try_add_hypothesis_proposal(learned,
+                                                task,
+                                                existing_candidates,
+                                                existing_count,
+                                                proposals,
+                                                proposal_capacity,
+                                                proposal_count,
+                                                stats,
+                                                template_index,
+                                                &task_features,
+                                                &hypothesis,
+                                                &candidate,
+                                                NULL,
+                                                NULL);
+        }
+    }
+    return proposal_count;
+}
+
 static size_t arc_task_test_input_cells(const ARCTask *task)
 {
     size_t cells = 0;
@@ -6166,6 +7233,9 @@ static size_t arc_select_hypothesis_proposals(const ARCTask *task,
                                               ARCTransformCandidate *candidates,
                                               size_t capacity,
                                               size_t base_count,
+                                              size_t top_k,
+                                              int use_coverage_selection,
+                                              int train_filter_enabled,
                                               ARCHypothesisSelectionStats *stats)
 {
     if (task == NULL || proposals == NULL || candidates == NULL ||
@@ -6185,22 +7255,25 @@ static size_t arc_select_hypothesis_proposals(const ARCTask *task,
             }
             continue;
         }
-        if (!arc_candidate_matches_train(task,
-                                         &proposals[i].candidate,
-                                         &checked_cells,
-                                         &mismatches,
-                                         &unsupported)) {
+        int train_consistent = arc_candidate_matches_train(task,
+                                                           &proposals[i].candidate,
+                                                           &checked_cells,
+                                                           &mismatches,
+                                                           &unsupported);
+        if (!train_consistent) {
             if (stats != NULL) {
                 ++stats->proposals_train_rejected;
             }
-            continue;
+            if (train_filter_enabled) {
+                continue;
+            }
         }
         valid[valid_count] = proposals[i];
         valid[valid_count].hypothesis.evidence_support = checked_cells;
         valid[valid_count].hypothesis.evidence_residual_gain =
             checked_cells == 0 ? 0.0 : 1.0 - (double)mismatches / (double)checked_cells;
         ++valid_count;
-        if (stats != NULL) {
+        if (stats != NULL && train_consistent) {
             ++stats->proposals_train_consistent;
             size_t template_index =
                 arc_hypothesis_registry_index_for_template_id(
@@ -6222,7 +7295,8 @@ static size_t arc_select_hypothesis_proposals(const ARCTask *task,
     NNProgramCoverage coverage;
     memset(&coverage, 0, sizeof(coverage));
     uint64_t *covered = NULL;
-    int have_coverage = task_cells > 0 &&
+    int have_coverage = use_coverage_selection &&
+                        task_cells > 0 &&
                         nn_program_coverage_init(&coverage, valid_count, task_cells);
     if (have_coverage && coverage.word_count != 0) {
         covered = calloc(coverage.word_count, sizeof(*covered));
@@ -6248,7 +7322,7 @@ static size_t arc_select_hypothesis_proposals(const ARCTask *task,
     size_t selected_count = 0;
     if (have_coverage && covered != NULL) {
         for (size_t step = 0;
-             step < ARC_HYPOTHESIS_TOP_K && count < capacity;
+             step < top_k && count < capacity;
              ++step) {
             size_t best = (size_t)-1;
             size_t best_gain = 0;
@@ -6292,9 +7366,9 @@ static size_t arc_select_hypothesis_proposals(const ARCTask *task,
         if (stats != NULL) {
             stats->coverage_fallback = 1;
         }
-        size_t proposal_limit = valid_count < ARC_HYPOTHESIS_TOP_K
+        size_t proposal_limit = valid_count < top_k
                                     ? valid_count
-                                    : ARC_HYPOTHESIS_TOP_K;
+                                    : top_k;
         for (size_t i = 0; i < proposal_limit && count < capacity; ++i) {
             if (!arc_candidate_name_exists(candidates, count, valid[i].candidate.name)) {
                 arc_add_candidate(candidates, capacity, &count, &valid[i].candidate);
@@ -6330,6 +7404,31 @@ static size_t arc_build_candidate_set(const ARCTask *task,
     if (hypothesis_stats != NULL) {
         memset(hypothesis_stats, 0, sizeof(*hypothesis_stats));
         hypothesis_stats->proposal_capacity = ARC_HYPOTHESIS_PROPOSAL_CAPACITY;
+        hypothesis_stats->hypothesis_prior_hidden =
+            learned == NULL ? ARC_HYPOTHESIS_PRIOR_DEFAULT_HIDDEN
+                            : learned->hypothesis_prior_hidden;
+        hypothesis_stats->hypothesis_top_k =
+            learned == NULL ? ARC_HYPOTHESIS_TOP_K : learned->hypothesis_top_k;
+        hypothesis_stats->hypothesis_neural_prior_enabled =
+            learned == NULL ? 1 : learned->hypothesis_neural_prior_enabled;
+        hypothesis_stats->hypothesis_slot_prior_enabled =
+            learned == NULL ? 1 : learned->hypothesis_slot_prior_enabled;
+        hypothesis_stats->hypothesis_cold_start_enabled =
+            learned == NULL ? 1 : learned->hypothesis_cold_start_enabled;
+        hypothesis_stats->hypothesis_structural_score_enabled =
+            learned == NULL ? 1 : learned->hypothesis_structural_score_enabled;
+        hypothesis_stats->hypothesis_coverage_selection_enabled =
+            learned == NULL ? 1 : learned->hypothesis_coverage_selection_enabled;
+        hypothesis_stats->hypothesis_train_filter_enabled =
+            learned == NULL ? 1 : learned->hypothesis_train_filter_enabled;
+        if (learned != NULL) {
+            hypothesis_stats->library_prior_entries = learned->hypothesis_library_entries;
+            hypothesis_stats->library_prior_slot_rows = learned->hypothesis_library_slot_rows;
+            hypothesis_stats->library_prior_seeded_proposals =
+                learned->hypothesis_library_seeded_proposals;
+            hypothesis_stats->library_prior_seeded_certified =
+                learned->hypothesis_library_seeded_certified;
+        }
     }
     if (include_hypothesis_induction) {
         ARCHypothesisProposal proposals[ARC_HYPOTHESIS_PROPOSAL_CAPACITY];
@@ -6380,6 +7479,14 @@ static size_t arc_build_candidate_set(const ARCTask *task,
                                                 candidates,
                                                 capacity,
                                                 count,
+                                                learned == NULL ? ARC_HYPOTHESIS_TOP_K
+                                                                : learned->hypothesis_top_k,
+                                                learned == NULL
+                                                    ? 1
+                                                    : learned->hypothesis_coverage_selection_enabled,
+                                                learned == NULL
+                                                    ? 1
+                                                    : learned->hypothesis_train_filter_enabled,
                                                 hypothesis_stats);
     }
     return arc_add_learned_compositions(task, learned, candidates, capacity, count);
@@ -6719,11 +7826,14 @@ static size_t arc_program_budget_list(const ARCConfig *config,
                                       size_t capacity)
 {
     if (config != NULL && config->program_budget_grid) {
+        const size_t *grid = config->program_budget_grid == 2
+                                 ? ARC_PROGRAM_BUDGET_TIGHT_GRID
+                                 : ARC_PROGRAM_BUDGET_GRID;
         size_t count = ARC_PROGRAM_BUDGET_GRID_COUNT < capacity
                            ? ARC_PROGRAM_BUDGET_GRID_COUNT
                            : capacity;
         for (size_t i = 0; i < count; ++i) {
-            budgets[i] = ARC_PROGRAM_BUDGET_GRID[i];
+            budgets[i] = grid[i];
         }
         return count;
     }
@@ -8332,6 +9442,126 @@ static int arc_apply_sequence_hypothesis(const NNHypothesis *hypothesis,
     return changed > 0;
 }
 
+static const NNHypothesisTemplate *arc_hypothesis_template_tile_motif_repeat(void)
+{
+    static NNHypothesisTemplate template_ref;
+    static int initialized = 0;
+    if (initialized) {
+        return &template_ref;
+    }
+    nn_hypothesis_template_init(&template_ref,
+                                "arc_agi",
+                                "tile_motif_repeat",
+                                1031,
+                                NN_PROGRAM_VALUE_GRID,
+                                NN_PROGRAM_VALUE_GRID);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "separator_lattice",
+                                     NN_PROGRAM_KIND_TRANSFORM,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     NN_PROGRAM_VALUE_OBJECT_SET,
+                                     180);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "select_motif_tile",
+                                     NN_PROGRAM_KIND_SELECTOR,
+                                     NN_PROGRAM_VALUE_OBJECT_SET,
+                                     NN_PROGRAM_VALUE_OBJECT,
+                                     181);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "repeat_by_parity",
+                                     NN_PROGRAM_KIND_TRANSFORM,
+                                     NN_PROGRAM_VALUE_OBJECT,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     182);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "lattice.background",
+                                    NN_HYPOTHESIS_SLOT_COLOR,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "repeat.period",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 2.0, 2);
+    initialized = 1;
+    return &template_ref;
+}
+
+typedef struct {
+    uint8_t background;
+    size_t period;
+} ARCTileMotifHypothesisSpec;
+
+static int arc_tile_motif_spec_from_hypothesis(const NNHypothesis *hypothesis,
+                                               ARCTileMotifHypothesisSpec *spec)
+{
+    if (hypothesis == NULL || spec == NULL ||
+        hypothesis->template_ref != arc_hypothesis_template_tile_motif_repeat() ||
+        !nn_hypothesis_is_fully_bound(hypothesis)) {
+        return 0;
+    }
+    int64_t background = 0;
+    int64_t period = 0;
+    if (!nn_hypothesis_get(hypothesis,
+                           "lattice.background",
+                           NULL,
+                           &background) ||
+        !nn_hypothesis_get(hypothesis, "repeat.period", NULL, &period)) {
+        return 0;
+    }
+    if (background < 0 || background >= ARC_COLOR_COUNT ||
+        period < 2 || period > ARC_MAX_GRID_WIDTH) {
+        return 0;
+    }
+    spec->background = (uint8_t)background;
+    spec->period = (size_t)period;
+    return 1;
+}
+
+static void arc_tile_motif_candidate_from_spec(const ARCTileMotifHypothesisSpec *spec,
+                                               ARCTransformCandidate *candidate)
+{
+    arc_init_candidate(candidate, ARC_RULE_TILE_MOTIF_PARITY_REPEAT, "");
+    candidate->background_color = spec->background;
+    candidate->selector_kind = ARC_OBJECT_SELECTOR_ALL_COLOR;
+    candidate->output_selector_kind = ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
+    candidate->render_mode = ARC_OBJECT_RENDER_OVERLAY;
+    candidate->scale = spec->period;
+}
+
+static int arc_candidate_from_tile_motif_hypothesis(const NNHypothesis *hypothesis,
+                                                    ARCTransformCandidate *candidate)
+{
+    ARCTileMotifHypothesisSpec spec;
+    if (candidate == NULL ||
+        !arc_tile_motif_spec_from_hypothesis(hypothesis, &spec)) {
+        return 0;
+    }
+    arc_tile_motif_candidate_from_spec(&spec, candidate);
+    candidate->op = ARC_RULE_HYPOTHESIS_APPLIED;
+    if (!arc_store_hypothesis_candidate(candidate, hypothesis)) {
+        return 0;
+    }
+    snprintf(candidate->name,
+             sizeof(candidate->name),
+             "hypothesis_%s_bg_%u_period_%zu",
+             hypothesis->template_ref->name,
+             (unsigned)spec.background,
+             spec.period);
+    return 1;
+}
+
+static int arc_apply_tile_motif_hypothesis(const NNHypothesis *hypothesis,
+                                           const ARCGrid *input,
+                                           ARCGrid *output)
+{
+    ARCTileMotifHypothesisSpec spec;
+    ARCTransformCandidate candidate;
+    if (!arc_tile_motif_spec_from_hypothesis(hypothesis, &spec)) {
+        return 0;
+    }
+    arc_tile_motif_candidate_from_spec(&spec, &candidate);
+    return arc_apply_tile_motif_parity_repeat_candidate(&candidate, input, output);
+}
+
 static const ARCHypothesisTemplateBinding *arc_hypothesis_template_registry(size_t *count)
 {
     static const ARCHypothesisTemplateBinding bindings[] = {
@@ -8390,6 +9620,14 @@ static const ARCHypothesisTemplateBinding *arc_hypothesis_template_registry(size
             arc_induce_sequence_hypotheses,
             arc_candidate_from_sequence_hypothesis,
             arc_apply_sequence_hypothesis,
+        },
+        {
+            "tile_motif_repeat",
+            1031,
+            arc_hypothesis_template_tile_motif_repeat,
+            arc_induce_tile_motif_hypotheses,
+            arc_candidate_from_tile_motif_hypothesis,
+            arc_apply_tile_motif_hypothesis,
         },
     };
     if (count != NULL) {
@@ -8501,6 +9739,7 @@ static void arc_emit_builtin_program_summaries(const ARCTask *task, const ARCCon
                                                   budgets,
                                                   ARC_PROGRAM_BUDGET_GRID_COUNT);
     if (!arc_program_learned_init(&learned,
+                                  config,
                                   (unsigned int)((config == NULL ? 20240516u : config->seed) &
                                                  UINT32_MAX))) {
         return;
@@ -9346,6 +10585,48 @@ static int arc_name_ends_json(const char *name)
     return len > 5 && strcmp(name + len - 5u, ".json") == 0;
 }
 
+static int arc_task_id_list_contains(const char *list, const char *task_id)
+{
+    if (list == NULL || list[0] == '\0' || task_id == NULL || task_id[0] == '\0') {
+        return 0;
+    }
+    const char *cursor = list;
+    while (*cursor != '\0') {
+        while (*cursor == ',' || isspace((unsigned char)*cursor)) {
+            ++cursor;
+        }
+        const char *start = cursor;
+        while (*cursor != '\0' && *cursor != ',') {
+            ++cursor;
+        }
+        const char *end = cursor;
+        while (end > start && isspace((unsigned char)end[-1])) {
+            --end;
+        }
+        size_t len = (size_t)(end - start);
+        if (len == strlen(task_id) && strncmp(start, task_id, len) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int arc_task_file_allowed(const ARCConfig *config, const char *task_id)
+{
+    if (config == NULL) {
+        return 1;
+    }
+    if (config->task_ids != NULL &&
+        !arc_task_id_list_contains(config->task_ids, task_id)) {
+        return 0;
+    }
+    if (config->exclude_task_ids != NULL &&
+        arc_task_id_list_contains(config->exclude_task_ids, task_id)) {
+        return 0;
+    }
+    return 1;
+}
+
 static int arc_collect_task_files(const char *task_dir,
                                   ARCTaskFile *files,
                                   size_t capacity,
@@ -9506,6 +10787,10 @@ static void print_arc_metrics_json(const char *task_instance,
 static void print_arc_transform_json(const char *task_instance,
                                      const ARCTransformMetrics *metrics)
 {
+    uint64_t prediction_hash = metrics != NULL && metrics->prediction_count != 0
+                                   ? arc_prediction_hash(metrics->predictions,
+                                                         metrics->prediction_count)
+                                   : UINT64_C(0);
     printf("{\"schema\":\"crlp.arc_transform.summary.v1\",\"report_version\":1,"
            "\"task\":\"arc_agi\",\"task_instance\":");
     print_json_string(task_instance == NULL ? "0520fde7" : task_instance);
@@ -9514,7 +10799,7 @@ static void print_arc_transform_json(const char *task_instance,
            "\"unsupported_train_pairs\":%zu,\"unsupported_test_pairs\":%zu,"
            "\"unique_test_prediction\":%s,\"test_exact\":%s,\"certified\":%s,"
            "\"test_pairs\":%zu,\"test_cells\":%zu,\"test_correct_cells\":%zu,"
-           "\"accepted_rules\":",
+           "\"prediction_hash\":\"%016llx\",\"accepted_rules\":",
            ARC_GRAMMAR_VERSION,
            metrics->rules,
            metrics->train_consistent_rules,
@@ -9527,7 +10812,8 @@ static void print_arc_transform_json(const char *task_instance,
            metrics->certified ? "true" : "false",
            metrics->test_pairs,
            metrics->test_cells,
-           metrics->test_correct_cells);
+           metrics->test_correct_cells,
+           (unsigned long long)prediction_hash);
     print_json_string(metrics->accepted_rules);
     printf("}\n");
 }
@@ -9574,9 +10860,20 @@ static void print_arc_hypothesis_selection_json(const char *task_id,
     print_json_string(task_id == NULL ? "unknown" : task_id);
     printf(",\"grammar_version\":%d,"
            "\"coverage_mode\":\"test_input_predicted_change\","
-           "\"top_k\":%d,\"proposal_capacity\":%d,"
+           "\"top_k\":%zu,\"proposal_capacity\":%d,"
+           "\"hypothesis_prior_hidden\":%zu,"
+           "\"hypothesis_neural_prior_enabled\":%s,"
+           "\"hypothesis_slot_prior_enabled\":%s,"
+           "\"hypothesis_cold_start_enabled\":%s,"
+           "\"hypothesis_structural_score_enabled\":%s,"
+           "\"hypothesis_coverage_selection_enabled\":%s,"
+           "\"hypothesis_train_filter_enabled\":%s,"
            "\"score_weights\":{\"structural\":%d,\"log_odds\":%d,"
            "\"neural\":%d,\"cold_start\":%d},"
+           "\"library_prior_entries\":%zu,"
+           "\"library_prior_slot_rows\":%zu,"
+           "\"library_prior_seeded_proposals\":%zu,"
+           "\"library_prior_seeded_certified\":%zu,"
            "\"registered_templates\":%zu,"
            "\"proposals_attempted\":%zu,"
            "\"proposals_retained\":%zu,"
@@ -9596,12 +10893,23 @@ static void print_arc_hypothesis_selection_json(const char *task_id,
            "\"coverage_events\":%zu,"
            "\"templates\":[",
            ARC_GRAMMAR_VERSION,
-           ARC_HYPOTHESIS_TOP_K,
+           stats->hypothesis_top_k,
            ARC_HYPOTHESIS_PROPOSAL_CAPACITY,
-           ARC_HYPOTHESIS_STRUCTURAL_SCORE,
-           ARC_HYPOTHESIS_LOG_ODDS_WEIGHT,
-           ARC_HYPOTHESIS_NEURAL_WEIGHT,
-           ARC_HYPOTHESIS_COLD_START_WEIGHT,
+           stats->hypothesis_prior_hidden,
+           stats->hypothesis_neural_prior_enabled ? "true" : "false",
+           stats->hypothesis_slot_prior_enabled ? "true" : "false",
+           stats->hypothesis_cold_start_enabled ? "true" : "false",
+           stats->hypothesis_structural_score_enabled ? "true" : "false",
+           stats->hypothesis_coverage_selection_enabled ? "true" : "false",
+           stats->hypothesis_train_filter_enabled ? "true" : "false",
+           stats->hypothesis_structural_score_enabled ? ARC_HYPOTHESIS_STRUCTURAL_SCORE : 0,
+           stats->hypothesis_slot_prior_enabled ? ARC_HYPOTHESIS_LOG_ODDS_WEIGHT : 0,
+           stats->hypothesis_neural_prior_enabled ? ARC_HYPOTHESIS_NEURAL_WEIGHT : 0,
+           stats->hypothesis_cold_start_enabled ? ARC_HYPOTHESIS_COLD_START_WEIGHT : 0,
+           stats->library_prior_entries,
+           stats->library_prior_slot_rows,
+           stats->library_prior_seeded_proposals,
+           stats->library_prior_seeded_certified,
            stats->registered_templates,
            stats->proposals_attempted,
            stats->proposals_retained,
@@ -9716,6 +11024,7 @@ static int run_arc_task_loader(const ARCConfig *config)
         program_aggregates[ARC_PROGRAM_BUDGET_GRID_COUNT][ARC_PROGRAM_STRATEGY_COUNT];
     ARCProgramLearnedState learned_state;
     if (!arc_program_learned_init(&learned_state,
+                                  config,
                                   (unsigned int)(config->seed & UINT32_MAX))) {
         free(files);
         return 0;
@@ -9726,6 +11035,14 @@ static int run_arc_task_loader(const ARCConfig *config)
                                        config->program_train_max_tasks,
                                        config->program_learning_rate,
                                        config->induction_smoke)) {
+        arc_program_learned_free(&learned_state);
+        free(files);
+        return 0;
+    }
+    if (config->hypothesis_library_prior_path != NULL &&
+        !arc_program_learned_load_hypothesis_library_prior(
+            &learned_state,
+            config->hypothesis_library_prior_path)) {
         arc_program_learned_free(&learned_state);
         free(files);
         return 0;
@@ -9741,6 +11058,9 @@ static int run_arc_task_loader(const ARCConfig *config)
 
     size_t induction_evidence_rows = 0;
     for (size_t i = 0; i < file_count; ++i) {
+        if (!arc_task_file_allowed(config, files[i].id)) {
+            continue;
+        }
         if (config->max_tasks != 0 && summary.loaded_tasks >= config->max_tasks) {
             break;
         }
@@ -9805,9 +11125,9 @@ static int run_arc_task_loader(const ARCConfig *config)
             if (transform.certified) {
                 ARCMetrics transform_metrics = arc_transform_to_metrics(&task, &transform);
                 print_arc_metrics_json(task.id,
-                                       "symbolic-transform-v10",
+                                      "symbolic-transform-v14",
                                        "certified_transform_gate",
-                                       "arc-transform-gate-v10",
+                                      "arc-transform-gate-v14",
                                        &transform_metrics);
             }
         }
@@ -9838,8 +11158,16 @@ static void print_usage(FILE *stream)
     fputs("usage: arc_agi [--schema] [--epochs count] [--steps-per-epoch count] "
           "[--test-samples count] [--learning-rate rate] [--seed seed] [--save path] "
           "[--task-dir path] [--max-tasks count] [--program-budget count] "
-          "[--program-budget-grid] [--program-train-dir path] "
+          "[--program-budget-grid] [--program-budget-tight-grid] "
+          "[--program-train-dir path] "
           "[--program-train-max-tasks count] [--program-learning-rate rate] "
+          "[--hypothesis-library-prior path] [--hypothesis-prior-hidden count] "
+          "[--task-ids comma-list] [--exclude-task-ids comma-list] "
+          "[--hypothesis-top-k count] [--disable-hypothesis-neural-prior] "
+          "[--disable-hypothesis-slot-prior] [--disable-hypothesis-cold-start] "
+          "[--disable-hypothesis-structural-score] "
+          "[--disable-hypothesis-coverage-selection] "
+          "[--disable-hypothesis-train-filter] "
           "[--loader-summary-only] [--induction] [--min-induction-evidence count]\n",
           stream);
 }
@@ -9853,15 +11181,26 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->program_budget = ARC_PROGRAM_PROPOSER_BUDGET;
     config->program_train_max_tasks = 0;
     config->min_induction_evidence = 1;
+    config->hypothesis_prior_hidden = ARC_HYPOTHESIS_PRIOR_DEFAULT_HIDDEN;
+    config->hypothesis_top_k = ARC_HYPOTHESIS_TOP_K;
     config->seed = 20240516u;
     config->learning_rate = (nn_real)0.006;
     config->program_learning_rate = (nn_real)0.015;
     config->save_path = NULL;
     config->task_dir = NULL;
     config->program_train_dir = NULL;
+    config->hypothesis_library_prior_path = NULL;
+    config->task_ids = NULL;
+    config->exclude_task_ids = NULL;
     config->loader_summary_only = 0;
     config->program_budget_grid = 0;
     config->induction_smoke = 0;
+    config->hypothesis_neural_prior_enabled = 1;
+    config->hypothesis_slot_prior_enabled = 1;
+    config->hypothesis_cold_start_enabled = 1;
+    config->hypothesis_structural_score_enabled = 1;
+    config->hypothesis_coverage_selection_enabled = 1;
+    config->hypothesis_train_filter_enabled = 1;
     *schema_only = 0;
 
     for (int i = 1; i < argc; ++i) {
@@ -9904,6 +11243,8 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             }
         } else if (strcmp(argv[i], "--program-budget-grid") == 0) {
             config->program_budget_grid = 1;
+        } else if (strcmp(argv[i], "--program-budget-tight-grid") == 0) {
+            config->program_budget_grid = 2;
         } else if (strcmp(argv[i], "--program-train-dir") == 0 && i + 1 < argc) {
             config->program_train_dir = argv[++i];
             if (config->program_train_dir[0] == '\0') {
@@ -9917,6 +11258,44 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             if (!parse_real_text(argv[++i], &config->program_learning_rate)) {
                 return 0;
             }
+        } else if (strcmp(argv[i], "--hypothesis-library-prior") == 0 && i + 1 < argc) {
+            config->hypothesis_library_prior_path = argv[++i];
+            if (config->hypothesis_library_prior_path[0] == '\0') {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--task-ids") == 0 && i + 1 < argc) {
+            config->task_ids = argv[++i];
+            if (config->task_ids[0] == '\0') {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--exclude-task-ids") == 0 && i + 1 < argc) {
+            config->exclude_task_ids = argv[++i];
+            if (config->exclude_task_ids[0] == '\0') {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--hypothesis-prior-hidden") == 0 && i + 1 < argc) {
+            const char *value = argv[++i];
+            if (strcmp(value, "0") == 0) {
+                config->hypothesis_prior_hidden = 0;
+            } else if (!parse_size_text(value, &config->hypothesis_prior_hidden)) {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--hypothesis-top-k") == 0 && i + 1 < argc) {
+            if (!parse_size_text(argv[++i], &config->hypothesis_top_k)) {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--disable-hypothesis-neural-prior") == 0) {
+            config->hypothesis_neural_prior_enabled = 0;
+        } else if (strcmp(argv[i], "--disable-hypothesis-slot-prior") == 0) {
+            config->hypothesis_slot_prior_enabled = 0;
+        } else if (strcmp(argv[i], "--disable-hypothesis-cold-start") == 0) {
+            config->hypothesis_cold_start_enabled = 0;
+        } else if (strcmp(argv[i], "--disable-hypothesis-structural-score") == 0) {
+            config->hypothesis_structural_score_enabled = 0;
+        } else if (strcmp(argv[i], "--disable-hypothesis-coverage-selection") == 0) {
+            config->hypothesis_coverage_selection_enabled = 0;
+        } else if (strcmp(argv[i], "--disable-hypothesis-train-filter") == 0) {
+            config->hypothesis_train_filter_enabled = 0;
         } else if (strcmp(argv[i], "--loader-summary-only") == 0) {
             config->loader_summary_only = 1;
         } else if (strcmp(argv[i], "--induction") == 0) {
@@ -9981,11 +11360,11 @@ int main(int argc, char **argv)
     print_arc_transform_json("0520fde7", &transform);
     ARCMetrics transform_metrics = arc_transform_to_metrics(&builtin_task, &transform);
     print_arc_metrics_json("0520fde7",
-                           "symbolic-transform-v10",
+                          "symbolic-transform-v14",
                            "certified_transform_gate",
-                           "arc-transform-gate-v10",
+                          "arc-transform-gate-v14",
                            &transform_metrics);
-    print_arc_metrics_line("symbolic-transform-v10",
+    print_arc_metrics_line("symbolic-transform-v14",
                            "certified_transform_gate",
                            &transform_metrics);
     arc_emit_builtin_program_summaries(&builtin_task, &config);

@@ -1,0 +1,4 @@
+/Users/ratimics/develop/crlplrimes/build/float/arc_agi --task-dir /private/tmp/ARC-AGI/data/training --max-tasks 400 --program-budget-grid # shared_scorer_context train
+/Users/ratimics/develop/crlplrimes/build/float/arc_agi --task-dir /private/tmp/ARC-AGI/data/training --max-tasks 400 --program-budget-grid # single_task_scorer_context train
+/Users/ratimics/develop/crlplrimes/build/float/arc_agi --task-dir /private/tmp/ARC-AGI/data/evaluation --max-tasks 400 --program-budget-grid # shared_scorer_context eval
+/Users/ratimics/develop/crlplrimes/build/float/arc_agi --task-dir /private/tmp/ARC-AGI/data/evaluation --max-tasks 400 --program-budget-grid # single_task_scorer_context eval

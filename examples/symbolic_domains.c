@@ -30,6 +30,11 @@ typedef enum {
     GRID_RULE_DOWN_AT_BOTTOM = 2,
     GRID_RULE_LEFT_AT_EDGE = 3,
     GRID_RULE_BLOCKED_NEXT = 4,
+    GRID_RULE_DEAD_END_NEXT = 5,
+    GRID_RULE_COMPONENT_TRAP_NEXT = 6,
+    GRID_RULE_CLEAR_AXIS_DOMINATED_NEXT = 7,
+    GRID_RULE_CLEAR_MANHATTAN_DOMINATED_NEXT = 8,
+    GRID_RULE_DISTANCE_DOMINATED_NEXT = 9,
 } GridRuleTemplate;
 
 typedef enum {
@@ -37,6 +42,10 @@ typedef enum {
     CLAIM_RULE_REJECT_TRUST_HIGH_CONTRADICTION = 1,
     CLAIM_RULE_REJECT_IGNORE_HIGH_EVIDENCE = 2,
     CLAIM_RULE_REJECT_CAUTIOUS_LOW_EVIDENCE = 3,
+    CLAIM_RULE_REJECT_TRUST_IF_REQUEST_BETTER = 4,
+    CLAIM_RULE_REJECT_REQUEST_IF_TRUST_BETTER = 5,
+    CLAIM_RULE_REJECT_TRUST_IF_REQUEST_PROXY_BETTER = 6,
+    CLAIM_RULE_REJECT_REQUEST_IF_TRUST_PROXY_BETTER = 7,
 } ClaimRuleTemplate;
 
 typedef enum {
@@ -46,11 +55,18 @@ typedef enum {
     ARC_RULE_UNION = 3,
     ARC_RULE_OBJECT_SELECT = 4,
     ARC_RULE_COLOR_MAP_LEFT = 5,
-    ARC_RULE_COUNT = 6,
+    ARC_RULE_LAYER_OVERLAP = 6,
+    ARC_RULE_LAYER_UNION = 7,
+    ARC_RULE_LAYER_XOR = 8,
+    ARC_RULE_LAYER_LEFT_ONLY = 9,
+    ARC_RULE_LAYER_RIGHT_ONLY = 10,
+    ARC_RULE_COUNT = 11,
 } ArcRuleTemplate;
 
 typedef struct {
     double state[CLAIM_STATE_FEATURES];
+    double utility[CLAIM_ACTION_COUNT];
+    double risk_proxy[CLAIM_ACTION_COUNT];
     size_t target;
 } ClaimStateLite;
 
@@ -124,24 +140,20 @@ static double claim_rng_unit(uint32_t *state)
     return (double)claim_rng_next(state) / (double)UINT32_MAX;
 }
 
-static ClaimStateLite generate_claim_lite(uint64_t seed)
+static void compute_claim_lite_utilities(const double features[CLAIM_STATE_FEATURES],
+                                         double utility[CLAIM_ACTION_COUNT])
 {
-    uint32_t rng = (uint32_t)(seed ^ (seed >> 32) ^ UINT64_C(0x9e3779b9));
-    ClaimStateLite state;
-    for (size_t i = 0; i < CLAIM_STATE_FEATURES; ++i) {
-        state.state[i] = claim_rng_unit(&rng);
-    }
-    double reliability = state.state[0];
-    double evidence = state.state[1];
-    double contradiction = state.state[2];
-    double age = state.state[3];
-    double history = state.state[4];
-    double noise = state.state[5];
+    double reliability = features[0];
+    double evidence = features[1];
+    double contradiction = features[2];
+    double age = features[3];
+    double history = features[4];
+    double noise = features[5];
     double truth_score = 0.45 * reliability + 0.35 * evidence + 0.20 * history -
                          0.30 * contradiction - 0.15 * noise - 0.10 * age;
     int resolves_true = truth_score >= 0.38;
     double uncertainty = fabs(truth_score - 0.38);
-    double utility[CLAIM_ACTION_COUNT];
+
     utility[0] = resolves_true ? 2.0 : -2.5;
     utility[1] = resolves_true ? -0.3 : 0.3;
     utility[2] = 0.95 - 0.6 * uncertainty - 0.25 * age;
@@ -150,9 +162,39 @@ static ClaimStateLite generate_claim_lite(uint64_t seed)
         utility[2] += 0.35;
         utility[0] -= 0.75;
     }
+}
+
+static void compute_claim_lite_risk_proxy(const double features[CLAIM_STATE_FEATURES],
+                                          double proxy[CLAIM_ACTION_COUNT])
+{
+    double reliability = features[0];
+    double evidence = features[1];
+    double contradiction = features[2];
+    double age = features[3];
+    double history = features[4];
+    double noise = features[5];
+    double truth_score = 0.45 * reliability + 0.35 * evidence + 0.20 * history -
+                         0.30 * contradiction - 0.15 * noise - 0.10 * age;
+    double high_risk_excess = fmax(0.0, contradiction - 0.70) +
+                              fmax(0.0, noise - 0.80);
+    memset(proxy, 0, CLAIM_ACTION_COUNT * sizeof(*proxy));
+    proxy[0] = truth_score - 0.45 * high_risk_excess - 0.04 * age;
+    proxy[2] = 0.38 - truth_score + 0.35 * high_risk_excess +
+               0.08 * age + 0.06 * contradiction + 0.03 * noise;
+}
+
+static ClaimStateLite generate_claim_lite(uint64_t seed)
+{
+    uint32_t rng = (uint32_t)(seed ^ (seed >> 32) ^ UINT64_C(0x9e3779b9));
+    ClaimStateLite state;
+    for (size_t i = 0; i < CLAIM_STATE_FEATURES; ++i) {
+        state.state[i] = claim_rng_unit(&rng);
+    }
+    compute_claim_lite_utilities(state.state, state.utility);
+    compute_claim_lite_risk_proxy(state.state, state.risk_proxy);
     state.target = 0;
     for (size_t action = 1; action < CLAIM_ACTION_COUNT; ++action) {
-        if (utility[action] > utility[state.target]) {
+        if (state.utility[action] > state.utility[state.target]) {
             state.target = action;
         }
     }
@@ -340,6 +382,11 @@ static size_t enumerate_grid_rules(const NNSymbolicDomain *domain,
         "reject_down_at_bottom",
         "reject_left_at_edge",
         "reject_blocked_next",
+        "reject_local_dead_end_next",
+        "reject_component_trap_next",
+        "reject_clear_axis_dominated_next",
+        "reject_clear_manhattan_dominated_next",
+        "reject_distance_dominated_next",
     };
     if (rules == NULL || capacity == 0) {
         return sizeof(names) / sizeof(names[0]);
@@ -347,7 +394,10 @@ static size_t enumerate_grid_rules(const NNSymbolicDomain *domain,
     size_t count = 0;
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]) && count < capacity; ++i) {
         nn_rule_init(&rules[count], "grid_path", names[i], NN_RULE_KIND_REJECT_ACTION, (uint32_t)i);
-        nn_rule_add_param(&rules[count], "rule_id", (double)i / 5.0, (int64_t)i);
+        nn_rule_add_param(&rules[count],
+                          "rule_id",
+                          (double)i / (double)(sizeof(names) / sizeof(names[0])),
+                          (int64_t)i);
         ++count;
     }
     return count;
@@ -358,11 +408,52 @@ static int check_grid_certificate(const NNSymbolicDomain *domain,
                                   NNCertificate *certificate)
 {
     (void)domain;
-    (void)rule;
-    nn_certificate_accept(certificate,
-                          "grid_legality_axiom",
-                          "illegal moves cannot be optimal shortest-path successors",
-                          1,
+    switch ((GridRuleTemplate)rule->template_id) {
+    case GRID_RULE_UP_AT_TOP:
+    case GRID_RULE_RIGHT_AT_EDGE:
+    case GRID_RULE_DOWN_AT_BOTTOM:
+    case GRID_RULE_LEFT_AT_EDGE:
+    case GRID_RULE_BLOCKED_NEXT:
+        nn_certificate_accept(certificate,
+                              "grid_legality_axiom",
+                              "illegal moves cannot be optimal shortest-path successors",
+                              1,
+                              1);
+        return 1;
+    case GRID_RULE_DEAD_END_NEXT:
+        nn_certificate_accept(certificate,
+                              "grid_local_dead_end_axiom",
+                              "a non-goal cul-de-sac successor cannot be optimal",
+                              1,
+                              1);
+        return 1;
+    case GRID_RULE_COMPONENT_TRAP_NEXT:
+        nn_certificate_accept(certificate,
+                              "grid_component_trap_axiom",
+                              "a successor that can reach the goal only by backtracking through the start cannot be optimal",
+                              1,
+                              1);
+        return 1;
+    case GRID_RULE_CLEAR_AXIS_DOMINATED_NEXT:
+    case GRID_RULE_CLEAR_MANHATTAN_DOMINATED_NEXT:
+        nn_certificate_accept(certificate,
+                              "grid_admissible_bound_dominance",
+                              "a successor whose Manhattan lower bound exceeds another successor's clear-path upper bound cannot be optimal",
+                              1,
+                              1);
+        return 1;
+    case GRID_RULE_DISTANCE_DOMINATED_NEXT:
+        nn_certificate_accept(certificate,
+                              "grid_shortest_path_dominance",
+                              "a successor with larger goal distance than another legal successor cannot be optimal",
+                              1,
+                              1);
+        return 1;
+    }
+    nn_certificate_reject(certificate,
+                          "grid_shortest_path_dominance",
+                          "unsupported grid rule",
+                          0,
                           1);
     return 1;
 }
@@ -382,16 +473,46 @@ static size_t enumerate_claim_rules(const NNSymbolicDomain *domain,
     static const int features[] = {0, 2, 1, 1};
     static const int directions[] = {-1, 1, 1, -1};
     static const double thresholds[] = {0.20, 0.85, 0.90, 0.20};
+    static const char *margin_names[] = {
+        "reject_trust_if_request_margin_better",
+        "reject_request_if_trust_margin_better",
+        "reject_trust_if_request_proxy_better",
+        "reject_request_if_trust_proxy_better",
+    };
+    static const int margin_actions[] = {0, 2, 0, 2};
+    static const int margin_other_actions[] = {2, 0, 2, 0};
+    static const int margin_proxy_kind[] = {0, 0, 1, 1};
+    static const double margins[] = {0.0, 0.0, 0.05, 0.50};
+    size_t threshold_count = sizeof(names) / sizeof(names[0]);
+    size_t margin_count = sizeof(margin_names) / sizeof(margin_names[0]);
     if (rules == NULL || capacity == 0) {
-        return sizeof(names) / sizeof(names[0]);
+        return threshold_count + margin_count;
     }
     size_t count = 0;
-    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]) && count < capacity; ++i) {
+    for (size_t i = 0; i < threshold_count && count < capacity; ++i) {
         nn_rule_init(&rules[count], "delayed_claim", names[i], NN_RULE_KIND_THRESHOLD, (uint32_t)i);
         nn_rule_add_param(&rules[count], "action", (double)actions[i] / 4.0, actions[i]);
         nn_rule_add_param(&rules[count], "feature", (double)features[i] / 6.0, features[i]);
         nn_rule_add_param(&rules[count], "direction", directions[i] > 0 ? 1.0 : 0.0, directions[i]);
         nn_rule_add_param(&rules[count], "threshold", thresholds[i], (int64_t)(thresholds[i] * 1000.0));
+        ++count;
+    }
+    for (size_t i = 0; i < margin_count && count < capacity; ++i) {
+        nn_rule_init(&rules[count],
+                     "delayed_claim",
+                     margin_names[i],
+                     NN_RULE_KIND_CUSTOM,
+                     (uint32_t)(CLAIM_RULE_REJECT_TRUST_IF_REQUEST_BETTER + i));
+        nn_rule_add_param(&rules[count],
+                          "action",
+                          (double)margin_actions[i] / 4.0,
+                          margin_actions[i]);
+        nn_rule_add_param(&rules[count],
+                          "other_action",
+                          (double)margin_other_actions[i] / 4.0,
+                          margin_other_actions[i]);
+        nn_rule_add_param(&rules[count], "margin", margins[i], (int64_t)(margins[i] * 1000.0));
+        nn_rule_add_param(&rules[count], "proxy_kind", (double)margin_proxy_kind[i], margin_proxy_kind[i]);
         ++count;
     }
     return count;
@@ -402,17 +523,32 @@ static int claim_rule_rejects_state(const NNRule *rule,
                                     size_t action)
 {
     int64_t reject_action = 0;
+    int64_t other_action = -1;
     int64_t feature = 0;
     int64_t direction = 0;
+    int64_t proxy_kind = 0;
     double threshold = 0.0;
-    if (!nn_rule_get_param_i64(rule, "action", &reject_action) ||
-        !nn_rule_get_param_i64(rule, "feature", &feature) ||
-        !nn_rule_get_param_i64(rule, "direction", &direction) ||
-        !nn_rule_get_param(rule, "threshold", &threshold) ||
-        feature < 0 || feature >= CLAIM_STATE_FEATURES) {
+    double margin = 0.0;
+    if (!nn_rule_get_param_i64(rule, "action", &reject_action)) {
         return 0;
     }
     if (action != (size_t)reject_action) {
+        return 0;
+    }
+    if (nn_rule_get_param_i64(rule, "other_action", &other_action) &&
+        nn_rule_get_param(rule, "margin", &margin)) {
+        if (other_action < 0 || other_action >= CLAIM_ACTION_COUNT ||
+            other_action == reject_action) {
+            return 0;
+        }
+        (void)nn_rule_get_param_i64(rule, "proxy_kind", &proxy_kind);
+        const double *scores = proxy_kind == 1 ? state->risk_proxy : state->utility;
+        return scores[(size_t)other_action] > scores[(size_t)reject_action] + margin;
+    }
+    if (!nn_rule_get_param_i64(rule, "feature", &feature) ||
+        !nn_rule_get_param_i64(rule, "direction", &direction) ||
+        !nn_rule_get_param(rule, "threshold", &threshold) ||
+        feature < 0 || feature >= CLAIM_STATE_FEATURES) {
         return 0;
     }
     double value = state->state[feature];
@@ -481,6 +617,21 @@ static void arc_apply_rule(const NNRule *rule, const uint8_t *input, uint8_t *ou
             case ARC_RULE_OBJECT_SELECT:
                 output[out] = left == 1 && right == 1 ? 2 : 0;
                 break;
+            case ARC_RULE_LAYER_OVERLAP:
+                output[out] = left == 1 && right == 1 ? 2 : 0;
+                break;
+            case ARC_RULE_LAYER_UNION:
+                output[out] = left == 1 || right == 1 ? 2 : 0;
+                break;
+            case ARC_RULE_LAYER_XOR:
+                output[out] = (left == 1) != (right == 1) ? 2 : 0;
+                break;
+            case ARC_RULE_LAYER_LEFT_ONLY:
+                output[out] = left == 1 && right != 1 ? 2 : 0;
+                break;
+            case ARC_RULE_LAYER_RIGHT_ONLY:
+                output[out] = right == 1 && left != 1 ? 2 : 0;
+                break;
             case ARC_RULE_COLOR_MAP_LEFT:
                 output[out] = left == 1 ? 1 : 0;
                 break;
@@ -504,6 +655,11 @@ static size_t enumerate_arc_rules(const NNSymbolicDomain *domain,
         "mask_union_color_2",
         "object_select_overlap_color_2",
         "color_map_left_identity",
+        "layer_overlap_color_2",
+        "layer_union_color_2",
+        "layer_xor_color_2",
+        "layer_left_only_color_2",
+        "layer_right_only_color_2",
     };
     if (rules == NULL || capacity == 0) {
         return sizeof(names) / sizeof(names[0]);
@@ -701,11 +857,11 @@ int main(void)
         },
         {
             .name = "grid_path",
-            .description = "grid legality rejection rules",
-            .symbols = "cell,wall,move,bounds",
-            .axioms = "illegal moves cannot be optimal",
-            .grammar = "edge_legality, blocked_next",
-            .max_rule_count = 5,
+            .description = "grid legality, local-dead-end, component-trap, clear-path bound, and distance-dominance rejection rules",
+            .symbols = "cell,wall,move,bounds,component,distance,local_topology,clear_path_upper_bound",
+            .axioms = "illegal, component-trap, bound-dominated, or distance-dominated moves cannot be optimal",
+            .grammar = "edge_legality, blocked_next, local_dead_end_next, component_trap_next, clear_axis_dominated_next, clear_manhattan_dominated_next, distance_dominated_next",
+            .max_rule_count = 10,
             .rule_feature_count = FORMAL_FEATURE_COUNT,
             .leakage_policy = NN_LEAKAGE_PRIORS_ALLOWED,
             .rule_feature_schema = FORMAL_RULE_FEATURE_SCHEMA,
@@ -719,11 +875,11 @@ int main(void)
         },
         {
             .name = "delayed_claim",
-            .description = "finite-generator claim threshold rules",
-            .symbols = "claim_feature,threshold,action,utility",
+            .description = "finite-generator claim threshold plus direct and indirect trust/request margin rules",
+            .symbols = "claim_feature,threshold,action,other_action,utility_margin,risk_proxy_margin",
             .axioms = "finite support checker owns safety",
-            .grammar = "reject_action_if_feature_threshold",
-            .max_rule_count = 4,
+            .grammar = "reject_action_if_feature_threshold_or_trust_request_direct_or_proxy_margin",
+            .max_rule_count = 8,
             .rule_feature_count = FORMAL_FEATURE_COUNT,
             .leakage_policy = NN_LEAKAGE_PRIORS_ALLOWED,
             .rule_feature_schema = FORMAL_RULE_FEATURE_SCHEMA,
@@ -740,7 +896,9 @@ int main(void)
             .description = "ARC 0520fde7 transformation rules",
             .symbols = "grid,color,object,mask,transform",
             .axioms = "certified transform matches train pairs and has a unique grammar-consistent test output",
-            .grammar = "copy_left, copy_right, mask_intersection, mask_union, object_select_overlap, color_map",
+            .grammar =
+                "copy_left, copy_right, mask_intersection, mask_union, object_select_overlap, "
+                "color_map, layer_overlap, layer_union, layer_xor, layer_left_only, layer_right_only",
             .max_rule_count = ARC_RULE_COUNT,
             .rule_feature_count = FORMAL_FEATURE_COUNT,
             .leakage_policy = NN_LEAKAGE_PRIORS_ALLOWED,

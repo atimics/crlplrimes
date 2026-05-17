@@ -11,11 +11,17 @@ enum {
     DC_ACTION_COUNT = 4,
     DC_FEATURE_COUNT = DC_STATE_FEATURES + DC_ACTION_COUNT,
     DC_TRAIN_SAMPLES = 4000,
+    DC_VALIDATION_SAMPLES = 1000,
     DC_TEST_SAMPLES = 1000,
     DC_TRAIN_SEED_START = 1000,
+    DC_VALIDATION_SEED_START = 5000,
     DC_TEST_SEED_START = 900000,
+    DC_SHIFTED_TEST_SEED_START = 1900000,
+    DC_UNCERTAINTY_TEST_SEED_START = 2900000,
+    DC_UNCERTAINTY_SCAN_LIMIT = 200000,
     DC_REPLAY_EPOCHS = 6,
     DC_CALIBRATION_BINS = 10,
+    DC_RULE_FEATURE_COUNT = 13,
 };
 
 static const NNFeatureSchema DELAYED_CLAIM_SCORER_FEATURES[] = {
@@ -47,14 +53,16 @@ static const NNExperimentSpec DELAYED_CLAIM_EXPERIMENT_SPEC = {
     .neural_scorer = "shared MLP scores one claim/action row and softmax ranks actions",
     .exact_verifier = "deterministic hidden rule computes action utilities and the best action",
     .verifier_feedback = "target action, utility, proposal steps, calibration bins, replay loss",
-    .rule_grammar = "threshold predicates over observable features and actions; production gate search pending",
+    .rule_grammar =
+        "threshold predicates plus direct utility-margin and indirect risk-margin predicates over trust/request actions",
     .certificate_checker =
-        "finite-generator safety check is exercised in symbolic-domain smoke; production gate table pending",
-    .gate_executor = "planned accepted predicates remove unsafe actions before neural residual scoring",
-    .proposer_inputs = "structural predicate descriptors: feature index, threshold bucket, action id, polarity",
-    .proposer_targets = "planned empirical utility/support and false-rejection diagnostics from verifier labels",
+        "finite-generator safety check rejects rules that remove optimal actions on train+validation support",
+    .gate_executor = "accepted predicates remove certified-unsafe actions before neural residual scoring",
+    .proposer_inputs =
+        "structural predicate descriptors: rule kind, feature index, threshold/margin bucket, action id, optional other-action id, polarity",
+    .proposer_targets = "empirical support, marginal support, and false-rejection diagnostics from verifier labels",
     .proposer_mode = NN_PROPOSER_SELECTION,
-    .baseline_orderings = "planned neural, random, grammar-order, structural heuristic, validation oracle",
+    .baseline_orderings = "neural, closed-loop residual, random, grammar-order, structural heuristic, validation oracle",
     .generalization_axis = "train on one seed band and evaluate shifted seed bands plus harder uncertainty bands",
     .trace_schema = NN_TRACE_SCHEMA,
     .replay_protocol = "stable action-id JSONL traces train replay successors with soft and hard target weights",
@@ -78,15 +86,90 @@ typedef struct {
 typedef struct {
     size_t samples;
     size_t correct;
+    size_t false_rejections;
     double nll;
     double ece;
     double utility;
     double proposal_steps;
     double baseline_steps;
+    double candidate_count;
+    double rejected_actions;
     size_t bin_count[DC_CALIBRATION_BINS];
     double bin_confidence[DC_CALIBRATION_BINS];
     double bin_accuracy[DC_CALIBRATION_BINS];
 } ClaimMetrics;
+
+typedef enum {
+    CLAIM_PROPOSER_NEURAL,
+    CLAIM_PROPOSER_CLOSED_LOOP,
+    CLAIM_PROPOSER_RANDOM,
+    CLAIM_PROPOSER_GRAMMAR,
+    CLAIM_PROPOSER_STRUCTURAL,
+    CLAIM_PROPOSER_VALIDATION_ORACLE,
+} ClaimProposerMode;
+
+typedef enum {
+    CLAIM_RULE_THRESHOLD,
+    CLAIM_RULE_UTILITY_MARGIN,
+    CLAIM_RULE_RISK_MARGIN,
+} ClaimRuleKind;
+
+typedef enum {
+    CLAIM_RULE_FAMILY_DIRECT,
+    CLAIM_RULE_FAMILY_INDIRECT,
+    CLAIM_RULE_FAMILY_ALL,
+} ClaimRuleFamily;
+
+typedef struct {
+    size_t id;
+    ClaimRuleKind kind;
+    size_t action;
+    size_t feature;
+    size_t other_action;
+    int direction;
+    double threshold;
+    double margin;
+    int certified;
+    size_t train_rejects;
+    size_t train_false_rejections;
+    size_t validation_rejects;
+    size_t validation_false_rejections;
+    size_t test_rejects;
+    size_t test_false_rejections;
+    double structural_score;
+    double neural_score;
+    double order_score;
+} ClaimRule;
+
+typedef struct {
+    ClaimProposerMode mode;
+    const char *label;
+    const char *selection_strategy;
+    ClaimRuleFamily rule_family;
+    size_t max_rules;
+    uint64_t seed;
+} ClaimRuleSearchConfig;
+
+typedef struct {
+    const char *label;
+    uint64_t seed_start;
+    size_t samples;
+    double observation_noise;
+    double uncertainty_band;
+    size_t scan_limit;
+} ClaimEvalConfig;
+
+typedef struct {
+    size_t accepted_rules;
+    size_t false_rejections;
+    size_t train_rejects;
+    size_t validation_rejects;
+    size_t test_rejects;
+    double direct_exact;
+    double expanded_exact;
+    double expanded_saved_pct;
+    uint64_t rule_set_hash;
+} ClaimRuleGateMetrics;
 
 static uint32_t dc_rng_next(uint32_t *state)
 {
@@ -155,6 +238,84 @@ static double dc_safe_probability(double probability)
     return probability < 1e-12 ? 1e-12 : probability;
 }
 
+static double dc_clamp01(double value)
+{
+    if (value < 0.0) {
+        return 0.0;
+    }
+    if (value > 1.0) {
+        return 1.0;
+    }
+    return value;
+}
+
+static double claim_truth_score_from_features(const nn_real *features)
+{
+    double reliability = (double)features[0];
+    double evidence = (double)features[1];
+    double contradiction = (double)features[2];
+    double age = (double)features[3];
+    double history = (double)features[4];
+    double noise = (double)features[5];
+    return 0.45 * reliability + 0.35 * evidence + 0.20 * history -
+           0.30 * contradiction - 0.15 * noise - 0.10 * age;
+}
+
+static void compute_claim_observable_utilities(const nn_real *features,
+                                               nn_real utility[DC_ACTION_COUNT])
+{
+    double contradiction = (double)features[2];
+    double age = (double)features[3];
+    double noise = (double)features[5];
+    double truth_score = claim_truth_score_from_features(features);
+    int resolves_true = truth_score >= 0.38;
+    double uncertainty = fabs(truth_score - 0.38);
+
+    utility[0] = resolves_true ? (nn_real)2.0 : (nn_real)-2.5;
+    utility[1] = resolves_true ? (nn_real)-0.3 : (nn_real)0.3;
+    utility[2] = (nn_real)(0.95 - 0.6 * uncertainty - 0.25 * age);
+    utility[3] = resolves_true ? (nn_real)1.1 : (nn_real)-0.2;
+    if (contradiction > 0.70 || noise > 0.80) {
+        utility[2] += (nn_real)0.35;
+        utility[0] -= (nn_real)0.75;
+    }
+}
+
+static void compute_claim_risk_proxy_scores(const nn_real *features,
+                                            double proxy[DC_ACTION_COUNT])
+{
+    double contradiction = (double)features[2];
+    double age = (double)features[3];
+    double noise = (double)features[5];
+    double truth_score = claim_truth_score_from_features(features);
+    double high_risk_excess = fmax(0.0, contradiction - 0.70) +
+                              fmax(0.0, noise - 0.80);
+
+    memset(proxy, 0, DC_ACTION_COUNT * sizeof(*proxy));
+    proxy[0] = truth_score - 0.45 * high_risk_excess - 0.04 * age;
+    proxy[2] = 0.38 - truth_score + 0.35 * high_risk_excess +
+               0.08 * age + 0.06 * contradiction + 0.03 * noise;
+}
+
+static double claim_uncertainty_from_state(const ClaimState *state)
+{
+    return fabs(claim_truth_score_from_features(state->state) - 0.38);
+}
+
+static void perturb_claim_observation(ClaimState *state,
+                                      uint64_t seed,
+                                      double observation_noise)
+{
+    if (state == NULL || observation_noise <= 0.0) {
+        return;
+    }
+    uint32_t rng = (uint32_t)(seed ^ (seed >> 32) ^ 0xa5a5a5a5u);
+    for (size_t i = 0; i < DC_STATE_FEATURES; ++i) {
+        double delta = observation_noise * (2.0 * (double)dc_rng_unit(&rng) - 1.0);
+        state->state[i] = (nn_real)dc_clamp01((double)state->state[i] + delta);
+    }
+}
+
 static ClaimState generate_claim_state(uint64_t seed)
 {
     uint32_t rng = (uint32_t)(seed ^ (seed >> 32) ^ 0x9e3779b9u);
@@ -163,26 +324,7 @@ static ClaimState generate_claim_state(uint64_t seed)
         state.state[i] = dc_rng_unit(&rng);
     }
 
-    double reliability = (double)state.state[0];
-    double evidence = (double)state.state[1];
-    double contradiction = (double)state.state[2];
-    double age = (double)state.state[3];
-    double history = (double)state.state[4];
-    double noise = (double)state.state[5];
-    double truth_score = 0.45 * reliability + 0.35 * evidence + 0.20 * history -
-                         0.30 * contradiction - 0.15 * noise - 0.10 * age;
-    int resolves_true = truth_score >= 0.38;
-    double uncertainty = fabs(truth_score - 0.38);
-
-    state.utility[0] = resolves_true ? (nn_real)2.0 : (nn_real)-2.5;
-    state.utility[1] = resolves_true ? (nn_real)-0.3 : (nn_real)0.3;
-    state.utility[2] = (nn_real)(0.95 - 0.6 * uncertainty - 0.25 * age);
-    state.utility[3] = resolves_true ? (nn_real)1.1 : (nn_real)-0.2;
-    if (contradiction > 0.70 || noise > 0.80) {
-        state.utility[2] += (nn_real)0.35;
-        state.utility[0] -= (nn_real)0.75;
-    }
-
+    compute_claim_observable_utilities(state.state, state.utility);
     state.target = 0;
     for (size_t action = 1; action < DC_ACTION_COUNT; ++action) {
         if (state.utility[action] > state.utility[state.target]) {
@@ -235,6 +377,338 @@ static size_t claim_row_for_action_id(const uint32_t *action_ids,
         }
     }
     return candidate_count;
+}
+
+static int claim_rule_rejects_state(const ClaimRule *rule,
+                                    const ClaimState *state,
+                                    size_t action)
+{
+    if (rule == NULL || state == NULL || action != rule->action) {
+        return 0;
+    }
+
+    if (rule->kind == CLAIM_RULE_THRESHOLD) {
+        if (rule->feature >= DC_STATE_FEATURES) {
+            return 0;
+        }
+        double value = (double)state->state[rule->feature];
+        return rule->direction > 0 ? value >= rule->threshold : value <= rule->threshold;
+    }
+
+    if (rule->kind == CLAIM_RULE_UTILITY_MARGIN) {
+        if (rule->other_action >= DC_ACTION_COUNT || rule->other_action == rule->action) {
+            return 0;
+        }
+        nn_real utility[DC_ACTION_COUNT];
+        compute_claim_observable_utilities(state->state, utility);
+        return (double)utility[rule->other_action] > (double)utility[rule->action] + rule->margin;
+    }
+
+    if (rule->kind == CLAIM_RULE_RISK_MARGIN) {
+        if (rule->other_action >= DC_ACTION_COUNT || rule->other_action == rule->action) {
+            return 0;
+        }
+        double proxy[DC_ACTION_COUNT];
+        compute_claim_risk_proxy_scores(state->state, proxy);
+        return proxy[rule->other_action] > proxy[rule->action] + rule->margin;
+    }
+
+    return 0;
+}
+
+static size_t enumerate_claim_rule_candidates(ClaimRule **out_rules, ClaimRuleFamily family)
+{
+    static const double thresholds[] = {
+        0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
+    };
+    static const double direct_margins[] = {0.0, 0.025, 0.05, 0.10, 0.20};
+    static const double risk_margins[] = {0.0, 0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.70, 1.0};
+    size_t threshold_count = DC_ACTION_COUNT * DC_STATE_FEATURES * 2u *
+                             (sizeof(thresholds) / sizeof(thresholds[0]));
+    size_t utility_margin_count =
+        (family == CLAIM_RULE_FAMILY_INDIRECT)
+            ? 0u
+            : 2u * (sizeof(direct_margins) / sizeof(direct_margins[0]));
+    size_t risk_margin_count =
+        (family == CLAIM_RULE_FAMILY_DIRECT)
+            ? 0u
+            : 2u * (sizeof(risk_margins) / sizeof(risk_margins[0]));
+    size_t count = threshold_count + utility_margin_count + risk_margin_count;
+    ClaimRule *rules = calloc(count, sizeof(*rules));
+    if (rules == NULL) {
+        *out_rules = NULL;
+        return 0;
+    }
+
+    size_t id = 0;
+    for (size_t action = 0; action < DC_ACTION_COUNT; ++action) {
+        for (size_t feature = 0; feature < DC_STATE_FEATURES; ++feature) {
+            for (size_t direction_index = 0; direction_index < 2; ++direction_index) {
+                int direction = direction_index == 0 ? -1 : 1;
+                for (size_t threshold_index = 0;
+                     threshold_index < sizeof(thresholds) / sizeof(thresholds[0]);
+                     ++threshold_index) {
+                    ClaimRule *rule = &rules[id];
+                    rule->id = id;
+                    rule->kind = CLAIM_RULE_THRESHOLD;
+                    rule->action = action;
+                    rule->feature = feature;
+                    rule->other_action = DC_ACTION_COUNT;
+                    rule->direction = direction;
+                    rule->threshold = thresholds[threshold_index];
+                    ++id;
+                }
+            }
+        }
+    }
+
+    if (family != CLAIM_RULE_FAMILY_INDIRECT) {
+        for (size_t pair_index = 0; pair_index < 2; ++pair_index) {
+            size_t action = pair_index == 0 ? 0u : 2u;
+            size_t other_action = pair_index == 0 ? 2u : 0u;
+            for (size_t margin_index = 0;
+                 margin_index < sizeof(direct_margins) / sizeof(direct_margins[0]);
+                 ++margin_index) {
+                ClaimRule *rule = &rules[id];
+                rule->id = id;
+                rule->kind = CLAIM_RULE_UTILITY_MARGIN;
+                rule->action = action;
+                rule->feature = DC_STATE_FEATURES;
+                rule->other_action = other_action;
+                rule->direction = 1;
+                rule->threshold = 0.0;
+                rule->margin = direct_margins[margin_index];
+                ++id;
+            }
+        }
+    }
+
+    if (family != CLAIM_RULE_FAMILY_DIRECT) {
+        for (size_t pair_index = 0; pair_index < 2; ++pair_index) {
+            size_t action = pair_index == 0 ? 0u : 2u;
+            size_t other_action = pair_index == 0 ? 2u : 0u;
+            for (size_t margin_index = 0;
+                 margin_index < sizeof(risk_margins) / sizeof(risk_margins[0]);
+                 ++margin_index) {
+                ClaimRule *rule = &rules[id];
+                rule->id = id;
+                rule->kind = CLAIM_RULE_RISK_MARGIN;
+                rule->action = action;
+                rule->feature = DC_STATE_FEATURES;
+                rule->other_action = other_action;
+                rule->direction = 1;
+                rule->threshold = 0.0;
+                rule->margin = risk_margins[margin_index];
+                ++id;
+            }
+        }
+    }
+
+    *out_rules = rules;
+    return count;
+}
+
+static void audit_claim_rule_on_split(ClaimRule *rule,
+                                      uint64_t seed_start,
+                                      size_t samples,
+                                      size_t *out_rejects,
+                                      size_t *out_false_rejections)
+{
+    size_t rejects = 0;
+    size_t false_rejections = 0;
+    for (size_t i = 0; i < samples; ++i) {
+        ClaimState state = generate_claim_state(seed_start + (uint64_t)i);
+        if (!claim_rule_rejects_state(rule, &state, rule->action)) {
+            continue;
+        }
+        if (rule->action == state.target) {
+            ++false_rejections;
+        } else {
+            ++rejects;
+        }
+    }
+    *out_rejects = rejects;
+    *out_false_rejections = false_rejections;
+}
+
+static void audit_claim_rules(ClaimRule *rules, size_t rule_count)
+{
+    for (size_t i = 0; i < rule_count; ++i) {
+        ClaimRule *rule = &rules[i];
+        audit_claim_rule_on_split(rule,
+                                  DC_TRAIN_SEED_START,
+                                  DC_TRAIN_SAMPLES,
+                                  &rule->train_rejects,
+                                  &rule->train_false_rejections);
+        audit_claim_rule_on_split(rule,
+                                  DC_VALIDATION_SEED_START,
+                                  DC_VALIDATION_SAMPLES,
+                                  &rule->validation_rejects,
+                                  &rule->validation_false_rejections);
+        audit_claim_rule_on_split(rule,
+                                  DC_TEST_SEED_START,
+                                  DC_TEST_SAMPLES,
+                                  &rule->test_rejects,
+                                  &rule->test_false_rejections);
+        rule->certified = rule->train_rejects != 0 &&
+                          rule->train_false_rejections == 0 &&
+                          rule->validation_false_rejections == 0;
+        if (rule->kind == CLAIM_RULE_UTILITY_MARGIN) {
+            double margin_prior = 1.0 / (1.0 + 10.0 * rule->margin);
+            rule->structural_score = 2.0 + 0.25 * margin_prior;
+        } else if (rule->kind == CLAIM_RULE_RISK_MARGIN) {
+            double margin_prior = 1.0 / (1.0 + 2.0 * rule->margin);
+            rule->structural_score = 1.55 + 0.25 * margin_prior;
+        } else {
+            double action_prior = (rule->action == 1 || rule->action == 3) ? 1.0 : 0.0;
+            double broadness = rule->direction > 0 ? 1.0 - rule->threshold : rule->threshold;
+            rule->structural_score = action_prior + 0.25 * broadness;
+        }
+    }
+}
+
+static void encode_claim_rule_features(const ClaimRule *rule, double features[DC_RULE_FEATURE_COUNT])
+{
+    memset(features, 0, DC_RULE_FEATURE_COUNT * sizeof(*features));
+    features[0] = 1.0;
+    features[1] = (double)rule->action / (double)(DC_ACTION_COUNT - 1u);
+    if (rule->kind == CLAIM_RULE_THRESHOLD) {
+        features[2] = (double)rule->feature / (double)(DC_STATE_FEATURES - 1u);
+        features[3] = rule->direction > 0 ? 1.0 : 0.0;
+        features[4] = rule->threshold;
+        features[5] = rule->direction > 0 ? 1.0 - rule->threshold : rule->threshold;
+        features[6] = (rule->threshold <= 0.0 || rule->threshold >= 1.0) ? 1.0 : 0.0;
+    }
+    features[7] = (rule->action == 1 || rule->action == 3) ? 1.0 : 0.0;
+    features[8] = rule->kind == CLAIM_RULE_THRESHOLD ? 1.0 : 0.0;
+    features[9] = rule->kind == CLAIM_RULE_UTILITY_MARGIN ? 1.0 : 0.0;
+    features[10] = rule->kind == CLAIM_RULE_RISK_MARGIN ? 1.0 : 0.0;
+    features[11] = rule->other_action < DC_ACTION_COUNT
+                       ? (double)rule->other_action / (double)(DC_ACTION_COUNT - 1u)
+                       : 0.0;
+    features[12] = rule->margin;
+}
+
+static void score_claim_rules_with_neural_prior(ClaimRule *rules, size_t rule_count)
+{
+    double weights[DC_RULE_FEATURE_COUNT] = {0};
+    const double learning_rate = 0.08;
+    for (size_t epoch = 0; epoch < 400; ++epoch) {
+        for (size_t i = 0; i < rule_count; ++i) {
+            double features[DC_RULE_FEATURE_COUNT];
+            encode_claim_rule_features(&rules[i], features);
+            double target = rules[i].certified
+                                ? (double)rules[i].train_rejects / (double)DC_TRAIN_SAMPLES
+                                : 0.0;
+            double prediction = 0.0;
+            for (size_t j = 0; j < DC_RULE_FEATURE_COUNT; ++j) {
+                prediction += weights[j] * features[j];
+            }
+            double error = prediction - target;
+            for (size_t j = 0; j < DC_RULE_FEATURE_COUNT; ++j) {
+                weights[j] -= learning_rate * error * features[j];
+            }
+        }
+    }
+    for (size_t i = 0; i < rule_count; ++i) {
+        double features[DC_RULE_FEATURE_COUNT];
+        encode_claim_rule_features(&rules[i], features);
+        rules[i].neural_score = 0.0;
+        for (size_t j = 0; j < DC_RULE_FEATURE_COUNT; ++j) {
+            rules[i].neural_score += weights[j] * features[j];
+        }
+    }
+}
+
+static int compare_claim_rule_order(const void *left, const void *right)
+{
+    const ClaimRule *a = *(const ClaimRule *const *)left;
+    const ClaimRule *b = *(const ClaimRule *const *)right;
+    if (a->order_score < b->order_score) {
+        return 1;
+    }
+    if (a->order_score > b->order_score) {
+        return -1;
+    }
+    return a->id < b->id ? -1 : (a->id > b->id ? 1 : 0);
+}
+
+static uint64_t claim_rule_mix_hash(uint64_t hash, uint64_t value)
+{
+    hash ^= value + UINT64_C(0x9e3779b97f4a7c15) + (hash << 6) + (hash >> 2);
+    return hash;
+}
+
+static const char *claim_rule_kind_name(ClaimRuleKind kind)
+{
+    switch (kind) {
+    case CLAIM_RULE_THRESHOLD:
+        return "threshold";
+    case CLAIM_RULE_UTILITY_MARGIN:
+        return "utility_margin";
+    case CLAIM_RULE_RISK_MARGIN:
+        return "risk_margin";
+    default:
+        return "unknown";
+    }
+}
+
+static const char *claim_rule_family_name(ClaimRuleFamily family)
+{
+    switch (family) {
+    case CLAIM_RULE_FAMILY_DIRECT:
+        return "direct";
+    case CLAIM_RULE_FAMILY_INDIRECT:
+        return "indirect";
+    case CLAIM_RULE_FAMILY_ALL:
+        return "all";
+    default:
+        return "unknown";
+    }
+}
+
+static const char *claim_rule_grammar_version(ClaimRuleFamily family)
+{
+    switch (family) {
+    case CLAIM_RULE_FAMILY_DIRECT:
+        return "claim_threshold_margin_v1";
+    case CLAIM_RULE_FAMILY_INDIRECT:
+        return "claim_threshold_risk_margin_v1";
+    case CLAIM_RULE_FAMILY_ALL:
+        return "claim_threshold_direct_indirect_margin_v1";
+    default:
+        return "claim_threshold_margin_unknown";
+    }
+}
+
+static int parse_claim_rule_family(const char *text, ClaimRuleFamily *out_family)
+{
+    if (strcmp(text, "direct") == 0 || strcmp(text, "utility") == 0) {
+        *out_family = CLAIM_RULE_FAMILY_DIRECT;
+    } else if (strcmp(text, "indirect") == 0 || strcmp(text, "risk") == 0) {
+        *out_family = CLAIM_RULE_FAMILY_INDIRECT;
+    } else if (strcmp(text, "all") == 0) {
+        *out_family = CLAIM_RULE_FAMILY_ALL;
+    } else {
+        return 0;
+    }
+    return 1;
+}
+
+static const char *claim_action_name(size_t action)
+{
+    switch (action) {
+    case 0:
+        return "trust";
+    case 1:
+        return "ignore";
+    case 2:
+        return "request_more_evidence";
+    case 3:
+        return "act_cautiously";
+    default:
+        return "unknown";
+    }
 }
 
 static NeuralNet *create_claim_model(unsigned int seed)
@@ -294,6 +768,7 @@ static ClaimMetrics evaluate_claim_model(NeuralNet *net,
         metrics.utility += (double)state.utility[selected];
         metrics.proposal_steps += (double)target_rank + 1.0;
         metrics.baseline_steps += (double)state.target + 1.0;
+        metrics.candidate_count += (double)DC_ACTION_COUNT;
         ++metrics.bin_count[bin];
         metrics.bin_confidence[bin] += confidence;
         metrics.bin_accuracy[bin] += selected == state.target ? 1.0 : 0.0;
@@ -304,6 +779,163 @@ static ClaimMetrics evaluate_claim_model(NeuralNet *net,
     metrics.utility /= sample_count;
     metrics.proposal_steps /= sample_count;
     metrics.baseline_steps /= sample_count;
+    metrics.candidate_count /= sample_count;
+    metrics.rejected_actions /= sample_count;
+    for (size_t bin = 0; bin < DC_CALIBRATION_BINS; ++bin) {
+        if (metrics.bin_count[bin] == 0) {
+            continue;
+        }
+        double count = (double)metrics.bin_count[bin];
+        double confidence = metrics.bin_confidence[bin] / count;
+        double accuracy = metrics.bin_accuracy[bin] / count;
+        metrics.ece += (count / sample_count) * fabs(confidence - accuracy);
+        metrics.bin_confidence[bin] = confidence;
+        metrics.bin_accuracy[bin] = accuracy;
+    }
+    return metrics;
+}
+
+static const ClaimEvalConfig DC_EVAL_CANONICAL = {
+    "canonical", DC_TEST_SEED_START, DC_TEST_SAMPLES, 0.0, 0.0, DC_TEST_SAMPLES,
+};
+
+static const ClaimEvalConfig DC_EVAL_STRESS_BANDS[] = {
+    {"shifted_seed", DC_SHIFTED_TEST_SEED_START, DC_TEST_SAMPLES, 0.0, 0.0, DC_TEST_SAMPLES},
+    {"observation_noise_0p03", DC_TEST_SEED_START, DC_TEST_SAMPLES, 0.03, 0.0, DC_TEST_SAMPLES},
+    {"uncertainty_band_noise_0p03",
+     DC_UNCERTAINTY_TEST_SEED_START,
+     DC_TEST_SAMPLES,
+     0.03,
+     0.04,
+     DC_UNCERTAINTY_SCAN_LIMIT},
+};
+
+static ClaimMetrics evaluate_claim_model_with_gate_on_band(NeuralNet *net,
+                                                           const ClaimEvalConfig *eval_config,
+                                                           const ClaimRule *rules,
+                                                           size_t rule_count,
+                                                           nn_real *candidate_inputs,
+                                                           nn_real *scores,
+                                                           nn_real *probabilities)
+{
+    ClaimMetrics metrics;
+    memset(&metrics, 0, sizeof(metrics));
+
+    const ClaimEvalConfig *config =
+        eval_config == NULL ? &DC_EVAL_CANONICAL : eval_config;
+    size_t scanned = 0;
+    uint64_t seed = config->seed_start;
+    while (metrics.samples < config->samples && scanned < config->scan_limit) {
+        ClaimState truth_state = generate_claim_state(seed);
+        ++seed;
+        ++scanned;
+        if (config->uncertainty_band > 0.0 &&
+            claim_uncertainty_from_state(&truth_state) > config->uncertainty_band) {
+            continue;
+        }
+
+        ClaimState observed_state = truth_state;
+        perturb_claim_observation(&observed_state,
+                                  seed + UINT64_C(0x517cc1b727220a95),
+                                  config->observation_noise);
+        observed_state.target = truth_state.target;
+        memcpy(observed_state.utility, truth_state.utility, sizeof(observed_state.utility));
+
+        fill_claim_candidate_features(candidate_inputs, &observed_state);
+        if (!nn_score_action_rows(net,
+                                  candidate_inputs,
+                                  DC_ACTION_COUNT,
+                                  scores,
+                                  NULL)) {
+            continue;
+        }
+
+        uint8_t rejected[DC_ACTION_COUNT] = {0};
+        size_t rejected_count = 0;
+        for (size_t action = 0; action < DC_ACTION_COUNT; ++action) {
+            for (size_t rule_index = 0; rule_index < rule_count; ++rule_index) {
+                if (claim_rule_rejects_state(&rules[rule_index], &observed_state, action)) {
+                    rejected[action] = 1;
+                    break;
+                }
+            }
+            if (rejected[action]) {
+                ++rejected_count;
+            }
+        }
+        if (rejected[truth_state.target]) {
+            ++metrics.false_rejections;
+        }
+        if (rejected_count >= DC_ACTION_COUNT || rejected[truth_state.target]) {
+            memset(rejected, 0, sizeof(rejected));
+            rejected_count = 0;
+        }
+
+        double max_score = -INFINITY;
+        for (size_t action = 0; action < DC_ACTION_COUNT; ++action) {
+            if (!rejected[action] && (double)scores[action] > max_score) {
+                max_score = (double)scores[action];
+            }
+        }
+        double sum = 0.0;
+        for (size_t action = 0; action < DC_ACTION_COUNT; ++action) {
+            if (rejected[action]) {
+                probabilities[action] = (nn_real)0;
+            } else {
+                double value = exp((double)scores[action] - max_score);
+                probabilities[action] = (nn_real)value;
+                sum += value;
+            }
+        }
+        if (sum <= 0.0 || !isfinite(sum)) {
+            continue;
+        }
+        for (size_t action = 0; action < DC_ACTION_COUNT; ++action) {
+            probabilities[action] = (nn_real)((double)probabilities[action] / sum);
+        }
+
+        size_t selected = DC_ACTION_COUNT;
+        double selected_score = -INFINITY;
+        for (size_t action = 0; action < DC_ACTION_COUNT; ++action) {
+            if (!rejected[action] && (double)scores[action] > selected_score) {
+                selected_score = (double)scores[action];
+                selected = action;
+            }
+        }
+        size_t target_rank = 1;
+        for (size_t action = 0; action < DC_ACTION_COUNT; ++action) {
+            if (!rejected[action] && action != truth_state.target &&
+                scores[action] > scores[truth_state.target]) {
+                ++target_rank;
+            }
+        }
+        double confidence = (double)probabilities[selected];
+        size_t bin = confidence >= 1.0 ? DC_CALIBRATION_BINS - 1
+                                       : (size_t)(confidence * DC_CALIBRATION_BINS);
+        if (bin >= DC_CALIBRATION_BINS) {
+            bin = DC_CALIBRATION_BINS - 1;
+        }
+
+        ++metrics.samples;
+        metrics.correct += selected == truth_state.target ? 1u : 0u;
+        metrics.nll += -log(dc_safe_probability((double)probabilities[truth_state.target]));
+        metrics.utility += (double)truth_state.utility[selected];
+        metrics.proposal_steps += (double)target_rank;
+        metrics.baseline_steps += (double)DC_ACTION_COUNT;
+        metrics.candidate_count += (double)(DC_ACTION_COUNT - rejected_count);
+        metrics.rejected_actions += (double)rejected_count;
+        ++metrics.bin_count[bin];
+        metrics.bin_confidence[bin] += confidence;
+        metrics.bin_accuracy[bin] += selected == truth_state.target ? 1.0 : 0.0;
+    }
+
+    double sample_count = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
+    metrics.nll /= sample_count;
+    metrics.utility /= sample_count;
+    metrics.proposal_steps /= sample_count;
+    metrics.baseline_steps /= sample_count;
+    metrics.candidate_count /= sample_count;
+    metrics.rejected_actions /= sample_count;
     for (size_t bin = 0; bin < DC_CALIBRATION_BINS; ++bin) {
         if (metrics.bin_count[bin] == 0) {
             continue;
@@ -803,6 +1435,715 @@ static void print_claim_reliability_bins_json(const ClaimMetrics *metrics)
     fputc(']', stdout);
 }
 
+static ClaimRuleGateMetrics evaluate_claim_rule_gate(const ClaimRule *rules,
+                                                     size_t rule_count,
+                                                     const size_t *accepted,
+                                                     size_t accepted_count)
+{
+    (void)rule_count;
+    ClaimRuleGateMetrics metrics;
+    memset(&metrics, 0, sizeof(metrics));
+    metrics.accepted_rules = accepted_count;
+    metrics.direct_exact = (double)DC_ACTION_COUNT;
+    metrics.rule_set_hash = UINT64_C(1469598103934665603);
+
+    for (size_t i = 0; i < accepted_count; ++i) {
+        const ClaimRule *rule = &rules[accepted[i]];
+        metrics.train_rejects += rule->train_rejects;
+        metrics.validation_rejects += rule->validation_rejects;
+        metrics.test_rejects += rule->test_rejects;
+        metrics.false_rejections += rule->test_false_rejections;
+        metrics.rule_set_hash = claim_rule_mix_hash(metrics.rule_set_hash, (uint64_t)rule->id);
+    }
+
+    double survivors_total = 0.0;
+    size_t false_rejections = 0;
+    for (size_t i = 0; i < DC_TEST_SAMPLES; ++i) {
+        ClaimState state = generate_claim_state(DC_TEST_SEED_START + (uint64_t)i);
+        size_t rejected_count = 0;
+        for (size_t action = 0; action < DC_ACTION_COUNT; ++action) {
+            int rejected = 0;
+            for (size_t rule_index = 0; rule_index < accepted_count; ++rule_index) {
+                if (claim_rule_rejects_state(&rules[accepted[rule_index]], &state, action)) {
+                    rejected = 1;
+                    break;
+                }
+            }
+            if (rejected) {
+                ++rejected_count;
+                if (action == state.target) {
+                    ++false_rejections;
+                }
+            }
+        }
+        if (rejected_count >= DC_ACTION_COUNT) {
+            rejected_count = 0;
+        }
+        survivors_total += (double)(DC_ACTION_COUNT - rejected_count);
+    }
+    metrics.false_rejections = false_rejections;
+    metrics.expanded_exact = survivors_total / (double)DC_TEST_SAMPLES;
+    metrics.expanded_saved_pct =
+        100.0 * (metrics.direct_exact - metrics.expanded_exact) / metrics.direct_exact;
+    return metrics;
+}
+
+static int select_claim_rules_ordered(ClaimRule *rules,
+                                      size_t rule_count,
+                                      ClaimProposerMode mode,
+                                      uint64_t seed,
+                                      size_t max_rules,
+                                      size_t *accepted,
+                                      size_t *accepted_count)
+{
+    ClaimRule **order = calloc(rule_count, sizeof(*order));
+    uint8_t *covered = calloc((size_t)DC_VALIDATION_SAMPLES * DC_ACTION_COUNT,
+                              sizeof(*covered));
+    if (order == NULL || covered == NULL) {
+        free(order);
+        free(covered);
+        return 0;
+    }
+    uint64_t rng = seed == 0 ? UINT64_C(20240511) : seed;
+    for (size_t i = 0; i < rule_count; ++i) {
+        order[i] = &rules[i];
+        switch (mode) {
+        case CLAIM_PROPOSER_NEURAL:
+            rules[i].order_score = rules[i].neural_score;
+            break;
+        case CLAIM_PROPOSER_RANDOM:
+            rng = rng * UINT64_C(6364136223846793005) + UINT64_C(1442695040888963407);
+            rules[i].order_score = (double)(rng >> 11) / (double)(UINT64_MAX >> 11);
+            break;
+        case CLAIM_PROPOSER_GRAMMAR:
+            rules[i].order_score = -(double)rules[i].id;
+            break;
+        case CLAIM_PROPOSER_STRUCTURAL:
+            rules[i].order_score = rules[i].structural_score;
+            break;
+        case CLAIM_PROPOSER_VALIDATION_ORACLE:
+            rules[i].order_score = (double)rules[i].validation_rejects;
+            break;
+        case CLAIM_PROPOSER_CLOSED_LOOP:
+            rules[i].order_score = 0.0;
+            break;
+        }
+    }
+    qsort(order, rule_count, sizeof(*order), compare_claim_rule_order);
+
+    *accepted_count = 0;
+    for (size_t i = 0; i < rule_count && *accepted_count < max_rules; ++i) {
+        if (!order[i]->certified) {
+            continue;
+        }
+        size_t marginal = 0;
+        for (size_t sample = 0; sample < DC_VALIDATION_SAMPLES; ++sample) {
+            ClaimState state =
+                generate_claim_state(DC_VALIDATION_SEED_START + (uint64_t)sample);
+            size_t action = order[i]->action;
+            size_t offset = sample * DC_ACTION_COUNT + action;
+            if (action != state.target && !covered[offset] &&
+                claim_rule_rejects_state(order[i], &state, action)) {
+                ++marginal;
+            }
+        }
+        if (marginal == 0) {
+            continue;
+        }
+        accepted[*accepted_count] = order[i]->id;
+        ++*accepted_count;
+        for (size_t sample = 0; sample < DC_VALIDATION_SAMPLES; ++sample) {
+            ClaimState state =
+                generate_claim_state(DC_VALIDATION_SEED_START + (uint64_t)sample);
+            size_t action = order[i]->action;
+            if (action != state.target &&
+                claim_rule_rejects_state(order[i], &state, action)) {
+                covered[sample * DC_ACTION_COUNT + action] = 1;
+            }
+        }
+    }
+    free(covered);
+    free(order);
+    return 1;
+}
+
+static int select_claim_rules_closed_loop(ClaimRule *rules,
+                                          size_t rule_count,
+                                          size_t max_rules,
+                                          size_t *accepted,
+                                          size_t *accepted_count)
+{
+    uint8_t *covered = calloc((size_t)DC_VALIDATION_SAMPLES * DC_ACTION_COUNT,
+                              sizeof(*covered));
+    uint8_t *selected = calloc(rule_count, sizeof(*selected));
+    if (covered == NULL || selected == NULL) {
+        free(covered);
+        free(selected);
+        return 0;
+    }
+
+    *accepted_count = 0;
+    while (*accepted_count < max_rules) {
+        size_t best = rule_count;
+        size_t best_marginal = 0;
+        for (size_t rule_index = 0; rule_index < rule_count; ++rule_index) {
+            if (selected[rule_index] || !rules[rule_index].certified) {
+                continue;
+            }
+            size_t marginal = 0;
+            for (size_t i = 0; i < DC_VALIDATION_SAMPLES; ++i) {
+                ClaimState state =
+                    generate_claim_state(DC_VALIDATION_SEED_START + (uint64_t)i);
+                size_t action = rules[rule_index].action;
+                size_t offset = i * DC_ACTION_COUNT + action;
+                if (action != state.target && !covered[offset] &&
+                    claim_rule_rejects_state(&rules[rule_index], &state, action)) {
+                    ++marginal;
+                }
+            }
+            if (marginal > best_marginal ||
+                (marginal == best_marginal && best == rule_count)) {
+                best = rule_index;
+                best_marginal = marginal;
+            }
+        }
+        if (best == rule_count || best_marginal == 0) {
+            break;
+        }
+        selected[best] = 1;
+        accepted[*accepted_count] = best;
+        ++*accepted_count;
+        for (size_t i = 0; i < DC_VALIDATION_SAMPLES; ++i) {
+            ClaimState state = generate_claim_state(DC_VALIDATION_SEED_START + (uint64_t)i);
+            size_t action = rules[best].action;
+            if (action != state.target &&
+                claim_rule_rejects_state(&rules[best], &state, action)) {
+                covered[i * DC_ACTION_COUNT + action] = 1;
+            }
+        }
+    }
+
+    free(covered);
+    free(selected);
+    return 1;
+}
+
+static const char *claim_proposer_feature_set_name(ClaimProposerMode mode)
+{
+    switch (mode) {
+    case CLAIM_PROPOSER_CLOSED_LOOP:
+        return "claim_threshold_margin_residual_rows_v1";
+    case CLAIM_PROPOSER_VALIDATION_ORACLE:
+        return "claim_threshold_margin_validation_oracle";
+    default:
+        return "claim_threshold_margin_structural_rows_v1";
+    }
+}
+
+static const char *claim_proposer_target_name(ClaimProposerMode mode)
+{
+    switch (mode) {
+    case CLAIM_PROPOSER_CLOSED_LOOP:
+        return "validation_marginal_support";
+    case CLAIM_PROPOSER_VALIDATION_ORACLE:
+        return "validation_support_oracle";
+    case CLAIM_PROPOSER_NEURAL:
+        return "train_support";
+    default:
+        return "none";
+    }
+}
+
+static int emit_claim_compare_json(const char *model_hash,
+                                   const char *parent_hash,
+                                   const char *evaluation_mode,
+                                   const char *gate_strategy,
+                                   const ClaimMetrics *metrics,
+                                   size_t accepted_rules,
+                                   const ClaimEvalConfig *eval_config,
+                                   ClaimRuleFamily rule_family)
+{
+    const ClaimEvalConfig *config =
+        eval_config == NULL ? &DC_EVAL_CANONICAL : eval_config;
+    printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"delayed_claim\","
+           "\"evaluation_mode\":\"%s\","
+           "\"gate_strategy\":\"%s\","
+           "\"evaluation_band\":\"%s\","
+           "\"rule_family\":\"%s\","
+           "\"observation_noise\":%.8f,"
+           "\"uncertainty_band\":%.8f,"
+           "\"target_source\":\"hidden_clean_state\","
+           "\"accepted_rules\":%zu,"
+           "\"false_rejections\":%zu,"
+           "\"leakage_policy\":\"%s\","
+           "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
+           "\"feature_encoder_version\":1,"
+           "\"benchmark_seed\":%llu,\"sample_count\":%zu,"
+           "\"accuracy\":%.8f,\"nll\":%.8f,\"ece\":%.8f,"
+           "\"decision_utility\":%.8f,\"proposal_steps\":%.8f,"
+           "\"baseline_steps\":%.8f,\"candidate_count\":%.8f,"
+           "\"rejected_actions\":%.8f,\"search_saved\":%.8f",
+           evaluation_mode,
+           gate_strategy,
+           config->label,
+           accepted_rules == 0 ? "none" : claim_rule_family_name(rule_family),
+           config->observation_noise,
+           config->uncertainty_band,
+           accepted_rules,
+           metrics->false_rejections,
+           nn_leakage_policy_name(DELAYED_CLAIM_EXPERIMENT_SPEC.leakage_policy),
+           model_hash == NULL ? "unknown" : model_hash,
+           parent_hash == NULL || parent_hash[0] == '\0' ? "unknown" : parent_hash,
+           (unsigned long long)config->seed_start,
+           metrics->samples,
+           metrics->samples == 0 ? 0.0 : (double)metrics->correct / (double)metrics->samples,
+           metrics->nll,
+           metrics->ece,
+           metrics->utility,
+           metrics->proposal_steps,
+           metrics->baseline_steps,
+           metrics->candidate_count,
+           metrics->rejected_actions,
+           metrics->baseline_steps - metrics->proposal_steps);
+    print_claim_reliability_bins_json(metrics);
+    printf("}\n");
+    return 1;
+}
+
+static void emit_claim_rule_summary_json(const ClaimRuleSearchConfig *config,
+                                         const ClaimRule *rules,
+                                         size_t rule_count,
+                                         const size_t *accepted,
+                                         const ClaimRuleGateMetrics *metrics)
+{
+    size_t verified = 0;
+    for (size_t i = 0; i < rule_count; ++i) {
+        verified += rules[i].certified ? 1u : 0u;
+    }
+    printf("{\"schema\":\"crlp.rule_search.summary.v1\",\"report_version\":1,"
+           "\"task\":\"delayed_claim\","
+           "\"rule_set_hash\":\"%016llx\","
+           "\"grammar_version\":\"%s\","
+           "\"rule_family\":\"%s\","
+           "\"include_state_conditions\":true,"
+           "\"include_candidate_filters\":false,"
+           "\"include_gap_filters\":false,"
+           "\"proposer_feature_set\":\"%s\","
+           "\"proposer_target\":\"%s\","
+           "\"selection_strategy\":\"%s\","
+           "\"selection_seed\":%llu,"
+           "\"max_rules\":%zu,"
+           "\"proposed_rules\":%zu,"
+           "\"verified_rules\":%zu,"
+           "\"accepted_rules\":%zu,"
+           "\"false_rejections\":%zu,"
+           "\"train_marginal_samples\":%u,"
+           "\"train_rejects\":%zu,"
+           "\"validation_rejects\":%zu,"
+           "\"test_rejects\":%zu,"
+           "\"direct_exact\":%.8f,"
+           "\"expanded_exact\":%.8f,"
+           "\"expanded_saved_pct\":%.8f,"
+           "\"accepted_rule_ids\":[",
+           (unsigned long long)metrics->rule_set_hash,
+           claim_rule_grammar_version(config->rule_family),
+           claim_rule_family_name(config->rule_family),
+           claim_proposer_feature_set_name(config->mode),
+           claim_proposer_target_name(config->mode),
+           config->selection_strategy,
+           (unsigned long long)config->seed,
+           config->max_rules,
+           rule_count,
+           verified,
+           metrics->accepted_rules,
+           metrics->false_rejections,
+           (unsigned int)DC_VALIDATION_SAMPLES,
+           metrics->train_rejects,
+           metrics->validation_rejects,
+           metrics->test_rejects,
+           metrics->direct_exact,
+           metrics->expanded_exact,
+           metrics->expanded_saved_pct);
+    for (size_t i = 0; i < metrics->accepted_rules; ++i) {
+        printf("%s%zu", i == 0 ? "" : ",", accepted[i]);
+    }
+    printf("]}\n");
+}
+
+static int claim_rule_accepted_rank(const size_t *accepted,
+                                    size_t accepted_count,
+                                    size_t rule_id,
+                                    size_t *out_rank)
+{
+    for (size_t i = 0; i < accepted_count; ++i) {
+        if (accepted[i] == rule_id) {
+            *out_rank = i + 1u;
+            return 1;
+        }
+    }
+    *out_rank = 0u;
+    return 0;
+}
+
+static const char *claim_rule_verifier_result(const ClaimRule *rule, int accepted)
+{
+    if (accepted) {
+        return "accepted";
+    }
+    if (rule->train_false_rejections != 0u ||
+        rule->validation_false_rejections != 0u) {
+        return "unsafe";
+    }
+    if (rule->train_rejects == 0u && rule->validation_rejects == 0u) {
+        return "no_support";
+    }
+    return rule->certified ? "verified_not_selected" : "unsafe";
+}
+
+static void emit_claim_rule_trace_json(FILE *trace,
+                                       const ClaimRuleSearchConfig *config,
+                                       const ClaimRule *rule,
+                                       int accepted,
+                                       size_t rank)
+{
+    if (trace == NULL) {
+        return;
+    }
+    fprintf(trace,
+            "{\"schema\":\"crlp.delayed_claim.rule_trace.v1\","
+            "\"task\":\"delayed_claim\","
+            "\"selection_strategy\":\"%s\","
+            "\"rule_id\":%zu,"
+            "\"rule_kind\":\"%s\","
+            "\"action\":%zu,"
+            "\"action_name\":\"%s\","
+            "\"feature\":%zu,"
+            "\"other_action\":%zu,"
+            "\"direction\":%d,"
+            "\"threshold\":%.12g,"
+            "\"margin\":%.12g,"
+            "\"accepted\":%s,"
+            "\"rank\":%zu,"
+            "\"verifier_result\":\"%s\","
+            "\"certificate\":\"finite_train_validation_safety\","
+            "\"model_score\":%.12g,"
+            "\"structural_score\":%.12g,"
+            "\"train_rejects\":%zu,"
+            "\"train_marginal_utility\":%zu,"
+            "\"train_false_rejections\":%zu,"
+            "\"validation_rejects\":%zu,"
+            "\"validation_marginal_utility\":%zu,"
+            "\"validation_false_rejections\":%zu,"
+            "\"test_rejects\":%zu,"
+            "\"test_false_rejections\":%zu}\n",
+            config->selection_strategy,
+            rule->id,
+            claim_rule_kind_name(rule->kind),
+            rule->action,
+            claim_action_name(rule->action),
+            rule->feature,
+            rule->other_action,
+            rule->direction,
+            rule->threshold,
+            rule->margin,
+            accepted ? "true" : "false",
+            rank,
+            claim_rule_verifier_result(rule, accepted),
+            rule->neural_score,
+            rule->structural_score,
+            rule->train_rejects,
+            rule->train_rejects,
+            rule->train_false_rejections,
+            rule->validation_rejects,
+            rule->validation_rejects,
+            rule->validation_false_rejections,
+            rule->test_rejects,
+            rule->test_false_rejections);
+}
+
+static int parse_claim_proposer_mode(const char *text, ClaimProposerMode *out_mode)
+{
+    if (strcmp(text, "neural") == 0 || strcmp(text, "neural_structural") == 0) {
+        *out_mode = CLAIM_PROPOSER_NEURAL;
+    } else if (strcmp(text, "closed-loop") == 0 ||
+               strcmp(text, "closed_loop") == 0 ||
+               strcmp(text, "closed_loop_neural") == 0) {
+        *out_mode = CLAIM_PROPOSER_CLOSED_LOOP;
+    } else if (strcmp(text, "random") == 0) {
+        *out_mode = CLAIM_PROPOSER_RANDOM;
+    } else if (strcmp(text, "grammar") == 0 || strcmp(text, "grammar_order") == 0) {
+        *out_mode = CLAIM_PROPOSER_GRAMMAR;
+    } else if (strcmp(text, "structural") == 0 ||
+               strcmp(text, "structural_heuristic") == 0) {
+        *out_mode = CLAIM_PROPOSER_STRUCTURAL;
+    } else if (strcmp(text, "validation-oracle") == 0 ||
+               strcmp(text, "validation_oracle") == 0) {
+        *out_mode = CLAIM_PROPOSER_VALIDATION_ORACLE;
+    } else {
+        return 0;
+    }
+    return 1;
+}
+
+static const char *claim_proposer_strategy_name(ClaimProposerMode mode)
+{
+    switch (mode) {
+    case CLAIM_PROPOSER_NEURAL:
+        return "neural_structural";
+    case CLAIM_PROPOSER_CLOSED_LOOP:
+        return "closed_loop_neural";
+    case CLAIM_PROPOSER_RANDOM:
+        return "random";
+    case CLAIM_PROPOSER_GRAMMAR:
+        return "grammar_order";
+    case CLAIM_PROPOSER_STRUCTURAL:
+        return "structural_heuristic";
+    case CLAIM_PROPOSER_VALIDATION_ORACLE:
+        return "validation_oracle";
+    }
+    return "unknown";
+}
+
+static int run_claim_rule_search_for_mode(NeuralNet *net,
+                                          const char *model_hash,
+                                          const char *parent_hash,
+                                          ClaimRule *rules,
+                                          size_t rule_count,
+                                          ClaimRuleSearchConfig config,
+                                          nn_real *candidate_inputs,
+                                          nn_real *scores,
+                                          nn_real *probabilities,
+                                          FILE *rule_trace)
+{
+    size_t *accepted = calloc(config.max_rules == 0 ? 1 : config.max_rules,
+                              sizeof(*accepted));
+    if (accepted == NULL) {
+        return 0;
+    }
+
+    size_t accepted_count = 0;
+    int ok = 0;
+    if (config.mode == CLAIM_PROPOSER_CLOSED_LOOP) {
+        ok = select_claim_rules_closed_loop(rules,
+                                            rule_count,
+                                            config.max_rules,
+                                            accepted,
+                                            &accepted_count);
+    } else {
+        ok = select_claim_rules_ordered(rules,
+                                        rule_count,
+                                        config.mode,
+                                        config.seed,
+                                        config.max_rules,
+                                        accepted,
+                                        &accepted_count);
+    }
+    if (!ok) {
+        free(accepted);
+        return 0;
+    }
+
+    ClaimRuleGateMetrics gate_metrics =
+        evaluate_claim_rule_gate(rules, rule_count, accepted, accepted_count);
+    emit_claim_rule_summary_json(&config, rules, rule_count, accepted, &gate_metrics);
+    if (rule_trace != NULL) {
+        for (size_t rule_index = 0; rule_index < rule_count; ++rule_index) {
+            size_t rank = 0u;
+            int is_accepted = claim_rule_accepted_rank(accepted,
+                                                       accepted_count,
+                                                       rules[rule_index].id,
+                                                       &rank);
+            emit_claim_rule_trace_json(rule_trace,
+                                       &config,
+                                       &rules[rule_index],
+                                       is_accepted,
+                                       rank);
+        }
+    }
+
+    ClaimRule *selected_rules = NULL;
+    if (accepted_count != 0) {
+        selected_rules = calloc(accepted_count, sizeof(*selected_rules));
+        if (selected_rules == NULL) {
+            free(accepted);
+            return 0;
+        }
+        for (size_t i = 0; i < accepted_count; ++i) {
+            selected_rules[i] = rules[accepted[i]];
+        }
+    }
+
+    char mode_name[96];
+    const char *gate_prefix = "certified_threshold_margin_gate";
+    if (config.rule_family == CLAIM_RULE_FAMILY_INDIRECT) {
+        gate_prefix = "certified_threshold_risk_margin_gate";
+    } else if (config.rule_family == CLAIM_RULE_FAMILY_ALL) {
+        gate_prefix = "certified_threshold_mixed_margin_gate";
+    }
+    snprintf(mode_name,
+             sizeof(mode_name),
+             "%s_%s",
+             gate_prefix,
+             config.selection_strategy);
+    ClaimMetrics model_metrics = evaluate_claim_model_with_gate_on_band(net,
+                                                                        &DC_EVAL_CANONICAL,
+                                                                        selected_rules,
+                                                                        accepted_count,
+                                                                        candidate_inputs,
+                                                                        scores,
+                                                                        probabilities);
+    emit_claim_compare_json(model_hash,
+                            parent_hash,
+                            mode_name,
+                            config.selection_strategy,
+                            &model_metrics,
+                            accepted_count,
+                            &DC_EVAL_CANONICAL,
+                            config.rule_family);
+    print_claim_metrics(mode_name, model_hash, model_metrics);
+
+    for (size_t band_index = 0;
+         band_index < sizeof(DC_EVAL_STRESS_BANDS) / sizeof(DC_EVAL_STRESS_BANDS[0]);
+         ++band_index) {
+        const ClaimEvalConfig *band = &DC_EVAL_STRESS_BANDS[band_index];
+        char stress_mode_name[128];
+        snprintf(stress_mode_name,
+                 sizeof(stress_mode_name),
+                 "%s_%s",
+                 mode_name,
+                 band->label);
+        ClaimMetrics stress_metrics =
+            evaluate_claim_model_with_gate_on_band(net,
+                                                   band,
+                                                   selected_rules,
+                                                   accepted_count,
+                                                   candidate_inputs,
+                                                   scores,
+                                                   probabilities);
+        emit_claim_compare_json(model_hash,
+                                parent_hash,
+                                stress_mode_name,
+                                config.selection_strategy,
+                                &stress_metrics,
+                                accepted_count,
+                                band,
+                                config.rule_family);
+        print_claim_metrics(stress_mode_name, model_hash, stress_metrics);
+    }
+    free(selected_rules);
+    free(accepted);
+    return 1;
+}
+
+static int run_claim_rule_search(const char *model_path,
+                                 size_t max_rules,
+                                 const char *proposer_text,
+                                 uint64_t proposer_seed,
+                                 ClaimRuleFamily rule_family,
+                                 const char *rule_trace_path)
+{
+    NNCheckpointMeta meta;
+    NeuralNet *net = nn_load_checkpoint(model_path, &meta);
+    if (net == NULL) {
+        fprintf(stderr, "failed to load model: %s\n", model_path);
+        return 0;
+    }
+    char hash[65] = "unknown";
+    nn_hash_checkpoint_hex(model_path, hash);
+
+    ClaimRule *rules = NULL;
+    size_t rule_count = enumerate_claim_rule_candidates(&rules, rule_family);
+    if (rule_count == 0 || rules == NULL) {
+        nn_free(net);
+        return 0;
+    }
+    audit_claim_rules(rules, rule_count);
+    score_claim_rules_with_neural_prior(rules, rule_count);
+
+    nn_real *candidate_inputs = calloc((size_t)DC_ACTION_COUNT * DC_FEATURE_COUNT,
+                                       sizeof(*candidate_inputs));
+    nn_real *scores = calloc(DC_ACTION_COUNT, sizeof(*scores));
+    nn_real *probabilities = calloc(DC_ACTION_COUNT, sizeof(*probabilities));
+    if (candidate_inputs == NULL || scores == NULL || probabilities == NULL) {
+        free(candidate_inputs);
+        free(scores);
+        free(probabilities);
+        free(rules);
+        nn_free(net);
+        return 0;
+    }
+
+    FILE *rule_trace = NULL;
+    if (rule_trace_path != NULL) {
+        rule_trace = fopen(rule_trace_path, "w");
+        if (rule_trace == NULL) {
+            fprintf(stderr, "failed to open rule trace: %s\n", rule_trace_path);
+            free(candidate_inputs);
+            free(scores);
+            free(probabilities);
+            free(rules);
+            nn_free(net);
+            return 0;
+        }
+    }
+
+    ClaimProposerMode modes[] = {
+        CLAIM_PROPOSER_NEURAL,
+        CLAIM_PROPOSER_CLOSED_LOOP,
+        CLAIM_PROPOSER_RANDOM,
+        CLAIM_PROPOSER_GRAMMAR,
+        CLAIM_PROPOSER_STRUCTURAL,
+        CLAIM_PROPOSER_VALIDATION_ORACLE,
+    };
+    size_t mode_count = sizeof(modes) / sizeof(modes[0]);
+    if (strcmp(proposer_text, "all") != 0) {
+        if (!parse_claim_proposer_mode(proposer_text, &modes[0])) {
+            fprintf(stderr, "unknown delayed_claim proposer: %s\n", proposer_text);
+            if (rule_trace != NULL) {
+                fclose(rule_trace);
+            }
+            free(candidate_inputs);
+            free(scores);
+            free(probabilities);
+            free(rules);
+            nn_free(net);
+            return 0;
+        }
+        mode_count = 1;
+    }
+
+    int ok = 1;
+    for (size_t i = 0; i < mode_count; ++i) {
+        ClaimRuleSearchConfig config;
+        config.mode = modes[i];
+        config.label = proposer_text;
+        config.selection_strategy = claim_proposer_strategy_name(modes[i]);
+        config.rule_family = rule_family;
+        config.max_rules = max_rules;
+        config.seed = proposer_seed;
+        ok = ok && run_claim_rule_search_for_mode(net,
+                                                  hash,
+                                                  meta.parent_model_hash,
+                                                  rules,
+                                                  rule_count,
+                                                  config,
+                                                  candidate_inputs,
+                                                  scores,
+                                                  probabilities,
+                                                  rule_trace);
+    }
+
+    if (rule_trace != NULL && fclose(rule_trace) != 0) {
+        ok = 0;
+    }
+    free(candidate_inputs);
+    free(scores);
+    free(probabilities);
+    free(rules);
+    nn_free(net);
+    return ok;
+}
+
 static int compare_claim_models(int argc, char **argv)
 {
     nn_real *candidate_inputs = calloc((size_t)DC_ACTION_COUNT * DC_FEATURE_COUNT,
@@ -834,13 +2175,24 @@ static int compare_claim_models(int argc, char **argv)
                                                     scores,
                                                     probabilities);
         printf("{\"schema\":\"crlp.compare.v1\",\"report_version\":1,\"task\":\"delayed_claim\","
+               "\"evaluation_mode\":\"raw\","
+               "\"gate_strategy\":\"none\","
+               "\"evaluation_band\":\"canonical\","
+               "\"rule_family\":\"none\","
+               "\"observation_noise\":0.00000000,"
+               "\"uncertainty_band\":0.00000000,"
+               "\"target_source\":\"hidden_clean_state\","
+               "\"accepted_rules\":0,"
+               "\"false_rejections\":%zu,"
                "\"leakage_policy\":\"%s\","
                "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
                "\"feature_encoder_version\":%u,"
                "\"benchmark_seed\":%u,\"sample_count\":%zu,"
                "\"accuracy\":%.8f,\"nll\":%.8f,\"ece\":%.8f,"
                "\"decision_utility\":%.8f,\"proposal_steps\":%.8f,"
-               "\"baseline_steps\":%.8f,\"search_saved\":%.8f",
+               "\"baseline_steps\":%.8f,\"candidate_count\":%.8f,"
+               "\"rejected_actions\":%.8f,\"search_saved\":%.8f",
+               metrics.false_rejections,
                nn_leakage_policy_name(DELAYED_CLAIM_EXPERIMENT_SPEC.leakage_policy),
                hash,
                meta.parent_model_hash[0] == '\0' ? "unknown" : meta.parent_model_hash,
@@ -853,6 +2205,8 @@ static int compare_claim_models(int argc, char **argv)
                metrics.utility,
                metrics.proposal_steps,
                metrics.baseline_steps,
+               metrics.candidate_count,
+               metrics.rejected_actions,
                metrics.baseline_steps - metrics.proposal_steps);
         print_claim_reliability_bins_json(&metrics);
         printf("}\n");
@@ -873,6 +2227,10 @@ static void print_usage(FILE *stream)
           "       delayed_claim --replay trace.jsonl --out model.nnckpt "
           "[--epochs count] [--hard-weight value] [--soft-weight value]\n"
           "       delayed_claim --compare model_a.nnckpt model_b.nnckpt [...]\n"
+          "       delayed_claim --rule-search model.nnckpt "
+          "[--max-rules count] [--rule-family direct|indirect|all] "
+          "[--proposer all|neural|closed-loop|random|grammar|structural|validation-oracle] "
+          "[--rule-trace path]\n"
           "       delayed_claim --schema\n",
           stream);
 }
@@ -945,6 +2303,51 @@ int main(int argc, char **argv)
             return EXIT_FAILURE;
         }
         return compare_claim_models(argc, argv) ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+    if (argc >= 2 && strcmp(argv[1], "--rule-search") == 0) {
+        if (argc < 3) {
+            print_usage(stderr);
+            return EXIT_FAILURE;
+        }
+        const char *model_path = argv[2];
+        const char *proposer = "all";
+        const char *rule_trace_path = NULL;
+        ClaimRuleFamily rule_family = CLAIM_RULE_FAMILY_DIRECT;
+        size_t max_rules = 8;
+        uint64_t proposer_seed = UINT64_C(20240511);
+        for (int i = 3; i < argc; ++i) {
+            if (strcmp(argv[i], "--max-rules") == 0 && i + 1 < argc) {
+                if (!parse_size_text(argv[++i], &max_rules)) {
+                    print_usage(stderr);
+                    return EXIT_FAILURE;
+                }
+            } else if (strcmp(argv[i], "--proposer") == 0 && i + 1 < argc) {
+                proposer = argv[++i];
+            } else if (strcmp(argv[i], "--rule-family") == 0 && i + 1 < argc) {
+                if (!parse_claim_rule_family(argv[++i], &rule_family)) {
+                    print_usage(stderr);
+                    return EXIT_FAILURE;
+                }
+            } else if (strcmp(argv[i], "--proposer-seed") == 0 && i + 1 < argc) {
+                if (!parse_u64_text(argv[++i], &proposer_seed)) {
+                    print_usage(stderr);
+                    return EXIT_FAILURE;
+                }
+            } else if (strcmp(argv[i], "--rule-trace") == 0 && i + 1 < argc) {
+                rule_trace_path = argv[++i];
+            } else {
+                print_usage(stderr);
+                return EXIT_FAILURE;
+            }
+        }
+        return run_claim_rule_search(model_path,
+                                     max_rules,
+                                     proposer,
+                                     proposer_seed,
+                                     rule_family,
+                                     rule_trace_path)
+                   ? EXIT_SUCCESS
+                   : EXIT_FAILURE;
     }
 
     const char *trace_path = NULL;

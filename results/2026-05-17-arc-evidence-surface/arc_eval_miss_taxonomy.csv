@@ -1,0 +1,11 @@
+category,tasks,test_cells,certified_tasks,covered_cells,promotion_target,examples
+object_motion_or_copy_extend,80,26064,0,0,offset/repetition induction over object sets,"d931c21c,fd096ab6,f3b10344,52fd389e,dc2e9a9d,e619ca6e,ac0c5833,18419cfa"
+relational_layout_or_counting,73,24370,0,0,relational layout/counting predicates,"05a7bcf2,3ed85e70,8a371977,a3f84088,b7f8a4d8,b9630600,ca8f78db,e760a62e"
+projection_or_panel_selection,71,3152,0,0,panel selector / row-column projection,"5833af48,4c177718,414297c0,136b0064,94133066,c64f1187,c658a4bd,d47aa2ff"
+color_remap_or_mode_collapse,70,26973,0,0,mask-conditioned recolor verifier,"09c534e7,25094a63,40f6cd08,47996f11,981571dc,af22c60d,f9d67f8b,7d1f7ee8"
+scale_tile_or_expand,34,5356,0,0,tile/scale policy with separator handling,"ad7e01d0,ccd554ac,cad67732,b4a43f3b,2697da3f,c1990cce,5b6cbef5,833dafe3"
+unsupported_parse_or_shape,23,5901,0,0,parser/runtime shape support,"16b78196,e1d2900e,df8cc377,e41c6fd3,4e45f183,ac2e8ecf,d282b262,e74e1818"
+shape_completion_or_fill,22,4887,0,0,boundary completion and fill verifier,"79fb03f4,070dd51e,9def23fe,96a8c0cd,13713586,17b80ad2,0f63c0b9,cf133acc"
+segmentation_or_object_extract,18,449,0,0,object selector plus crop normalization,"1a6449f1,2c0b0aff,d56f2372,73ccf9c2,358ba94e,aee291af,c3202e5a,7bb29440"
+symmetry_or_geometry,2,306,0,0,axis/pivot symmetry verifier,"d4b1c2b1,90347967"
+certified,7,1057,7,1057,already covered,"92e50de0,60c09cac,5d2a5c43,195ba7dc,34b99a2b,68b67ca3,e133d23d"

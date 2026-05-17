@@ -1118,7 +1118,11 @@ int emit_prime_gap_trace(NeuralNet *net,
         }
         fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
         ok = nn_score_action_rows(net, candidate_inputs, ACTION_COUNT, scores, probabilities) &&
-             nn_rank_action_scores(scores, ACTION_COUNT, ranked);
+             nn_rank_action_scores_with_ids(scores,
+                                            action_ids,
+                                            ACTION_COUNT,
+                                            ranked,
+                                            NN_RANK_SCORE_EPSILON);
         if (!ok) {
             break;
         }

@@ -16,6 +16,34 @@ typedef enum {
     MT_TASK_COUNT = 4,
 } MTTask;
 
+typedef enum {
+    MT_ARC_EVAL_0520FDE7 = 0,
+    MT_ARC_EVAL_OOD_SAME_ENVELOPE = 1,
+} MTArcEvalSuite;
+
+typedef enum {
+    MT_ARC_OOD_UNION = 0,
+    MT_ARC_OOD_XOR = 1,
+    MT_ARC_OOD_LEFT_ONLY = 2,
+    MT_ARC_OOD_RIGHT_ONLY = 3,
+    MT_ARC_OOD_LEFT_PANEL = 4,
+    MT_ARC_OOD_RIGHT_PANEL = 5,
+    MT_ARC_OOD_NEITHER = 6,
+    MT_ARC_OOD_NOT_LEFT = 7,
+    MT_ARC_OOD_NOT_RIGHT = 8,
+    MT_ARC_OOD_LEFT_IMPLIES_RIGHT = 9,
+    MT_ARC_OOD_RIGHT_IMPLIES_LEFT = 10,
+    MT_ARC_OOD_ROW_ANY_INTERSECTION = 11,
+} MTArcOODFamily;
+
+typedef struct {
+    const char *name;
+    const char *family_name;
+    MTArcOODFamily family;
+    uint16_t left_mask;
+    uint16_t right_mask;
+} MTArcOODTask;
+
 enum {
     MT_FEATURE_COUNT = 96,
     MT_MAX_CANDIDATES = ACTION_COUNT,
@@ -32,8 +60,15 @@ enum {
     MT_ARC_OUTPUT_WIDTH = 3,
     MT_ARC_OUTPUT_HEIGHT = 3,
     MT_ARC_OUTPUT_CELLS = MT_ARC_OUTPUT_WIDTH * MT_ARC_OUTPUT_HEIGHT,
+    MT_ARC_PANEL_WIDTH = 3,
+    MT_ARC_PANEL_HEIGHT = 3,
+    MT_ARC_PANEL_CELLS = MT_ARC_PANEL_WIDTH * MT_ARC_PANEL_HEIGHT,
+    MT_ARC_SEPARATOR_COLOR = 5,
+    MT_ARC_INPUT_COLOR = 1,
+    MT_ARC_TARGET_COLOR = 2,
     MT_ARC_ACTION_COUNT = 10,
     MT_ARC_TRAIN_PAIR_COUNT = 3,
+    MT_ARC_OOD_TASK_COUNT = 12,
     MT_F_BIAS = 0,
     MT_F_TASK = 1,
     MT_F_ACTION_INDEX = 5,
@@ -81,6 +116,20 @@ static const uint8_t MT_ARC_0520FDE7_TEST_OUTPUT[MT_ARC_OUTPUT_CELLS] = {
     0, 0, 0,
     0, 0, 0,
 };
+static const MTArcOODTask MT_ARC_OOD_TASKS[MT_ARC_OOD_TASK_COUNT] = {
+    {"union_checker", "union", MT_ARC_OOD_UNION, 0x155u, 0x0bau},
+    {"xor_offset", "xor", MT_ARC_OOD_XOR, 0x0d3u, 0x18eu},
+    {"left_only_bands", "left_only", MT_ARC_OOD_LEFT_ONLY, 0x1c7u, 0x092u},
+    {"right_only_floor", "right_only", MT_ARC_OOD_RIGHT_ONLY, 0x049u, 0x1f8u},
+    {"copy_left_sparse", "copy_left", MT_ARC_OOD_LEFT_PANEL, 0x0adu, 0x151u},
+    {"copy_right_sparse", "copy_right", MT_ARC_OOD_RIGHT_PANEL, 0x056u, 0x12bu},
+    {"neither_diag", "neither", MT_ARC_OOD_NEITHER, 0x111u, 0x044u},
+    {"not_left_motif", "not_left", MT_ARC_OOD_NOT_LEFT, 0x0d6u, 0x12cu},
+    {"not_right_motif", "not_right", MT_ARC_OOD_NOT_RIGHT, 0x0a3u, 0x169u},
+    {"left_implies_right", "left_implies_right", MT_ARC_OOD_LEFT_IMPLIES_RIGHT, 0x0f3u, 0x05au},
+    {"right_implies_left", "right_implies_left", MT_ARC_OOD_RIGHT_IMPLIES_LEFT, 0x0a6u, 0x1b2u},
+    {"row_any_intersection", "row_any_intersection", MT_ARC_OOD_ROW_ANY_INTERSECTION, 0x129u, 0x083u},
+};
 
 typedef struct {
     uint8_t blocked[MT_GRID_CELLS];
@@ -109,6 +158,10 @@ typedef struct {
     uint32_t task_mask;
     uint32_t eval_task_mask;
     int training_order;
+    int arc_eval_suite;
+    int arc_ood_task;
+    int report_arc_ood_tasks;
+    int run_task_head_model;
 } MTConfig;
 
 typedef struct {
@@ -139,6 +192,56 @@ typedef struct {
     double bin_confidence[MT_CALIBRATION_BINS];
     double bin_accuracy[MT_CALIBRATION_BINS];
 } MTMetrics;
+
+typedef struct {
+    size_t cells;
+    size_t correct_cells;
+    int grid_exact;
+    uint64_t prediction_hash;
+    double nll;
+    uint8_t target[MT_ARC_OUTPUT_CELLS];
+    uint8_t predicted[MT_ARC_OUTPUT_CELLS];
+    double confidence[MT_ARC_OUTPUT_CELLS];
+    double target_probability[MT_ARC_OUTPUT_CELLS];
+    size_t target_color_count[MT_ARC_ACTION_COUNT];
+    size_t predicted_color_count[MT_ARC_ACTION_COUNT];
+    size_t correct_target_color_count[MT_ARC_ACTION_COUNT];
+} MTArcFixedDiagnostics;
+
+typedef struct {
+    size_t input_count;
+    size_t hidden1;
+    size_t hidden2;
+    size_t candidate_capacity;
+    nn_real *w1;
+    nn_real *b1;
+    nn_real *w2;
+    nn_real *b2;
+    nn_real *head_w;
+    nn_real *head_b;
+    nn_real *a1;
+    nn_real *a2;
+    nn_real *scores;
+    nn_real *probabilities;
+    nn_real *delta1;
+    nn_real *delta2;
+    nn_real *grad_w1;
+    nn_real *grad_b1;
+    nn_real *grad_w2;
+    nn_real *grad_b2;
+    nn_real *grad_head_w;
+} MTTaskHeadedScorer;
+
+typedef enum {
+    MT_SCORER_NN = 0,
+    MT_SCORER_TASK_HEADS = 1,
+} MTScorerKind;
+
+typedef struct {
+    MTScorerKind kind;
+    NeuralNet *net;
+    MTTaskHeadedScorer *task_heads;
+} MTScorer;
 
 typedef enum {
     MT_TRAINING_UNIFORM_RANDOM = 0,
@@ -712,6 +815,138 @@ static size_t mt_fill_claim_sample(const MTConfig *config,
     return MT_CLAIM_ACTION_COUNT;
 }
 
+static const char *mt_arc_eval_suite_name(int suite)
+{
+    switch ((MTArcEvalSuite)suite) {
+    case MT_ARC_EVAL_0520FDE7:
+        return "0520fde7";
+    case MT_ARC_EVAL_OOD_SAME_ENVELOPE:
+        return "ood_same_envelope_v1";
+    }
+    return "unknown";
+}
+
+static int mt_parse_arc_eval_suite(const char *text, int *out_suite)
+{
+    if (text == NULL || out_suite == NULL) {
+        return 0;
+    }
+    if (strcmp(text, "0520fde7") == 0 || strcmp(text, "fixed") == 0 ||
+        strcmp(text, "id") == 0 || strcmp(text, "in_distribution") == 0 ||
+        strcmp(text, "in-distribution") == 0) {
+        *out_suite = MT_ARC_EVAL_0520FDE7;
+        return 1;
+    }
+    if (strcmp(text, "ood") == 0 || strcmp(text, "ood_same_envelope") == 0 ||
+        strcmp(text, "ood-same-envelope") == 0 ||
+        strcmp(text, "ood_same_envelope_v1") == 0) {
+        *out_suite = MT_ARC_EVAL_OOD_SAME_ENVELOPE;
+        return 1;
+    }
+    return 0;
+}
+
+static int mt_parse_arc_ood_task(const char *text, int *out_task)
+{
+    if (text == NULL || out_task == NULL) {
+        return 0;
+    }
+    if (strcmp(text, "all") == 0 || strcmp(text, "*") == 0) {
+        *out_task = -1;
+        return 1;
+    }
+    errno = 0;
+    char *end = NULL;
+    unsigned long parsed = strtoul(text, &end, 10);
+    if (end != text && *end == '\0' && errno != ERANGE) {
+        if (parsed >= MT_ARC_OOD_TASK_COUNT) {
+            return 0;
+        }
+        *out_task = (int)parsed;
+        return 1;
+    }
+    for (size_t i = 0; i < MT_ARC_OOD_TASK_COUNT; ++i) {
+        if (strcmp(text, MT_ARC_OOD_TASKS[i].name) == 0 ||
+            strcmp(text, MT_ARC_OOD_TASKS[i].family_name) == 0) {
+            *out_task = (int)i;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int mt_arc_mask_cell(uint16_t mask, size_t cell)
+{
+    return ((mask >> cell) & 1u) != 0u;
+}
+
+static int mt_arc_ood_rule_value(MTArcOODFamily family,
+                                 uint16_t left_mask,
+                                 uint16_t right_mask,
+                                 size_t cell)
+{
+    int left = mt_arc_mask_cell(left_mask, cell);
+    int right = mt_arc_mask_cell(right_mask, cell);
+    switch (family) {
+    case MT_ARC_OOD_UNION:
+        return left || right;
+    case MT_ARC_OOD_XOR:
+        return left != right;
+    case MT_ARC_OOD_LEFT_ONLY:
+        return left && !right;
+    case MT_ARC_OOD_RIGHT_ONLY:
+        return right && !left;
+    case MT_ARC_OOD_LEFT_PANEL:
+        return left;
+    case MT_ARC_OOD_RIGHT_PANEL:
+        return right;
+    case MT_ARC_OOD_NEITHER:
+        return !left && !right;
+    case MT_ARC_OOD_NOT_LEFT:
+        return !left;
+    case MT_ARC_OOD_NOT_RIGHT:
+        return !right;
+    case MT_ARC_OOD_LEFT_IMPLIES_RIGHT:
+        return !left || right;
+    case MT_ARC_OOD_RIGHT_IMPLIES_LEFT:
+        return !right || left;
+    case MT_ARC_OOD_ROW_ANY_INTERSECTION: {
+        size_t row = cell / MT_ARC_PANEL_WIDTH;
+        uint16_t row_mask = (uint16_t)(0x7u << (row * MT_ARC_PANEL_WIDTH));
+        return (left_mask & right_mask & row_mask) != 0u;
+    }
+    }
+    return 0;
+}
+
+static void mt_arc_fill_input_from_masks(uint16_t left_mask, uint16_t right_mask, uint8_t *input)
+{
+    for (size_t y = 0; y < MT_ARC_PANEL_HEIGHT; ++y) {
+        for (size_t x = 0; x < MT_ARC_PANEL_WIDTH; ++x) {
+            size_t panel_cell = y * MT_ARC_PANEL_WIDTH + x;
+            input[y * MT_ARC_INPUT_WIDTH + x] =
+                mt_arc_mask_cell(left_mask, panel_cell) ? MT_ARC_INPUT_COLOR : 0u;
+            input[y * MT_ARC_INPUT_WIDTH + MT_ARC_PANEL_WIDTH] = MT_ARC_SEPARATOR_COLOR;
+            input[y * MT_ARC_INPUT_WIDTH + MT_ARC_PANEL_WIDTH + 1u + x] =
+                mt_arc_mask_cell(right_mask, panel_cell) ? MT_ARC_INPUT_COLOR : 0u;
+        }
+    }
+}
+
+static void mt_arc_generate_ood_task(size_t task_index, uint8_t *input, uint8_t *output)
+{
+    const MTArcOODTask *task = &MT_ARC_OOD_TASKS[task_index % MT_ARC_OOD_TASK_COUNT];
+    mt_arc_fill_input_from_masks(task->left_mask, task->right_mask, input);
+    for (size_t cell = 0; cell < MT_ARC_OUTPUT_CELLS; ++cell) {
+        output[cell] = mt_arc_ood_rule_value(task->family,
+                                             task->left_mask,
+                                             task->right_mask,
+                                             cell)
+                           ? MT_ARC_TARGET_COLOR
+                           : 0u;
+    }
+}
+
 static size_t mt_arc_select_balanced_cell(const uint8_t *output, uint64_t sample)
 {
     int want_foreground = (sample & UINT64_C(1)) == 0;
@@ -740,24 +975,18 @@ static size_t mt_arc_select_balanced_cell(const uint8_t *output, uint64_t sample
     return 0;
 }
 
-static size_t mt_fill_arc_sample(const MTConfig *config,
-                                 int train,
-                                 uint64_t seed_or_index,
-                                 nn_real *candidate_inputs,
-                                 size_t *target_index,
-                                 double *target_utility)
+static size_t mt_fill_arc_cell_rows(const MTConfig *config,
+                                    const uint8_t *input,
+                                    const uint8_t *output,
+                                    size_t cell,
+                                    nn_real *candidate_inputs,
+                                    size_t *target_index,
+                                    double *target_utility)
 {
-    const uint8_t *input = MT_ARC_0520FDE7_TEST_INPUT;
-    const uint8_t *output = MT_ARC_0520FDE7_TEST_OUTPUT;
-    uint64_t cell_sample = seed_or_index;
-    if (train) {
-        size_t pair = (size_t)(seed_or_index % MT_ARC_TRAIN_PAIR_COUNT);
-        input = MT_ARC_0520FDE7_TRAIN_INPUTS[pair];
-        output = MT_ARC_0520FDE7_TRAIN_OUTPUTS[pair];
-        cell_sample = seed_or_index / MT_ARC_TRAIN_PAIR_COUNT;
+    if (input == NULL || output == NULL || candidate_inputs == NULL ||
+        target_index == NULL || cell >= MT_ARC_OUTPUT_CELLS) {
+        return 0;
     }
-
-    size_t cell = mt_arc_select_balanced_cell(output, cell_sample);
     size_t output_x = cell % MT_ARC_OUTPUT_WIDTH;
     size_t output_y = cell / MT_ARC_OUTPUT_WIDTH;
     uint8_t target_color = output[cell];
@@ -791,6 +1020,48 @@ static size_t mt_fill_arc_sample(const MTConfig *config,
     }
 
     return MT_ARC_ACTION_COUNT;
+}
+
+static size_t mt_fill_arc_sample(const MTConfig *config,
+                                 int train,
+                                 uint64_t seed_or_index,
+                                 nn_real *candidate_inputs,
+                                 size_t *target_index,
+                                 double *target_utility)
+{
+    const uint8_t *input = MT_ARC_0520FDE7_TEST_INPUT;
+    const uint8_t *output = MT_ARC_0520FDE7_TEST_OUTPUT;
+    uint8_t ood_input[MT_ARC_INPUT_CELLS];
+    uint8_t ood_output[MT_ARC_OUTPUT_CELLS];
+    uint64_t cell_sample = seed_or_index;
+    if (train) {
+        size_t pair = (size_t)(seed_or_index % MT_ARC_TRAIN_PAIR_COUNT);
+        input = MT_ARC_0520FDE7_TRAIN_INPUTS[pair];
+        output = MT_ARC_0520FDE7_TRAIN_OUTPUTS[pair];
+        cell_sample = seed_or_index / MT_ARC_TRAIN_PAIR_COUNT;
+    } else if (config != NULL &&
+               config->arc_eval_suite == MT_ARC_EVAL_OOD_SAME_ENVELOPE) {
+        size_t task_index = 0;
+        if (config->arc_ood_task >= 0) {
+            task_index = (size_t)config->arc_ood_task;
+            cell_sample = seed_or_index;
+        } else {
+            task_index = (size_t)(seed_or_index % MT_ARC_OOD_TASK_COUNT);
+            cell_sample = seed_or_index / MT_ARC_OOD_TASK_COUNT;
+        }
+        mt_arc_generate_ood_task(task_index, ood_input, ood_output);
+        input = ood_input;
+        output = ood_output;
+    }
+
+    size_t cell = mt_arc_select_balanced_cell(output, cell_sample);
+    return mt_fill_arc_cell_rows(config,
+                                 input,
+                                 output,
+                                 cell,
+                                 candidate_inputs,
+                                 target_index,
+                                 target_utility);
 }
 
 static size_t mt_fill_task_sample(const MTData *data,
@@ -864,6 +1135,438 @@ static NeuralNet *mt_create_model(const MTConfig *config, unsigned int seed)
     nn_config.output_activation = NN_ACTIVATION_LINEAR;
     nn_config.loss = NN_LOSS_MSE;
     return nn_create_config(&nn_config);
+}
+
+static int mt_checked_mul(size_t a, size_t b, size_t *out)
+{
+    if (out == NULL || (a != 0 && b > SIZE_MAX / a)) {
+        return 0;
+    }
+    *out = a * b;
+    return 1;
+}
+
+static void *mt_calloc_array(size_t count, size_t size)
+{
+    size_t bytes = 0;
+    if (count == 0 || size == 0 || !mt_checked_mul(count, size, &bytes)) {
+        return NULL;
+    }
+    (void)bytes;
+    return calloc(count, size);
+}
+
+static nn_real mt_relu(nn_real value)
+{
+    return value > (nn_real)0 ? value : (nn_real)0;
+}
+
+static nn_real mt_relu_grad(nn_real activation)
+{
+    return activation > (nn_real)0 ? (nn_real)1 : (nn_real)0;
+}
+
+static nn_real mt_random_weight(uint32_t *rng, size_t fan_in, size_t fan_out)
+{
+    double denom = (double)(fan_in + fan_out);
+    double scale = denom <= 0.0 ? 0.01 : sqrt(6.0 / denom);
+    return (nn_real)((2.0 * mt_rng_unit(rng) - 1.0) * scale);
+}
+
+static void mt_init_dense_weights(nn_real *weights,
+                                  size_t input_count,
+                                  size_t output_count,
+                                  uint32_t *rng)
+{
+    for (size_t output = 0; output < output_count; ++output) {
+        for (size_t input = 0; input < input_count; ++input) {
+            weights[output * input_count + input] =
+                mt_random_weight(rng, input_count, output_count);
+        }
+    }
+}
+
+static MTTaskHeadedScorer *mt_task_heads_create(const MTConfig *config, unsigned int seed)
+{
+    MTTaskHeadedScorer *model = calloc(1, sizeof(*model));
+    if (model == NULL) {
+        return NULL;
+    }
+
+    model->input_count = MT_FEATURE_COUNT;
+    model->hidden1 = config == NULL ? (size_t)64 : config->hidden1;
+    model->hidden2 = config == NULL ? (size_t)32 : config->hidden2;
+    model->candidate_capacity = MT_MAX_CANDIDATES;
+
+    size_t w1_count = 0;
+    size_t w2_count = 0;
+    size_t head_count = 0;
+    size_t a1_count = 0;
+    size_t a2_count = 0;
+    if (!mt_checked_mul(model->hidden1, model->input_count, &w1_count) ||
+        !mt_checked_mul(model->hidden2, model->hidden1, &w2_count) ||
+        !mt_checked_mul((size_t)MT_TASK_COUNT, model->hidden2, &head_count) ||
+        !mt_checked_mul(model->candidate_capacity, model->hidden1, &a1_count) ||
+        !mt_checked_mul(model->candidate_capacity, model->hidden2, &a2_count)) {
+        free(model);
+        return NULL;
+    }
+
+    model->w1 = mt_calloc_array(w1_count, sizeof(*model->w1));
+    model->b1 = mt_calloc_array(model->hidden1, sizeof(*model->b1));
+    model->w2 = mt_calloc_array(w2_count, sizeof(*model->w2));
+    model->b2 = mt_calloc_array(model->hidden2, sizeof(*model->b2));
+    model->head_w = mt_calloc_array(head_count, sizeof(*model->head_w));
+    model->head_b = mt_calloc_array((size_t)MT_TASK_COUNT, sizeof(*model->head_b));
+    model->a1 = mt_calloc_array(a1_count, sizeof(*model->a1));
+    model->a2 = mt_calloc_array(a2_count, sizeof(*model->a2));
+    model->scores = mt_calloc_array(model->candidate_capacity, sizeof(*model->scores));
+    model->probabilities =
+        mt_calloc_array(model->candidate_capacity, sizeof(*model->probabilities));
+    model->delta1 = mt_calloc_array(a1_count, sizeof(*model->delta1));
+    model->delta2 = mt_calloc_array(a2_count, sizeof(*model->delta2));
+    model->grad_w1 = mt_calloc_array(w1_count, sizeof(*model->grad_w1));
+    model->grad_b1 = mt_calloc_array(model->hidden1, sizeof(*model->grad_b1));
+    model->grad_w2 = mt_calloc_array(w2_count, sizeof(*model->grad_w2));
+    model->grad_b2 = mt_calloc_array(model->hidden2, sizeof(*model->grad_b2));
+    model->grad_head_w = mt_calloc_array(model->hidden2, sizeof(*model->grad_head_w));
+
+    if (model->w1 == NULL || model->b1 == NULL || model->w2 == NULL ||
+        model->b2 == NULL || model->head_w == NULL || model->head_b == NULL ||
+        model->a1 == NULL || model->a2 == NULL || model->scores == NULL ||
+        model->probabilities == NULL || model->delta1 == NULL ||
+        model->delta2 == NULL || model->grad_w1 == NULL ||
+        model->grad_b1 == NULL || model->grad_w2 == NULL ||
+        model->grad_b2 == NULL || model->grad_head_w == NULL) {
+        free(model->w1);
+        free(model->b1);
+        free(model->w2);
+        free(model->b2);
+        free(model->head_w);
+        free(model->head_b);
+        free(model->a1);
+        free(model->a2);
+        free(model->scores);
+        free(model->probabilities);
+        free(model->delta1);
+        free(model->delta2);
+        free(model->grad_w1);
+        free(model->grad_b1);
+        free(model->grad_w2);
+        free(model->grad_b2);
+        free(model->grad_head_w);
+        free(model);
+        return NULL;
+    }
+
+    uint32_t rng = seed == 0 ? 1u : seed;
+    mt_init_dense_weights(model->w1, model->input_count, model->hidden1, &rng);
+    mt_init_dense_weights(model->w2, model->hidden1, model->hidden2, &rng);
+    for (size_t task = 0; task < MT_TASK_COUNT; ++task) {
+        nn_real *head = &model->head_w[task * model->hidden2];
+        for (size_t i = 0; i < model->hidden2; ++i) {
+            head[i] = mt_random_weight(&rng, model->hidden2, 1u);
+        }
+    }
+
+    return model;
+}
+
+static void mt_task_heads_free(MTTaskHeadedScorer *model)
+{
+    if (model == NULL) {
+        return;
+    }
+    free(model->w1);
+    free(model->b1);
+    free(model->w2);
+    free(model->b2);
+    free(model->head_w);
+    free(model->head_b);
+    free(model->a1);
+    free(model->a2);
+    free(model->scores);
+    free(model->probabilities);
+    free(model->delta1);
+    free(model->delta2);
+    free(model->grad_w1);
+    free(model->grad_b1);
+    free(model->grad_w2);
+    free(model->grad_b2);
+    free(model->grad_head_w);
+    free(model);
+}
+
+static void mt_task_heads_forward(MTTaskHeadedScorer *model,
+                                  MTTask task,
+                                  const nn_real *candidate_inputs,
+                                  size_t candidate_count)
+{
+    const nn_real *head = &model->head_w[(size_t)task * model->hidden2];
+    nn_real head_bias = model->head_b[(size_t)task];
+    for (size_t sample = 0; sample < candidate_count; ++sample) {
+        const nn_real *input = &candidate_inputs[sample * model->input_count];
+        nn_real *a1 = &model->a1[sample * model->hidden1];
+        nn_real *a2 = &model->a2[sample * model->hidden2];
+
+        for (size_t h = 0; h < model->hidden1; ++h) {
+            const nn_real *weights = &model->w1[h * model->input_count];
+            nn_real sum = model->b1[h];
+            for (size_t i = 0; i < model->input_count; ++i) {
+                sum += weights[i] * input[i];
+            }
+            a1[h] = mt_relu(sum);
+        }
+
+        for (size_t h = 0; h < model->hidden2; ++h) {
+            const nn_real *weights = &model->w2[h * model->hidden1];
+            nn_real sum = model->b2[h];
+            for (size_t i = 0; i < model->hidden1; ++i) {
+                sum += weights[i] * a1[i];
+            }
+            a2[h] = mt_relu(sum);
+        }
+
+        nn_real score = head_bias;
+        for (size_t h = 0; h < model->hidden2; ++h) {
+            score += head[h] * a2[h];
+        }
+        model->scores[sample] = score;
+    }
+}
+
+static int mt_task_heads_score_action_rows(MTTaskHeadedScorer *model,
+                                           MTTask task,
+                                           const nn_real *candidate_inputs,
+                                           size_t candidate_count,
+                                           nn_real *scores,
+                                           nn_real *probabilities)
+{
+    if (model == NULL || candidate_inputs == NULL || candidate_count == 0 ||
+        candidate_count > model->candidate_capacity || scores == NULL ||
+        (size_t)task >= MT_TASK_COUNT) {
+        return 0;
+    }
+    mt_task_heads_forward(model, task, candidate_inputs, candidate_count);
+    memcpy(scores, model->scores, candidate_count * sizeof(*scores));
+    if (probabilities != NULL) {
+        nn_softmax(scores, probabilities, candidate_count);
+    }
+    return 1;
+}
+
+static void mt_task_heads_zero_gradients(MTTaskHeadedScorer *model)
+{
+    memset(model->grad_w1, 0, model->hidden1 * model->input_count * sizeof(*model->grad_w1));
+    memset(model->grad_b1, 0, model->hidden1 * sizeof(*model->grad_b1));
+    memset(model->grad_w2, 0, model->hidden2 * model->hidden1 * sizeof(*model->grad_w2));
+    memset(model->grad_b2, 0, model->hidden2 * sizeof(*model->grad_b2));
+    memset(model->grad_head_w, 0, model->hidden2 * sizeof(*model->grad_head_w));
+}
+
+static void mt_task_heads_apply_gradients(MTTaskHeadedScorer *model,
+                                          MTTask task,
+                                          nn_real grad_head_b,
+                                          nn_real learning_rate)
+{
+    for (size_t i = 0; i < model->hidden1 * model->input_count; ++i) {
+        model->w1[i] -= learning_rate * model->grad_w1[i];
+    }
+    for (size_t i = 0; i < model->hidden1; ++i) {
+        model->b1[i] -= learning_rate * model->grad_b1[i];
+    }
+    for (size_t i = 0; i < model->hidden2 * model->hidden1; ++i) {
+        model->w2[i] -= learning_rate * model->grad_w2[i];
+    }
+    for (size_t i = 0; i < model->hidden2; ++i) {
+        model->b2[i] -= learning_rate * model->grad_b2[i];
+    }
+
+    nn_real *head = &model->head_w[(size_t)task * model->hidden2];
+    for (size_t i = 0; i < model->hidden2; ++i) {
+        head[i] -= learning_rate * model->grad_head_w[i];
+    }
+    model->head_b[(size_t)task] -= learning_rate * grad_head_b;
+}
+
+static nn_real mt_task_heads_train_action_scorer(MTTaskHeadedScorer *model,
+                                                 MTTask task,
+                                                 const nn_real *candidate_inputs,
+                                                 size_t candidate_count,
+                                                 size_t target_index,
+                                                 nn_real learning_rate)
+{
+    if (model == NULL || candidate_inputs == NULL || candidate_count == 0 ||
+        candidate_count > model->candidate_capacity || target_index >= candidate_count ||
+        learning_rate <= (nn_real)0 || (size_t)task >= MT_TASK_COUNT) {
+        return (nn_real)NAN;
+    }
+
+    mt_task_heads_forward(model, task, candidate_inputs, candidate_count);
+    nn_softmax(model->scores, model->probabilities, candidate_count);
+    nn_real loss = (nn_real)(-log(mt_safe_probability((double)model->probabilities[target_index])));
+    mt_task_heads_zero_gradients(model);
+
+    nn_real *head = &model->head_w[(size_t)task * model->hidden2];
+    nn_real grad_head_b = 0;
+    for (size_t sample = 0; sample < candidate_count; ++sample) {
+        const nn_real *input = &candidate_inputs[sample * model->input_count];
+        const nn_real *a1 = &model->a1[sample * model->hidden1];
+        const nn_real *a2 = &model->a2[sample * model->hidden2];
+        nn_real *delta2 = &model->delta2[sample * model->hidden2];
+        nn_real *delta1 = &model->delta1[sample * model->hidden1];
+        nn_real dscore = model->probabilities[sample] -
+                         (sample == target_index ? (nn_real)1 : (nn_real)0);
+
+        grad_head_b += dscore;
+        for (size_t h = 0; h < model->hidden2; ++h) {
+            model->grad_head_w[h] += dscore * a2[h];
+            delta2[h] = dscore * head[h] * mt_relu_grad(a2[h]);
+        }
+
+        for (size_t h = 0; h < model->hidden2; ++h) {
+            const nn_real d = delta2[h];
+            nn_real *grad_w = &model->grad_w2[h * model->hidden1];
+            model->grad_b2[h] += d;
+            for (size_t i = 0; i < model->hidden1; ++i) {
+                grad_w[i] += d * a1[i];
+            }
+        }
+
+        for (size_t h = 0; h < model->hidden1; ++h) {
+            nn_real sum = 0;
+            for (size_t next = 0; next < model->hidden2; ++next) {
+                sum += model->w2[next * model->hidden1 + h] * delta2[next];
+            }
+            delta1[h] = sum * mt_relu_grad(a1[h]);
+        }
+
+        for (size_t h = 0; h < model->hidden1; ++h) {
+            const nn_real d = delta1[h];
+            nn_real *grad_w = &model->grad_w1[h * model->input_count];
+            model->grad_b1[h] += d;
+            for (size_t i = 0; i < model->input_count; ++i) {
+                grad_w[i] += d * input[i];
+            }
+        }
+    }
+
+    mt_task_heads_apply_gradients(model, task, grad_head_b, learning_rate);
+    return loss;
+}
+
+static size_t mt_task_heads_parameter_count(const MTTaskHeadedScorer *model)
+{
+    if (model == NULL) {
+        return 0;
+    }
+    size_t total = 0;
+    size_t term = 0;
+    if (!mt_checked_mul(model->hidden1, model->input_count, &term) ||
+        term > SIZE_MAX - total) {
+        return 0;
+    }
+    total += term;
+    if (model->hidden1 > SIZE_MAX - total) {
+        return 0;
+    }
+    total += model->hidden1;
+    if (!mt_checked_mul(model->hidden2, model->hidden1, &term) ||
+        term > SIZE_MAX - total) {
+        return 0;
+    }
+    total += term;
+    if (model->hidden2 > SIZE_MAX - total) {
+        return 0;
+    }
+    total += model->hidden2;
+    if (!mt_checked_mul((size_t)MT_TASK_COUNT, model->hidden2 + 1u, &term) ||
+        term > SIZE_MAX - total) {
+        return 0;
+    }
+    return total + term;
+}
+
+static size_t mt_task_heads_forward_flop_count(const MTTaskHeadedScorer *model)
+{
+    if (model == NULL) {
+        return 0;
+    }
+    size_t total = 0;
+    size_t per_h1 = 2u * model->input_count + 1u;
+    size_t per_h2 = 2u * model->hidden1 + 1u;
+    size_t per_head = 2u * model->hidden2 + 1u;
+    if (model->hidden1 > (SIZE_MAX - total) / per_h1) {
+        return 0;
+    }
+    total += model->hidden1 * per_h1;
+    if (model->hidden2 > (SIZE_MAX - total) / per_h2) {
+        return 0;
+    }
+    total += model->hidden2 * per_h2;
+    if (per_head > SIZE_MAX - total) {
+        return 0;
+    }
+    return total + per_head;
+}
+
+static int mt_scorer_score_action_rows(MTScorer *scorer,
+                                       MTTask task,
+                                       const nn_real *candidate_inputs,
+                                       size_t candidate_count,
+                                       nn_real *scores,
+                                       nn_real *probabilities)
+{
+    if (scorer == NULL) {
+        return 0;
+    }
+    switch (scorer->kind) {
+    case MT_SCORER_NN:
+        return nn_score_action_rows(scorer->net,
+                                    candidate_inputs,
+                                    candidate_count,
+                                    scores,
+                                    probabilities);
+    case MT_SCORER_TASK_HEADS:
+        return mt_task_heads_score_action_rows(scorer->task_heads,
+                                               task,
+                                               candidate_inputs,
+                                               candidate_count,
+                                               scores,
+                                               probabilities);
+    }
+    return 0;
+}
+
+static size_t mt_scorer_parameter_count(const MTScorer *scorer)
+{
+    if (scorer == NULL) {
+        return 0;
+    }
+    return scorer->kind == MT_SCORER_TASK_HEADS
+               ? mt_task_heads_parameter_count(scorer->task_heads)
+               : nn_parameter_count(scorer->net);
+}
+
+static size_t mt_scorer_forward_flop_count(const MTScorer *scorer)
+{
+    if (scorer == NULL) {
+        return 0;
+    }
+    return scorer->kind == MT_SCORER_TASK_HEADS
+               ? mt_task_heads_forward_flop_count(scorer->task_heads)
+               : nn_forward_flop_count(scorer->net);
+}
+
+static uint64_t mt_hash_arc_prediction(const uint8_t *prediction, size_t count)
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+    for (size_t i = 0; i < count; ++i) {
+        hash ^= (uint64_t)prediction[i] + UINT64_C(0x9e3779b97f4a7c15) +
+                (uint64_t)i;
+        hash *= UINT64_C(1099511628211);
+    }
+    return hash;
 }
 
 static int mt_prepare_data(MTData *data)
@@ -993,6 +1696,52 @@ static MTTask mt_choose_training_task(const MTConfig *config,
     return active_tasks[mt_rng_bounded(rng, active_count)];
 }
 
+static void mt_print_epoch_json(const MTConfig *config,
+                                const char *model_kind,
+                                MTTask task,
+                                size_t epoch,
+                                size_t epoch_updates,
+                                size_t train_updates,
+                                double loss_sum)
+{
+    char task_set[128];
+    char hidden[32];
+    mt_task_set_name(config->task_mask, task_set, sizeof(task_set));
+    mt_hidden_text(config, hidden, sizeof(hidden));
+    double denom = epoch_updates == 0 ? 1.0 : (double)epoch_updates;
+    printf("{\"schema\":\"crlp.multitask.epoch.v1\","
+           "\"report_version\":1,"
+           "\"task\":\"multi_domain\","
+           "\"domain\":\"%s\","
+           "\"model_kind\":\"%s\","
+           "\"training_order\":\"%s\","
+           "\"feature_envelope\":\"%s\","
+           "\"task_set\":\"%s\","
+           "\"epoch\":%zu,"
+           "\"epochs\":%zu,"
+           "\"steps_per_epoch\":%zu,"
+           "\"epoch_updates\":%zu,"
+           "\"train_updates\":%zu,"
+           "\"loss_mean\":%.8f,"
+           "\"hidden\":\"%s\","
+           "\"learning_rate\":%.8f,"
+           "\"seed\":%llu}\n",
+           mt_task_name(task),
+           model_kind == NULL ? "shared" : model_kind,
+           mt_training_order_name((MTTrainingOrder)config->training_order),
+           mt_feature_envelope_name(config),
+           task_set,
+           epoch,
+           config->epochs,
+           config->steps_per_epoch,
+           epoch_updates,
+           train_updates,
+           loss_sum / denom,
+           hidden,
+           (double)config->learning_rate,
+           (unsigned long long)config->seed);
+}
+
 static int mt_train_mixed(NeuralNet *net,
                           const MTData *data,
                           const MTConfig *config,
@@ -1061,6 +1810,102 @@ static int mt_train_mixed(NeuralNet *net,
             printf(" %s_loss=%.4f", mt_task_name((MTTask)task), losses[task] / denom);
         }
         putchar('\n');
+        for (size_t i = 0; i < active_count; ++i) {
+            size_t task = (size_t)active_tasks[i];
+            mt_print_epoch_json(config,
+                                "shared",
+                                (MTTask)task,
+                                epoch + 1u,
+                                epoch_updates[task],
+                                updates[task],
+                                losses[task]);
+        }
+    }
+
+    free(candidate_inputs);
+    return 1;
+}
+
+static int mt_train_mixed_task_heads(MTTaskHeadedScorer *model,
+                                     const MTData *data,
+                                     const MTConfig *config,
+                                     size_t updates[MT_TASK_COUNT])
+{
+    uint32_t rng =
+        (uint32_t)(config->seed ^ (config->seed >> 32) ^ UINT64_C(0x27182818));
+    MTTask active_tasks[MT_TASK_COUNT];
+    size_t active_count = mt_fill_active_tasks(config->task_mask,
+                                               active_tasks,
+                                               MT_TASK_COUNT);
+    nn_real *candidate_inputs =
+        calloc((size_t)MT_MAX_CANDIDATES * MT_FEATURE_COUNT, sizeof(*candidate_inputs));
+    if (model == NULL || active_count == 0 || candidate_inputs == NULL) {
+        free(candidate_inputs);
+        return 0;
+    }
+
+    memset(updates, 0, MT_TASK_COUNT * sizeof(*updates));
+    for (size_t epoch = 0; epoch < config->epochs; ++epoch) {
+        double losses[MT_TASK_COUNT] = {0.0, 0.0, 0.0, 0.0};
+        size_t epoch_updates[MT_TASK_COUNT] = {0, 0, 0, 0};
+        for (size_t step = 0; step < config->steps_per_epoch; ++step) {
+            size_t global_step = epoch * config->steps_per_epoch + step;
+            MTTask task = mt_choose_training_task(config,
+                                                  active_tasks,
+                                                  active_count,
+                                                  global_step,
+                                                  &rng);
+            uint64_t sample = (uint64_t)mt_rng_next(&rng);
+            if (task == MT_TASK_PRIME_GAP && data->train.count != 0) {
+                sample %= (uint64_t)data->train.count;
+            }
+
+            size_t target_index = 0;
+            double ignored_utility = 0.0;
+            size_t candidate_count = mt_fill_task_sample(data,
+                                                         config,
+                                                         task,
+                                                         1,
+                                                         sample,
+                                                         candidate_inputs,
+                                                         &target_index,
+                                                         &ignored_utility);
+            if (candidate_count == 0 || target_index >= candidate_count) {
+                free(candidate_inputs);
+                return 0;
+            }
+            nn_real loss = mt_task_heads_train_action_scorer(model,
+                                                             task,
+                                                             candidate_inputs,
+                                                             candidate_count,
+                                                             target_index,
+                                                             config->learning_rate);
+            if (isnan((double)loss)) {
+                free(candidate_inputs);
+                return 0;
+            }
+            losses[task] += (double)loss;
+            ++epoch_updates[task];
+            ++updates[task];
+        }
+
+        printf("task_heads epoch %zu", epoch + 1);
+        for (size_t i = 0; i < active_count; ++i) {
+            size_t task = (size_t)active_tasks[i];
+            double denom = epoch_updates[task] == 0 ? 1.0 : (double)epoch_updates[task];
+            printf(" %s_loss=%.4f", mt_task_name((MTTask)task), losses[task] / denom);
+        }
+        putchar('\n');
+        for (size_t i = 0; i < active_count; ++i) {
+            size_t task = (size_t)active_tasks[i];
+            mt_print_epoch_json(config,
+                                "shared_task_heads",
+                                (MTTask)task,
+                                epoch + 1u,
+                                epoch_updates[task],
+                                updates[task],
+                                losses[task]);
+        }
     }
 
     free(candidate_inputs);
@@ -1121,7 +1966,7 @@ static int mt_train_single_task(NeuralNet *net,
     return 1;
 }
 
-static MTMetrics mt_evaluate_task(NeuralNet *net,
+static MTMetrics mt_evaluate_task(MTScorer *scorer,
                                   const MTData *data,
                                   const MTConfig *config,
                                   MTTask task,
@@ -1154,7 +1999,12 @@ static MTMetrics mt_evaluate_task(NeuralNet *net,
                                                      &target_index,
                                                      &target_utility);
         if (candidate_count == 0 || target_index >= candidate_count ||
-            !nn_score_action_rows(net, candidate_inputs, candidate_count, scores, probabilities) ||
+            !mt_scorer_score_action_rows(scorer,
+                                         task,
+                                         candidate_inputs,
+                                         candidate_count,
+                                         scores,
+                                         probabilities) ||
             !nn_rank_action_scores(scores, candidate_count, ranked)) {
             continue;
         }
@@ -1233,6 +2083,163 @@ static MTMetrics mt_evaluate_task(NeuralNet *net,
     return metrics;
 }
 
+static int mt_compute_arc_fixed_diagnostics(MTScorer *scorer,
+                                            const MTConfig *config,
+                                            MTArcFixedDiagnostics *diag)
+{
+    if (scorer == NULL || config == NULL || diag == NULL) {
+        return 0;
+    }
+    memset(diag, 0, sizeof(*diag));
+    nn_real *candidate_inputs =
+        calloc((size_t)MT_MAX_CANDIDATES * MT_FEATURE_COUNT, sizeof(*candidate_inputs));
+    nn_real *scores = calloc(MT_MAX_CANDIDATES, sizeof(*scores));
+    nn_real *probabilities = calloc(MT_MAX_CANDIDATES, sizeof(*probabilities));
+    size_t *ranked = calloc(MT_MAX_CANDIDATES, sizeof(*ranked));
+    if (candidate_inputs == NULL || scores == NULL || probabilities == NULL || ranked == NULL) {
+        free(candidate_inputs);
+        free(scores);
+        free(probabilities);
+        free(ranked);
+        return 0;
+    }
+
+    for (size_t cell = 0; cell < MT_ARC_OUTPUT_CELLS; ++cell) {
+        size_t target_index = 0;
+        double ignored_utility = 0.0;
+        size_t candidate_count =
+            mt_fill_arc_cell_rows(config,
+                                  MT_ARC_0520FDE7_TEST_INPUT,
+                                  MT_ARC_0520FDE7_TEST_OUTPUT,
+                                  cell,
+                                  candidate_inputs,
+                                  &target_index,
+                                  &ignored_utility);
+        if (candidate_count == 0 || target_index >= candidate_count ||
+            !mt_scorer_score_action_rows(scorer,
+                                         MT_TASK_ARC_AGI,
+                                         candidate_inputs,
+                                         candidate_count,
+                                         scores,
+                                         probabilities) ||
+            !nn_rank_action_scores(scores, candidate_count, ranked)) {
+            continue;
+        }
+        uint8_t predicted = (uint8_t)ranked[0];
+        uint8_t target = (uint8_t)target_index;
+        diag->target[cell] = target;
+        diag->predicted[cell] = predicted;
+        diag->confidence[cell] = (double)probabilities[ranked[0]];
+        diag->target_probability[cell] = (double)probabilities[target_index];
+        diag->nll += -log(mt_safe_probability((double)probabilities[target_index]));
+        ++diag->cells;
+        if (target < MT_ARC_ACTION_COUNT) {
+            ++diag->target_color_count[target];
+        }
+        if (predicted < MT_ARC_ACTION_COUNT) {
+            ++diag->predicted_color_count[predicted];
+        }
+        if (predicted == target) {
+            ++diag->correct_cells;
+            if (target < MT_ARC_ACTION_COUNT) {
+                ++diag->correct_target_color_count[target];
+            }
+        }
+    }
+    if (diag->cells != 0) {
+        diag->nll /= (double)diag->cells;
+    }
+    diag->grid_exact = diag->cells == MT_ARC_OUTPUT_CELLS &&
+                       diag->correct_cells == MT_ARC_OUTPUT_CELLS;
+    diag->prediction_hash = mt_hash_arc_prediction(diag->predicted, MT_ARC_OUTPUT_CELLS);
+
+    free(candidate_inputs);
+    free(scores);
+    free(probabilities);
+    free(ranked);
+    return diag->cells == MT_ARC_OUTPUT_CELLS;
+}
+
+static void mt_print_u8_json_array(const char *name, const uint8_t *values, size_t count)
+{
+    printf(",\"%s\":[", name);
+    for (size_t i = 0; i < count; ++i) {
+        if (i != 0) {
+            fputc(',', stdout);
+        }
+        printf("%u", (unsigned int)values[i]);
+    }
+    fputc(']', stdout);
+}
+
+static void mt_print_size_json_array(const char *name, const size_t *values, size_t count)
+{
+    printf(",\"%s\":[", name);
+    for (size_t i = 0; i < count; ++i) {
+        if (i != 0) {
+            fputc(',', stdout);
+        }
+        printf("%zu", values[i]);
+    }
+    fputc(']', stdout);
+}
+
+static void mt_print_double_json_array(const char *name, const double *values, size_t count)
+{
+    printf(",\"%s\":[", name);
+    for (size_t i = 0; i < count; ++i) {
+        if (i != 0) {
+            fputc(',', stdout);
+        }
+        printf("%.8f", values[i]);
+    }
+    fputc(']', stdout);
+}
+
+static void mt_print_arc_fixed_diagnostics_json(MTScorer *scorer,
+                                                MTTask task,
+                                                const MTConfig *config)
+{
+    if (task != MT_TASK_ARC_AGI || config == NULL ||
+        config->arc_eval_suite != MT_ARC_EVAL_0520FDE7) {
+        return;
+    }
+    MTArcFixedDiagnostics diag;
+    if (!mt_compute_arc_fixed_diagnostics(scorer, config, &diag)) {
+        return;
+    }
+    double cells = diag.cells == 0 ? 1.0 : (double)diag.cells;
+    printf(",\"arc_fixed_grid_exact\":%s,"
+           "\"arc_fixed_cell_accuracy\":%.8f,"
+           "\"arc_fixed_correct_cells\":%zu,"
+           "\"arc_fixed_cells\":%zu,"
+           "\"arc_fixed_nll\":%.8f,"
+           "\"arc_fixed_prediction_hash\":\"%016llx\"",
+           diag.grid_exact ? "true" : "false",
+           (double)diag.correct_cells / cells,
+           diag.correct_cells,
+           diag.cells,
+           diag.nll,
+           (unsigned long long)diag.prediction_hash);
+    mt_print_u8_json_array("arc_fixed_targets", diag.target, MT_ARC_OUTPUT_CELLS);
+    mt_print_u8_json_array("arc_fixed_predictions", diag.predicted, MT_ARC_OUTPUT_CELLS);
+    mt_print_double_json_array("arc_fixed_confidence",
+                               diag.confidence,
+                               MT_ARC_OUTPUT_CELLS);
+    mt_print_double_json_array("arc_fixed_target_probability",
+                               diag.target_probability,
+                               MT_ARC_OUTPUT_CELLS);
+    mt_print_size_json_array("arc_fixed_target_color_count",
+                             diag.target_color_count,
+                             MT_ARC_ACTION_COUNT);
+    mt_print_size_json_array("arc_fixed_predicted_color_count",
+                             diag.predicted_color_count,
+                             MT_ARC_ACTION_COUNT);
+    mt_print_size_json_array("arc_fixed_correct_target_color_count",
+                             diag.correct_target_color_count,
+                             MT_ARC_ACTION_COUNT);
+}
+
 static void mt_print_reliability_bins_json(const MTMetrics *metrics)
 {
     int first = 1;
@@ -1258,7 +2265,37 @@ static void mt_print_reliability_bins_json(const MTMetrics *metrics)
     fputc(']', stdout);
 }
 
-static void mt_print_metrics_json(const NeuralNet *net,
+static void mt_print_arc_eval_json(const MTConfig *config, MTTask task)
+{
+    if (task != MT_TASK_ARC_AGI || config == NULL) {
+        return;
+    }
+    printf(",\"arc_eval_suite\":\"%s\"", mt_arc_eval_suite_name(config->arc_eval_suite));
+    if (config->arc_eval_suite == MT_ARC_EVAL_OOD_SAME_ENVELOPE) {
+        if (config->arc_ood_task >= 0 &&
+            config->arc_ood_task < (int)MT_ARC_OOD_TASK_COUNT) {
+            const MTArcOODTask *ood = &MT_ARC_OOD_TASKS[config->arc_ood_task];
+            printf(",\"arc_eval_task\":\"%s\","
+                   "\"arc_eval_family\":\"%s\","
+                   "\"arc_eval_task_index\":%d,"
+                   "\"arc_eval_task_count\":1",
+                   ood->name,
+                   ood->family_name,
+                   config->arc_ood_task);
+        } else {
+            printf(",\"arc_eval_task\":\"all\","
+                   "\"arc_eval_family\":\"mixed\","
+                   "\"arc_eval_task_count\":%d",
+                   MT_ARC_OOD_TASK_COUNT);
+        }
+    } else {
+        printf(",\"arc_eval_task\":\"0520fde7\","
+               "\"arc_eval_family\":\"intersection\","
+               "\"arc_eval_task_count\":1");
+    }
+}
+
+static void mt_print_metrics_json(MTScorer *scorer,
                                   const char *model_kind,
                                   const char *training_order,
                                   MTTask task,
@@ -1275,7 +2312,10 @@ static void mt_print_metrics_json(const NeuralNet *net,
     mt_hidden_text(config, hidden, sizeof(hidden));
     printf("{\"schema\":\"crlp.multitask.summary.v1\","
            "\"task\":\"multi_domain\","
-           "\"domain\":\"%s\","
+           "\"domain\":\"%s\"",
+           mt_task_name(task));
+    mt_print_arc_eval_json(config, task);
+    printf(","
            "\"task_set\":\"%s\","
            "\"eval_task_set\":\"%s\","
            "\"model_kind\":\"%s\","
@@ -1302,7 +2342,6 @@ static void mt_print_metrics_json(const NeuralNet *net,
            "\"mean_rank\":%.8f,"
            "\"decision_utility\":%.8f,"
            "\"baseline_steps\":%.8f",
-           mt_task_name(task),
            task_set,
            eval_task_set,
            model_kind,
@@ -1312,8 +2351,8 @@ static void mt_print_metrics_json(const NeuralNet *net,
            config->epochs,
            config->steps_per_epoch,
            hidden,
-           net == NULL ? (size_t)0 : nn_parameter_count(net),
-           net == NULL ? (size_t)0 : nn_forward_flop_count(net),
+           mt_scorer_parameter_count(scorer),
+           mt_scorer_forward_flop_count(scorer),
            (double)config->learning_rate,
            (unsigned long long)config->seed,
            metrics.samples,
@@ -1329,6 +2368,7 @@ static void mt_print_metrics_json(const NeuralNet *net,
            metrics.mean_rank,
            metrics.utility,
            metrics.baseline_steps);
+    mt_print_arc_fixed_diagnostics_json(scorer, task, config);
     mt_print_reliability_bins_json(&metrics);
     printf("}\n");
 }
@@ -1351,14 +2391,44 @@ static void mt_print_metrics_line(const char *model_kind, MTTask task, MTMetrics
            metrics.samples);
 }
 
+static void mt_print_arc_ood_task_breakdown(MTScorer *scorer,
+                                            const MTData *data,
+                                            const MTConfig *config,
+                                            const char *model_kind,
+                                            const char *training_order,
+                                            size_t train_updates)
+{
+    if (scorer == NULL || data == NULL || config == NULL ||
+        config->arc_eval_suite != MT_ARC_EVAL_OOD_SAME_ENVELOPE ||
+        config->arc_ood_task >= 0 || !config->report_arc_ood_tasks ||
+        (config->eval_task_mask & mt_task_bit(MT_TASK_ARC_AGI)) == 0) {
+        return;
+    }
+    for (size_t task_index = 0; task_index < MT_ARC_OOD_TASK_COUNT; ++task_index) {
+        MTConfig task_config = *config;
+        task_config.arc_ood_task = (int)task_index;
+        MTMetrics metrics =
+            mt_evaluate_task(scorer, data, &task_config, MT_TASK_ARC_AGI, config->eval_samples);
+        mt_print_metrics_json(scorer,
+                              model_kind,
+                              training_order,
+                              MT_TASK_ARC_AGI,
+                              train_updates,
+                              &task_config,
+                              metrics);
+    }
+}
+
 static void mt_print_usage(FILE *stream)
 {
     fputs("usage: multitask_domain [--epochs count] [--steps-per-epoch count] "
           "[--eval-samples count] [--learning-rate rate] [--seed seed] "
           "[--hidden h1xh2] "
           "[--training-order uniform_random|round_robin|arc_heavy|prime_light] "
+          "[--arc-eval-suite 0520fde7|ood] [--arc-ood-task all|index|name] "
+          "[--arc-ood-task-breakdown] "
           "[--tasks prime,grid,claim,arc|all] [--eval-tasks prime,grid,claim,arc|all] "
-          "[--no-task-tags] [--no-task-baselines]\n",
+          "[--task-heads] [--no-task-tags] [--no-task-baselines]\n",
           stream);
 }
 
@@ -1379,6 +2449,10 @@ static int mt_parse_config(int argc, char **argv, MTConfig *config)
                         mt_task_bit(MT_TASK_ARC_AGI);
     config->eval_task_mask = 0;
     config->training_order = MT_TRAINING_UNIFORM_RANDOM;
+    config->arc_eval_suite = MT_ARC_EVAL_0520FDE7;
+    config->arc_ood_task = -1;
+    config->report_arc_ood_tasks = 0;
+    config->run_task_head_model = 0;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--epochs") == 0 && i + 1 < argc) {
@@ -1407,6 +2481,21 @@ static int mt_parse_config(int argc, char **argv, MTConfig *config)
                 return 0;
             }
             config->training_order = order;
+        } else if (strcmp(argv[i], "--arc-eval-suite") == 0 && i + 1 < argc) {
+            int suite = MT_ARC_EVAL_0520FDE7;
+            if (!mt_parse_arc_eval_suite(argv[++i], &suite)) {
+                return 0;
+            }
+            config->arc_eval_suite = suite;
+        } else if (strcmp(argv[i], "--arc-ood-task") == 0 && i + 1 < argc) {
+            if (!mt_parse_arc_ood_task(argv[++i], &config->arc_ood_task)) {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--arc-ood-task-breakdown") == 0) {
+            config->report_arc_ood_tasks = 1;
+        } else if (strcmp(argv[i], "--task-heads") == 0 ||
+                   strcmp(argv[i], "--shared-task-heads") == 0) {
+            config->run_task_head_model = 1;
         } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
             if (!mt_parse_u64_text(argv[++i], &config->seed)) {
                 return 0;
@@ -1461,7 +2550,8 @@ int main(int argc, char **argv)
     mt_hidden_text(&config, hidden, sizeof(hidden));
     printf("[multitask_domain] feature_envelope=%s "
            "task_set=%s eval_task_set=%s epochs=%zu steps_per_epoch=%zu "
-           "eval_samples=%zu hidden=%s training_order=%s lr=%.6f seed=%llu\n",
+           "eval_samples=%zu hidden=%s training_order=%s arc_eval_suite=%s "
+           "task_heads=%s lr=%.6f seed=%llu\n",
            mt_feature_envelope_name(&config),
            task_set,
            eval_task_set,
@@ -1470,6 +2560,8 @@ int main(int argc, char **argv)
            config.eval_samples,
            hidden,
            mt_training_order_name((MTTrainingOrder)config.training_order),
+           mt_arc_eval_suite_name(config.arc_eval_suite),
+           config.run_task_head_model ? "on" : "off",
            (double)config.learning_rate,
            (unsigned long long)config.seed);
 
@@ -1479,6 +2571,10 @@ int main(int argc, char **argv)
         mt_free_data(&data);
         return EXIT_FAILURE;
     }
+    MTScorer shared_scorer;
+    shared_scorer.kind = MT_SCORER_NN;
+    shared_scorer.net = shared;
+    shared_scorer.task_heads = NULL;
 
     MTTask active_tasks[MT_TASK_COUNT];
     size_t active_count = mt_fill_active_tasks(config.task_mask,
@@ -1490,8 +2586,9 @@ int main(int argc, char **argv)
                                              MT_TASK_COUNT);
     for (size_t task_index = 0; task_index < eval_count; ++task_index) {
         MTTask task = eval_tasks[task_index];
-        MTMetrics metrics = mt_evaluate_task(shared, &data, &config, task, config.eval_samples);
-        mt_print_metrics_json(shared,
+        MTMetrics metrics =
+            mt_evaluate_task(&shared_scorer, &data, &config, task, config.eval_samples);
+        mt_print_metrics_json(&shared_scorer,
                               "shared",
                               mt_training_order_name((MTTrainingOrder)config.training_order),
                               task,
@@ -1499,6 +2596,57 @@ int main(int argc, char **argv)
                               &config,
                               metrics);
         mt_print_metrics_line("shared", task, metrics);
+        if (task == MT_TASK_ARC_AGI) {
+            mt_print_arc_ood_task_breakdown(&shared_scorer,
+                                            &data,
+                                            &config,
+                                            "shared",
+                                            mt_training_order_name(
+                                                (MTTrainingOrder)config.training_order),
+                                            shared_updates[task]);
+        }
+    }
+
+    if (config.run_task_head_model) {
+        MTTaskHeadedScorer *task_heads =
+            mt_task_heads_create(&config,
+                                 (unsigned int)((config.seed + UINT64_C(303)) &
+                                                UINT64_C(0xffffffff)));
+        size_t task_head_updates[MT_TASK_COUNT] = {0, 0, 0, 0};
+        if (task_heads == NULL ||
+            !mt_train_mixed_task_heads(task_heads, &data, &config, task_head_updates)) {
+            mt_task_heads_free(task_heads);
+            nn_free(shared);
+            mt_free_data(&data);
+            return EXIT_FAILURE;
+        }
+        MTScorer task_head_scorer;
+        task_head_scorer.kind = MT_SCORER_TASK_HEADS;
+        task_head_scorer.net = NULL;
+        task_head_scorer.task_heads = task_heads;
+        for (size_t task_index = 0; task_index < eval_count; ++task_index) {
+            MTTask task = eval_tasks[task_index];
+            MTMetrics metrics =
+                mt_evaluate_task(&task_head_scorer, &data, &config, task, config.eval_samples);
+            mt_print_metrics_json(&task_head_scorer,
+                                  "shared_task_heads",
+                                  mt_training_order_name((MTTrainingOrder)config.training_order),
+                                  task,
+                                  task_head_updates[task],
+                                  &config,
+                                  metrics);
+            mt_print_metrics_line("shared_task_heads", task, metrics);
+            if (task == MT_TASK_ARC_AGI) {
+                mt_print_arc_ood_task_breakdown(&task_head_scorer,
+                                                &data,
+                                                &config,
+                                                "shared_task_heads",
+                                                mt_training_order_name(
+                                                    (MTTrainingOrder)config.training_order),
+                                                task_head_updates[task]);
+            }
+        }
+        mt_task_heads_free(task_heads);
     }
 
     if (config.run_task_baselines) {
@@ -1509,6 +2657,9 @@ int main(int argc, char **argv)
         }
         for (size_t task_index = 0; task_index < active_count; ++task_index) {
             MTTask task = active_tasks[task_index];
+            if ((config.eval_task_mask & mt_task_bit(task)) == 0) {
+                continue;
+            }
             NeuralNet *single =
                 mt_create_model(&config,
                                 (unsigned int)((config.seed + 101u + task_index) &
@@ -1520,8 +2671,13 @@ int main(int argc, char **argv)
                 mt_free_data(&data);
                 return EXIT_FAILURE;
             }
-            MTMetrics metrics = mt_evaluate_task(single, &data, &config, task, config.eval_samples);
-            mt_print_metrics_json(single,
+            MTScorer single_scorer;
+            single_scorer.kind = MT_SCORER_NN;
+            single_scorer.net = single;
+            single_scorer.task_heads = NULL;
+            MTMetrics metrics =
+                mt_evaluate_task(&single_scorer, &data, &config, task, config.eval_samples);
+            mt_print_metrics_json(&single_scorer,
                                   "single_task",
                                   "domain_only_random",
                                   task,
@@ -1529,6 +2685,14 @@ int main(int argc, char **argv)
                                   &config,
                                   metrics);
             mt_print_metrics_line("single_task", task, metrics);
+            if (task == MT_TASK_ARC_AGI) {
+                mt_print_arc_ood_task_breakdown(&single_scorer,
+                                                &data,
+                                                &config,
+                                                "single_task",
+                                                "domain_only_random",
+                                                baseline_updates);
+            }
             nn_free(single);
         }
     }

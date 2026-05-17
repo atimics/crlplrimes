@@ -1,7 +1,7 @@
 # Multitask Transfer Research Plan
 
 Date: 2026-05-17
-Status: implementation plan with first instrumentation pass landed
+Status: R-MT.1/R-MT.2 captured; remaining work is follow-up analysis and architecture
 
 ## Purpose
 
@@ -71,12 +71,88 @@ Mean trained-domain top-1:
 This suggests task tags are not currently buying much, and the fixed ARC row
 remains the most fragile part of the shared action envelope.
 
+### Roadmap Capture: R-MT.1 and R-MT.2
+
+Command source: `scripts/multitask_roadmap_experiments.py`, captured in
+`results/2026-05-17-multitask-roadmap`.
+
+R-MT.1 uses three seeds at 16 epochs x 12,000 shared steps per seed
+(192,000 total shared updates). Mean top-1:
+
+| Domain | Shared | Single | Delta |
+| --- | ---: | ---: | ---: |
+| `prime_gap` | 14.07% | 13.63% | +0.43pp |
+| `grid_path` | 90.90% | 91.13% | -0.23pp |
+| `delayed_claim` | 98.00% | 97.90% | +0.10pp |
+| `arc_agi` | 26.17% | 42.80% | -16.63pp |
+
+R-MT.2 evaluates the same trained ARC scorer on 12 same-envelope held-out
+7x3 -> 3x3 panel-composition tasks, still training ARC only on `0520fde7`.
+
+| Model | OOD top-1 | OOD NLL | OOD ECE |
+| --- | ---: | ---: | ---: |
+| shared | 48.40% | 2.6278 | 0.4481 |
+| single-task | 42.83% | 4.3723 | 0.4820 |
+
+Interpretation: longer training narrows but does not close the fixed-task ARC
+gap. The same-envelope OOD suite produces the first positive ARC transfer
+signal (+5.57pp aggregate), but per-family rows are mixed, so this is a narrow
+same-envelope finding rather than a public ARC generalization claim.
+
+R-MT.3 keeps the delayed-claim transfer claim alive at the same long-run
+budget. With 48k expected delayed-claim updates per seed, all-domain training
+beats claim-only by +1.40pp top-1 (98.00% vs 96.60%). The sibling pattern is
+specific rather than uniformly positive: removing `arc_agi` improves the row to
+98.50%, while removing `grid_path` is the largest loss at 97.20%.
+
+R-MT.6 rejects the simple "just make the trunk bigger" explanation for the
+fixed ARC gap. Across `32x16`, `64x32`, `128x64`, and `256x128` trunks, the
+smallest `32x16` trunk has the best shared fixed-ARC top-1 (39.20%) and the
+least negative fixed-ARC shared-minus-single delta (-1.23pp). The largest trunk
+partially recovers the `64x32` gap (-8.30pp versus -16.63pp), but not
+monotonically and not enough to close the gap. Delayed-claim remains strong
+across the sweep.
+
+The follow-up ARC fixed-scorer diagnostic points to cell/color mode collapse,
+not a core NN engine bug. Uniform random gives ARC about 47.9k updates and
+round-robin gives exactly 48k, so the baseline is not simply starved. The
+epoch-prefix scan shows the same prediction family after one epoch and after 16
+epochs while train loss falls to near zero, so this is not late forgetting.
+Learning rates from `0.0015` through `0.012` do not fix exactness. The learned
+scorers discover the relevant color set `{0,2}` and crude background/foreground
+priors, but do not infer the `0520fde7` panel geometry; the single-task scorer
+converges to the same background-heavy wrong grid across all three seeds.
+`docs/arc-json-vision-research-note.md` records the follow-up interpretation:
+ARC is stored as JSON cell colors, but it assumes human-like objectness,
+segmentation, geometry, topology, and latent layer/depth priors. The next ARC
+experiment should therefore put those priors in the symbolic verifier grammar
+first. The standalone ARC grammar now has an explicit layer/depth family
+(`layer_overlap`, `layer_union`, `layer_xor`, `layer_left_only`,
+`layer_right_only`), and the budgeted proposer has a split-panel structural
+prior based on train shapes and foreground counts. The flat multitask scorer
+remains the negative-control baseline rather than the place where these priors
+are smuggled in as ordinary features.
+
+R-MT.7 pins down the ARC scorer boundary. The public ARC transform gate and
+budgeted proposer path do not currently consume a multitask scorer checkpoint,
+so the `shared_scorer_context` versus `single_task_scorer_context` run is an
+explicit invariance audit of the scorer-independent path. Across 400 train and
+400 eval tasks, accepted rule sets, prediction hashes, loader summaries, and
+budgeted proposer aggregates had zero mismatches.
+
 ### Public ARC Loader
 
-The symbolic ARC loader is a separate surface. Grammar v10 loaded all 400
+The symbolic ARC loader is a separate surface. Grammar v15 loaded all 400
 training and 400 evaluation tasks with no parse errors, certifying 24/400 train
-tasks and 4/400 eval tasks. With optional induction enabled, the current phase-4
-public-corpus run reaches 5/400 eval tasks with no regressions.
+tasks and 7/400 eval tasks. The train count is unchanged from the
+pre-layer-overlap grammar v10 pass, while the explicit layer/depth family and
+separator-line compression plus lattice motif repeat move evaluation cell
+coverage from 187/98515 to 1057/98515 with no evaluation false rejections in
+the budgeted proposer rows. Grammar v15 preserves that coverage while exposing
+the `92e50de0` lattice verifier as a `tile_motif_repeat` hypothesis template
+that the proposer can induce from train-pair lattice evidence.
+The clean evidence surface and miss taxonomy are generated by
+`make arc-agi-evidence-surface`.
 
 Use this to evaluate the verifier-gated ARC substrate, not fixed-scorer
 multi-task transfer.
@@ -136,26 +212,60 @@ The selected value is emitted in `training_order`.
 
 ### I-MT.4: Create Fixed-Envelope ARC OOD Variants
 
-Status: pending.
+Status: implemented.
 
-To test scorer OOD without switching to the public ARC transform loader, add a
-small held-out suite of same-shape cell-color tasks that fit the existing
-96-feature envelope:
+To test scorer OOD without switching to the public ARC transform loader,
+`examples/multitask_domain.c` now provides `--arc-eval-suite ood` and
+`--arc-ood-task-breakdown`. The suite has 12 held-out same-shape cell-color
+tasks that fit the existing 96-feature envelope:
 
 - same 7x3 input and 3x3 output shape
 - output-color action space `0..9`
 - train/test split analogous to `0520fde7`
-- family metadata such as `split_panel_mask`, `intersection`, `union`,
-  `recolor`, `translate`, or `sequence`
+- family metadata such as `union`, `xor`, `left_only`, `right_only`,
+  `copy_left`, `copy_right`, `neither`, `not_left`, `not_right`,
+  `left_implies_right`, `right_implies_left`, and `row_any_intersection`
 
-This is the scorer OOD testbed for H1. It should not be described as a public
-ARC solver benchmark.
+This is the scorer OOD testbed for H1.
+
+### I-MT.5: Add Training-Dynamics and Fixed-ARC Grid Diagnostics
+
+Status: implemented.
+
+`examples/multitask_domain.c` emits `crlp.multitask.epoch.v1`, one row per
+active domain per shared-training epoch, with:
+
+- `loss_mean`
+- `epoch_updates`
+- `train_updates`
+- `hidden`
+- `learning_rate`
+- `seed`
+- `training_order`
+- `task_set`
+
+Fixed `0520fde7` ARC summary rows also include exact-grid diagnostics:
+
+- `arc_fixed_grid_exact`
+- `arc_fixed_cell_accuracy`
+- `arc_fixed_prediction_hash`
+- `arc_fixed_targets`
+- `arc_fixed_predictions`
+- `arc_fixed_confidence`
+- `arc_fixed_target_probability`
+- per-color target/predicted/correct counts
+
+This addresses the R-MT.6 diagnostic gap: fixed ARC can now be read as a 3x3
+grid/color failure rather than only as 1,000 repeated balanced cell samples, and
+R-MT.8 can separate task starvation from forgetting or optimizer instability.
 
 ## Experiments
 
 ### E-MT.1: Longer Shared and Single Runs
 
 Question: was the 24,000-update budget too small?
+
+Status: captured in `results/2026-05-17-multitask-roadmap`.
 
 Run all-domain shared and per-task single baselines at:
 
@@ -179,6 +289,8 @@ Decision rule:
 Question: does shared training generalize better than single-task ARC when the
 held-out tasks are not the memorized `0520fde7` test grid?
 
+Status: captured in `results/2026-05-17-multitask-roadmap`.
+
 Train:
 
 - single ARC scorer on the fixed ARC training task
@@ -200,6 +312,8 @@ Decision rule:
 
 Question: which sibling domain drives the delayed-claim gain?
 
+Status: captured in `results/2026-05-17-multitask-roadmap/rmt3_leave_one_out.md`.
+
 The existing matrix already enumerates every non-empty training subset. Re-run
 or filter it for:
 
@@ -218,9 +332,22 @@ Decision rule:
 - If every removal preserves the gain, the gain may come from regularization or
   update noise rather than semantic sibling transfer.
 
+Result:
+
+- All-domain training is +1.40pp top-1 versus claim-only.
+- Removing `grid_path` causes the largest loss versus all-domain (-0.80pp),
+  making it the most likely positive sibling.
+- Removing `arc_agi` improves delayed-claim by +0.50pp versus all-domain,
+  so ARC appears to be mild interference for this target.
+- Removing `prime_gap` is near-neutral (-0.17pp).
+
 ### E-MT.4: Adapter-Headed Sharing
 
 Question: can a shared trunk avoid ARC interference while preserving claim gain?
+
+Status: instrumented as `examples/multitask_domain.c --task-heads` and
+`scripts/multitask_adapter_heads.py`; canonical R-MT.4 results are not yet
+captured.
 
 Architecture:
 
@@ -237,12 +364,17 @@ Each step updates the trunk and only the active task head. Compare:
 
 Tests: H3
 
-Implementation note:
+Run:
 
-This likely needs either new engine support for exposed intermediate
-activations/backprop, or a bespoke adapter model inside `multitask_domain.c`.
-It is more than a trivial config change because `NeuralNet` is opaque through
-the public API.
+```sh
+python3 scripts/multitask_adapter_heads.py
+```
+
+Implementation note: the first implementation uses a bespoke adapter model
+inside `multitask_domain.c` instead of changing the opaque public `NeuralNet`
+API. The emitted `shared_task_heads` rows carry the same
+`crlp.multitask.summary.v1` schema, parameter/FLOP counters, calibration bins,
+and fixed-ARC diagnostics as the `shared` and `single_task` rows.
 
 Decision rule:
 
@@ -254,6 +386,8 @@ Decision rule:
 ### E-MT.5: Calibration Audit
 
 Question: is shared training improving uncertainty even when top-1 falls?
+
+Status: captured in `results/2026-05-17-multitask-roadmap/rmt5_calibration.md`.
 
 After I-MT.1, report for each `{shared, single} x task x seed`:
 
@@ -272,9 +406,21 @@ Decision rule:
   ranking/calibration tradeoff rather than pure degradation.
 - If shared worsens both top-1 and calibration, call it negative transfer.
 
+Result:
+
+- Fixed `0520fde7`: shared has worse top-1 and worse ECE (0.6995 vs 0.5589),
+  but substantially better NLL (4.0827 vs 8.2754). This is a ranking/log-loss
+  tradeoff, not a calibration win.
+- Same-envelope ARC OOD: shared improves top-1, NLL, and ECE (ECE 0.4481 vs
+  0.4820; NLL 2.6278 vs 4.3723). This supports the narrow OOD transfer
+  interpretation from R-MT.2.
+- Other fixed tasks have small ECE deltas; R-MT.5 is mainly an ARC diagnostic.
+
 ### E-MT.6: Capacity Sweep
 
 Question: is the ARC gap a trunk capacity bottleneck?
+
+Status: captured in `results/2026-05-17-multitask-roadmap/rmt6_capacity_sweep.md`.
 
 After I-MT.2, run:
 
@@ -295,9 +441,30 @@ Decision rule:
   capacity is the likely bottleneck.
 - If larger trunks do not help, prioritize adapter heads or data/order changes.
 
+Result:
+
+- The fixed ARC gap does not improve monotonically with capacity. Shared
+  fixed-ARC top-1 is 39.20% at `32x16`, 26.17% at `64x32`, 26.17% at
+  `128x64`, and 34.50% at `256x128`.
+- The smallest trunk has the least negative fixed-ARC shared-minus-single
+  delta (-1.23pp). The largest trunk is better than `64x32` but still trails
+  single-task by -8.30pp.
+- Delayed-claim remains strong across the sweep, with shared-minus-single
+  deltas from +0.10pp to +0.43pp.
+- Capacity is therefore not the dominant explanation by itself. The follow-up
+  diagnostic in `rmt_arc_failure_diagnostics.md` narrows the issue further to
+  fixed ARC cell/color mode collapse under the current row formulation.
+  R-MT.8 remains useful for sampling dynamics, but exact fixed-ARC scorer
+  recovery likely needs a better ARC feature/training surface or adapter path.
+  Before adding architecture, run the fully-trained tiny-net audit in E-MT.9 so
+  the roadmap can distinguish undertraining, saturation, and missing cumulative
+  protocol state.
+
 ### E-MT.7: ARC Gate and Budgeted Proposer Invariance
 
 Question: which ARC measurements are actually scorer-dependent?
+
+Status: captured in `results/2026-05-17-multitask-roadmap/rmt7_arc_gate_invariance.md`.
 
 Run two separate checks:
 
@@ -312,6 +479,17 @@ Decision rule:
 - Budgeted coverage may change if the scorer/proposer affects which candidates
   are surfaced inside budget. Report this as proposer/ranker sensitivity, not
   exact-gate correctness.
+
+Result:
+
+- The current public ARC transform gate and budgeted proposer path are
+  scorer-independent: the harness labels `shared_scorer_context` and
+  `single_task_scorer_context`, but both exercise the same ARC loader/gate path.
+- On 400 train tasks and 400 eval tasks, exact gate/loader mismatches were `0`
+  and budgeted proposer aggregate mismatches were `0`.
+- This strengthens the verifier-correctness boundary while also narrowing the
+  claim: R-MT.7 is not evidence that the current shared scorer improves public
+  ARC search, because that scorer is not wired into this path.
 
 ### E-MT.8: Curriculum and Sampling
 
@@ -332,6 +510,50 @@ Decision rule:
 - If ARC-heavy recovers ARC without hurting claim, sampling is enough.
 - If ARC-heavy hurts other tasks or still fails ARC, architecture is the next
   lever.
+
+### E-MT.9: Fully Trained Tiny-Net Audit
+
+Question: have the current tiny scorers reached their practical limit under
+ordinary training, or is there still headroom from longer training, restarts,
+warm starts, and cumulative protocol artifacts?
+
+Run a small capacity ladder under fixed seeds:
+
+```text
+96 -> 8 -> 4 -> 1
+96 -> 16 -> 8 -> 1
+96 -> 32 -> 16 -> 1
+96 -> 64 -> 32 -> 1
+```
+
+Implemented runner:
+
+```sh
+make tiny-net-plateau-audit
+```
+
+The runner writes checkpointed learning curves, restart variance, best
+checkpoint rows, plateau flags, parameter/FLOP counts, and a width-help verdict
+under `build/float/tiny_net_plateau_audit/`.
+
+For each row, report loss, top-1, NLL, ECE, validation utility, and
+certificate-gated utility over checkpoints. Then rerun the best small trunk with
+longer budgets and fresh restarts. Finally compare scratch training against
+warm-start or artifact-fed variants that can consume rejected-candidate reason
+codes and certified-library features.
+
+Tests: H5, H6, and the paper-roadmap R-F items.
+
+Decision rule:
+
+- If extra steps, restarts, and wider trunks do not produce a material
+  validation or certified-utility gain, treat the tiny net as fully trained for
+  this protocol.
+- If warm-start or artifact-fed rows improve while scratch rows plateau, frame
+  the remaining headroom as cumulative substrate learning rather than raw
+  network capacity.
+- If a wider trunk wins after the same plateau checks, keep capacity as a
+  controlled variable but do not make it the default explanation.
 
 ### E-ARC.1: Public ARC Induction Family Expansion
 
@@ -363,23 +585,39 @@ Completed instrumentation:
 1. **I-MT.1 calibration fields.** Small schema extension, unlocks H4.
 2. **I-MT.2 hidden-size reporting.** Makes capacity sweeps auditable.
 3. **I-MT.3 training-order modes.** Makes curriculum/sampling tests explicit.
+4. **I-MT.4 same-envelope ARC OOD suite.** Adds fixed-envelope held-out ARC
+   panel-composition tasks and task-level metadata.
+5. **I-MT.5 epoch and fixed-ARC grid diagnostics.** Adds
+   `crlp.multitask.epoch.v1` plus exact-grid/per-cell/per-color ARC fields.
+6. **R-MT.4 adapter-head surface.** Adds `--task-heads` plus
+   `scripts/multitask_adapter_heads.py`; full roadmap results are pending.
+
+Completed experiments:
+
+1. **E-MT.1 longer run.** Three-seed 192k-update capture landed.
+2. **E-MT.2 ARC OOD scorer test.** Shared is +5.57pp top-1 aggregate on the
+   same-envelope OOD suite, mixed by family.
+3. **E-MT.3 delayed-claim leave-one-out.** Positive transfer survives, with
+   `grid_path` as the most likely positive sibling and `arc_agi` as mild
+   interference.
+4. **E-MT.5 calibration audit.** Reliability-bin CSVs and markdown summary
+   landed in `results/2026-05-17-multitask-roadmap`.
+5. **E-MT.6 capacity sweep.** Larger trunks do not monotonically close the
+   fixed ARC shared-minus-single gap; delayed-claim stays strong.
+6. **E-MT.7 gate/proposer invariance.** ARC accepted rule sets, prediction
+   hashes, loader summaries, and budgeted proposer aggregates are invariant
+   across the current scorer-context labels.
 
 Next experiments:
 
-1. **E-MT.1 longer run.** Establish whether baseline training budget was too
-   small.
-2. **E-MT.3 delayed-claim leave-one-out.** Existing script already provides most
-   of the needed data shape.
-3. **I-MT.4 and E-MT.2 ARC OOD scorer test.** Answers the memorization question
-   without confusing scorer transfer with public ARC gate coverage.
-4. **E-MT.7 gate/proposer invariance.** Cheap once ARC measurement labels are
-   clean.
-5. **E-MT.6 capacity sweep.** Only after the long-run baseline is known.
-6. **E-MT.8 curriculum.** Use the implemented training-order modes once the
+1. **E-MT.9 fully trained tiny-net audit.** Establish whether the current
+   tiny scorers are undertrained, saturated, or missing cumulative artifacts
+   before spending effort on architecture.
+2. **E-MT.8 curriculum.** Use the implemented training-order modes once the
    dominant failure mode is known.
-7. **E-MT.4 adapter heads.** Architectural work; do it after budget/capacity
-   has a clear failure mode.
-8. **E-ARC.1 induction-family expansion.** Parallel substrate track; do not
+3. **E-MT.4 adapter heads.** Run the now-instrumented `--task-heads` comparison
+   after plateau and cumulative-artifact checks have a clear failure mode.
+4. **E-ARC.1 induction-family expansion.** Parallel substrate track; do not
    present it as multitask-scorer OOD evidence.
 
 ## Paper Impact
@@ -390,6 +628,8 @@ Next experiments:
 | Adapter heads recover ARC and preserve delayed-claim gain | Promote shared trunk + per-task heads + verifier gates as a recipe. |
 | Longer training closes the ARC gap | Reframe negative transfer as under-training, not architectural incompatibility. |
 | Capacity closes the ARC gap | Keep architecture simple but report explicit capacity scaling. |
+| Capacity does not close the ARC gap | Run the fully-trained tiny-net audit; prioritize cumulative artifacts, curriculum/sampling, and adapter heads over simply increasing trunk size. |
+| Warm-start or artifact-fed tiny nets improve after scratch plateaus | Frame the remaining headroom as cumulative substrate learning: certified traces and rejected-candidate reasons improve future proposal/search. |
 | Exact ARC gate invariant, budgeted proposer varies | Strengthen the verifier-correctness claim while narrowing scorer claims to ranking efficiency. |
 | Most hypotheses fail | Narrow the paper: the substrate is a verifier-gating contract; multitask scoring is an ablation with heterogeneous-task interference. |
 
@@ -398,7 +638,7 @@ Next experiments:
 - Larger domain-specific feature envelopes.
 - Transformer or attention scorers.
 - Claims about beating ARC-AGI SOTA.
-- Public ARC solver claims from the fixed multitask scorer.
+- Public ARC coverage claims from the fixed multitask scorer.
 - Reward shaping for `delayed_claim`.
 - Hand-tuning against public ARC evaluation task IDs.
 

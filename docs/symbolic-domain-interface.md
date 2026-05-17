@@ -67,9 +67,9 @@ their task binaries.
 | Domain | Grammar | Certificate |
 | --- | --- | --- |
 | `prime_gap` | candidate modular filters, conditional gap modular filters | algebraic `gcd` compositeness proof |
-| `grid_path` | edge legality, blocked-next legality | legality axiom: impossible moves cannot be optimal successors |
-| `delayed_claim` | threshold rules over claim features and actions | finite-generator check with zero false rejections |
-| `arc_agi` | copy, mask/intersection, union, object-select-overlap, color map | match all train pairs and require all train-consistent grammar rules to agree on the test grid |
+| `grid_path` | edge legality, blocked-next legality, local dead ends, component traps, clear-path admissible bounds, distance dominance | illegal, component-trap, bound-dominated, or distance-dominated moves cannot be optimal successors |
+| `delayed_claim` | threshold rules over claim features/actions plus direct utility-margin and indirect risk-margin trust/request predicates | finite-generator check with zero false rejections |
+| `arc_agi` | copy, mask/intersection, union, object-select-overlap, layer-overlap/union/xor/left-only/right-only, color map | match all train pairs and require all train-consistent grammar rules to agree on the test grid |
 
 Run:
 
@@ -128,19 +128,25 @@ certificate-status classifier described above.
 The interface is generalized, but the task implementations are not equally
 mature:
 
-- `grid_path` and `delayed_claim` need production gate-ablation tables under
-  the same matched-budget baselines as prime.
+- `grid_path` and `delayed_claim` now have production gate-ablation tables, but
+  both need richer non-prime grammars and repeated-seed matched-budget runs
+  before they should be treated as peers of the prime result.
 - The symbolic-domain smoke needs real `rule_rejects` and `verify_action`
   callbacks before it can exercise gate execution uniformly.
 - The standalone ARC binary has a JSON directory loader, but the shared
-  symbolic-domain smoke still uses one compiled sample and is not a general ARC
-  solver.
+  symbolic-domain smoke still uses one compiled sample.
 - The standalone ARC loader now has typed `NNProgram` rows, a largest
   connected-component primitive, budget curves, a learned program proposer over
   shared program features plus ARC task descriptors, and an optional
   `NNHypothesis` induction smoke for top-K object-scene delta slot proposals;
   the older shared symbolic-domain `object_select_overlap` rule is still an
-  alias for intersection.
+  alias for intersection. The `layer_*` family makes the hidden layer/depth
+  prior explicit as verifier grammar rather than as a neural input feature, and
+  the standalone loader now also carries `compress_color_*` separator-line
+  compression for projection/panel tasks plus `tile_motif_parity_repeat` for
+  separator-grid copy/extend tasks. Grammar v15 also exposes that lattice
+  repeat as a `tile_motif_repeat` `NNHypothesis` template so the proposer can
+  synthesize the verifier candidate from train-pair lattice evidence.
 - The shared proposer should be evaluated against random, grammar-order,
   structural-heuristic, and oracle orderings on each non-ARC domain; ARC now
   emits matched program-proposer rows from the standalone loader path.

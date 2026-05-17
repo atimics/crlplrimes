@@ -1,0 +1,11 @@
+version,split,loaded_tasks,certified_tasks,test_cells,test_correct_cells,cell_accuracy,notes
+v10_recorded,training,400,24,56672,1187,0.02094509,pre-layer-overlap recorded snapshot
+v10_recorded,evaluation,400,4,98515,187,0.00189819,pre-layer-overlap recorded snapshot
+v12_recorded,training,400,24,56672,1187,0.02094509,layer relation family recorded snapshot
+v12_recorded,evaluation,400,5,98515,207,0.00210120,layer relation family recorded snapshot
+v13_recorded,training,400,24,56672,1187,0.02094509,color-line compression recorded snapshot
+v13_recorded,evaluation,400,6,98515,216,0.00219256,color-line compression recorded snapshot
+v14_recorded,training,400,24,56672,1187,0.02094509,static lattice motif repeat recorded snapshot
+v14_recorded,evaluation,400,7,98515,1057,0.01072933,static lattice motif repeat recorded snapshot
+v15_measured,training,400,24,56672,1187,0.02094509,current measured run
+v15_measured,evaluation,400,7,98515,1057,0.01072933,current measured run

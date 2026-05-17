@@ -1,0 +1,10 @@
+schema_version	template_id	template_name	library_id	slot_name	slot_type	slot_value	slot_integer	proposal_count	certified_count	support_tasks	covered_events	utility_mean
+crlp.hypothesis_library.prior.v1	1025	move_to_anchor	arc_agi:move_to_anchor:library:2x:78	align.axis	integer	0.00000000	0	1	1	2	78	1.0
+crlp.hypothesis_library.prior.v1	1025	move_to_anchor	arc_agi:move_to_anchor:library:2x:78	align.axis	integer	2.00000000	2	1	1	2	78	1.0
+crlp.hypothesis_library.prior.v1	1025	move_to_anchor	arc_agi:move_to_anchor:library:2x:78	align.offset	offset	-1.00000000	-1	2	2	2	78	1.0
+crlp.hypothesis_library.prior.v1	1025	move_to_anchor	arc_agi:move_to_anchor:library:2x:78	anchor.color	color	3.00000000	3	2	2	2	78	1.0
+crlp.hypothesis_library.prior.v1	1025	move_to_anchor	arc_agi:move_to_anchor:library:2x:78	anchor.selector_kind	selector_kind	1.00000000	1	2	2	2	78	1.0
+crlp.hypothesis_library.prior.v1	1025	move_to_anchor	arc_agi:move_to_anchor:library:2x:78	object_scene.background	color	0.00000000	0	2	2	2	78	1.0
+crlp.hypothesis_library.prior.v1	1025	move_to_anchor	arc_agi:move_to_anchor:library:2x:78	render.output_color	color	2.00000000	2	2	2	2	78	1.0
+crlp.hypothesis_library.prior.v1	1025	move_to_anchor	arc_agi:move_to_anchor:library:2x:78	subject.color	color	1.00000000	1	2	2	2	78	1.0
+crlp.hypothesis_library.prior.v1	1025	move_to_anchor	arc_agi:move_to_anchor:library:2x:78	subject.selector_kind	selector_kind	1.00000000	1	2	2	2	78	1.0

@@ -1,0 +1,12 @@
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 32x16 --seed 20240516
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 32x16 --seed 20240517
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 32x16 --seed 20240518
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240516
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240517
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240518
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 128x64 --seed 20240516
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 128x64 --seed 20240517
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 128x64 --seed 20240518
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 256x128 --seed 20240516
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 256x128 --seed 20240517
+/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 256x128 --seed 20240518

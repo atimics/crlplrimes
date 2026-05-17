@@ -33,7 +33,11 @@ candidate colors. The row exposes the flattened input grid, output coordinate,
 grid sizes, candidate action, and optional task tag. It does not expose a direct
 overlap/intersection rule. The standalone `make arc-agi` path uses the same
 fixed task without the multitask task tag, adds certified transform-gate and
-typed program-proposer rows, and is captured by `make results`.
+typed program-proposer rows, carries symbolic ARC priors such as
+`layer_overlap`, its sibling layer-relation rules, and `compress_color_*`
+separator-line compression plus `tile_motif_parity_repeat` lattice copying,
+with the lattice repeat also available as an induced `NNHypothesis` template,
+and is captured by `make results`.
 
 ## Feature Envelope
 
@@ -73,6 +77,20 @@ The binary also supports capacity and sampler controls:
 ```sh
 ./build/float/multitask_domain --tasks all --eval-tasks all --hidden 128x64 --training-order round_robin
 ```
+
+Run the adapter-headed comparison path:
+
+```sh
+./build/float/multitask_domain --tasks all --eval-tasks all --task-heads
+python3 scripts/multitask_adapter_heads.py
+```
+
+`--task-heads` leaves the existing `shared` and `single_task` rows intact, then
+adds `shared_task_heads` rows from a bespoke shared `96 -> hidden1 -> hidden2`
+trunk with one scalar linear head per domain. Each update changes the trunk and
+only the active task head. This is the R-MT.4 adapter-head experiment surface;
+it tests whether ARC can get a geometry-sensitive residual head without forcing
+grid and delayed-claim through the same final scalar weights.
 
 Build and run the standalone first-class ARC sample:
 
@@ -130,7 +148,7 @@ Each evaluated domain emits one JSON row:
   "domain": "prime_gap",
   "task_set": "all",
   "eval_task_set": "all",
-  "model_kind": "shared_action_scorer",
+  "model_kind": "shared",
   "training_order": "uniform_random",
   "feature_envelope": "task_tagged_action_rows_v1",
   "train_updates": 12000,
@@ -158,6 +176,14 @@ Each evaluated domain emits one JSON row:
 }
 ```
 
+Current multitask model kinds are:
+
+| `model_kind` | Meaning |
+| --- | --- |
+| `shared` | one dense action scorer shared by all active domains |
+| `shared_task_heads` | shared trunk plus per-domain scalar heads, emitted only with `--task-heads` |
+| `single_task` | matched per-domain baseline with the same hidden shape |
+
 `scripts/neurosymbolic_tuning.py` also recognizes
 `crlp.multitask.summary.v1` and normalizes its config key as:
 
@@ -169,6 +195,31 @@ There is no `prime_features` field; prime residue flags are not a multitask
 feature option under this envelope. The capacity fields are emitted from the
 actual model (`nn_parameter_count` and `nn_forward_flop_count`) so hidden-size
 sweeps can be audited from the JSON row instead of inferred from the command.
+
+ARC fixed-task rows also emit exact-grid diagnostics for `0520fde7`:
+
+- `arc_fixed_grid_exact`
+- `arc_fixed_cell_accuracy`
+- `arc_fixed_prediction_hash`
+- `arc_fixed_targets`
+- `arc_fixed_predictions`
+- `arc_fixed_confidence`
+- `arc_fixed_target_probability`
+- `arc_fixed_target_color_count`
+- `arc_fixed_predicted_color_count`
+- `arc_fixed_correct_target_color_count`
+
+These fields make the fixed ARC row inspectable as a 3x3 grid prediction rather
+than only as repeated balanced cell-color samples.
+
+## Training Diagnostics
+
+Shared training emits `crlp.multitask.epoch.v1` rows, one row per active domain
+per epoch. These rows include `loss_mean`, `epoch_updates`, `train_updates`,
+`hidden`, `learning_rate`, `seed`, `training_order`, and `task_set`. They are
+intended for R-MT.8/R-MT.4 diagnostics: starvation, forgetting, oscillation, and
+capacity-sensitive optimizer behavior should be visible before relying on final
+top-1 summaries.
 
 ## Current Matrix
 
@@ -187,23 +238,25 @@ The interpretation is deliberately conservative:
 - `prime_gap` is weak without symbolic residue predicates.
 - The harder ARC row is unsaturated under this envelope; the standalone loader
   can scan many ARC tasks, but the current certified grammar is still a narrow
-  hand-coded geometry/recolor/crop family rather than a general ARC solver.
+  hand-coded geometry/recolor/crop family.
 
 ## Next Steps
 
 Multitask-specific open work is tracked in `docs/multitask-transfer-research-plan.md`
 (operational) and the paper Roadmap appendix (`paper/paper.typ`, items R-MT.1
-through R-MT.8; defensibility). The unfinished items local to this document are:
+through R-MT.8; defensibility). R-MT.1, R-MT.2, R-MT.3, R-MT.5, R-MT.6, and
+R-MT.7 are captured in `results/2026-05-17-multitask-roadmap`. The unfinished
+items local to this document are:
 
 1. Expand the ARC loader grammar beyond the current hand-coded geometry/recolor
    family (parallel substrate track; cross-listed as R-S.3 in the paper
    Roadmap as the synthetic-task bootstrapping idea borrowed from
    AlphaGeometry).
-2. Add task-family metadata so ARC tasks with different transformations can be
-   evaluated without changing the scorer code (precondition for R-MT.2).
-3. Promote loader-backed symbolic ARC evidence into matched grammar/proposer
+2. Promote loader-backed symbolic ARC evidence into matched grammar/proposer
    comparisons before treating ARC as production verifier-gated ARC evidence
    (cross-listed as R-X4 in the paper Roadmap).
-4. Track transfer with held-out task families, not only held-out domains from
-   the same compiled set (cross-listed as R-MT.2 in the paper Roadmap, the
-   same-envelope OOD scorer test).
+3. Follow the same-envelope OOD result with curriculum and adapter-head
+   experiments before treating the shared scorer as a recipe. The adapter-head
+   path is now instrumented as `--task-heads`, but full R-MT.4 results are not
+   captured in the canonical roadmap bundle until
+   `scripts/multitask_adapter_heads.py` has been run at the roadmap seed/budget.

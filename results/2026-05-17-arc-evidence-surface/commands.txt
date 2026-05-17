@@ -1,0 +1,4 @@
+build/float/arc_agi --epochs 1 --steps-per-epoch 50 --test-samples 50 --program-budget 1
+build/float/arc_agi --task-dir /private/tmp/ARC-AGI/data/training --max-tasks 400 --loader-summary-only --program-budget-grid
+build/float/arc_agi --program-train-dir /private/tmp/ARC-AGI/data/training --task-dir /private/tmp/ARC-AGI/data/evaluation --max-tasks 400 --loader-summary-only --program-budget-grid
+build/float/arc_agi --task-dir /private/tmp/ARC-AGI/data/evaluation --max-tasks 400 --program-budget 1

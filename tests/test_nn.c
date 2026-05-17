@@ -1438,6 +1438,13 @@ static int test_action_scorer_api_scores_probabilities_and_ranking(void)
     nn_real probabilities[3];
     size_t ranked[4];
     nn_real tied_scores[] = {(nn_real)1, (nn_real)2, (nn_real)2, (nn_real)0};
+    uint32_t tied_action_ids[] = {40, 30, 20, 10};
+    nn_real near_tied_scores[] = {
+        (nn_real)1,
+        (nn_real)(1.0 + (double)NN_RANK_SCORE_EPSILON * 0.5),
+        (nn_real)0,
+    };
+    uint32_t near_tied_action_ids[] = {20, 10, 30};
     int ok = 1;
 
     if (net == NULL) {
@@ -1449,6 +1456,22 @@ static int test_action_scorer_api_scores_probabilities_and_ranking(void)
     ok = ok && nearly_equal(sum, (nn_real)1, (nn_real)1e-6, (nn_real)1e-6);
     ok = ok && nn_rank_action_scores(tied_scores, 4, ranked);
     ok = ok && ranked[0] == 1 && ranked[1] == 2 && ranked[2] == 0 && ranked[3] == 3;
+    ok = ok && nn_rank_action_scores_with_ids(tied_scores,
+                                              tied_action_ids,
+                                              4,
+                                              ranked,
+                                              (nn_real)0);
+    ok = ok && ranked[0] == 2 && ranked[1] == 1 && ranked[2] == 0 && ranked[3] == 3;
+    ok = ok && nn_rank_action_scores_with_ids(near_tied_scores,
+                                              near_tied_action_ids,
+                                              3,
+                                              ranked,
+                                              NN_RANK_SCORE_EPSILON);
+    ok = ok && ranked[0] == 1 && ranked[1] == 0 &&
+         nearly_equal(nn_action_score_margin(near_tied_scores, 3, ranked[0]),
+                      near_tied_scores[1] - near_tied_scores[0],
+                      (nn_real)1e-8,
+                      (nn_real)1e-8);
 
     nn_free(net);
     return ok;
@@ -1617,7 +1640,7 @@ static int test_trace_writer_emits_parseable_jsonl(void)
     nn_real parsed_probabilities[2];
     NNParsedTraceRecord parsed;
     NNTraceRecord record;
-    char line[1024];
+    char line[2048];
     int ok = 1;
 
     memset(&record, 0, sizeof(record));
@@ -1657,6 +1680,10 @@ static int test_trace_writer_emits_parseable_jsonl(void)
          strstr(line, "\"action_id_contract\":\"stable_unique_action_ids\"") != NULL &&
          strstr(line, "\"candidate_count\":2") != NULL &&
          strstr(line, "\"action_ids\":[10,20]") != NULL &&
+         strstr(line, "\"selected_action_id\":10") != NULL &&
+         strstr(line, "\"target_action_id\":20") != NULL &&
+         strstr(line, "\"selected_score_margin\":0.5") != NULL &&
+         strstr(line, "\"ranking_policy\":\"score_desc_action_id_tiebreak_epsilon\"") != NULL &&
          strstr(line, "\"verifier_cost\":{\"steps\":2}") != NULL &&
          strstr(line, "\"p\":11") != NULL;
     ok = ok && nn_trace_parse_jsonl(line,
@@ -1673,9 +1700,24 @@ static int test_trace_writer_emits_parseable_jsonl(void)
          parsed.candidate_count == 2 &&
          parsed.selected_index == 0 &&
          parsed.target_index == 1 &&
+         parsed.selected_action_id == 10 &&
+         parsed.target_action_id == 20 &&
+         strcmp(parsed.ranking_policy, NN_RANKING_POLICY) == 0 &&
+         nearly_equal(parsed.selected_score_margin, (nn_real)0.5, (nn_real)1e-6, (nn_real)1e-6) &&
          parsed_action_ids[0] == 10 &&
          parsed_action_ids[1] == 20 &&
          nearly_equal(parsed_probabilities[0], probabilities[0], (nn_real)1e-6, (nn_real)1e-6);
+
+    NNTraceRecord nonbest_record = record;
+    nonbest_record.selected_index = 1;
+    nonbest_record.target_index = 0;
+    fp = fopen(path, "w");
+    if (fp == NULL) {
+        return 0;
+    }
+    ok = ok && !nn_trace_write_jsonl(fp, &nonbest_record);
+    fclose(fp);
+    remove(path);
     return ok;
 }
 
@@ -1857,6 +1899,9 @@ static int test_fixture_trace_parser(void)
          parsed.candidate_count == 3 &&
          parsed.selected_index == 0 &&
          parsed.target_index == 2 &&
+         parsed.selected_action_id == 10 &&
+         parsed.target_action_id == 30 &&
+         strcmp(parsed.ranking_policy, "legacy_score_order") == 0 &&
          action_ids[0] == 10 &&
          action_ids[2] == 30 &&
          nn_trace_json_get_u64(line, "seed", &p) &&
@@ -1882,6 +1927,35 @@ static int test_fixture_trace_parser(void)
         "\"verifier_result\":\"corrected\",\"verifier_cost\":{},\"seed\":42}";
     ok = ok && !nn_trace_parse_jsonl(
                    duplicate_ids, &parsed, action_ids, scores, probabilities, 3);
+
+    const char *bad_selected_action_id =
+        "{\"schema\":\"crlp.trace.v1\",\"trace_version\":1,"
+        "\"action_id_contract\":\"stable_unique_action_ids\",\"task\":\"fixture\","
+        "\"state_hash\":\"0000000000001234\",\"model_hash\":\"fixture-model\","
+        "\"feature_encoder_version\":1,\"candidate_count\":2,\"action_ids\":[1,2],"
+        "\"scores\":[1,0],\"probabilities\":[0.7,0.3],"
+        "\"selected_index\":0,\"target_index\":1,"
+        "\"selected_action_id\":9,\"target_action_id\":2,"
+        "\"ranking_policy\":\"" NN_RANKING_POLICY "\","
+        "\"loss\":0.1,\"verifier_result\":\"corrected\","
+        "\"verifier_cost\":{},\"seed\":42}";
+    ok = ok && !nn_trace_parse_jsonl(
+                   bad_selected_action_id, &parsed, action_ids, scores, probabilities, 3);
+
+    const char *bad_policy_winner =
+        "{\"schema\":\"crlp.trace.v1\",\"trace_version\":1,"
+        "\"action_id_contract\":\"stable_unique_action_ids\",\"task\":\"fixture\","
+        "\"state_hash\":\"0000000000001234\",\"model_hash\":\"fixture-model\","
+        "\"feature_encoder_version\":1,\"candidate_count\":2,\"action_ids\":[1,2],"
+        "\"scores\":[0,1],\"probabilities\":[0.3,0.7],"
+        "\"selected_index\":0,\"target_index\":1,"
+        "\"selected_action_id\":1,\"target_action_id\":2,"
+        "\"rank_score_epsilon\":0.000001,"
+        "\"ranking_policy\":\"" NN_RANKING_POLICY "\","
+        "\"loss\":0.1,\"verifier_result\":\"corrected\","
+        "\"verifier_cost\":{},\"seed\":42}";
+    ok = ok && !nn_trace_parse_jsonl(
+                   bad_policy_winner, &parsed, action_ids, scores, probabilities, 3);
     return ok;
 }
 

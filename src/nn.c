@@ -1533,20 +1533,54 @@ int nn_score_action_rows(NeuralNet *net,
     return 1;
 }
 
-int nn_rank_action_scores(const nn_real *scores, size_t count, size_t *ranked_indices)
+static int rank_score_is_better(const nn_real *scores,
+                                const uint32_t *action_ids,
+                                size_t left,
+                                size_t right,
+                                nn_real score_epsilon)
+{
+    double delta = (double)scores[left] - (double)scores[right];
+    double epsilon = score_epsilon < (nn_real)0 ? 0.0 : (double)score_epsilon;
+    if (delta > epsilon) {
+        return 1;
+    }
+    if (delta < -epsilon) {
+        return 0;
+    }
+
+    uint32_t left_id = action_ids == NULL ? (uint32_t)left : action_ids[left];
+    uint32_t right_id = action_ids == NULL ? (uint32_t)right : action_ids[right];
+    if (left_id != right_id) {
+        return left_id < right_id;
+    }
+    return left < right;
+}
+
+int nn_rank_action_scores_with_ids(const nn_real *scores,
+                                   const uint32_t *action_ids,
+                                   size_t count,
+                                   size_t *ranked_indices,
+                                   nn_real score_epsilon)
 {
     if (scores == NULL || ranked_indices == NULL || count == 0) {
         return 0;
     }
 
     for (size_t i = 0; i < count; ++i) {
+        if (!isfinite((double)scores[i])) {
+            return 0;
+        }
         ranked_indices[i] = i;
     }
 
     for (size_t i = 0; i < count; ++i) {
         size_t best = i;
         for (size_t j = i + 1; j < count; ++j) {
-            if (scores[ranked_indices[j]] > scores[ranked_indices[best]]) {
+            if (rank_score_is_better(scores,
+                                     action_ids,
+                                     ranked_indices[j],
+                                     ranked_indices[best],
+                                     score_epsilon)) {
                 best = j;
             }
         }
@@ -1557,6 +1591,39 @@ int nn_rank_action_scores(const nn_real *scores, size_t count, size_t *ranked_in
     }
 
     return 1;
+}
+
+int nn_rank_action_scores(const nn_real *scores, size_t count, size_t *ranked_indices)
+{
+    return nn_rank_action_scores_with_ids(scores, NULL, count, ranked_indices, (nn_real)0);
+}
+
+nn_real nn_action_score_margin(const nn_real *scores, size_t count, size_t selected_index)
+{
+    if (scores == NULL || count == 0 || selected_index >= count ||
+        !isfinite((double)scores[selected_index])) {
+        return (nn_real)NAN;
+    }
+
+    if (count == 1) {
+        return (nn_real)0;
+    }
+
+    int found_other = 0;
+    nn_real best_other = (nn_real)0;
+    for (size_t i = 0; i < count; ++i) {
+        if (i == selected_index) {
+            continue;
+        }
+        if (!isfinite((double)scores[i])) {
+            return (nn_real)NAN;
+        }
+        if (!found_other || scores[i] > best_other) {
+            best_other = scores[i];
+            found_other = 1;
+        }
+    }
+    return found_other ? scores[selected_index] - best_other : (nn_real)0;
 }
 
 nn_real nn_train_sample(NeuralNet *net,
@@ -2510,12 +2577,42 @@ static int trace_write_real_array(FILE *fp, const nn_real *values, size_t count)
     return fputc(']', fp) != EOF;
 }
 
+static uint32_t trace_action_id_at(const NNTraceRecord *record, size_t index)
+{
+    return record->action_ids == NULL ? (uint32_t)index : record->action_ids[index];
+}
+
+static int trace_record_arrays_are_valid(const NNTraceRecord *record)
+{
+    double probability_sum = 0.0;
+    for (size_t i = 0; i < record->candidate_count; ++i) {
+        if (record->action_ids == NULL && i > UINT32_MAX) {
+            return 0;
+        }
+        uint32_t action_id = trace_action_id_at(record, i);
+        for (size_t j = i + 1; j < record->candidate_count; ++j) {
+            if (action_id == trace_action_id_at(record, j)) {
+                return 0;
+            }
+        }
+        if (!isfinite((double)record->scores[i]) ||
+            !isfinite((double)record->probabilities[i]) ||
+            record->probabilities[i] < (nn_real)0 ||
+            record->probabilities[i] > (nn_real)1) {
+            return 0;
+        }
+        probability_sum += (double)record->probabilities[i];
+    }
+    return fabs(probability_sum - 1.0) <= 1e-3;
+}
+
 int nn_trace_write_jsonl(FILE *fp, const NNTraceRecord *record)
 {
     if (fp == NULL || record == NULL || record->candidate_count == 0 ||
         record->scores == NULL || record->probabilities == NULL ||
         record->selected_index >= record->candidate_count ||
-        record->target_index >= record->candidate_count) {
+        record->target_index >= record->candidate_count ||
+        !trace_record_arrays_are_valid(record)) {
         return 0;
     }
 
@@ -2526,6 +2623,28 @@ int nn_trace_write_jsonl(FILE *fp, const NNTraceRecord *record)
         record->verifier_result == NULL ? "unknown" : record->verifier_result;
     const char *verifier_cost =
         record->verifier_cost_json == NULL ? "{}" : record->verifier_cost_json;
+    uint32_t selected_action_id = trace_action_id_at(record, record->selected_index);
+    uint32_t target_action_id = trace_action_id_at(record, record->target_index);
+    nn_real selected_score_margin =
+        nn_action_score_margin(record->scores, record->candidate_count, record->selected_index);
+    if (!isfinite((double)selected_score_margin)) {
+        return 0;
+    }
+    size_t selected_by_policy = 0;
+    for (size_t i = 1; i < record->candidate_count; ++i) {
+        if (rank_score_is_better(record->scores,
+                                 record->action_ids,
+                                 i,
+                                 selected_by_policy,
+                                 NN_RANK_SCORE_EPSILON)) {
+            selected_by_policy = i;
+        }
+    }
+    if (selected_by_policy != record->selected_index) {
+        return 0;
+    }
+    int rank_fp_sensitive = fabs((double)selected_score_margin) <=
+                            (double)NN_RANK_SCORE_EPSILON;
 
     if (fputc('{', fp) == EOF || fputs("\"schema\":", fp) == EOF ||
         !trace_write_json_string(fp, NN_TRACE_SCHEMA) ||
@@ -2561,16 +2680,33 @@ int nn_trace_write_jsonl(FILE *fp, const NNTraceRecord *record)
 
 #if NN_REAL_IS_FLOAT
     const char *loss_format =
-        ",\"selected_index\":%zu,\"target_index\":%zu,\"loss\":%.9g,\"verifier_result\":";
+        ",\"selected_index\":%zu,\"target_index\":%zu,\"loss\":%.9g";
+    const char *rank_guard_format =
+        ",\"selected_action_id\":%u,\"target_action_id\":%u,"
+        "\"selected_score_margin\":%.9g,\"rank_score_epsilon\":%.9g,";
 #else
     const char *loss_format =
-        ",\"selected_index\":%zu,\"target_index\":%zu,\"loss\":%.17g,\"verifier_result\":";
+        ",\"selected_index\":%zu,\"target_index\":%zu,\"loss\":%.17g";
+    const char *rank_guard_format =
+        ",\"selected_action_id\":%u,\"target_action_id\":%u,"
+        "\"selected_score_margin\":%.17g,\"rank_score_epsilon\":%.17g,";
 #endif
     if (fprintf(fp,
                 loss_format,
                 record->selected_index,
                 record->target_index,
                 (double)record->loss) < 0 ||
+        fprintf(fp,
+                rank_guard_format,
+                selected_action_id,
+                target_action_id,
+                (double)selected_score_margin,
+                (double)NN_RANK_SCORE_EPSILON) < 0 ||
+        fprintf(fp,
+                "\"rank_fp_sensitive\":%s,\"ranking_policy\":",
+                rank_fp_sensitive ? "true" : "false") < 0 ||
+        !trace_write_json_string(fp, NN_RANKING_POLICY) ||
+        fputs(",\"verifier_result\":", fp) == EOF ||
         !trace_write_json_string(fp, verifier_result) ||
         fputs(",\"verifier_cost\":", fp) == EOF || fputs(verifier_cost, fp) == EOF ||
         fprintf(fp, ",\"seed\":%llu", (unsigned long long)record->seed) < 0) {
@@ -2787,6 +2923,21 @@ static int trace_parse_hex_u64(const char *line, const char *key, uint64_t *out_
     return 1;
 }
 
+static int trace_validate_logged_action_id(const char *line,
+                                           const char *key,
+                                           uint32_t expected_action_id)
+{
+    uint64_t logged = 0;
+    const char *value = trace_find_key_value(line, key);
+    if (value == NULL) {
+        return 1;
+    }
+    if (!nn_trace_json_get_u64(line, key, &logged) || logged > UINT32_MAX) {
+        return 0;
+    }
+    return (uint32_t)logged == expected_action_id;
+}
+
 int nn_trace_parse_jsonl(const char *line,
                          NNParsedTraceRecord *out_record,
                          uint32_t *action_ids,
@@ -2808,6 +2959,7 @@ int nn_trace_parse_jsonl(const char *line,
     uint64_t trace_version = 0;
     uint64_t feature_encoder_version = 0;
     nn_real loss = 0;
+    nn_real rank_score_epsilon = NN_RANK_SCORE_EPSILON;
 
     if (!nn_trace_json_get_string(line, "schema", parsed.schema, sizeof(parsed.schema)) ||
         strcmp(parsed.schema, NN_TRACE_SCHEMA) != 0 ||
@@ -2842,6 +2994,7 @@ int nn_trace_parse_jsonl(const char *line,
     parsed.selected_index = (size_t)selected_index;
     parsed.target_index = (size_t)target_index;
     parsed.loss = loss;
+    parsed.rank_score_epsilon = rank_score_epsilon;
 
     if (!trace_parse_u32_array(line, "action_ids", action_ids, parsed.candidate_count) ||
         !trace_parse_real_array(line, "scores", scores, parsed.candidate_count) ||
@@ -2856,10 +3009,73 @@ int nn_trace_parse_jsonl(const char *line,
             }
         }
     }
+    parsed.selected_action_id = action_ids[parsed.selected_index];
+    parsed.target_action_id = action_ids[parsed.target_index];
+
+    if (!trace_validate_logged_action_id(line,
+                                         "selected_action_id",
+                                         parsed.selected_action_id) ||
+        !trace_validate_logged_action_id(line, "target_action_id", parsed.target_action_id)) {
+        return 0;
+    }
+
+    nn_real logged_epsilon = 0;
+    if (trace_find_key_value(line, "rank_score_epsilon") != NULL) {
+        if (!nn_trace_json_get_real(line, "rank_score_epsilon", &logged_epsilon) ||
+            logged_epsilon < (nn_real)0) {
+            return 0;
+        }
+        parsed.rank_score_epsilon = logged_epsilon;
+    }
+
+    parsed.selected_score_margin =
+        nn_action_score_margin(scores, parsed.candidate_count, parsed.selected_index);
+    if (!isfinite((double)parsed.selected_score_margin)) {
+        return 0;
+    }
+    nn_real logged_margin = 0;
+    if (trace_find_key_value(line, "selected_score_margin") != NULL) {
+        if (!nn_trace_json_get_real(line, "selected_score_margin", &logged_margin) ||
+            !isfinite((double)logged_margin)) {
+            return 0;
+        }
+        double tolerance = fabs((double)parsed.selected_score_margin) * 1e-5 + 1e-5;
+        if (fabs((double)logged_margin - (double)parsed.selected_score_margin) > tolerance) {
+            return 0;
+        }
+        parsed.selected_score_margin = logged_margin;
+    }
+
+    if (nn_trace_json_get_string(line,
+                                 "ranking_policy",
+                                 parsed.ranking_policy,
+                                 sizeof(parsed.ranking_policy))) {
+        if (strcmp(parsed.ranking_policy, NN_RANKING_POLICY) != 0) {
+            return 0;
+        }
+        size_t selected_by_policy = 0;
+        for (size_t i = 1; i < parsed.candidate_count; ++i) {
+            if (rank_score_is_better(scores,
+                                     action_ids,
+                                     i,
+                                     selected_by_policy,
+                                     parsed.rank_score_epsilon)) {
+                selected_by_policy = i;
+            }
+        }
+        if (selected_by_policy != parsed.selected_index) {
+            return 0;
+        }
+    } else {
+        snprintf(parsed.ranking_policy, sizeof(parsed.ranking_policy), "legacy_score_order");
+    }
 
     nn_real probability_sum = 0;
     for (size_t i = 0; i < parsed.candidate_count; ++i) {
-        if (probabilities[i] < (nn_real)0 || probabilities[i] > (nn_real)1) {
+        if (!isfinite((double)scores[i]) ||
+            !isfinite((double)probabilities[i]) ||
+            probabilities[i] < (nn_real)0 ||
+            probabilities[i] > (nn_real)1) {
             return 0;
         }
         probability_sum += probabilities[i];

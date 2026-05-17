@@ -1,0 +1,1218 @@
+{
+  "schema": "crlp.paper_claim_registry.v1",
+  "format_note": "This file is a strict JSON subset of YAML so scripts can parse it with the Python standard library.",
+  "claim_families": [
+    {
+      "id": "C1",
+      "title": "Certified gates reduce the residual action space",
+      "role": "paper_axis"
+    },
+    {
+      "id": "C2",
+      "title": "Rule search must beat fixed-budget symbolic baselines",
+      "role": "paper_axis"
+    },
+    {
+      "id": "C3",
+      "title": "Verifier RL must preserve calibration across tasks",
+      "role": "paper_axis"
+    },
+    {
+      "id": "C4",
+      "title": "Shared scoring should improve residual generalization",
+      "role": "paper_axis"
+    },
+    {
+      "id": "C5",
+      "title": "Verifier-grounded hypothesis substrate ports across domains",
+      "role": "substrate_claim"
+    },
+    {
+      "id": "C6",
+      "title": "Related-work positioning is source-backed and scoped",
+      "role": "paper_claim"
+    },
+    {
+      "id": "C7",
+      "title": "Tiny-net training and capacity claims are plateau-checked before architecture claims",
+      "role": "method_claim"
+    },
+    {
+      "id": "C8",
+      "title": "The paper compiler enforces code-to-PDF claim support",
+      "role": "framework_claim"
+    },
+    {
+      "id": "C9",
+      "title": "Replay-grounded control uses bounded neural rankers without owning safety",
+      "role": "application_claim"
+    }
+  ],
+  "experiment_tracks": [
+    {
+      "id": "axis1-prime-gate-delta",
+      "title": "Prime learned-gate delta support",
+      "role": "claim_support",
+      "claim_ids": [
+        "C1.prime_gate_delta"
+      ],
+      "roadmap_items": [
+        "R-E1.3",
+        "R-E1.4"
+      ],
+      "command": "make results",
+      "artifacts": [
+        "results/latest/comparison.canonical.jsonl",
+        "paper/generated/gap_report.md"
+      ],
+      "agent_instruction": "Strengthen or falsify the prime learned-gate claim without changing the claim compiler contract.",
+      "success_criteria": [
+        "Required claim C1.prime_gate_delta remains supported.",
+        "Seed/CIs or calibration tradeoff evidence can be added as derived claims without rewriting paper prose by hand."
+      ],
+      "failure_modes": [
+        "If learned gate no longer beats hand-wheel or raw, move the headline gate claim to generated limitations."
+      ]
+    },
+    {
+      "id": "axis2-prime-proposer-baselines",
+      "title": "Prime fixed-budget proposer baseline support",
+      "role": "claim_falsification",
+      "claim_ids": [
+        "C2.prime_proposer_fixed_budget"
+      ],
+      "roadmap_items": [
+        "R-E2.1",
+        "R-E2.2",
+        "R-E2.3"
+      ],
+      "command": "make results",
+      "artifacts": [
+        "results/latest/comparison.canonical.jsonl",
+        "paper/generated/limitations.md"
+      ],
+      "agent_instruction": "Treat C2 as currently contradicted; produce baseline evidence that either keeps it as a limitation or defines a narrower supported proposer claim.",
+      "success_criteria": [
+        "Static, closed-loop, grammar-order, structural, random, and oracle baselines remain budget-matched.",
+        "Any positive proposer claim is narrower than the current contradicted C2 claim."
+      ],
+      "failure_modes": [
+        "Do not present the static neural proposer as supported while C2 remains contradicted."
+      ]
+    },
+    {
+      "id": "axis4-arc-ood-transfer",
+      "title": "ARC same-envelope OOD shared-vs-single support",
+      "role": "claim_support",
+      "claim_ids": [
+        "C4.arc_ood_shared_vs_single"
+      ],
+      "roadmap_items": [
+        "R-MT.4",
+        "R-MT.6",
+        "R-MT.8"
+      ],
+      "command": "python3 scripts/multitask_roadmap_experiments.py",
+      "artifacts": [
+        "results/2026-05-17-multitask-roadmap/rmt2_aggregate.csv",
+        "paper/generated/gap_report.md"
+      ],
+      "agent_instruction": "Preserve the distinction between fixed-task ARC negative transfer and same-envelope OOD positive transfer.",
+      "success_criteria": [
+        "C4 remains supported only if shared top-1 beats single-task and shared NLL improves at the registered seed count.",
+        "Adapter/capacity/order results either strengthen C4 or generate a narrower limitation."
+      ],
+      "failure_modes": [
+        "If OOD top-1 or NLL regresses, the shared-scorer transfer claim must move to generated limitations."
+      ]
+    },
+    {
+      "id": "axis1-arc-gate-invariance",
+      "title": "ARC certified gate independence from scorer context",
+      "role": "claim_boundary",
+      "claim_ids": [
+        "C1.arc_gate_scorer_invariance"
+      ],
+      "roadmap_items": [
+        "R-MT.7"
+      ],
+      "command": "python3 scripts/arc_gate_invariance.py",
+      "artifacts": [
+        "results/2026-05-17-multitask-roadmap/rmt7_arc_gate_invariance_summary.csv",
+        "results/2026-05-17-multitask-roadmap/rmt7_arc_gate_invariance_mismatches.csv"
+      ],
+      "agent_instruction": "Keep scorer claims separate from certified ARC gate/proposer claims; report any context mismatch as a support failure.",
+      "success_criteria": [
+        "Gate, loader, and proposer summaries are identical under shared-scorer and single-scorer context labels.",
+        "Any future scorer-coupled ARC search must register a separate claim."
+      ],
+      "failure_modes": [
+        "Do not let public ARC gate coverage be interpreted as a shared-scorer gain if the scorer is not in the gate/proposer path."
+      ]
+    },
+    {
+      "id": "axis1-arc-public-evidence-surface",
+      "title": "Public ARC training/evaluation evidence surface",
+      "role": "claim_support",
+      "claim_ids": [
+        "C1.arc_public_evidence_surface"
+      ],
+      "roadmap_items": [
+        "R-X4"
+      ],
+      "command": "make arc-agi-evidence-surface",
+      "artifacts": [
+        "results/2026-05-17-arc-evidence-surface/arc_evidence_summary.csv",
+        "results/2026-05-17-arc-evidence-surface/arc_budget_curves.csv",
+        "results/2026-05-17-arc-evidence-surface/arc_eval_miss_taxonomy.csv"
+      ],
+      "agent_instruction": "Treat public ARC coverage as a measured evidence surface, not as a broad ARC-solved claim.",
+      "success_criteria": [
+        "The paper can state public train/eval certified-task and covered-cell counts from generated claim variables.",
+        "Residual ARC categories stay visible as roadmap input."
+      ],
+      "failure_modes": [
+        "Do not collapse ARC public-corpus parity into same-envelope synthetic OOD scorer performance."
+      ]
+    },
+    {
+      "id": "axis3-arc-ood-calibration",
+      "title": "ARC fixed-vs-OOD calibration tradeoff",
+      "role": "claim_support",
+      "claim_ids": [
+        "C3.arc_ood_calibration_tradeoff"
+      ],
+      "roadmap_items": [
+        "R-MT.5"
+      ],
+      "command": "python3 scripts/multitask_calibration_audit.py",
+      "artifacts": [
+        "results/2026-05-17-multitask-roadmap/rmt5_calibration_summary.csv",
+        "results/2026-05-17-multitask-roadmap/rmt5_reliability_bins.csv"
+      ],
+      "agent_instruction": "Frame calibration as a fixed-task/OOD tradeoff; do not claim shared scoring is globally better calibrated.",
+      "success_criteria": [
+        "The generated claim distinguishes fixed-task NLL/ECE from same-envelope OOD NLL/ECE.",
+        "Reliability diagrams remain tied to the exact bin artifact."
+      ],
+      "failure_modes": [
+        "If fixed and OOD calibration move in the same direction, rewrite the Axis 3 paragraph from the generated claim state."
+      ]
+    },
+    {
+      "id": "axis4-delayed-claim-leave-one-out",
+      "title": "Delayed-claim sibling transfer support",
+      "role": "claim_support",
+      "claim_ids": [
+        "C4.delayed_claim_sibling_transfer"
+      ],
+      "roadmap_items": [
+        "R-MT.3"
+      ],
+      "command": "python3 scripts/multitask_leave_one_out.py",
+      "artifacts": [
+        "results/2026-05-17-multitask-roadmap/rmt3_leave_one_out.csv"
+      ],
+      "agent_instruction": "Keep the transfer claim narrow: identify which sibling helps rather than claiming all siblings help.",
+      "success_criteria": [
+        "All-domain delayed_claim beats claim-only at the registered seed count.",
+        "The generated explanation names the sibling whose removal hurts most."
+      ],
+      "failure_modes": [
+        "If all-domain no longer beats claim-only, remove positive delayed-claim transfer language from the body."
+      ]
+    },
+    {
+      "id": "axis4-multitask-capacity-sweep",
+      "title": "Capacity sweep rules out a simple wider-trunk explanation",
+      "role": "claim_boundary",
+      "claim_ids": [
+        "C4.multitask_capacity_tradeoff"
+      ],
+      "roadmap_items": [
+        "R-MT.6",
+        "R-F.1",
+        "R-F.5"
+      ],
+      "command": "python3 scripts/multitask_capacity_sweep.py",
+      "artifacts": [
+        "results/2026-05-17-multitask-roadmap/rmt6_capacity_sweep_deltas.csv"
+      ],
+      "agent_instruction": "Use the capacity sweep as a boundary condition for architecture claims; do not claim adapters or width solve ARC until tested.",
+      "success_criteria": [
+        "The sweep reports at least four capacities and keeps delayed_claim deltas visible next to ARC deltas.",
+        "The generated claim says whether ARC improves monotonically with width."
+      ],
+      "failure_modes": [
+        "If capacity alone closes the ARC gap, the roadmap should prioritize plateau validation before adapter heads."
+      ]
+    },
+    {
+      "id": "axis4-tiny-net-plateau-audit",
+      "title": "Fully trained tiny-net plateau audit",
+      "role": "claim_boundary",
+      "claim_ids": [
+        "C7.tiny_net_plateau_stop_rule"
+      ],
+      "roadmap_items": [
+        "E-MT.9",
+        "R-F.1",
+        "R-F.5"
+      ],
+      "command": "make tiny-net-plateau-audit",
+      "artifacts": [
+        "results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl",
+        "results/2026-05-17-multitask-roadmap/tiny_net_width_help.jsonl"
+      ],
+      "agent_instruction": "Treat wider-network claims as unsupported unless the tiny-net plateau audit shows width, not training budget, is the limiting factor.",
+      "success_criteria": [
+        "The audit reports learning curves, restart variance, best checkpoints, parameter counts, FLOPs, plateau flags, and width-help verdicts.",
+        "Every core task has the same small-capacity ladder before architecture conclusions are drawn."
+      ],
+      "failure_modes": [
+        "If plateau rows are missing or not saturated, keep architecture-size claims as underpowered."
+      ]
+    },
+    {
+      "id": "substrate-rejected-candidate-reason-learning",
+      "title": "Rejected-candidate reason learning repairs proposer failures",
+      "role": "claim_support",
+      "claim_ids": [
+        "C5.rejected_candidate_reason_learning"
+      ],
+      "roadmap_items": [
+        "R-S.0",
+        "R-E2.1",
+        "R-F.4"
+      ],
+      "command": "python3 scripts/rejected_candidate_reason_learning.py",
+      "artifacts": [
+        "results/2026-05-17-substrate-extensions/rejected_candidate_reason_learning.jsonl",
+        "results/2026-05-17-substrate-extensions/rejected_candidate_split_sweep.jsonl",
+        "results/2026-05-17-substrate-extensions/rejected_candidate_reason_family_sweep.jsonl",
+        "results/2026-05-17-substrate-extensions/rejected_candidate_seed_interval_summary.jsonl"
+      ],
+      "agent_instruction": "Treat rejected verifier outcomes as training data for the next proposer pass; keep the claim scoped to the domains whose split sweeps pass.",
+      "success_criteria": [
+        "Reason priors and trained residuals preserve zero false rejections where the claim is supported.",
+        "The generated claim names any domain whose reason-learning split sweep is still mixed."
+      ],
+      "failure_modes": [
+        "Do not use reason learning as a universal proposer claim while delayed_claim split rows remain mixed."
+      ]
+    },
+    {
+      "id": "substrate-certified-hypothesis-library",
+      "title": "Certified hypothesis library promotion feeds back into proposal ranking",
+      "role": "claim_support",
+      "claim_ids": [
+        "C5.hypothesis_library_promotion"
+      ],
+      "roadmap_items": [
+        "R-S.1a",
+        "R-S.1b",
+        "R-S.1c",
+        "R-F.4"
+      ],
+      "command": "python3 scripts/certified_hypothesis_library.py",
+      "artifacts": [
+        "results/2026-05-17-substrate-extensions/hypothesis_library_promotions.jsonl",
+        "results/2026-05-17-substrate-extensions/hypothesis_library_ablation_no_prior.jsonl",
+        "results/2026-05-17-substrate-extensions/hypothesis_library_ablation_slot_only.jsonl",
+        "results/2026-05-17-substrate-extensions/hypothesis_library_heldout_result.jsonl"
+      ],
+      "agent_instruction": "Promote only zero-false-rejection certified hypotheses and separate fixture feedback from held-out/public promotion claims.",
+      "success_criteria": [
+        "The fixture promotion row has support across at least two task instances and zero false rejections.",
+        "Slot-prior feedback improves budgeted learned certified coverage and utility without introducing false rejections."
+      ],
+      "failure_modes": [
+        "Do not headline hypothesis-library feedback until R-S.1b or R-S.1c supplies held-out/public split evidence."
+      ]
+    },
+    {
+      "id": "application-signal-flight-replay-control",
+      "title": "Signal offline replay control vignette",
+      "role": "claim_support",
+      "claim_ids": [
+        "C9.signal_flight_replay_control"
+      ],
+      "roadmap_items": [
+        "R-SIG.1",
+        "R-SIG.2",
+        "R-SIG.3"
+      ],
+      "command": "make signal-flight",
+      "artifacts": [
+        "results/2026-05-17-signal-flight/summary.jsonl",
+        "results/2026-05-17-signal-flight/shadow_replay_audit.jsonl",
+        "results/2026-05-17-signal-flight/shadow_frames.jsonl"
+      ],
+      "agent_instruction": "Keep Signal scoped to offline replay-certified ranking until shadow inference and active-control gates pass.",
+      "success_criteria": [
+        "The neural ranker beats the no-safety baseline on top-1, utility, and regret.",
+        "Damage and death rates are not worse than the baseline on the measured held-out trace."
+      ],
+      "failure_modes": [
+        "Do not describe the live websocket pilot as neural-controlled until R-SIG.2/R-SIG.3 are supported."
+      ]
+    },
+    {
+      "id": "framework-trace-determinism",
+      "title": "Trace determinism audit closes the replay-semantics reproducibility gap",
+      "role": "claim_support",
+      "claim_ids": [
+        "C8.trace_determinism_audit"
+      ],
+      "roadmap_items": [
+        "R-P.5"
+      ],
+      "command": "make trace-determinism-compare",
+      "artifacts": [
+        "results/latest/trace_determinism.jsonl",
+        "results/latest/prime_gap_trace.semantic.jsonl"
+      ],
+      "agent_instruction": "Keep the reproducibility claim semantic: action ids, verifier outcomes, and ranking policy must match even if raw logits differ.",
+      "success_criteria": [
+        "Trace audit rows have zero invalid rows and zero logged rank-sensitivity mismatches.",
+        "The float and double semantic trace hashes match."
+      ],
+      "failure_modes": [
+        "Do not claim bit-identical logits; if semantic hashes diverge, keep L9 open and inspect the first mismatch row."
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "id": "C1.prime_gate_delta",
+      "title": "Prime learned gate improves top-1 over raw and hand-wheel gates",
+      "claim_type": "gate_effect",
+      "claim_text": "On prime_gap, the certified learned rule gate improves top-1 over both the raw scorer and the hand-wheel gate while preserving zero false rejections.",
+      "builtin_evaluator": "prime_gate_delta",
+      "required_for_submission": true,
+      "paper_surfaces": [
+        "abstract",
+        "axis_1_table",
+        "cross_task_interpretation"
+      ],
+      "roadmap_items": [
+        "R-E1.3",
+        "R-E1.4"
+      ],
+      "evidence": {
+        "source": "results/latest/comparison.canonical.jsonl",
+        "command": "make results",
+        "schemas": [
+          "crlp.compare.v1"
+        ],
+        "filters": {
+          "task": "prime_gap",
+          "feature_set": "minimal"
+        },
+        "required_rows": [
+          {
+            "evaluation_mode": "raw"
+          },
+          {
+            "evaluation_mode": "hand_wheel_model"
+          },
+          {
+            "evaluation_mode": "expanded_rule_model"
+          },
+          {
+            "evaluation_mode": "expanded_rules"
+          }
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "expanded_rule_model.top1 > hand_wheel_model.top1",
+          "hand_wheel_model.top1 > raw.top1",
+          "expanded_rule_model.top10 >= 0.999",
+          "expanded_rules.false_rejections == 0",
+          "expanded_rule_model.sample_count >= 30000"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Re-run make results and inspect prime_gap compare rows.",
+        "If top-1 ordering regressed, move the learned-gate claim to limitations and reopen R-E1.3/R-E1.4."
+      ],
+      "limitation_when_not_supported": "The prime learned-gate delta is not currently supported by the canonical comparison rows, so the paper cannot use the 9.13% -> 45.12% -> 68.87% progression as a headline claim.",
+      "derived_claims": [
+        "C1.prime_gate_delta_ci",
+        "C1.learned_gate_calibration_tradeoff"
+      ]
+    },
+    {
+      "id": "C2.prime_proposer_fixed_budget",
+      "title": "Prime neural proposer beats fixed-budget symbolic baselines",
+      "claim_type": "proposer_usefulness",
+      "claim_text": "On prime_gap, the neural rule proposer is useful at fixed verifier budget relative to grammar-order and structural baselines.",
+      "builtin_evaluator": "prime_proposer_fixed_budget",
+      "required_for_submission": false,
+      "paper_surfaces": [
+        "axis_2_table",
+        "limitations",
+        "roadmap"
+      ],
+      "roadmap_items": [
+        "R-E2.1",
+        "R-E2.2",
+        "R-E2.3"
+      ],
+      "evidence": {
+        "source": "results/latest/comparison.canonical.jsonl",
+        "command": "make results",
+        "schemas": [
+          "crlp.rule_search.summary.v1"
+        ],
+        "filters": {
+          "task": "prime_gap",
+          "max_rules": 16
+        },
+        "required_rows": [
+          {
+            "grammar": "candidate",
+            "selection_strategy": "neural_structural"
+          },
+          {
+            "grammar": "candidate",
+            "selection_strategy": "grammar_order"
+          },
+          {
+            "grammar": "candidate",
+            "selection_strategy": "structural_heuristic"
+          },
+          {
+            "grammar": "conditional_gap",
+            "selection_strategy": "neural_structural"
+          },
+          {
+            "grammar": "conditional_gap",
+            "selection_strategy": "grammar_order"
+          },
+          {
+            "grammar": "conditional_gap",
+            "selection_strategy": "structural_heuristic"
+          }
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "best_neural.expanded_saved_pct >= grammar_order.expanded_saved_pct for every grammar",
+          "best_neural.expanded_saved_pct >= structural_heuristic.expanded_saved_pct for every grammar"
+        ],
+        "contradicted_if": [
+          "neural_structural trails grammar_order and structural_heuristic on any reported grammar"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Treat the current Axis 2 row as a negative or mixed result, not a proposer-usefulness proof.",
+        "Run R-E2.1 for 5+ seeds and budget grids.",
+        "Run R-E2.2/R-E2.3 only if the richer grammar creates non-saturated cases where learned ordering can matter."
+      ],
+      "limitation_when_not_supported": "The current fixed-budget prime proposer evidence is negative for static neural proposer superiority; the paper should frame Axis 2 as a falsifiable baseline failure until R-E2.1/R-E2.2/R-E2.3 close the gap.",
+      "derived_claims": [
+        "C2.closed_loop_residual_scope",
+        "C2.conjunctive_grammar_needed"
+      ]
+    },
+    {
+      "id": "C4.arc_ood_shared_vs_single",
+      "title": "Shared scorer beats single-task scorer on same-envelope ARC OOD",
+      "claim_type": "multitask_transfer",
+      "claim_text": "When trained on the fixed ARC task but evaluated on held-out same-envelope ARC variants, the shared multitask scorer beats the single-task ARC scorer.",
+      "builtin_evaluator": "arc_ood_shared_vs_single",
+      "required_for_submission": true,
+      "paper_surfaces": [
+        "abstract",
+        "multitask_table",
+        "multitask_interpretation"
+      ],
+      "roadmap_items": [
+        "R-MT.4",
+        "R-MT.6",
+        "R-MT.8"
+      ],
+      "evidence": {
+        "source": "results/2026-05-17-multitask-roadmap/rmt2_aggregate.csv",
+        "command": "make multitask-roadmap-experiments",
+        "schemas": [
+          "crlp.multitask.summary.v1"
+        ],
+        "filters": {
+          "domain": "arc_agi",
+          "arc_eval_suite": "ood"
+        },
+        "required_rows": [
+          {
+            "model_kind": "shared"
+          },
+          {
+            "model_kind": "single_task"
+          }
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "shared.top1_mean > single_task.top1_mean",
+          "shared.nll_mean < single_task.nll_mean",
+          "shared.seeds >= 3",
+          "single_task.seeds >= 3"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Move the ARC OOD transfer claim to limitations.",
+        "Run R-F.1/R-F.2 plateau checks and R-MT.8 ordering ablations before trying adapter heads."
+      ],
+      "limitation_when_not_supported": "The ARC same-envelope OOD transfer claim is not supported, so the paper should treat shared scoring as a substrate ablation rather than a positive transfer result.",
+      "derived_claims": [
+        "C4.arc_ood_family_breakdown",
+        "C4.adapter_heads_preserve_ood_gain"
+      ]
+    },
+    {
+      "id": "C1.arc_gate_scorer_invariance",
+      "title": "Public ARC certified gate is invariant to scorer context labels",
+      "claim_type": "gate_boundary",
+      "claim_text": "The public ARC certified transform gate and budgeted proposer measurements are unchanged under shared-scorer and single-task-scorer context labels in the current implementation.",
+      "builtin_evaluator": "arc_gate_invariance",
+      "required_for_submission": true,
+      "paper_surfaces": [
+        "multitask_boundary",
+        "claim_support_chart",
+        "roadmap"
+      ],
+      "roadmap_items": [
+        "R-MT.7"
+      ],
+      "evidence": {
+        "source": "results/2026-05-17-multitask-roadmap/rmt7_arc_gate_invariance_summary.csv",
+        "secondary_sources": [
+          "results/2026-05-17-multitask-roadmap/rmt7_arc_gate_invariance_mismatches.csv"
+        ],
+        "command": "python3 scripts/arc_gate_invariance.py",
+        "schemas": [
+          "crlp.arc_transform.summary.v1",
+          "crlp.program_proposer.summary.v1"
+        ],
+        "filters": {
+          "context_labels": [
+            "shared_scorer_context",
+            "single_task_scorer_context"
+          ]
+        },
+        "required_rows": [
+          {
+            "split": "train"
+          },
+          {
+            "split": "eval"
+          }
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "train.loader_parse_errors == 0",
+          "eval.loader_parse_errors == 0",
+          "context_mismatches.rows == 0",
+          "train.loader_certified_tasks >= 24",
+          "eval.loader_certified_tasks >= 4"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Separate scorer-coupled ARC results from scorer-independent gate/proposer rows.",
+        "If mismatches appear, explain which measurement path now consumes scorer state."
+      ],
+      "limitation_when_not_supported": "The public ARC gate/proposer rows are not invariant to scorer context labels, so the paper cannot use them to cleanly separate gate correctness from scorer transfer.",
+      "derived_claims": [
+        "C1.arc_gate_scorer_coupled_search"
+      ]
+    },
+    {
+      "id": "C1.arc_public_evidence_surface",
+      "title": "Public ARC corpus parity row is measured and scoped",
+      "claim_type": "public_arc_parity",
+      "claim_text": "The paper reports public ARC train/eval certified-task and covered-cell counts as a measured evidence surface rather than as a broad ARC-performance claim.",
+      "builtin_evaluator": "arc_public_evidence_surface",
+      "required_for_submission": true,
+      "paper_surfaces": [
+        "arc_public_row",
+        "claim_support_chart",
+        "roadmap"
+      ],
+      "roadmap_items": [
+        "R-X4",
+        "R-X5"
+      ],
+      "evidence": {
+        "source": "results/2026-05-17-arc-evidence-surface/arc_evidence_summary.csv",
+        "secondary_sources": [
+          "results/2026-05-17-arc-evidence-surface/arc_budget_curves.csv",
+          "results/2026-05-17-arc-evidence-surface/arc_eval_miss_taxonomy.csv"
+        ],
+        "command": "make arc-agi-evidence-surface",
+        "schemas": [
+          "crlp.arc_induction.parity.v1"
+        ],
+        "filters": {
+          "corpus": "public_arc_training_and_evaluation"
+        },
+        "required_rows": [
+          {
+            "version": "*_measured",
+            "split": "training"
+          },
+          {
+            "version": "*_measured",
+            "split": "evaluation"
+          }
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "latest measured evaluation certified_tasks >= v12_recorded evaluation certified_tasks",
+          "latest measured evaluation test_correct_cells >= v12_recorded evaluation test_correct_cells",
+          "latest measured training loaded_tasks == 400",
+          "latest measured evaluation loaded_tasks == 400"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Re-run the ARC evidence-surface capture and inspect versioned public-corpus rows.",
+        "If public coverage regresses, keep ARC public-corpus claims in limitations."
+      ],
+      "limitation_when_not_supported": "The public ARC evidence surface is missing or regressed, so the paper should not claim a committed public-corpus parity row.",
+      "derived_claims": [
+        "C1.arc_eval_miss_taxonomy",
+        "C1.arc_budget_curve"
+      ]
+    },
+    {
+      "id": "C3.arc_ood_calibration_tradeoff",
+      "title": "ARC shared scorer has a fixed-task versus OOD calibration tradeoff",
+      "claim_type": "calibration_tradeoff",
+      "claim_text": "On ARC, the shared scorer improves log loss but worsens fixed-task ECE, while improving both log loss and ECE on same-envelope OOD evaluation.",
+      "builtin_evaluator": "arc_ood_calibration_tradeoff",
+      "required_for_submission": true,
+      "paper_surfaces": [
+        "axis_3",
+        "multitask_calibration",
+        "claim_support_chart"
+      ],
+      "roadmap_items": [
+        "R-MT.5",
+        "R-X5",
+        "R-E3.4"
+      ],
+      "evidence": {
+        "source": "results/2026-05-17-multitask-roadmap/rmt5_calibration_summary.csv",
+        "secondary_sources": [
+          "results/2026-05-17-multitask-roadmap/rmt5_reliability_bins.csv"
+        ],
+        "command": "python3 scripts/multitask_calibration_audit.py",
+        "schemas": [
+          "crlp.multitask.summary.v1"
+        ],
+        "filters": {
+          "domain": "arc_agi"
+        },
+        "required_rows": [
+          {
+            "scope": "fixed_task",
+            "model_kind": "shared"
+          },
+          {
+            "scope": "fixed_task",
+            "model_kind": "single_task"
+          },
+          {
+            "scope": "arc_ood_aggregate",
+            "model_kind": "shared"
+          },
+          {
+            "scope": "arc_ood_aggregate",
+            "model_kind": "single_task"
+          }
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "fixed_task.shared.nll_mean < fixed_task.single_task.nll_mean",
+          "fixed_task.shared.ece_mean > fixed_task.single_task.ece_mean",
+          "arc_ood_aggregate.shared.nll_mean < arc_ood_aggregate.single_task.nll_mean",
+          "arc_ood_aggregate.shared.ece_mean < arc_ood_aggregate.single_task.ece_mean",
+          "all compared rows have seeds >= 3"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Rewrite the ARC calibration paragraph from the generated claim summary.",
+        "Run R-X5 before generalizing the ECE story beyond the current ARC evidence surface."
+      ],
+      "limitation_when_not_supported": "The ARC calibration tradeoff is not supported, so the paper should avoid claiming shared scoring improves calibration and should report only the raw NLL/ECE table.",
+      "derived_claims": [
+        "C3.arc_reliability_diagram",
+        "C3.arc_ece_task_distribution"
+      ]
+    },
+    {
+      "id": "C4.delayed_claim_sibling_transfer",
+      "title": "Delayed-claim transfer gain is sibling-specific",
+      "claim_type": "multitask_transfer",
+      "claim_text": "Delayed_claim benefits from shared training at matched updates, but the sibling effect is specific rather than universal.",
+      "builtin_evaluator": "delayed_claim_leave_one_out",
+      "required_for_submission": true,
+      "paper_surfaces": [
+        "multitask_transfer",
+        "claim_support_chart",
+        "roadmap"
+      ],
+      "roadmap_items": [
+        "R-MT.3",
+        "R-MT.8"
+      ],
+      "evidence": {
+        "source": "results/2026-05-17-multitask-roadmap/rmt3_leave_one_out.csv",
+        "command": "python3 scripts/multitask_leave_one_out.py",
+        "schemas": [
+          "crlp.multitask.summary.v1"
+        ],
+        "filters": {
+          "eval_domain": "delayed_claim"
+        },
+        "required_rows": [
+          {
+            "training_set": "all"
+          },
+          {
+            "training_set": "claim_only"
+          },
+          {
+            "training_set": "no_grid_path"
+          },
+          {
+            "training_set": "no_arc_agi"
+          }
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "all.top1_mean > claim_only.top1_mean",
+          "no_grid_path.top1_mean < all.top1_mean",
+          "all.seeds >= 3",
+          "claim_only.seeds >= 3"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Remove delayed_claim positive transfer wording from the main body.",
+        "Run R-MT.8 to distinguish sibling effect from task-ordering and sampling-rate effects."
+      ],
+      "limitation_when_not_supported": "The delayed_claim leave-one-out rows do not support positive sibling transfer, so the paper should not use delayed_claim as a positive multitask example.",
+      "derived_claims": [
+        "C4.delayed_claim_task_ordering",
+        "C4.delayed_claim_grid_path_mechanism"
+      ]
+    },
+    {
+      "id": "C4.multitask_capacity_tradeoff",
+      "title": "Capacity sweep does not explain away the ARC fixed-task gap",
+      "claim_type": "capacity_boundary",
+      "claim_text": "A four-capacity sweep changes the fixed ARC shared-vs-single gap but does not monotonically close it, while delayed_claim remains non-negative across capacities.",
+      "builtin_evaluator": "multitask_capacity_sweep",
+      "required_for_submission": true,
+      "paper_surfaces": [
+        "multitask_capacity",
+        "claim_support_chart",
+        "roadmap"
+      ],
+      "roadmap_items": [
+        "R-MT.6",
+        "R-F.1",
+        "R-F.5"
+      ],
+      "evidence": {
+        "source": "results/2026-05-17-multitask-roadmap/rmt6_capacity_sweep_deltas.csv",
+        "command": "python3 scripts/multitask_capacity_sweep.py",
+        "schemas": [
+          "crlp.multitask.summary.v1"
+        ],
+        "filters": {
+          "domains": [
+            "arc_agi",
+            "delayed_claim"
+          ]
+        },
+        "required_rows": [
+          {
+            "hidden": "32x16",
+            "domain": "arc_agi"
+          },
+          {
+            "hidden": "64x32",
+            "domain": "arc_agi"
+          },
+          {
+            "hidden": "128x64",
+            "domain": "arc_agi"
+          },
+          {
+            "hidden": "256x128",
+            "domain": "arc_agi"
+          }
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "all ARC capacity rows have seeds >= 3",
+          "max ARC shared-minus-single top1 delta < 0",
+          "min delayed_claim shared-minus-single top1 delta >= 0",
+          "ARC delta is not monotone non-decreasing with parameter count"
+        ]
+      },
+      "residual_when_not_supported": [
+        "If wider trunks close the fixed ARC gap, prioritize R-F.1/R-F.5 plateau checks before adapter heads.",
+        "If delayed_claim turns negative at any capacity, narrow or remove the delayed-claim multitask support claim."
+      ],
+      "limitation_when_not_supported": "The capacity sweep no longer rules out a simple width explanation, so the paper should not treat adapters or ordering as the next architectural bottleneck without a new plateau audit.",
+      "derived_claims": [
+        "C7.tiny_net_plateau_stop_rule",
+        "C4.adapter_head_priority"
+      ]
+    },
+    {
+      "id": "C5.rejected_candidate_reason_learning",
+      "title": "Rejected-candidate reasons repair proposer ranking on prime/modular gates",
+      "claim_type": "substrate_feedback",
+      "claim_text": "Verifier rejection reasons can be fed back into the proposer so that reason-aware and trained-residual ranking avoid unsafe rows and improve budgeted validation utility on the prime/modular gate family.",
+      "builtin_evaluator": "rejected_candidate_reason_learning",
+      "required_for_submission": true,
+      "paper_surfaces": [
+        "substrate",
+        "claim_support_chart",
+        "axis_2_followup",
+        "roadmap"
+      ],
+      "roadmap_items": [
+        "R-S.0",
+        "R-E2.1",
+        "R-F.4"
+      ],
+      "evidence": {
+        "source": "results/2026-05-17-substrate-extensions/rejected_candidate_reason_learning.jsonl",
+        "secondary_sources": [
+          "results/2026-05-17-substrate-extensions/rejected_candidate_split_sweep.jsonl",
+          "results/2026-05-17-substrate-extensions/rejected_candidate_reason_family_sweep.jsonl",
+          "results/2026-05-17-substrate-extensions/rejected_candidate_seed_interval_summary.jsonl",
+          "results/2026-05-17-substrate-extensions/rejected_candidate_reason_family_seed_interval.jsonl"
+        ],
+        "command": "python3 scripts/rejected_candidate_reason_learning.py",
+        "schemas": [
+          "crlp.rejected_candidate_learning.summary.v1",
+          "crlp.rejected_candidate_learning.split_sweep.v1",
+          "crlp.rejected_candidate_learning.reason_family_sweep.v1",
+          "crlp.rejected_candidate_learning.seed_interval.v1",
+          "crlp.rejected_candidate_learning.reason_family_seed_interval.v1"
+        ],
+        "filters": {
+          "primary_task": "prime_gap",
+          "budget": 8,
+          "sweep_tasks": [
+            "prime_gap",
+            "modular_gate"
+          ]
+        },
+        "required_rows": [
+          {
+            "task": "prime_gap",
+            "strategy": "model_score",
+            "budget": 8
+          },
+          {
+            "task": "prime_gap",
+            "strategy": "reason_prior",
+            "budget": 8
+          },
+          {
+            "task": "prime_gap",
+            "strategy": "trained_residual",
+            "budget": 8
+          }
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "model_score picks unsafe rows and produces validation false rejections at budget 8",
+          "reason_prior and trained_residual have zero unsafe rows and zero validation false rejections at budget 8",
+          "trained_residual.validation_utility > reason_prior.validation_utility on prime_gap",
+          "prime_gap and modular_gate split sweeps have zero trained_residual validation false rejections and nonnegative utility deltas"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Keep R-S.0 as a prototype and do not present reason learning as an Axis 2 repair.",
+        "Inspect whether split-sweep failures come from unsafe rows, no-support rows, or duplicate certificates."
+      ],
+      "limitation_when_not_supported": "Rejected-candidate reason learning is not yet a supported proposer repair, so the paper should keep Axis 2 as only the fixed-budget negative result.",
+      "derived_claims": [
+        "C2.reason_aware_fixed_budget_baselines",
+        "C5.reason_codes_as_training_data",
+        "C5.delayed_claim_reason_learning_stress_case"
+      ]
+    },
+    {
+      "id": "C5.hypothesis_library_promotion",
+      "title": "Certified hypothesis libraries feed back into proposal ranking",
+      "claim_type": "substrate_feedback",
+      "claim_text": "Zero-false-rejection hypothesis promotions can be reused as slot priors that improve learned proposal coverage and utility in the ARC hypothesis fixture.",
+      "builtin_evaluator": "hypothesis_library_promotion",
+      "required_for_submission": true,
+      "paper_surfaces": [
+        "substrate",
+        "claim_support_chart",
+        "roadmap"
+      ],
+      "roadmap_items": [
+        "R-S.1a",
+        "R-S.1b",
+        "R-S.1c",
+        "R-F.4"
+      ],
+      "evidence": {
+        "source": "results/2026-05-17-substrate-extensions/hypothesis_library_promotions.jsonl",
+        "secondary_sources": [
+          "results/2026-05-17-substrate-extensions/hypothesis_library_ablation_no_prior.jsonl",
+          "results/2026-05-17-substrate-extensions/hypothesis_library_ablation_slot_only.jsonl",
+          "results/2026-05-17-substrate-extensions/hypothesis_library_promotion.md",
+          "results/2026-05-17-substrate-extensions/hypothesis_library_heldout_result.jsonl"
+        ],
+        "command": "python3 scripts/certified_hypothesis_library.py",
+        "schemas": [
+          "crlp.hypothesis_library.promotion.v1",
+          "crlp.program_proposer.summary.v1",
+          "crlp.hypothesis_library.heldout_result.v1"
+        ],
+        "filters": {
+          "domain": "arc_agi",
+          "strategy": "learned",
+          "prior_comparison": [
+            "no_prior",
+            "slot_only"
+          ]
+        },
+        "required_rows": [
+          {
+            "schema": "crlp.hypothesis_library.promotion.v1",
+            "promoted": true
+          },
+          {
+            "strategy": "learned",
+            "budget": 1,
+            "prior": "no_prior"
+          },
+          {
+            "strategy": "learned",
+            "budget": 1,
+            "prior": "slot_only"
+          },
+          {
+            "strategy": "learned",
+            "budget": 8,
+            "prior": "no_prior"
+          },
+          {
+            "strategy": "learned",
+            "budget": 8,
+            "prior": "slot_only"
+          }
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "at least one promoted library row has support_tasks >= 2 and false_rejections == 0",
+          "slot_prior learned certified@1 > no_prior learned certified@1",
+          "slot_prior learned utility@8 > no_prior learned utility@8",
+          "both compared learned rows preserve zero false rejections"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Keep R-S.1a as fixture-only infrastructure until a promoted prior improves budgeted proposal utility.",
+        "Do not start R-S.1b/R-S.1c until promotion rows have stable zero-false-rejection semantics."
+      ],
+      "limitation_when_not_supported": "The certified hypothesis library does not yet produce a supported feedback gain, so the paper should describe it as substrate machinery only.",
+      "derived_claims": [
+        "C5.held_out_library_feedback",
+        "C5.public_arc_library_promotion",
+        "C5.artifact_fed_tiny_net_training"
+      ]
+    },
+    {
+      "id": "C7.tiny_net_plateau_stop_rule",
+      "title": "Tiny-net architecture claims are gated by plateau audits",
+      "claim_type": "method_claim",
+      "claim_text": "Before increasing neural capacity, the paper reports a same-ladder tiny-net audit with learning curves, restart variance, best checkpoint, plateau detection, parameter count, FLOPs, and width-help verdicts for each core task.",
+      "builtin_evaluator": "tiny_net_plateau_audit",
+      "required_for_submission": false,
+      "paper_surfaces": [
+        "architecture",
+        "limitations",
+        "roadmap"
+      ],
+      "roadmap_items": [
+        "E-MT.9",
+        "R-F.1",
+        "R-F.5"
+      ],
+      "evidence": {
+        "source": "results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl",
+        "secondary_sources": [
+          "results/2026-05-17-multitask-roadmap/tiny_net_width_help.jsonl"
+        ],
+        "command": "make tiny-net-plateau-audit",
+        "schemas": [
+          "crlp.multitask.tiny_net_plateau.v1",
+          "crlp.multitask.tiny_net_width_help.v1"
+        ],
+        "filters": {
+          "domains": [
+            "prime_gap",
+            "grid_path",
+            "delayed_claim",
+            "arc_agi"
+          ],
+          "model_kind": "shared"
+        }
+      },
+      "decision_rule": {
+        "supported_if": [
+          "all core domains have the same four-capacity shared tiny-net ladder",
+          "every shared row has plateau_detected == true",
+          "width-help rows exist for each core domain"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Do not explain ARC or learned-wheel failures as capacity limits until this audit is present.",
+        "Run make tiny-net-plateau-audit and inspect the width-help verdicts before increasing default hidden sizes."
+      ],
+      "limitation_when_not_supported": "The tiny networks have not yet been audited as fully trained, so larger architectures should remain a hypothesis rather than a paper claim."
+    },
+    {
+      "id": "C8.trace_determinism_audit",
+      "title": "Trace replay semantics are deterministic across float and double runs",
+      "claim_type": "reproducibility_guard",
+      "claim_text": "The prime trace replay contract is deterministic at the semantic layer: float and double runs produce the same replay-semantic trace hash while reporting FP-sensitive rank rows explicitly.",
+      "builtin_evaluator": "trace_determinism_audit",
+      "required_for_submission": true,
+      "paper_surfaces": [
+        "reproducibility_substrate",
+        "limitations",
+        "paper_support"
+      ],
+      "roadmap_items": [
+        "R-P.5"
+      ],
+      "evidence": {
+        "source": "results/latest/trace_determinism.jsonl",
+        "command": "make trace-determinism-compare",
+        "schemas": [
+          "crlp.trace_determinism_audit.v1",
+          "crlp.trace_determinism_compare.v1"
+        ],
+        "filters": {
+          "task": "prime_gap"
+        },
+        "required_rows": [
+          {
+            "schema": "crlp.trace_determinism_audit.v1",
+            "trace_path": "build/float/traces/prime_gap.jsonl"
+          },
+          {
+            "schema": "crlp.trace_determinism_audit.v1",
+            "trace_path": "build/double/traces/prime_gap.jsonl"
+          },
+          {
+            "schema": "crlp.trace_determinism_compare.v1"
+          }
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "every audit row has invalid_rows == 0",
+          "every audit row has rank_fp_sensitive_logged_mismatches == 0",
+          "every audit row reports rank_fp_sensitive_rate and semantic_hash",
+          "float/double comparison has all_semantic_hashes_equal == true",
+          "float/double comparison has row_counts_equal == true"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Run make trace-determinism-compare and inspect results/latest/trace_determinism.jsonl.",
+        "If semantic hashes diverge, inspect first_mismatch and keep L9 open.",
+        "If only raw score margins differ, keep the claim semantic rather than bit-exact."
+      ],
+      "limitation_when_not_supported": "The trace determinism audit is missing or contradicted, so the paper must keep L9 as an open reproducibility limitation.",
+      "derived_claims": [
+        "C8.cross_machine_trace_double_blind",
+        "C8.semantic_trace_ci_gate"
+      ]
+    },
+    {
+      "id": "C9.signal_flight_replay_control",
+      "title": "Signal replay-certified WASD ranker improves held-out control utility",
+      "claim_type": "application_vignette",
+      "claim_text": "On held-out replay-certified Signal flight groups, a tiny WASD ranker improves top-1, utility, and regret against the primitive no-safety goal-heading baseline without increasing measured damage or death rate.",
+      "builtin_evaluator": "signal_flight_replay_control",
+      "required_for_submission": true,
+      "paper_surfaces": [
+        "abstract",
+        "schema_table",
+        "application_vignette",
+        "limitations",
+        "roadmap"
+      ],
+      "roadmap_items": [
+        "R-SIG.1",
+        "R-SIG.2",
+        "R-SIG.3"
+      ],
+      "evidence": {
+        "source": "results/2026-05-17-signal-flight/summary.jsonl",
+        "secondary_sources": [
+          "results/2026-05-17-signal-flight/shadow_replay_audit.jsonl"
+        ],
+        "command": "make signal-flight",
+        "schemas": [
+          "crlp.signal_flight.summary.v1",
+          "crlp.signal_shadow_replay_audit.v1"
+        ],
+        "filters": {
+          "task": "signal_flight",
+          "training_mode": "counterfactual_utility",
+          "baseline": "goal_heading_no_safety"
+        },
+        "required_rows": [
+          {
+            "schema": "crlp.signal_flight.summary.v1",
+            "task": "signal_flight",
+            "training_mode": "counterfactual_utility"
+          }
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "neural top1 exceeds baseline_top1",
+          "neural selected_utility exceeds baseline_selected_utility",
+          "neural regret is lower than baseline_regret",
+          "neural damage and death rates are no worse than baseline on the held-out trace",
+          "candidate mask sanity rates remain 1.0"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Keep Signal as a design proposal rather than a result.",
+        "Do not cite live-control reach until offline replay ranking is stable against the no-safety baseline."
+      ],
+      "limitation_when_not_supported": "Signal does not yet provide a supported replay-control vignette, so the paper should remove Signal from the abstract and keep it only in the roadmap.",
+      "derived_claims": [
+        "C9.signal_shadow_inference",
+        "C9.signal_active_neural_control",
+        "C9.signal_construction_ranker"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "eval_certified_tasks": 7,
+  "eval_covered_cells": 1057,
+  "grammar_version": 15,
+  "output_dir": "results/2026-05-17-arc-evidence-surface",
+  "schema": "crlp.arc_evidence_surface.summary.v1",
+  "task": "arc_agi",
+  "taxonomy_categories": 10,
+  "top_miss_categories": [
+    {
+      "category": "object_motion_or_copy_extend",
+      "tasks": 80,
+      "test_cells": 26064
+    },
+    {
+      "category": "relational_layout_or_counting",
+      "tasks": 73,
+      "test_cells": 24370
+    },
+    {
+      "category": "projection_or_panel_selection",
+      "tasks": 71,
+      "test_cells": 3152
+    },
+    {
+      "category": "color_remap_or_mode_collapse",
+      "tasks": 70,
+      "test_cells": 26973
+    },
+    {
+      "category": "scale_tile_or_expand",
+      "tasks": 34,
+      "test_cells": 5356
+    }
+  ],
+  "train_certified_tasks": 24
+}

@@ -1,6 +1,6 @@
 # Reference Synthesis: How This Paper Sits in the Current Literature
 
-**Purpose.** This is the working bibliography + analysis the paper draws from. Each entry has: full citation, verbatim abstract or near-verbatim summary, one-paragraph positioning against this project's claims, and (where applicable) ideas worth borrowing into the substrate. The Related Work section in `paper.typ` should be regenerated from this document by the `cenetex/agent` flow.
+**Purpose.** This is the working bibliography + analysis the paper draws from. Each entry has: full citation, verbatim abstract or near-verbatim summary, one-paragraph positioning against this project's claims, and (where applicable) ideas worth borrowing into the substrate. The Related Work section in `paper.typ` was regenerated from this document on 2026-05-17.
 
 The headline analytical claim: **our paper's closest active relative is AlphaGeometry; our closest *contemporary methodological* relative is DeepSeek-R1's RLVR; our closest *cognitive* relative is Hypothesis Search.** All three confirm the architectural premise (exact verifiers + neural proposers are a real design point). What we add over them is engineering discipline — schema-attested provenance, matched-budget oracle baselines, tiny C11 substrate, paper-as-CI-artifact — applied to *heterogeneous* tasks.
 
@@ -46,7 +46,7 @@ Last updated: 2026-05-17.
 ### A7. Stiennon et al. 2020 — *Learning to summarize from human feedback*
 - Nisan Stiennon, Long Ouyang, Jeff Wu, Daniel M. Ziegler, Ryan Lowe, Chelsea Voss, Alec Radford, Dario Amodei, Paul Christiano. arXiv:2009.01325.
 - **What they do.** RLHF on summarization. Establishes the now-canonical "KL-to-prior + entropy bonus" regularization on the reward-model gradient. 1.3B InstructGPT-precursor model outperforms 175B GPT-3 on summary preference.
-- **Relation to us.** Axis 3 of our paper (the calibration result) is "the Stiennon objective applied to *exact* rewards instead of preference rewards." Cite as the methodological precedent. We are not claiming the regularization mechanism is novel; we are claiming its applicability when the reward is exact-by-construction.
+- **Relation to us.** Axis 3 of our paper (the calibration result) is "the Stiennon objective applied to *exact* rewards instead of preference rewards." Cite as the methodological precedent. The novelty is the regularization pattern's use with exact verifier rewards and schema-attested traces.
 
 ### A8. Ouyang et al. 2022 — *Training language models to follow instructions with human feedback (InstructGPT)*
 - Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welinder, Paul Christiano, Jan Leike, Ryan Lowe. arXiv:2203.02155.
@@ -73,7 +73,7 @@ Last updated: 2026-05-17.
 - Kevin Ellis, Catherine Wong, Maxwell Nye, Mathias Sable-Meyer, Luc Cary, Lucas Morales, Luke Hewitt, Armando Solar-Lezama, Joshua B. Tenenbaum. arXiv:2006.08381.
 - **What they do.** Wake-sleep neural-guided enumeration over a domain-specific language. Learns reusable abstractions ("rediscovers" functional programming primitives, vector algebra, classical mechanics laws). Library-learning across creative tasks (drawing, scenes) and inductive programming.
 - **Relation to us.** *Closest cognitive relative of the `NNHypothesis` layer.* Their template = our NNHypothesisTemplate; their abstraction = our compiled NNProgram; their neural search guidance = our learned hypothesis slot prior. Differences: DreamCoder is GPU Python, learns abstractions over months from scratch; our substrate is C11, instantiates templates inline, uses certificates rather than empirical support.
-- **Idea worth borrowing.** *Library learning is the next research move.* DreamCoder grows its DSL by compressing repeated patterns in solved tasks; our hypothesis registry is currently hand-authored. A wake-sleep loop that promotes successful slot bindings to *new templates* would be a natural Phase-5 direction.
+- **Idea worth borrowing.** *Library learning is the next research move.* DreamCoder grows its DSL by compressing repeated patterns in completed tasks; our hypothesis registry is currently hand-authored. A wake-sleep loop that promotes successful slot bindings to *new templates* would be a natural Phase-5 direction.
 
 ### B4. Wang et al. 2024 — *Hypothesis Search: Inductive Reasoning with Language Models*
 - Ruocheng Wang, Eric Zelikman, Gabriel Poesia, Yewen Pu, Nick Haber, Noah D. Goodman. ICLR 2024 / arXiv:2309.05660.
@@ -88,18 +88,18 @@ Last updated: 2026-05-17.
 ### C1. Chollet 2019 — *On the Measure of Intelligence*
 - François Chollet. arXiv:1911.01547.
 - **What they do.** Introduces the Abstraction and Reasoning Corpus (ARC). Formal definition of intelligence as *skill-acquisition efficiency*. Argues benchmark scores alone don't measure intelligence because priors and training data can buy arbitrary skill.
-- **Relation to us.** Defines the benchmark we partially use. Our position: *the audit machinery is itself a step toward Chollet's intelligence definition* — by tracking which features are state-observations vs structural-priors vs gate-derived, we make explicit what priors we're using. We are not claiming the benchmark is solved; we are claiming the framework makes prior-budgeting visible.
+- **Relation to us.** Defines the benchmark we partially use. Our position: *the audit machinery is itself a step toward Chollet's intelligence definition* — by tracking which features are state-observations vs structural-priors vs gate-derived, we make explicit what priors we're using. The framework makes prior-budgeting visible.
 
 ### C2. Chollet, Knoop, Kamradt, Landers 2024 — *ARC Prize 2024: Technical Report*
 - François Chollet, Mike Knoop, Gregory Kamradt, Bryan Landers. arXiv:2412.04604.
 - **What they do.** SOTA on the ARC private evaluation set rose from 33% to 55.5% in 2024. Top techniques: test-time training (TTT) + deep-learning-guided program synthesis. ARChitects won the open-source prize at 53.5%; MindsAI scored 55.5% but did not open-source.
-- **Relation to us.** *The competitive baseline we should explicitly position against.* Our public-corpus floor is 24/400 ≈ 6% on the training split; the SOTA is 55.5% on the (different but related) private evaluation. We are not in this race — our contribution is the substrate, not the score. Cite this paper to make the gap honest.
+- **Relation to us.** ARC provides competitive context for one diagnostic in a multi-experiment substrate argument. Our public-corpus floor is 24/400 ≈ 6% on the training split; the SOTA is 55.5% on the (different but related) private evaluation. Cite this paper to make the gap honest and to justify compute-budget reporting.
 - **Idea worth borrowing.** Test-time training as a mechanism — *update model weights at inference using the train pairs of the current task.* This is structurally compatible with our hypothesis induction layer (induce hypothesis on test task's train pairs, certify against those pairs, apply to test) but with neural-weight adaptation. Worth exploring whether a small TTT step on the hypothesis prior at inference helps.
 
 ### C3. Akyürek et al. 2024 — *The Surprising Effectiveness of Test-Time Training for Abstract Reasoning*
 - Ekin Akyürek, Mehul Damani, et al. arXiv:2411.07279 (MIT).
 - **What they do.** TTT with in-context ARC examples — up to 6× higher accuracy than fine-tuned baselines. 53% public-validation with an 8B-parameter LM, 61.9% ensembled with program synthesis (matches average human). Three crucial components: (1) initial fine-tuning on similar tasks, (2) auxiliary task format + augmentations, (3) per-instance training.
-- **Relation to us.** Direct competitor on ARC scores; far above our 24/400. *Our argument is that their result depends on a 8B LM + test-time gradient updates, which presumes per-task compute they don't audit.* The substrate contribution we make — schema-enforced feature provenance, certificate-gated rules — is orthogonal to their approach; either could in principle be combined.
+- **Relation to us.** ARC context for per-instance adaptation. Their result uses an 8B LM, test-time gradient updates, augmentations, voting, and program-synthesis ensembling. The substrate contribution we make — schema-enforced feature provenance, certificate-gated rules, and multiple verifier-equipped experiments — is orthogonal to their approach; either could in principle be combined.
 - **Idea worth borrowing.** "Per-instance training" — they train on augmentations of the *current task's* train pairs. Our `move_to_anchor` apply-time scene re-derivation is a no-gradient form of per-instance specialization; a learned form would be the natural next step.
 
 ---
@@ -138,16 +138,16 @@ Last updated: 2026-05-17.
 
 ---
 
-## What's missing from the current draft's Related Work
+## Related Work pass status
 
-The placeholder in `paper.typ` §Related Work lists Lightman, Cobbe, Hosseini, Trinh, Stiennon, Ouyang. **Six gaps to fill:**
+The 2026-05-17 pass in `paper.typ` closes the original placeholder by covering:
 
-1. **DeepSeek-R1 (A5).** The most contemporaneous and structurally aligned paper. Cite as confirmation of the verifier-over-learned-reward thesis at scale.
-2. **AlphaGeometry (B1).** Closest structural ancestor. Currently mentioned only in commentary, not formally cited.
-3. **GPT-f / Polu & Sutskever (B2).** Historical antecedent of the LM-proposes-formal-verifier-decides pattern.
-4. **DreamCoder (B3).** Closest cognitive relative of the hypothesis layer.
-5. **Hypothesis Search (B4).** Naming overlap; structurally we are doing the verifier-first version of their sample-and-test loop.
-6. **ARC Prize 2024 Technical Report (C2) + Akyürek TTT (C3).** Required to honestly position our 24/400 floor against the 55.5% SOTA. The honest framing is that our ARC contribution is substrate-level, not score-level.
+1. **DeepSeek-R1 / RLVR (A5)** as the contemporary verifier-reward confirmation at scale.
+2. **Learned verifiers and process supervision (A1-A4)** as the contrast class where the verifier itself is learned.
+3. **RLHF / PPO regularization (A6-A8, E1-E2)** as the borrowed stabilization pattern for Axis 3.
+4. **AlphaGeometry and GPT-f (B1-B2)** as formal-checker neural proposal ancestors.
+5. **DreamCoder and Hypothesis Search (B3-B4)** as the closest cognitive/hypothesis-layer relatives.
+6. **ARC context (C1-C3)** to position ARC as one diagnostic in the verifier-substrate portfolio.
 
 ## Citation budget for the paper
 
@@ -156,7 +156,7 @@ A reasonable Related Work section runs 1.5–2 pages, citing 15–20 papers. The
 - **Foreground (3 papers, one paragraph each):** AlphaGeometry, DeepSeek-R1, DreamCoder. The structural ancestors against which we have a real architectural argument.
 - **Mid-ground (5–6 papers, grouped paragraphs):** Lightman, Uesato, Cobbe, V-STaR, Hypothesis Search. The verifier-guided line in NLP; we are the audit-clean small-scale variant.
 - **Background (4–5 papers, one paragraph):** Ouyang, Stiennon, Christiano, Schulman PPO. RLHF / regularized policy gradient. Axis 3 borrows the regularization mechanism.
-- **Benchmark context (3 papers):** Chollet *Measure*, ARC Prize 2024, Akyürek TTT. We are not in this race; we say so.
+- **Benchmark context (3 papers):** Chollet *Measure*, ARC Prize 2024, Akyürek TTT. Use these to position ARC as one diagnostic, with compute-budget context.
 - **Calibration (1 paper):** Guo et al. temperature scaling.
 
 ## BibTeX

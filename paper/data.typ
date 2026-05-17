@@ -391,11 +391,39 @@
   (8, 2.521300, 0.225400),
 )
 
+// One-seed snapshot retained for historical context; do not cite. The
+// three-seed steady-state below is the load-bearing data.
 #let multitask_shared_vs_single = (
   (domain: "prime_gap", shared_top1: 0.109000, single_top1: 0.109000, shared_nll: 2.663878, single_nll: 2.697013, shared_ece: none, single_ece: none, hidden: "", candidate_count: 129, samples: 1000),
   (domain: "grid_path", shared_top1: 0.897000, single_top1: 0.910000, shared_nll: 0.371303, single_nll: 0.349729, shared_ece: none, single_ece: none, hidden: "", candidate_count: 4, samples: 1000),
   (domain: "delayed_claim", shared_top1: 0.984000, single_top1: 0.957000, shared_nll: 0.068422, single_nll: 0.098921, shared_ece: none, single_ece: none, hidden: "", candidate_count: 4, samples: 1000),
   (domain: "arc_agi", shared_top1: 0.142000, single_top1: 0.428000, shared_nll: 2.198120, single_nll: 3.925826, shared_ece: none, single_ece: none, hidden: "", candidate_count: 10, samples: 1000),
+)
+
+// R-MT.1: three-seed shared vs single at 192k total updates.
+// Source: results/2026-05-17-multitask-roadmap/rmt1_summary.csv
+#let multitask_rmt1 = (
+  (domain: "prime_gap",     shared_top1: 0.140667, shared_top1_std: 0.032332, single_top1: 0.136333, single_top1_std: 0.036665, shared_nll: 2.664796, single_nll: 2.673337, shared_ece: 0.027896, single_ece: 0.041032, candidate_count: 129),
+  (domain: "grid_path",     shared_top1: 0.909000, shared_top1_std: 0.003464, single_top1: 0.911333, single_top1_std: 0.003215, shared_nll: 0.321642, single_nll: 0.299922, shared_ece: 0.035699, single_ece: 0.026804, candidate_count: 4),
+  (domain: "delayed_claim", shared_top1: 0.980000, shared_top1_std: 0.010149, single_top1: 0.979000, single_top1_std: 0.005292, shared_nll: 0.047236, single_nll: 0.041156, shared_ece: 0.010188, single_ece: 0.013442, candidate_count: 4),
+  (domain: "arc_agi",       shared_top1: 0.261667, shared_top1_std: 0.206403, single_top1: 0.428000, single_top1_std: 0.000000, shared_nll: 4.082653, single_nll: 8.275397, shared_ece: 0.699497, single_ece: 0.558910, candidate_count: 10),
+)
+
+// R-MT.2: same-envelope ARC OOD evaluation. 12 held-out 7x3->3x3 tasks,
+// scorer trained only on 0520fde7. Three seeds, aggregate row.
+// Source: results/2026-05-17-multitask-roadmap/rmt2_aggregate.csv
+#let multitask_rmt2_aggregate = (
+  (model_kind: "shared",      top1: 0.484000, top1_std: 0.041725, nll: 2.627845, nll_std: 0.904236, ece: 0.448107, ece_std: 0.074224),
+  (model_kind: "single_task", top1: 0.428333, top1_std: 0.021221, nll: 4.372325, nll_std: 0.306984, ece: 0.481980, ece_std: 0.022278),
+)
+
+// R-MT.6: capacity sweep at the same three-seed, 192k-update budget.
+// Source: results/2026-05-17-multitask-roadmap/rmt6_capacity_sweep_deltas.csv
+#let multitask_rmt6_capacity = (
+  (hidden: "32x16",   parameters: 3649,  arc_shared_top1: 0.392000, arc_single_top1: 0.404333, arc_delta: -0.012333, claim_shared_top1: 0.986000, claim_single_top1: 0.981667, claim_delta: 0.004333),
+  (hidden: "64x32",   parameters: 8321,  arc_shared_top1: 0.261667, arc_single_top1: 0.428000, arc_delta: -0.166333, claim_shared_top1: 0.980000, claim_single_top1: 0.979000, claim_delta: 0.001000),
+  (hidden: "128x64",  parameters: 20737, arc_shared_top1: 0.261667, arc_single_top1: 0.404333, arc_delta: -0.142667, claim_shared_top1: 0.981667, claim_single_top1: 0.980333, claim_delta: 0.001333),
+  (hidden: "256x128", parameters: 57857, arc_shared_top1: 0.345000, arc_single_top1: 0.428000, arc_delta: -0.083000, claim_shared_top1: 0.983000, claim_single_top1: 0.978667, claim_delta: 0.004333),
 )
 
 #let gate_ablation = (
@@ -407,8 +435,8 @@
   "grid_path": (
     (mode: "raw", accuracy: 0.758000, nll: 0.715390, ece: 0.071156),
     (mode: "raw_prior_disabled_ablation", accuracy: 0.574000, nll: 1.042008, ece: 0.042252),
-    (mode: "budgeted_legality_gate_model", accuracy: 0.896000, nll: 0.373220, ece: 0.103257),
-    (mode: "budgeted_legality_gate_prior_disabled_ablation", accuracy: 0.689000, nll: 0.740348, ece: 0.046980),
+    (mode: "budgeted_legality_gate_model", accuracy: 0.953000, nll: 0.192517, ece: 0.069927),
+    (mode: "budgeted_legality_gate_prior_disabled_ablation", accuracy: 0.939000, nll: 0.227842, ece: 0.099877),
   ),
   "delayed_claim": (
     (mode: "delayed_claim", accuracy: 0.935000, nll: 0.158036, ece: 0.036331),
