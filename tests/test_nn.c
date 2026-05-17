@@ -550,6 +550,63 @@ static int test_hypothesis_template_validity_and_canonical_id(void)
     return ok;
 }
 
+static int test_hypothesis_reference_color_presence_disambiguates_id(void)
+{
+    NNHypothesisTemplate template_ref;
+    nn_hypothesis_template_init(&template_ref,
+                                "arc",
+                                "reference_color_identity",
+                                777,
+                                NN_PROGRAM_VALUE_GRID,
+                                NN_PROGRAM_VALUE_GRID);
+    int ok = nn_hypothesis_template_add_stage(&template_ref,
+                                              "identity",
+                                              NN_PROGRAM_KIND_TRANSFORM,
+                                              NN_PROGRAM_VALUE_GRID,
+                                              NN_PROGRAM_VALUE_GRID,
+                                              778);
+    ok = ok && nn_hypothesis_template_add_slot(&template_ref,
+                                               "select.reference_color_used",
+                                               NN_HYPOTHESIS_SLOT_BOOLEAN,
+                                               1,
+                                               0.0,
+                                               0);
+    ok = ok && nn_hypothesis_template_add_slot(&template_ref,
+                                               "select.reference_color",
+                                               NN_HYPOTHESIS_SLOT_REFERENCE_COLOR,
+                                               1,
+                                               0.0,
+                                               0);
+    ok = ok && nn_hypothesis_template_is_valid(&template_ref);
+
+    NNHypothesis no_reference;
+    NNHypothesis reference_zero;
+    ok = ok && nn_hypothesis_init(&no_reference, &template_ref);
+    ok = ok && nn_hypothesis_init(&reference_zero, &template_ref);
+    ok = ok && nn_hypothesis_bind(&no_reference,
+                                  "select.reference_color_used",
+                                  0.0,
+                                  0);
+    ok = ok && nn_hypothesis_bind(&no_reference,
+                                  "select.reference_color",
+                                  0.0,
+                                  0);
+    ok = ok && nn_hypothesis_bind(&reference_zero,
+                                  "select.reference_color_used",
+                                  1.0,
+                                  1);
+    ok = ok && nn_hypothesis_bind(&reference_zero,
+                                  "select.reference_color",
+                                  0.0,
+                                  0);
+    ok = ok && nn_hypothesis_is_fully_bound(&no_reference);
+    ok = ok && nn_hypothesis_is_fully_bound(&reference_zero);
+    ok = ok && no_reference.canonical_hash != reference_zero.canonical_hash;
+    ok = ok && strcmp(no_reference.canonical_id,
+                      reference_zero.canonical_id) != 0;
+    return ok;
+}
+
 static int test_hypothesis_feature_audit_and_encoder(void)
 {
     NNHypothesisTemplate template_ref;
@@ -2872,6 +2929,8 @@ int main(void)
           "program layer tracks coverage and proposer evidence");
     check(test_hypothesis_template_validity_and_canonical_id(),
           "hypothesis layer validates templates and canonicalizes bindings");
+    check(test_hypothesis_reference_color_presence_disambiguates_id(),
+          "hypothesis canonical id distinguishes absent reference color from color zero");
     check(test_hypothesis_feature_audit_and_encoder(),
           "hypothesis features audit clean and encode bound slots");
     check(test_hypothesis_compile_to_typed_program(),
