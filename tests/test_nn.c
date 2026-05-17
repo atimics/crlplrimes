@@ -415,6 +415,268 @@ static int test_program_coverage_and_proposer_summary_json(void)
     return ok;
 }
 
+static int build_select_then_translate_template(NNHypothesisTemplate *template_ref)
+{
+    nn_hypothesis_template_init(template_ref,
+                                "arc",
+                                "select_then_translate",
+                                501,
+                                NN_PROGRAM_VALUE_GRID,
+                                NN_PROGRAM_VALUE_GRID);
+    int ok = nn_hypothesis_template_add_stage(template_ref,
+                                              "scene",
+                                              NN_PROGRAM_KIND_TRANSFORM,
+                                              NN_PROGRAM_VALUE_GRID,
+                                              NN_PROGRAM_VALUE_OBJECT_SET,
+                                              510);
+    ok = ok && nn_hypothesis_template_add_stage(template_ref,
+                                                "select",
+                                                NN_PROGRAM_KIND_SELECTOR,
+                                                NN_PROGRAM_VALUE_OBJECT_SET,
+                                                NN_PROGRAM_VALUE_OBJECT,
+                                                511);
+    ok = ok && nn_hypothesis_template_add_stage(template_ref,
+                                                "translate",
+                                                NN_PROGRAM_KIND_TRANSFORM,
+                                                NN_PROGRAM_VALUE_OBJECT,
+                                                NN_PROGRAM_VALUE_OBJECT,
+                                                512);
+    ok = ok && nn_hypothesis_template_add_stage(template_ref,
+                                                "render",
+                                                NN_PROGRAM_KIND_TRANSFORM,
+                                                NN_PROGRAM_VALUE_OBJECT,
+                                                NN_PROGRAM_VALUE_GRID,
+                                                513);
+    ok = ok && nn_hypothesis_template_add_slot(template_ref,
+                                               "background",
+                                               NN_HYPOTHESIS_SLOT_COLOR,
+                                               1,
+                                               0.0,
+                                               0);
+    ok = ok && nn_hypothesis_template_add_slot(template_ref,
+                                               "select.selector_kind",
+                                               NN_HYPOTHESIS_SLOT_SELECTOR_KIND,
+                                               1,
+                                               0.0,
+                                               0);
+    ok = ok && nn_hypothesis_template_add_slot(template_ref,
+                                               "select.color",
+                                               NN_HYPOTHESIS_SLOT_COLOR,
+                                               1,
+                                               0.0,
+                                               0);
+    ok = ok && nn_hypothesis_template_add_slot(template_ref,
+                                               "translate.dx",
+                                               NN_HYPOTHESIS_SLOT_OFFSET,
+                                               1,
+                                               0.0,
+                                               0);
+    ok = ok && nn_hypothesis_template_add_slot(template_ref,
+                                               "translate.dy",
+                                               NN_HYPOTHESIS_SLOT_OFFSET,
+                                               1,
+                                               0.0,
+                                               0);
+    ok = ok && nn_hypothesis_template_add_slot(template_ref,
+                                               "render.output_color",
+                                               NN_HYPOTHESIS_SLOT_COLOR,
+                                               0,
+                                               -1.0,
+                                               -1);
+    return ok;
+}
+
+static int test_hypothesis_template_validity_and_canonical_id(void)
+{
+    NNHypothesisTemplate template_ref;
+    NNHypothesisTemplate bad_chain;
+    int ok = build_select_then_translate_template(&template_ref);
+    ok = ok && nn_hypothesis_template_is_valid(&template_ref);
+
+    nn_hypothesis_template_init(&bad_chain,
+                                "arc",
+                                "bad_chain",
+                                599,
+                                NN_PROGRAM_VALUE_GRID,
+                                NN_PROGRAM_VALUE_GRID);
+    ok = ok && nn_hypothesis_template_add_stage(&bad_chain,
+                                                "scene",
+                                                NN_PROGRAM_KIND_TRANSFORM,
+                                                NN_PROGRAM_VALUE_GRID,
+                                                NN_PROGRAM_VALUE_OBJECT_SET,
+                                                510);
+    ok = ok && nn_hypothesis_template_add_stage(&bad_chain,
+                                                "render",
+                                                NN_PROGRAM_KIND_TRANSFORM,
+                                                NN_PROGRAM_VALUE_GRID,
+                                                NN_PROGRAM_VALUE_GRID,
+                                                513);
+    ok = ok && !nn_hypothesis_template_is_valid(&bad_chain);
+
+    NNHypothesis hypothesis_a;
+    NNHypothesis hypothesis_b;
+    ok = ok && nn_hypothesis_init(&hypothesis_a, &template_ref);
+    ok = ok && nn_hypothesis_init(&hypothesis_b, &template_ref);
+    ok = ok && nn_hypothesis_bind(&hypothesis_a, "background", 0.0, 0);
+    ok = ok && nn_hypothesis_bind(&hypothesis_a, "select.selector_kind", 0.0, 0);
+    ok = ok && nn_hypothesis_bind(&hypothesis_a, "select.color", 3.0, 3);
+    ok = ok && nn_hypothesis_bind(&hypothesis_a, "translate.dx", 1.0, 1);
+    ok = ok && nn_hypothesis_bind(&hypothesis_a, "translate.dy", -2.0, -2);
+    ok = ok && nn_hypothesis_is_fully_bound(&hypothesis_a);
+    ok = ok && nn_hypothesis_bind(&hypothesis_b, "background", 0.0, 0);
+    ok = ok && nn_hypothesis_bind(&hypothesis_b, "select.selector_kind", 0.0, 0);
+    ok = ok && nn_hypothesis_bind(&hypothesis_b, "select.color", 3.0, 3);
+    ok = ok && nn_hypothesis_bind(&hypothesis_b, "translate.dx", 1.0, 1);
+    ok = ok && nn_hypothesis_bind(&hypothesis_b, "translate.dy", -2.0, -2);
+    ok = ok && hypothesis_a.canonical_hash == hypothesis_b.canonical_hash;
+    ok = ok && strcmp(hypothesis_a.canonical_id, hypothesis_b.canonical_id) == 0;
+
+    NNHypothesis hypothesis_partial;
+    ok = ok && nn_hypothesis_init(&hypothesis_partial, &template_ref);
+    ok = ok && nn_hypothesis_bind(&hypothesis_partial, "background", 0.0, 0);
+    ok = ok && !nn_hypothesis_is_fully_bound(&hypothesis_partial);
+
+    NNHypothesis hypothesis_c;
+    ok = ok && nn_hypothesis_init(&hypothesis_c, &template_ref);
+    ok = ok && nn_hypothesis_bind(&hypothesis_c, "background", 0.0, 0);
+    ok = ok && nn_hypothesis_bind(&hypothesis_c, "select.selector_kind", 0.0, 0);
+    ok = ok && nn_hypothesis_bind(&hypothesis_c, "select.color", 3.0, 3);
+    ok = ok && nn_hypothesis_bind(&hypothesis_c, "translate.dx", 1.0, 1);
+    ok = ok && nn_hypothesis_bind(&hypothesis_c, "translate.dy", 2.0, 2);
+    ok = ok && hypothesis_c.canonical_hash != hypothesis_a.canonical_hash;
+
+    int rebind = nn_hypothesis_bind(&hypothesis_c, "translate.unknown", 0.0, 0);
+    ok = ok && rebind == 0;
+    return ok;
+}
+
+static int test_hypothesis_feature_audit_and_encoder(void)
+{
+    NNHypothesisTemplate template_ref;
+    NNHypothesis hypothesis;
+    nn_real features[NN_HYPOTHESIS_FEATURE_COUNT];
+    size_t encoded_count = 0;
+    size_t schema_count = 0;
+    const NNFeatureSchema *schema = nn_hypothesis_feature_schema(&schema_count);
+
+    int ok = build_select_then_translate_template(&template_ref);
+    ok = ok && schema != NULL && schema_count == NN_HYPOTHESIS_FEATURE_COUNT;
+
+    NNFeatureAudit audit = nn_hypothesis_feature_audit();
+    ok = ok && audit.total_features == NN_HYPOTHESIS_FEATURE_COUNT;
+    ok = ok && audit.verifier_derived_features == 0;
+    ok = ok && audit.gate_derived_features == 0;
+    ok = ok && audit.scorer_input_is_policy_compliant == 1;
+
+    ok = ok && nn_hypothesis_init(&hypothesis, &template_ref);
+    ok = ok && nn_hypothesis_bind(&hypothesis, "background", 0.0, 0);
+    ok = ok && nn_hypothesis_bind(&hypothesis, "select.selector_kind", 1.0, 1);
+    ok = ok && nn_hypothesis_bind(&hypothesis, "select.color", 4.0, 4);
+    ok = ok && nn_hypothesis_bind(&hypothesis, "translate.dx", 2.0, 2);
+    ok = ok && nn_hypothesis_bind(&hypothesis, "translate.dy", -1.0, -1);
+    ok = ok && nn_hypothesis_encode_features(&hypothesis,
+                                              features,
+                                              NN_HYPOTHESIS_FEATURE_COUNT,
+                                              &encoded_count);
+    ok = ok && encoded_count == NN_HYPOTHESIS_FEATURE_COUNT;
+    ok = ok && features[0] == (nn_real)1;
+    ok = ok && features[4] == (nn_real)1;
+    ok = ok && features[5] == (nn_real)1;
+    ok = ok && features[6] == (nn_real)1;
+    ok = ok && features[9] == (nn_real)1;
+    ok = ok && features[10] == (nn_real)1;
+    ok = ok && features[22] == (nn_real)1;
+    ok = ok && nearly_equal(features[21], (nn_real)(3.0 / 16.0),
+                            (nn_real)1e-6, (nn_real)1e-6);
+    return ok;
+}
+
+static int test_hypothesis_compile_to_typed_program(void)
+{
+    NNHypothesisTemplate template_ref;
+    NNHypothesis hypothesis_a;
+    NNHypothesis hypothesis_b;
+    NNProgram program_a;
+    NNProgram program_b;
+
+    int ok = build_select_then_translate_template(&template_ref);
+    ok = ok && nn_hypothesis_init(&hypothesis_a, &template_ref);
+    ok = ok && nn_hypothesis_bind(&hypothesis_a, "background", 0.0, 0);
+    ok = ok && nn_hypothesis_bind(&hypothesis_a, "select.selector_kind", 1.0, 1);
+    ok = ok && nn_hypothesis_bind(&hypothesis_a, "select.color", 2.0, 2);
+    ok = ok && nn_hypothesis_bind(&hypothesis_a, "translate.dx", 1.0, 1);
+    ok = ok && nn_hypothesis_bind(&hypothesis_a, "translate.dy", 0.0, 0);
+    ok = ok && nn_hypothesis_compile(&hypothesis_a, &program_a);
+    ok = ok && strcmp(program_a.domain, "arc") == 0;
+    ok = ok && strcmp(program_a.name, "select_then_translate") == 0;
+    ok = ok && program_a.input_type == NN_PROGRAM_VALUE_GRID;
+    ok = ok && program_a.output_type == NN_PROGRAM_VALUE_GRID;
+    ok = ok && program_a.kind == NN_PROGRAM_KIND_COMPOSITION;
+
+    ok = ok && nn_hypothesis_init(&hypothesis_b, &template_ref);
+    ok = ok && nn_hypothesis_bind(&hypothesis_b, "background", 0.0, 0);
+    ok = ok && nn_hypothesis_bind(&hypothesis_b, "select.selector_kind", 1.0, 1);
+    ok = ok && nn_hypothesis_bind(&hypothesis_b, "select.color", 2.0, 2);
+    ok = ok && nn_hypothesis_bind(&hypothesis_b, "translate.dx", 1.0, 1);
+    ok = ok && nn_hypothesis_bind(&hypothesis_b, "translate.dy", 0.0, 0);
+    ok = ok && nn_hypothesis_compile(&hypothesis_b, &program_b);
+    ok = ok && program_a.canonical_hash == program_b.canonical_hash;
+    ok = ok && strcmp(program_a.canonical_id, program_b.canonical_id) == 0;
+
+    NNHypothesis hypothesis_c;
+    NNProgram program_c;
+    ok = ok && nn_hypothesis_init(&hypothesis_c, &template_ref);
+    ok = ok && nn_hypothesis_bind(&hypothesis_c, "background", 0.0, 0);
+    ok = ok && nn_hypothesis_bind(&hypothesis_c, "select.selector_kind", 1.0, 1);
+    ok = ok && nn_hypothesis_bind(&hypothesis_c, "select.color", 2.0, 2);
+    ok = ok && nn_hypothesis_bind(&hypothesis_c, "translate.dx", 2.0, 2);
+    ok = ok && nn_hypothesis_bind(&hypothesis_c, "translate.dy", 0.0, 0);
+    ok = ok && nn_hypothesis_compile(&hypothesis_c, &program_c);
+    ok = ok && program_c.canonical_hash != program_a.canonical_hash;
+
+    int64_t echoed_template_id = 0;
+    ok = ok && nn_program_get_param_i64(&program_a,
+                                         "hypothesis_template_id",
+                                         &echoed_template_id);
+    ok = ok && echoed_template_id == (int64_t)template_ref.template_id;
+
+    NNHypothesis partial;
+    NNProgram partial_program;
+    ok = ok && nn_hypothesis_init(&partial, &template_ref);
+    ok = ok && nn_hypothesis_bind(&partial, "background", 0.0, 0);
+    ok = ok && !nn_hypothesis_compile(&partial, &partial_program);
+
+    FILE *fp = tmpfile();
+    ok = ok && fp != NULL;
+    if (fp != NULL) {
+        NNHypothesisEvidence evidence = {
+            .task = "arc",
+            .task_instance = "unit",
+            .program = &program_a,
+            .certificate_status = NN_CERTIFICATE_CERTIFIED,
+            .proof_kind = "unit_compile",
+            .reason = "compiled hypothesis row",
+            .event_count = 9,
+            .covered_events = 9,
+            .support = 5,
+            .false_rejections = 0,
+            .utility = 1.0,
+        };
+        ok = ok && nn_hypothesis_write_evidence_json(fp,
+                                                     &hypothesis_a,
+                                                     &evidence);
+        rewind(fp);
+        char row[1024];
+        size_t n = fread(row, 1u, sizeof(row) - 1u, fp);
+        row[n] = '\0';
+        ok = ok && strstr(row, "\"schema\":\"crlp.hypothesis.evidence.v1\"") != NULL;
+        ok = ok && strstr(row, "\"certificate_status\":\"certified\"") != NULL;
+        ok = ok && strstr(row, "\"covered_events\":9") != NULL;
+        fclose(fp);
+    }
+    return ok;
+}
+
 static int toy_residual_encode_features(size_t rule_index,
                                         const size_t *accepted_indices,
                                         size_t accepted_count,
@@ -2608,6 +2870,12 @@ int main(void)
           "program layer encodes domain-neutral structural features");
     check(test_program_coverage_and_proposer_summary_json(),
           "program layer tracks coverage and proposer evidence");
+    check(test_hypothesis_template_validity_and_canonical_id(),
+          "hypothesis layer validates templates and canonicalizes bindings");
+    check(test_hypothesis_feature_audit_and_encoder(),
+          "hypothesis features audit clean and encode bound slots");
+    check(test_hypothesis_compile_to_typed_program(),
+          "hypothesis compile produces typed composed NNProgram");
     check(test_closed_loop_policy_uses_generic_residual_coverage(),
           "closed-loop policy trains on generic residual coverage");
     check(test_fixture_checkpoint_load_and_scoring(),

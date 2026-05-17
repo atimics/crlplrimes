@@ -13,7 +13,7 @@ LDFLAGS ?=
 LDLIBS ?= -lm
 
 BUILD_DIR := build/$(REAL)
-NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h include/nn_program.h
+NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h include/nn_program.h include/nn_hypothesis.h
 PRIME_GAP_TASK_HEADERS := include/nn_tasks_prime_gap.h src/prime_gap/internal.h
 PRIME_GAP_MODULE_SOURCES := $(wildcard src/prime_gap/*.c)
 PRIME_GAP_TASK_SOURCES := src/nn_tasks_prime_gap.c $(PRIME_GAP_MODULE_SOURCES)
@@ -22,17 +22,20 @@ NN_OBJ := $(BUILD_DIR)/nn.o
 NN_EXPERIMENT_OBJ := $(BUILD_DIR)/nn_experiment.o
 NN_SYMBOLIC_OBJ := $(BUILD_DIR)/nn_symbolic.o
 NN_PROGRAM_OBJ := $(BUILD_DIR)/nn_program.o
+NN_HYPOTHESIS_OBJ := $(BUILD_DIR)/nn_hypothesis.o
 NN_TEST_OBJ := $(BUILD_DIR)/nn_test.o
 NN_EXPERIMENT_TEST_OBJ := $(BUILD_DIR)/nn_experiment_test.o
 NN_SYMBOLIC_TEST_OBJ := $(BUILD_DIR)/nn_symbolic_test.o
 NN_PROGRAM_TEST_OBJ := $(BUILD_DIR)/nn_program_test.o
+NN_HYPOTHESIS_TEST_OBJ := $(BUILD_DIR)/nn_hypothesis_test.o
 NN_SANITIZE_OBJ := $(BUILD_DIR)/nn_sanitize.o
 NN_EXPERIMENT_SANITIZE_OBJ := $(BUILD_DIR)/nn_experiment_sanitize.o
 NN_SYMBOLIC_SANITIZE_OBJ := $(BUILD_DIR)/nn_symbolic_sanitize.o
 NN_PROGRAM_SANITIZE_OBJ := $(BUILD_DIR)/nn_program_sanitize.o
-NN_OBJS := $(NN_OBJ) $(NN_EXPERIMENT_OBJ) $(NN_SYMBOLIC_OBJ) $(NN_PROGRAM_OBJ)
-NN_TEST_OBJS := $(NN_TEST_OBJ) $(NN_EXPERIMENT_TEST_OBJ) $(NN_SYMBOLIC_TEST_OBJ) $(NN_PROGRAM_TEST_OBJ)
-NN_SANITIZE_OBJS := $(NN_SANITIZE_OBJ) $(NN_EXPERIMENT_SANITIZE_OBJ) $(NN_SYMBOLIC_SANITIZE_OBJ) $(NN_PROGRAM_SANITIZE_OBJ)
+NN_HYPOTHESIS_SANITIZE_OBJ := $(BUILD_DIR)/nn_hypothesis_sanitize.o
+NN_OBJS := $(NN_OBJ) $(NN_EXPERIMENT_OBJ) $(NN_SYMBOLIC_OBJ) $(NN_PROGRAM_OBJ) $(NN_HYPOTHESIS_OBJ)
+NN_TEST_OBJS := $(NN_TEST_OBJ) $(NN_EXPERIMENT_TEST_OBJ) $(NN_SYMBOLIC_TEST_OBJ) $(NN_PROGRAM_TEST_OBJ) $(NN_HYPOTHESIS_TEST_OBJ)
+NN_SANITIZE_OBJS := $(NN_SANITIZE_OBJ) $(NN_EXPERIMENT_SANITIZE_OBJ) $(NN_SYMBOLIC_SANITIZE_OBJ) $(NN_PROGRAM_SANITIZE_OBJ) $(NN_HYPOTHESIS_SANITIZE_OBJ)
 XOR_EXAMPLE := $(BUILD_DIR)/xor
 ACTION_SCORE_EXAMPLE := $(BUILD_DIR)/action_score
 PRIME_GAP_EXAMPLE := $(BUILD_DIR)/prime_gap
@@ -61,7 +64,7 @@ TUNING_DIR ?= build/$(REAL)/neurosymbolic_tuning
 ARC_AGI_TASK_DIR ?=
 ARC_AGI_MAX_TASKS ?= 400
 
-.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-trace grid-path-replay grid-path-eval multitask-domain symbolic-domains program-synthesis program-synthesis-baselines arc-agi arc-agi-loader results neurosymbolic-tune benchmark test sanitize check clean
+.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-trace grid-path-replay grid-path-eval multitask-domain symbolic-domains program-synthesis program-synthesis-baselines arc-agi arc-agi-loader arc-agi-induction-smoke results neurosymbolic-tune benchmark test sanitize check clean
 
 all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(ARC_AGI) $(BENCHMARK)
 
@@ -80,6 +83,9 @@ $(NN_SYMBOLIC_OBJ): src/nn_symbolic.c include/nn_symbolic.h include/nn_core.h in
 $(NN_PROGRAM_OBJ): src/nn_program.c include/nn_program.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_program.c -o $@
 
+$(NN_HYPOTHESIS_OBJ): src/nn_hypothesis.c include/nn_hypothesis.h include/nn_program.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_hypothesis.c -o $@
+
 $(NN_TEST_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn.c -o $@
 
@@ -92,6 +98,9 @@ $(NN_SYMBOLIC_TEST_OBJ): src/nn_symbolic.c include/nn_symbolic.h include/nn_core
 $(NN_PROGRAM_TEST_OBJ): src/nn_program.c include/nn_program.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_program.c -o $@
 
+$(NN_HYPOTHESIS_TEST_OBJ): src/nn_hypothesis.c include/nn_hypothesis.h include/nn_program.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_hypothesis.c -o $@
+
 $(NN_SANITIZE_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn.c -o $@
 
@@ -103,6 +112,9 @@ $(NN_SYMBOLIC_SANITIZE_OBJ): src/nn_symbolic.c include/nn_symbolic.h include/nn_
 
 $(NN_PROGRAM_SANITIZE_OBJ): src/nn_program.c include/nn_program.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_program.c -o $@
+
+$(NN_HYPOTHESIS_SANITIZE_OBJ): src/nn_hypothesis.c include/nn_hypothesis.h include/nn_program.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_hypothesis.c -o $@
 
 $(BUILD_DIR)/obj/prime_gap/%.o: src/prime_gap/%.c $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
@@ -282,6 +294,9 @@ arc-agi: $(ARC_AGI)
 arc-agi-loader: $(ARC_AGI)
 	./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS) --program-budget-grid
 
+arc-agi-induction-smoke: $(ARC_AGI)
+	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 1 --program-budget-grid --loader-summary-only --induction
+
 results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(ARC_AGI)
 	$(PYTHON) scripts/capture_results.py --output-dir $(RESULTS_DIR) --real $(REAL)
 
@@ -294,7 +309,7 @@ test: $(TEST_RUNNER)
 sanitize: $(SANITIZE_TEST_RUNNER)
 	./$(SANITIZE_TEST_RUNNER)
 
-check: test sanitize action-score symbolic-domains program-synthesis arc-agi delayed-claim-self-test delayed-claim-eval grid-path-eval prime-rule-search-smoke prime-gap-eval
+check: test sanitize action-score symbolic-domains program-synthesis arc-agi arc-agi-induction-smoke delayed-claim-self-test delayed-claim-eval grid-path-eval prime-rule-search-smoke prime-gap-eval
 	$(MAKE) test REAL=double
 
 clean:

@@ -10,6 +10,7 @@ git clone --depth 1 https://github.com/fchollet/ARC-AGI.git /private/tmp/ARC-AGI
 ./build/float/arc_agi --task-dir /private/tmp/ARC-AGI/data/training --max-tasks 400 --program-budget-grid
 ./build/float/arc_agi --program-train-dir /private/tmp/ARC-AGI/data/training --task-dir /private/tmp/ARC-AGI/data/evaluation --max-tasks 400 --program-budget-grid
 ./build/float/arc_agi --program-train-dir /private/tmp/arc-selector-smoke --task-dir /private/tmp/arc-selector-smoke --max-tasks 1 --program-budget-grid --loader-summary-only
+make arc-agi-induction-smoke
 ```
 
 ## Loader Summary
@@ -119,21 +120,37 @@ same selector task the learned proposer ranks both certificates inside budget
 8 while grammar-order and structural heuristic rank no selected-object
 certificate at budgets 8, 16, 32, or 64.
 
+## Hypothesis Induction Smoke
+
+The tracked fixture under `tests/fixtures/arc_hypothesis` exercises the new
+`NNHypothesis` layer without adding another ARC-specific candidate family. The
+ARC adapter extracts object-scene deltas from train pairs, binds the
+`select_then_translate` template slots (`selector`, input/output color,
+background, and `dx/dy`), compiles the hypothesis into an `NNProgram`, and emits
+`crlp.hypothesis.evidence.v1`. The smoke certifies the hypothesis-derived row
+with 25/25 test cells covered, and the structural and learned program orderings
+rank that row inside budget 8 while grammar-order does not.
+
 Interpretation: the loader and certificate path work across many ARC-format
 tasks, but this grammar is intentionally narrow. It only certifies tasks that
 fit the current hand-coded split-panel, recolor, crop, geometry, bbox,
 small-translation, largest/selected connected-component, generic
-object-relation induction, and learned scale-composition families. The
-largest-object primitive adds two training certifications (`1f85a75f`,
-`be94b721`) and one redundant certificate on `1cf80156`; learned scale
+object-relation induction, hypothesis-bound object translation, and learned
+scale-composition families. The largest-object primitive adds two training
+certifications (`1f85a75f`, `be94b721`) and one redundant certificate on
+`1cf80156`; learned scale
 composition adds the training-only `f25fbde4` certificate. The generic
 object-relation template induces the training-only `ded97339`, `00d62c1b`,
 `a5313dff`, and `a79310a0` certificates by learning selector/parameter scores
 over relation kind, background, colors, mode, and offset rather than treating
 connection, recolored translation, and enclosed fill as separate families.
 Grammar v10 adds selected-object selector parameters (`unique`, `largest`,
-`smallest`, `interior`, `border`, `nearest`) plus connector-only rendering, but
-the public evaluation split remains at four exact certifications. The learned
+`smallest`, `interior`, `border`, `nearest`) plus connector-only rendering.
+The optional induction path adds a generic template/slot-binding layer over
+those primitives, ranks observed object-delta slot bindings through a top-K
+proposal queue, and then sends only verifier-checked rows forward. The public
+evaluation split remains at four exact certifications unless that path is
+explicitly enabled. The learned
 proposer is still a real neural scorer over program/task descriptors: it
 improves tight-budget ranking on the public evaluation split, and the selector
 smoke shows it can rank learned selected-object certificates when selector

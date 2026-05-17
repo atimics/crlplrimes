@@ -185,6 +185,8 @@ are more naturally expressed as programs than as one-step rejection rules.
 ```text
 domain grammar emits typed NNProgram rows
         ↓
+optional NNHypothesis templates rank and bind slots from example evidence
+        ↓
 nn_program_encode_features emits domain-neutral program features
         ↓
 canonical id from signature, params, and child ids
@@ -201,11 +203,13 @@ crlp.program_proposer.summary.v1 records matched-budget proposer comparisons
 
 The program layer does not replace `NNSymbolicDomain`; it gives symbolic
 domains a lower-level object for candidates with typed inputs and outputs plus a
-shared structural feature encoder for candidate ranking. ARC appends
-task-specific shape/color/object descriptors to those domain-neutral program
-features before training its learned proposer. For program synthesis, the same
-object can name reusable DSL abstractions. The certificate checker remains
-domain-owned.
+shared structural feature encoder for candidate ranking. `NNHypothesis` is the
+thin slot-binding layer above `NNProgram`: domains can bind typed template slots
+from observed task facts, compile the result into a canonical `NNProgram`, then
+let the domain verifier accept or reject it. ARC appends task-specific
+shape/color/object descriptors to those domain-neutral program features before
+training its learned proposer. For program synthesis, the same object can name
+reusable DSL abstractions. The certificate checker remains domain-owned.
 
 ## Rule-Search Summary Rows
 

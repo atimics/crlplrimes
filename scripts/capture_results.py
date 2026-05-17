@@ -13,6 +13,7 @@ from pathlib import Path
 COMMANDS = (
     ("experiment_schemas", ("experiment-schemas",)),
     ("arc_agi", ("arc-agi",)),
+    ("arc_agi_induction_smoke", ("arc-agi-induction-smoke",)),
     ("delayed_claim", ("delayed-claim-eval",)),
     ("grid_path", ("grid-path-eval",)),
     ("prime_rule_search", ("prime-rule-search",)),
@@ -47,6 +48,7 @@ def run_make(repo: Path, real: str, target: str, log_path: Path) -> list[dict[st
             "crlp.program_proposer.summary.v1",
             "crlp.arc_transform.summary.v1",
             "crlp.arc_loader.summary.v1",
+            "crlp.hypothesis.evidence.v1",
         }:
             row["source_target"] = target
             rows.append(row)
@@ -160,6 +162,12 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
         for row in rows
         if row.get("domain") == "arc_agi"
         and row.get("schema") == "crlp.program_proposer.summary.v1"
+    ]
+    arc_hypotheses = [
+        row
+        for row in rows
+        if row.get("task") == "arc_agi"
+        and row.get("schema") == "crlp.hypothesis.evidence.v1"
     ]
     grid = [
         row
@@ -342,6 +350,33 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                     "correct",
                     "cells",
                     "cell accuracy",
+                ],
+            )
+        )
+    if arc_hypotheses:
+        lines.extend(["", "### ARC Hypothesis Evidence", ""])
+        lines.append(
+            markdown_table(
+                [
+                    [
+                        str(row.get("task_instance", "")),
+                        str(row.get("template_name", "")),
+                        str(row.get("certificate_status", "")),
+                        str(row.get("covered_events", "")),
+                        str(row.get("event_count", "")),
+                        fmt_percent(row, "utility"),
+                        str(row.get("program_canonical_hash", ""))[:12],
+                    ]
+                    for row in arc_hypotheses
+                ],
+                [
+                    "task",
+                    "template",
+                    "certificate",
+                    "covered",
+                    "events",
+                    "utility",
+                    "program hash",
                 ],
             )
         )

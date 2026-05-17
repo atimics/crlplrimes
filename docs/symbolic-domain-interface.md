@@ -50,6 +50,7 @@ The core engine features are:
 | Program features | `nn_program_encode_features()` emits a fixed structural feature row that learned proposers can share across domains |
 | Program coverage | `NNProgramCoverage` mirrors rule coverage for program-to-event support, residual gain, and accepted-set coverage |
 | Proposer evidence | `nn_program_write_proposer_summary_json()` emits `crlp.program_proposer.summary.v1` rows for random, grammar-order, structural, learned, closed-loop, and oracle program orderings |
+| Hypothesis evidence | `NNHypothesis` binds typed template slots from task evidence, lets domain adapters rank top-K slot proposals, compiles to `NNProgram`, and `nn_hypothesis_write_evidence_json()` emits `crlp.hypothesis.evidence.v1` rows |
 
 This does not make ARC object-relation reasoning automatic. It gives each task
 a first-class place to put learned transform induction or object-relation
@@ -135,10 +136,11 @@ mature:
   symbolic-domain smoke still uses one compiled sample and is not a general ARC
   solver.
 - The standalone ARC loader now has typed `NNProgram` rows, a largest
-  connected-component primitive, budget curves, and a learned program proposer
-  over shared program features plus ARC task descriptors; the older shared
-  symbolic-domain `object_select_overlap` rule is still an alias for
-  intersection.
+  connected-component primitive, budget curves, a learned program proposer over
+  shared program features plus ARC task descriptors, and an optional
+  `NNHypothesis` induction smoke for top-K object-scene delta slot proposals;
+  the older shared symbolic-domain `object_select_overlap` rule is still an
+  alias for intersection.
 - The shared proposer should be evaluated against random, grammar-order,
   structural-heuristic, and oracle orderings on each non-ARC domain; ARC now
   emits matched program-proposer rows from the standalone loader path.

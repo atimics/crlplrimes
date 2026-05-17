@@ -40,6 +40,8 @@ enum {
     ARC_GRAMMAR_VERSION = 10,
     ARC_LEARNED_COMPOSE_TOP = 16,
     ARC_LEARNED_COMPOSE_LIMIT = 256,
+    ARC_HYPOTHESIS_PROPOSAL_CAPACITY = 96,
+    ARC_HYPOTHESIS_TOP_K = 16,
     ARC_PROGRAM_PROPOSER_BUDGET = 64,
     ARC_PROGRAM_BUDGET_GRID_COUNT = 4,
     ARC_PROGRAM_TASK_FEATURE_COUNT = 32,
@@ -251,6 +253,7 @@ typedef struct {
     const char *program_train_dir;
     int loader_summary_only;
     int program_budget_grid;
+    int induction_smoke;
 } ARCConfig;
 
 typedef struct {
@@ -338,6 +341,12 @@ typedef struct {
     ARCTransformStep steps[2];
     char name[ARC_TRANSFORM_NAME_BYTES];
 } ARCTransformCandidate;
+
+typedef struct {
+    NNHypothesis hypothesis;
+    ARCTransformCandidate candidate;
+    double score;
+} ARCHypothesisProposal;
 
 typedef struct {
     size_t samples;
@@ -488,12 +497,16 @@ typedef struct {
 } ARCLoaderSummary;
 
 static int arc_extract_scene(const ARCGrid *grid, uint8_t background, ARCScene *scene);
+static void print_json_string(const char *text);
 static int arc_scene_unique_color_object(const ARCScene *scene,
                                          uint8_t color,
                                          ARCObject *object_out);
 static int arc_apply_candidate(const ARCTransformCandidate *candidate,
                                const ARCGrid *input,
                                ARCGrid *output);
+static const NNHypothesisTemplate *arc_hypothesis_template_object_translate(void);
+static int arc_candidate_from_translate_hypothesis(const NNHypothesis *hypothesis,
+                                                   ARCTransformCandidate *candidate);
 
 static int parse_size_text(const char *text, size_t *out_value)
 {
@@ -1036,6 +1049,58 @@ static int arc_select_scene_object(const ARCScene *scene,
         *object_out = best;
     }
     return 1;
+}
+
+static int arc_infer_selector_for_scene_object(const ARCScene *scene,
+                                               const ARCObject *target,
+                                               uint8_t *selector_kind_out,
+                                               uint8_t *reference_color_out)
+{
+    if (scene == NULL || target == NULL ||
+        selector_kind_out == NULL || reference_color_out == NULL) {
+        return 0;
+    }
+    static const uint8_t selectors[] = {
+        ARC_OBJECT_SELECTOR_UNIQUE_COLOR,
+        ARC_OBJECT_SELECTOR_LARGEST_COLOR,
+        ARC_OBJECT_SELECTOR_SMALLEST_COLOR,
+        ARC_OBJECT_SELECTOR_INTERIOR_COLOR,
+        ARC_OBJECT_SELECTOR_TOUCHING_BORDER_COLOR,
+    };
+    for (size_t i = 0; i < sizeof(selectors) / sizeof(selectors[0]); ++i) {
+        ARCObject selected;
+        if (arc_select_scene_object(scene,
+                                    selectors[i],
+                                    target->color,
+                                    0,
+                                    &selected) &&
+            selected.id == target->id) {
+            *selector_kind_out = selectors[i];
+            *reference_color_out = 0;
+            return 1;
+        }
+    }
+    for (uint8_t reference_color = 0;
+         reference_color < ARC_COLOR_COUNT;
+         ++reference_color) {
+        ARCObject selected;
+        if (reference_color == scene->background_color ||
+            reference_color == target->color ||
+            !arc_scene_unique_color_object(scene, reference_color, NULL)) {
+            continue;
+        }
+        if (arc_select_scene_object(scene,
+                                    ARC_OBJECT_SELECTOR_NEAREST_TO_COLOR,
+                                    target->color,
+                                    reference_color,
+                                    &selected) &&
+            selected.id == target->id) {
+            *selector_kind_out = ARC_OBJECT_SELECTOR_NEAREST_TO_COLOR;
+            *reference_color_out = reference_color;
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static int arc_build_object_translation_candidate(const ARCTask *task,
@@ -3204,8 +3269,17 @@ static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
     return 0;
 }
 
+static int arc_candidate_is_hypothesis_induced(const ARCTransformCandidate *candidate)
+{
+    return candidate != NULL &&
+           strncmp(candidate->name, "hypothesis_", strlen("hypothesis_")) == 0;
+}
+
 static double arc_structural_program_score(const ARCTransformCandidate *candidate)
 {
+    if (arc_candidate_is_hypothesis_induced(candidate)) {
+        return 130.0 - (double)(abs(candidate->dx) + abs(candidate->dy));
+    }
     switch (candidate->op) {
     case ARC_RULE_GRID_COLOR_MAP:
         return 120.0;
@@ -4142,12 +4216,244 @@ static size_t arc_add_learned_compositions(const ARCTask *task,
     return count;
 }
 
+static int arc_candidate_name_exists(const ARCTransformCandidate *candidates,
+                                     size_t count,
+                                     const char *name)
+{
+    if (candidates == NULL || name == NULL) {
+        return 0;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if (strcmp(candidates[i].name, name) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static double arc_hypothesis_slot_proposal_score(const ARCProgramLearnedState *learned,
+                                                 const ARCTransformCandidate *candidate,
+                                                 const ARCObject *input_object,
+                                                 const ARCObject *output_object,
+                                                 const ARCProgramTaskFeatures *task_features)
+{
+    (void)task_features;
+    if (candidate == NULL || input_object == NULL || output_object == NULL) {
+        return -1.0e9;
+    }
+
+    double score = 64.0;
+    score += arc_objects_same_shape(input_object, output_object) ? 16.0 : -32.0;
+    score -= 0.5 * (double)(abs(candidate->dx) + abs(candidate->dy));
+    score += candidate->input_color == candidate->output_color ? 0.25 : 1.0;
+    switch (arc_candidate_selector_kind(candidate)) {
+    case ARC_OBJECT_SELECTOR_UNIQUE_COLOR:
+        score += 6.0;
+        break;
+    case ARC_OBJECT_SELECTOR_LARGEST_COLOR:
+    case ARC_OBJECT_SELECTOR_SMALLEST_COLOR:
+        score += 4.0;
+        break;
+    case ARC_OBJECT_SELECTOR_INTERIOR_COLOR:
+    case ARC_OBJECT_SELECTOR_TOUCHING_BORDER_COLOR:
+        score += 3.0;
+        break;
+    case ARC_OBJECT_SELECTOR_NEAREST_TO_COLOR:
+        score += 2.0;
+        break;
+    default:
+        break;
+    }
+    if (learned != NULL) {
+        score += arc_learned_family_score(learned, candidate);
+        score += 8.0 * arc_learned_relation_score(learned, candidate);
+    }
+    return score;
+}
+
+static void arc_hypothesis_insert_proposal(ARCHypothesisProposal *proposals,
+                                           size_t *proposal_count,
+                                           const ARCHypothesisProposal *proposal)
+{
+    if (proposals == NULL || proposal_count == NULL || proposal == NULL) {
+        return;
+    }
+    size_t count = *proposal_count;
+    size_t pos = count;
+    if (count < ARC_HYPOTHESIS_PROPOSAL_CAPACITY) {
+        proposals[pos] = *proposal;
+        ++count;
+    } else if (proposal->score > proposals[count - 1u].score) {
+        proposals[count - 1u] = *proposal;
+        pos = count - 1u;
+    } else {
+        return;
+    }
+
+    while (pos > 0 && proposals[pos].score > proposals[pos - 1u].score) {
+        ARCHypothesisProposal tmp = proposals[pos - 1u];
+        proposals[pos - 1u] = proposals[pos];
+        proposals[pos] = tmp;
+        --pos;
+    }
+    *proposal_count = count;
+}
+
+static size_t arc_add_hypothesis_induced_translates(const ARCTask *task,
+                                                    ARCProgramLearnedState *learned,
+                                                    ARCTransformCandidate *candidates,
+                                                    size_t capacity,
+                                                    size_t base_count)
+{
+    if (task == NULL || task->train_count == 0 ||
+        candidates == NULL || base_count >= capacity) {
+        return base_count;
+    }
+
+    size_t count = base_count;
+    ARCHypothesisProposal proposals[ARC_HYPOTHESIS_PROPOSAL_CAPACITY];
+    size_t proposal_count = 0;
+    ARCProgramTaskFeatures task_features;
+    arc_program_task_features(task, &task_features);
+    uint8_t backgrounds[2];
+    size_t background_count =
+        arc_task_relation_backgrounds(task,
+                                      backgrounds,
+                                      sizeof(backgrounds) / sizeof(backgrounds[0]));
+    for (size_t background_index = 0;
+         background_index < background_count && count < capacity;
+         ++background_index) {
+        uint8_t background = backgrounds[background_index];
+        ARCScene input_scene;
+        ARCScene output_scene;
+        if (!task->train[0].has_output ||
+            !arc_extract_scene(&task->train[0].input, background, &input_scene) ||
+            !arc_extract_scene(&task->train[0].output, background, &output_scene)) {
+            continue;
+        }
+        for (size_t input_index = 0;
+             input_index < input_scene.object_count && count < capacity;
+             ++input_index) {
+            const ARCObject *input_object = &input_scene.objects[input_index];
+            uint8_t selector_kind = ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
+            uint8_t reference_color = 0;
+            if (input_object->color == background ||
+                !arc_infer_selector_for_scene_object(&input_scene,
+                                                     input_object,
+                                                     &selector_kind,
+                                                     &reference_color)) {
+                continue;
+            }
+            for (size_t output_index = 0;
+                 output_index < output_scene.object_count && count < capacity;
+                 ++output_index) {
+                const ARCObject *output_object = &output_scene.objects[output_index];
+                if (output_object->color == background ||
+                    !arc_objects_same_shape(input_object, output_object)) {
+                    continue;
+                }
+                int dx = (int)output_object->min_x - (int)input_object->min_x;
+                int dy = (int)output_object->min_y - (int)input_object->min_y;
+                if (dx == 0 && dy == 0 &&
+                    output_object->color == input_object->color) {
+                    continue;
+                }
+
+                NNHypothesis hypothesis;
+                ARCTransformCandidate candidate;
+                if (!nn_hypothesis_init(&hypothesis,
+                                        arc_hypothesis_template_object_translate())) {
+                    continue;
+                }
+                int ok = nn_hypothesis_bind(&hypothesis,
+                                            "object_scene.background",
+                                            (double)background,
+                                            background);
+                ok = ok && nn_hypothesis_bind(&hypothesis,
+                                              "select.selector_kind",
+                                              (double)selector_kind,
+                                              selector_kind);
+                ok = ok && nn_hypothesis_bind(&hypothesis,
+                                              "select.color",
+                                              (double)input_object->color,
+                                              input_object->color);
+                ok = ok && nn_hypothesis_bind(&hypothesis,
+                                              "select.reference_color",
+                                              (double)reference_color,
+                                              reference_color);
+                ok = ok && nn_hypothesis_bind(&hypothesis,
+                                              "translate.dx",
+                                              (double)dx,
+                                              dx);
+                ok = ok && nn_hypothesis_bind(&hypothesis,
+                                              "translate.dy",
+                                              (double)dy,
+                                              dy);
+                ok = ok && nn_hypothesis_bind(&hypothesis,
+                                              "render.background",
+                                              (double)background,
+                                              background);
+                ok = ok && nn_hypothesis_bind(&hypothesis,
+                                              "render.output_color",
+                                              (double)output_object->color,
+                                              output_object->color);
+                if (!ok ||
+                    !arc_candidate_from_translate_hypothesis(&hypothesis, &candidate) ||
+                    arc_candidate_name_exists(candidates, count, candidate.name)) {
+                    continue;
+                }
+                ARCHypothesisProposal proposal;
+                proposal.hypothesis = hypothesis;
+                proposal.candidate = candidate;
+                proposal.score = arc_hypothesis_slot_proposal_score(learned,
+                                                                    &candidate,
+                                                                    input_object,
+                                                                    output_object,
+                                                                    &task_features);
+                arc_hypothesis_insert_proposal(proposals,
+                                               &proposal_count,
+                                               &proposal);
+            }
+        }
+    }
+
+    size_t proposal_limit = proposal_count < ARC_HYPOTHESIS_TOP_K
+                                ? proposal_count
+                                : ARC_HYPOTHESIS_TOP_K;
+    for (size_t i = 0; i < proposal_limit && count < capacity; ++i) {
+        size_t checked_cells = 0;
+        size_t mismatches = 0;
+        size_t unsupported = 0;
+        if (arc_candidate_name_exists(candidates, count, proposals[i].candidate.name) ||
+            !arc_candidate_matches_train(task,
+                                         &proposals[i].candidate,
+                                         &checked_cells,
+                                         &mismatches,
+                                         &unsupported)) {
+            continue;
+        }
+        proposals[i].hypothesis.evidence_support = checked_cells;
+        proposals[i].hypothesis.evidence_residual_gain =
+            checked_cells == 0 ? 0.0 : 1.0 - (double)mismatches / (double)checked_cells;
+        arc_add_candidate(candidates, capacity, &count, &proposals[i].candidate);
+    }
+    return count;
+}
+
 static size_t arc_build_candidate_set(const ARCTask *task,
                                       ARCProgramLearnedState *learned,
                                       ARCTransformCandidate *candidates,
-                                      size_t capacity)
+                                      size_t capacity,
+                                      int include_hypothesis_induction)
 {
     size_t count = arc_build_candidates(task, candidates, capacity);
+    if (include_hypothesis_induction) {
+        count = arc_add_hypothesis_induced_translates(task,
+                                                      learned,
+                                                      candidates,
+                                                      capacity,
+                                                      count);
+    }
     return arc_add_learned_compositions(task, learned, candidates, capacity, count);
 }
 
@@ -4495,6 +4801,265 @@ static size_t arc_program_budget_list(const ARCConfig *config,
     return 1;
 }
 
+static const NNHypothesisTemplate *arc_hypothesis_template_object_translate(void)
+{
+    static NNHypothesisTemplate template_ref;
+    static int initialized = 0;
+    if (initialized) {
+        return &template_ref;
+    }
+    nn_hypothesis_template_init(&template_ref,
+                                "arc_agi",
+                                "select_then_translate",
+                                1024,
+                                NN_PROGRAM_VALUE_GRID,
+                                NN_PROGRAM_VALUE_GRID);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "object_scene",
+                                     NN_PROGRAM_KIND_TRANSFORM,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     NN_PROGRAM_VALUE_OBJECT_SET,
+                                     110);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "select",
+                                     NN_PROGRAM_KIND_SELECTOR,
+                                     NN_PROGRAM_VALUE_OBJECT_SET,
+                                     NN_PROGRAM_VALUE_OBJECT,
+                                     111);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "translate",
+                                     NN_PROGRAM_KIND_TRANSFORM,
+                                     NN_PROGRAM_VALUE_OBJECT,
+                                     NN_PROGRAM_VALUE_OBJECT,
+                                     112);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "render",
+                                     NN_PROGRAM_KIND_TRANSFORM,
+                                     NN_PROGRAM_VALUE_OBJECT,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     113);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "object_scene.background",
+                                    NN_HYPOTHESIS_SLOT_COLOR,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "select.selector_kind",
+                                    NN_HYPOTHESIS_SLOT_SELECTOR_KIND,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "select.color",
+                                    NN_HYPOTHESIS_SLOT_COLOR,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "select.reference_color",
+                                    NN_HYPOTHESIS_SLOT_REFERENCE_COLOR,
+                                    0, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "translate.dx",
+                                    NN_HYPOTHESIS_SLOT_OFFSET,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "translate.dy",
+                                    NN_HYPOTHESIS_SLOT_OFFSET,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "render.background",
+                                    NN_HYPOTHESIS_SLOT_COLOR,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "render.output_color",
+                                    NN_HYPOTHESIS_SLOT_COLOR,
+                                    1, 0.0, 0);
+    initialized = 1;
+    return &template_ref;
+}
+
+static int arc_bind_hypothesis_from_translate_candidate(NNHypothesis *hypothesis,
+                                                        const ARCTransformCandidate *candidate)
+{
+    if (hypothesis == NULL || candidate == NULL ||
+        candidate->op != ARC_RULE_OBJECT_TRANSLATE) {
+        return 0;
+    }
+    if (!nn_hypothesis_init(hypothesis,
+                            arc_hypothesis_template_object_translate())) {
+        return 0;
+    }
+    int ok = nn_hypothesis_bind(hypothesis,
+                                "object_scene.background",
+                                (double)candidate->background_color,
+                                candidate->background_color);
+    ok = ok && nn_hypothesis_bind(hypothesis,
+                                  "select.selector_kind",
+                                  (double)arc_candidate_selector_kind(candidate),
+                                  arc_candidate_selector_kind(candidate));
+    ok = ok && nn_hypothesis_bind(hypothesis,
+                                  "select.color",
+                                  (double)candidate->input_color,
+                                  candidate->input_color);
+    ok = ok && nn_hypothesis_bind(hypothesis,
+                                  "select.reference_color",
+                                  (double)candidate->reference_color,
+                                  candidate->reference_color);
+    ok = ok && nn_hypothesis_bind(hypothesis,
+                                  "translate.dx",
+                                  (double)candidate->dx,
+                                  candidate->dx);
+    ok = ok && nn_hypothesis_bind(hypothesis,
+                                  "translate.dy",
+                                  (double)candidate->dy,
+                                  candidate->dy);
+    ok = ok && nn_hypothesis_bind(hypothesis,
+                                  "render.background",
+                                  (double)candidate->background_color,
+                                  candidate->background_color);
+    ok = ok && nn_hypothesis_bind(hypothesis,
+                                  "render.output_color",
+                                  (double)candidate->output_color,
+                                  candidate->output_color);
+    return ok && nn_hypothesis_is_fully_bound(hypothesis);
+}
+
+static int arc_candidate_from_translate_hypothesis(const NNHypothesis *hypothesis,
+                                                   ARCTransformCandidate *candidate)
+{
+    if (hypothesis == NULL || candidate == NULL ||
+        hypothesis->template_ref != arc_hypothesis_template_object_translate() ||
+        !nn_hypothesis_is_fully_bound(hypothesis)) {
+        return 0;
+    }
+    int64_t background = 0;
+    int64_t selector_kind = 0;
+    int64_t input_color = 0;
+    int64_t reference_color = 0;
+    int64_t dx = 0;
+    int64_t dy = 0;
+    int64_t render_background = 0;
+    int64_t output_color = 0;
+    if (!nn_hypothesis_get(hypothesis,
+                           "object_scene.background",
+                           NULL,
+                           &background) ||
+        !nn_hypothesis_get(hypothesis,
+                           "select.selector_kind",
+                           NULL,
+                           &selector_kind) ||
+        !nn_hypothesis_get(hypothesis, "select.color", NULL, &input_color) ||
+        !nn_hypothesis_get(hypothesis,
+                           "select.reference_color",
+                           NULL,
+                           &reference_color) ||
+        !nn_hypothesis_get(hypothesis, "translate.dx", NULL, &dx) ||
+        !nn_hypothesis_get(hypothesis, "translate.dy", NULL, &dy) ||
+        !nn_hypothesis_get(hypothesis,
+                           "render.background",
+                           NULL,
+                           &render_background) ||
+        !nn_hypothesis_get(hypothesis,
+                           "render.output_color",
+                           NULL,
+                           &output_color)) {
+        return 0;
+    }
+    if (background < 0 || background >= ARC_COLOR_COUNT ||
+        render_background != background ||
+        selector_kind < 0 || selector_kind >= ARC_OBJECT_SELECTOR_KIND_COUNT ||
+        input_color < 0 || input_color >= ARC_COLOR_COUNT ||
+        reference_color < 0 || reference_color >= ARC_COLOR_COUNT ||
+        output_color < 0 || output_color >= ARC_COLOR_COUNT ||
+        dx < -ARC_MAX_GRID_WIDTH || dx > ARC_MAX_GRID_WIDTH ||
+        dy < -ARC_MAX_GRID_HEIGHT || dy > ARC_MAX_GRID_HEIGHT) {
+        return 0;
+    }
+
+    arc_init_candidate(candidate, ARC_RULE_OBJECT_TRANSLATE, "");
+    candidate->background_color = (uint8_t)background;
+    candidate->selector_kind = (uint8_t)selector_kind;
+    candidate->output_selector_kind = ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
+    candidate->input_color = (uint8_t)input_color;
+    candidate->reference_color = (uint8_t)reference_color;
+    candidate->output_color = (uint8_t)output_color;
+    candidate->dx = (int)dx;
+    candidate->dy = (int)dy;
+    snprintf(candidate->name,
+             sizeof(candidate->name),
+             "hypothesis_%s_%s_ref_%u_bg_%u_color_%u_to_%u_%+d_%+d",
+             hypothesis->template_ref->name,
+             arc_object_selector_short_name(candidate->selector_kind),
+             (unsigned)candidate->reference_color,
+             (unsigned)candidate->background_color,
+             (unsigned)candidate->input_color,
+             (unsigned)candidate->output_color,
+             candidate->dx,
+             candidate->dy);
+    return 1;
+}
+
+static void arc_emit_hypothesis_evidence_json(const char *task_id,
+                                              const NNHypothesis *hypothesis,
+                                              const NNProgram *program,
+                                              const ARCProgramEval *eval,
+                                              size_t test_cells)
+{
+    if (hypothesis == NULL || hypothesis->template_ref == NULL ||
+        program == NULL) {
+        return;
+    }
+    size_t events = eval != NULL && eval->test_cells != 0
+                        ? eval->test_cells
+                        : test_cells;
+    size_t covered = eval != NULL ? eval->test_correct_cells : 0;
+    NNHypothesisEvidence evidence = {
+        .task = "arc_agi",
+        .task_instance = task_id != NULL ? task_id : "unknown",
+        .program = program,
+        .certificate_status = eval != NULL && eval->train_consistent && eval->test_supported
+                                  ? NN_CERTIFICATE_CERTIFIED
+                                  : NN_CERTIFICATE_REJECTED,
+        .proof_kind = eval != NULL && eval->train_consistent
+                          ? "arc_train_pairs_consistent"
+                          : "arc_hypothesis_unchecked",
+        .reason = eval != NULL && eval->train_consistent
+                      ? "hypothesis-derived transform matches train pairs"
+                      : "hypothesis-derived transform did not certify on train pairs",
+        .event_count = events,
+        .covered_events = covered,
+        .support = eval != NULL ? eval->train_checked_cells : 0,
+        .false_rejections = eval != NULL ? eval->train_mismatches : 0,
+        .utility = events == 0 ? 0.0 : (double)covered / (double)events,
+    };
+    nn_hypothesis_write_evidence_json(stdout, hypothesis, &evidence);
+}
+
+static size_t arc_emit_induction_smoke(const ARCTask *task,
+                                       const ARCTransformCandidate *candidates,
+                                       const ARCProgramEval *evals,
+                                       size_t candidate_count)
+{
+    size_t test_cells = arc_task_test_cells(task);
+    size_t emitted = 0;
+    for (size_t i = 0; i < candidate_count && emitted < 8; ++i) {
+        if (!arc_candidate_is_hypothesis_induced(&candidates[i]) ||
+            candidates[i].op != ARC_RULE_OBJECT_TRANSLATE) {
+            continue;
+        }
+        NNHypothesis hypothesis;
+        NNProgram program;
+        if (!arc_bind_hypothesis_from_translate_candidate(&hypothesis,
+                                                          &candidates[i]) ||
+            !nn_hypothesis_compile(&hypothesis, &program)) {
+            continue;
+        }
+        arc_emit_hypothesis_evidence_json(task->id,
+                                          &hypothesis,
+                                          &program,
+                                          &evals[i],
+                                          test_cells);
+        ++emitted;
+    }
+    return emitted;
+}
+
 static void arc_emit_builtin_program_summaries(const ARCTask *task, const ARCConfig *config)
 {
     ARCTransformCandidate candidates[ARC_RULE_CANDIDATE_COUNT];
@@ -4510,7 +5075,11 @@ static void arc_emit_builtin_program_summaries(const ARCTask *task, const ARCCon
                                                  UINT32_MAX))) {
         return;
     }
-    size_t candidate_count = arc_build_candidate_set(task, &learned, candidates, ARC_RULE_CANDIDATE_COUNT);
+    size_t candidate_count = arc_build_candidate_set(task,
+                                                     &learned,
+                                                     candidates,
+                                                     ARC_RULE_CANDIDATE_COUNT,
+                                                     config != NULL && config->induction_smoke);
     arc_evaluate_program_candidates(task, candidates, candidate_count, evals);
     for (size_t budget_index = 0; budget_index < budget_count; ++budget_index) {
         for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
@@ -4528,6 +5097,9 @@ static void arc_emit_builtin_program_summaries(const ARCTask *task, const ARCCon
                                        budgets[budget_index]);
             arc_program_print_aggregate(&aggregate);
         }
+    }
+    if (config != NULL && config->induction_smoke) {
+        arc_emit_induction_smoke(task, candidates, evals, candidate_count);
     }
     arc_program_learned_free(&learned);
 }
@@ -5384,7 +5956,8 @@ static int arc_collect_task_files(const char *task_dir,
 static int arc_pretrain_program_proposer(ARCProgramLearnedState *learned_state,
                                          const char *task_dir,
                                          size_t max_tasks,
-                                         nn_real learning_rate)
+                                         nn_real learning_rate,
+                                         int include_hypothesis_induction)
 {
     ARCTaskFile *files = calloc(ARC_MAX_TASK_FILES, sizeof(*files));
     if (files == NULL) {
@@ -5409,9 +5982,15 @@ static int arc_pretrain_program_proposer(ARCProgramLearnedState *learned_state,
         ++loaded;
         ARCTransformCandidate candidates[ARC_RULE_CANDIDATE_COUNT];
         ARCProgramEval evals[ARC_RULE_CANDIDATE_COUNT];
-        size_t candidate_count = arc_build_candidates(&task,
-                                                      candidates,
-                                                      ARC_RULE_CANDIDATE_COUNT);
+        size_t candidate_count = include_hypothesis_induction
+                                     ? arc_build_candidate_set(&task,
+                                                               learned_state,
+                                                               candidates,
+                                                               ARC_RULE_CANDIDATE_COUNT,
+                                                               1)
+                                     : arc_build_candidates(&task,
+                                                            candidates,
+                                                            ARC_RULE_CANDIDATE_COUNT);
         arc_evaluate_program_candidates(&task, candidates, candidate_count, evals);
         if (!arc_program_learned_observe(learned_state,
                                          &task,
@@ -5625,7 +6204,8 @@ static int run_arc_task_loader(const ARCConfig *config)
         !arc_pretrain_program_proposer(&learned_state,
                                        config->program_train_dir,
                                        config->program_train_max_tasks,
-                                       config->program_learning_rate)) {
+                                       config->program_learning_rate,
+                                       config->induction_smoke)) {
         arc_program_learned_free(&learned_state);
         free(files);
         return 0;
@@ -5639,6 +6219,7 @@ static int run_arc_task_loader(const ARCConfig *config)
         }
     }
 
+    size_t induction_evidence_rows = 0;
     for (size_t i = 0; i < file_count; ++i) {
         if (config->max_tasks != 0 && summary.loaded_tasks >= config->max_tasks) {
             break;
@@ -5653,11 +6234,16 @@ static int run_arc_task_loader(const ARCConfig *config)
         size_t candidate_count = arc_build_candidate_set(&task,
                                                          &learned_state,
                                                          candidates,
-                                                         ARC_RULE_CANDIDATE_COUNT);
+                                                         ARC_RULE_CANDIDATE_COUNT,
+                                                         config->induction_smoke);
         ARCTransformMetrics transform =
             evaluate_arc_transform_gate_candidates(&task, candidates, candidate_count);
         arc_loader_summary_add(&summary, &task, &transform);
         arc_evaluate_program_candidates(&task, candidates, candidate_count, evals);
+        if (config->induction_smoke) {
+            induction_evidence_rows +=
+                arc_emit_induction_smoke(&task, candidates, evals, candidate_count);
+        }
         for (size_t budget_index = 0; budget_index < budget_count; ++budget_index) {
             for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
                 arc_program_aggregate_task(&program_aggregates[budget_index][strategy],
@@ -5703,6 +6289,12 @@ static int run_arc_task_loader(const ARCConfig *config)
             }
         }
     }
+    if (config->induction_smoke && induction_evidence_rows == 0) {
+        fprintf(stderr, "ARC induction smoke emitted no hypothesis evidence rows\n");
+        arc_program_learned_free(&learned_state);
+        free(files);
+        return 0;
+    }
     print_arc_loader_summary_json(config->task_dir, &summary);
     for (size_t budget_index = 0; budget_index < budget_count; ++budget_index) {
         for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
@@ -5721,7 +6313,7 @@ static void print_usage(FILE *stream)
           "[--task-dir path] [--max-tasks count] [--program-budget count] "
           "[--program-budget-grid] [--program-train-dir path] "
           "[--program-train-max-tasks count] [--program-learning-rate rate] "
-          "[--loader-summary-only]\n",
+          "[--loader-summary-only] [--induction]\n",
           stream);
 }
 
@@ -5741,6 +6333,7 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->program_train_dir = NULL;
     config->loader_summary_only = 0;
     config->program_budget_grid = 0;
+    config->induction_smoke = 0;
     *schema_only = 0;
 
     for (int i = 1; i < argc; ++i) {
@@ -5798,6 +6391,8 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             }
         } else if (strcmp(argv[i], "--loader-summary-only") == 0) {
             config->loader_summary_only = 1;
+        } else if (strcmp(argv[i], "--induction") == 0) {
+            config->induction_smoke = 1;
         } else {
             return 0;
         }
