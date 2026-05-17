@@ -63,8 +63,10 @@ RESULTS_DIR ?= results/latest
 TUNING_DIR ?= build/$(REAL)/neurosymbolic_tuning
 ARC_AGI_TASK_DIR ?=
 ARC_AGI_MAX_TASKS ?= 400
+ARC_FAMILY_DIAGNOSTICS ?= results/2026-05-17-arc-induction-task-diagnostics.tasks.jsonl
+ARC_FAMILY_DISCOVERY_DIR ?= $(BUILD_DIR)/arc_family_discovery
 
-.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-trace grid-path-replay grid-path-eval multitask-domain symbolic-domains program-synthesis program-synthesis-baselines arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public results paper-pdf paper-data neurosymbolic-tune benchmark test sanitize check clean
+.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-trace grid-path-replay grid-path-eval multitask-domain symbolic-domains program-synthesis program-synthesis-baselines arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-family-discovery results paper-pdf paper-data neurosymbolic-tune benchmark test sanitize check clean
 
 all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(ARC_AGI) $(BENCHMARK)
 
@@ -299,6 +301,9 @@ arc-agi-induction-smoke: $(ARC_AGI)
 
 arc-agi-induction-public: $(ARC_AGI)
 	$(PYTHON) scripts/arc_induction_parity.py --arc-agi ./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS)
+
+arc-family-discovery:
+	$(PYTHON) scripts/arc_family_discovery.py --task-dir "$(ARC_AGI_TASK_DIR)" --diagnostics "$(ARC_FAMILY_DIAGNOSTICS)" --output-dir "$(ARC_FAMILY_DISCOVERY_DIR)"
 
 results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(ARC_AGI)
 	$(PYTHON) scripts/environment_manifest.py --output $(RESULTS_DIR)/environment.json >/dev/null

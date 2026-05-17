@@ -681,6 +681,19 @@ flips/rotations/transposes, scaling, bbox drawing, small translations, largest
 and selected connected-component crop/mask transforms, relation-induced translation,
 connection, enclosed-fill transforms, and bounded scale-composition transforms.
 
+The family-discovery pass mines ARC induction misses into recurring symbolic
+search-space targets:
+
+```sh
+make arc-family-discovery ARC_AGI_TASK_DIR=/path/to/ARC-AGI/data
+```
+
+It consumes the task-level induction diagnostics JSONL, extracts train-pair
+signatures, clusters repeated failure shapes, and emits candidate family stubs
+plus pseudo-labels for a future neural family proposer. The output is a search
+agenda, not a certificate; promoted families still need train-pair verification
+and zero-regression public ARC measurement.
+
 `multitask_domain` remains the generalization smoke test for the core scorer API. It trains one scalar action scorer over a fixed 96-feature row envelope while shuffling samples from `prime_gap`, `grid_path`, `delayed_claim`, and `arc_agi`.
 
 ```sh
