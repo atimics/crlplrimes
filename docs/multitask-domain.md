@@ -68,6 +68,12 @@ make multitask-domain
 ./build/float/multitask_domain --tasks all --eval-tasks all
 ```
 
+The binary also supports capacity and sampler controls:
+
+```sh
+./build/float/multitask_domain --tasks all --eval-tasks all --hidden 128x64 --training-order round_robin
+```
+
 Build and run the standalone first-class ARC sample:
 
 ```sh
@@ -125,11 +131,14 @@ Each evaluated domain emits one JSON row:
   "task_set": "all",
   "eval_task_set": "all",
   "model_kind": "shared_action_scorer",
-  "training_order": "shuffled",
+  "training_order": "uniform_random",
   "feature_envelope": "task_tagged_action_rows_v1",
   "train_updates": 12000,
   "epochs": 4,
   "steps_per_epoch": 12000,
+  "hidden": "64x32",
+  "parameters": 8321,
+  "forward_flops": 16513,
   "learning_rate": 0.004,
   "seed": 20240516,
   "sample_count": 1000,
@@ -138,9 +147,14 @@ Each evaluated domain emits one JSON row:
   "top5": 0.42,
   "top10": 0.78,
   "nll": 2.66,
+  "ece": 0.10,
+  "confidence_mean": 0.20,
+  "correct_confidence_mean": 0.25,
+  "incorrect_confidence_mean": 0.19,
   "mean_rank": 14.0,
   "decision_utility": 0.0,
-  "baseline_steps": 0.0
+  "baseline_steps": 0.0,
+  "reliability_bins": []
 }
 ```
 
@@ -152,7 +166,9 @@ task_set:model_kind:feature_envelope
 ```
 
 There is no `prime_features` field; prime residue flags are not a multitask
-feature option under this envelope.
+feature option under this envelope. The capacity fields are emitted from the
+actual model (`nn_parameter_count` and `nn_forward_flop_count`) so hidden-size
+sweeps can be audited from the JSON row instead of inferred from the command.
 
 ## Current Matrix
 

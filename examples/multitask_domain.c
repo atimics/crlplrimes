@@ -19,6 +19,7 @@ typedef enum {
 enum {
     MT_FEATURE_COUNT = 96,
     MT_MAX_CANDIDATES = ACTION_COUNT,
+    MT_CALIBRATION_BINS = 10,
     MT_GRID_SIZE = 7,
     MT_GRID_CELLS = MT_GRID_SIZE * MT_GRID_SIZE,
     MT_GRID_ACTION_COUNT = 4,
@@ -101,10 +102,13 @@ typedef struct {
     size_t eval_samples;
     uint64_t seed;
     nn_real learning_rate;
+    size_t hidden1;
+    size_t hidden2;
     int run_task_baselines;
     int use_task_tags;
     uint32_t task_mask;
     uint32_t eval_task_mask;
+    int training_order;
 } MTConfig;
 
 typedef struct {
@@ -125,7 +129,23 @@ typedef struct {
     double candidate_count;
     double utility;
     double baseline_steps;
+    double ece;
+    double confidence_sum;
+    double correct_confidence_sum;
+    double incorrect_confidence_sum;
+    size_t correct_confidence_count;
+    size_t incorrect_confidence_count;
+    size_t bin_count[MT_CALIBRATION_BINS];
+    double bin_confidence[MT_CALIBRATION_BINS];
+    double bin_accuracy[MT_CALIBRATION_BINS];
 } MTMetrics;
+
+typedef enum {
+    MT_TRAINING_UNIFORM_RANDOM = 0,
+    MT_TRAINING_ROUND_ROBIN = 1,
+    MT_TRAINING_ARC_HEAVY = 2,
+    MT_TRAINING_PRIME_LIGHT = 3,
+} MTTrainingOrder;
 
 static const char *mt_task_name(MTTask task)
 {
@@ -196,6 +216,46 @@ static size_t mt_fill_active_tasks(uint32_t task_mask, MTTask *tasks, size_t cap
     return count;
 }
 
+static const char *mt_training_order_name(MTTrainingOrder order)
+{
+    switch (order) {
+    case MT_TRAINING_UNIFORM_RANDOM:
+        return "uniform_random";
+    case MT_TRAINING_ROUND_ROBIN:
+        return "round_robin";
+    case MT_TRAINING_ARC_HEAVY:
+        return "arc_heavy";
+    case MT_TRAINING_PRIME_LIGHT:
+        return "prime_light";
+    }
+    return "unknown";
+}
+
+static int mt_parse_training_order(const char *text, MTTrainingOrder *out_order)
+{
+    if (text == NULL || out_order == NULL) {
+        return 0;
+    }
+    if (strcmp(text, "uniform_random") == 0 || strcmp(text, "uniform-random") == 0 ||
+        strcmp(text, "shuffled") == 0) {
+        *out_order = MT_TRAINING_UNIFORM_RANDOM;
+        return 1;
+    }
+    if (strcmp(text, "round_robin") == 0 || strcmp(text, "round-robin") == 0) {
+        *out_order = MT_TRAINING_ROUND_ROBIN;
+        return 1;
+    }
+    if (strcmp(text, "arc_heavy") == 0 || strcmp(text, "arc-heavy") == 0) {
+        *out_order = MT_TRAINING_ARC_HEAVY;
+        return 1;
+    }
+    if (strcmp(text, "prime_light") == 0 || strcmp(text, "prime-light") == 0) {
+        *out_order = MT_TRAINING_PRIME_LIGHT;
+        return 1;
+    }
+    return 0;
+}
+
 static void mt_task_set_name(uint32_t task_mask, char *buffer, size_t buffer_size)
 {
     size_t written = 0;
@@ -261,6 +321,38 @@ static int mt_parse_size_text(const char *text, size_t *out_value)
         return 0;
     }
     *out_value = (size_t)value;
+    return 1;
+}
+
+static int mt_parse_hidden_text(const char *text, size_t *hidden1, size_t *hidden2)
+{
+    if (text == NULL || hidden1 == NULL || hidden2 == NULL || text[0] == '\0') {
+        return 0;
+    }
+    char buffer[64];
+    int written = snprintf(buffer, sizeof(buffer), "%s", text);
+    if (written < 0 || (size_t)written >= sizeof(buffer)) {
+        return 0;
+    }
+    char *sep = strchr(buffer, 'x');
+    if (sep == NULL) {
+        sep = strchr(buffer, 'X');
+    }
+    if (sep == NULL) {
+        sep = strchr(buffer, ',');
+    }
+    if (sep == NULL) {
+        return 0;
+    }
+    *sep = '\0';
+    size_t first = 0;
+    size_t second = 0;
+    if (!mt_parse_size_text(buffer, &first) ||
+        !mt_parse_size_text(sep + 1, &second)) {
+        return 0;
+    }
+    *hidden1 = first;
+    *hidden2 = second;
     return 1;
 }
 
@@ -744,17 +836,34 @@ static size_t mt_fill_task_sample(const MTData *data,
     return 0;
 }
 
-static NeuralNet *mt_create_model(unsigned int seed)
+static void mt_hidden_text(const MTConfig *config, char *buffer, size_t buffer_size)
 {
-    static const size_t layers[] = {MT_FEATURE_COUNT, 64, 32, 1};
-    NNConfig config;
-    config.layer_sizes = layers;
-    config.layer_count = sizeof(layers) / sizeof(layers[0]);
-    config.seed = seed;
-    config.hidden_activation = NN_ACTIVATION_RELU;
-    config.output_activation = NN_ACTIVATION_LINEAR;
-    config.loss = NN_LOSS_MSE;
-    return nn_create_config(&config);
+    if (buffer == NULL || buffer_size == 0) {
+        return;
+    }
+    snprintf(buffer,
+             buffer_size,
+             "%zux%zu",
+             config == NULL ? (size_t)64 : config->hidden1,
+             config == NULL ? (size_t)32 : config->hidden2);
+}
+
+static NeuralNet *mt_create_model(const MTConfig *config, unsigned int seed)
+{
+    size_t layers[] = {
+        MT_FEATURE_COUNT,
+        config == NULL ? (size_t)64 : config->hidden1,
+        config == NULL ? (size_t)32 : config->hidden2,
+        1,
+    };
+    NNConfig nn_config;
+    nn_config.layer_sizes = layers;
+    nn_config.layer_count = sizeof(layers) / sizeof(layers[0]);
+    nn_config.seed = seed;
+    nn_config.hidden_activation = NN_ACTIVATION_RELU;
+    nn_config.output_activation = NN_ACTIVATION_LINEAR;
+    nn_config.loss = NN_LOSS_MSE;
+    return nn_create_config(&nn_config);
 }
 
 static int mt_prepare_data(MTData *data)
@@ -788,6 +897,102 @@ static void mt_free_data(MTData *data)
     memset(data, 0, sizeof(*data));
 }
 
+static int mt_active_task_index(const MTTask *tasks,
+                                size_t count,
+                                MTTask wanted,
+                                size_t *index_out)
+{
+    if (tasks == NULL || index_out == NULL) {
+        return 0;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if (tasks[i] == wanted) {
+            *index_out = i;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static MTTask mt_choose_nonpreferred_task(const MTTask *tasks,
+                                          size_t count,
+                                          MTTask preferred,
+                                          uint32_t *rng)
+{
+    if (tasks == NULL || count == 0 || rng == NULL) {
+        return MT_TASK_PRIME_GAP;
+    }
+    size_t alternatives = 0;
+    for (size_t i = 0; i < count; ++i) {
+        alternatives += tasks[i] != preferred ? 1u : 0u;
+    }
+    if (alternatives == 0) {
+        return preferred;
+    }
+    size_t wanted = mt_rng_bounded(rng, alternatives);
+    for (size_t i = 0; i < count; ++i) {
+        if (tasks[i] == preferred) {
+            continue;
+        }
+        if (wanted == 0) {
+            return tasks[i];
+        }
+        --wanted;
+    }
+    return tasks[0];
+}
+
+static MTTask mt_choose_training_task(const MTConfig *config,
+                                      const MTTask *active_tasks,
+                                      size_t active_count,
+                                      size_t global_step,
+                                      uint32_t *rng)
+{
+    if (active_tasks == NULL || active_count == 0 || rng == NULL) {
+        return MT_TASK_PRIME_GAP;
+    }
+    switch ((MTTrainingOrder)(config == NULL ? MT_TRAINING_UNIFORM_RANDOM
+                                             : config->training_order)) {
+    case MT_TRAINING_ROUND_ROBIN:
+        return active_tasks[global_step % active_count];
+    case MT_TRAINING_ARC_HEAVY: {
+        size_t arc_index = 0;
+        if (active_count > 1 &&
+            mt_active_task_index(active_tasks,
+                                 active_count,
+                                 MT_TASK_ARC_AGI,
+                                 &arc_index) &&
+            mt_rng_unit(rng) < 0.5) {
+            return active_tasks[arc_index];
+        }
+        return mt_choose_nonpreferred_task(active_tasks,
+                                           active_count,
+                                           MT_TASK_ARC_AGI,
+                                           rng);
+    }
+    case MT_TRAINING_PRIME_LIGHT: {
+        size_t prime_index = 0;
+        if (active_count > 1 &&
+            mt_active_task_index(active_tasks,
+                                 active_count,
+                                 MT_TASK_PRIME_GAP,
+                                 &prime_index)) {
+            if (mt_rng_unit(rng) < 0.1) {
+                return active_tasks[prime_index];
+            }
+            return mt_choose_nonpreferred_task(active_tasks,
+                                               active_count,
+                                               MT_TASK_PRIME_GAP,
+                                               rng);
+        }
+        return active_tasks[mt_rng_bounded(rng, active_count)];
+    }
+    case MT_TRAINING_UNIFORM_RANDOM:
+        break;
+    }
+    return active_tasks[mt_rng_bounded(rng, active_count)];
+}
+
 static int mt_train_mixed(NeuralNet *net,
                           const MTData *data,
                           const MTConfig *config,
@@ -807,10 +1012,15 @@ static int mt_train_mixed(NeuralNet *net,
 
     memset(updates, 0, MT_TASK_COUNT * sizeof(*updates));
     for (size_t epoch = 0; epoch < config->epochs; ++epoch) {
-        double losses[MT_TASK_COUNT] = {0.0, 0.0, 0.0};
-        size_t epoch_updates[MT_TASK_COUNT] = {0, 0, 0};
+        double losses[MT_TASK_COUNT] = {0.0, 0.0, 0.0, 0.0};
+        size_t epoch_updates[MT_TASK_COUNT] = {0, 0, 0, 0};
         for (size_t step = 0; step < config->steps_per_epoch; ++step) {
-            MTTask task = active_tasks[mt_rng_bounded(&rng, active_count)];
+            size_t global_step = epoch * config->steps_per_epoch + step;
+            MTTask task = mt_choose_training_task(config,
+                                                  active_tasks,
+                                                  active_count,
+                                                  global_step,
+                                                  &rng);
             uint64_t sample = (uint64_t)mt_rng_next(&rng);
             if (task == MT_TASK_PRIME_GAP && data->train.count != 0) {
                 sample %= (uint64_t)data->train.count;
@@ -964,6 +1174,23 @@ static MTMetrics mt_evaluate_task(NeuralNet *net,
         metrics.top1 += rank == 0 ? 1u : 0u;
         metrics.top5 += rank < 5 ? 1u : 0u;
         metrics.top10 += rank < 10 ? 1u : 0u;
+        double confidence = (double)probabilities[ranked[0]];
+        int correct = rank == 0;
+        size_t bin = (size_t)floor(confidence * (double)MT_CALIBRATION_BINS);
+        if (bin >= MT_CALIBRATION_BINS) {
+            bin = MT_CALIBRATION_BINS - 1u;
+        }
+        ++metrics.bin_count[bin];
+        metrics.bin_confidence[bin] += confidence;
+        metrics.bin_accuracy[bin] += correct ? 1.0 : 0.0;
+        metrics.confidence_sum += confidence;
+        if (correct) {
+            metrics.correct_confidence_sum += confidence;
+            ++metrics.correct_confidence_count;
+        } else {
+            metrics.incorrect_confidence_sum += confidence;
+            ++metrics.incorrect_confidence_count;
+        }
         metrics.nll += -log(mt_safe_probability((double)probabilities[target_index]));
         metrics.mean_rank += (double)rank + 1.0;
         metrics.candidate_count += (double)candidate_count;
@@ -983,6 +1210,21 @@ static MTMetrics mt_evaluate_task(NeuralNet *net,
     metrics.candidate_count /= denom;
     metrics.utility /= denom;
     metrics.baseline_steps /= denom;
+    metrics.confidence_sum /= denom;
+    metrics.correct_confidence_sum /=
+        metrics.correct_confidence_count == 0 ? 1.0 : (double)metrics.correct_confidence_count;
+    metrics.incorrect_confidence_sum /=
+        metrics.incorrect_confidence_count == 0 ? 1.0 : (double)metrics.incorrect_confidence_count;
+    for (size_t bin = 0; bin < MT_CALIBRATION_BINS; ++bin) {
+        if (metrics.bin_count[bin] == 0) {
+            continue;
+        }
+        double count = (double)metrics.bin_count[bin];
+        metrics.bin_confidence[bin] /= count;
+        metrics.bin_accuracy[bin] /= count;
+        metrics.ece +=
+            (count / denom) * fabs(metrics.bin_confidence[bin] - metrics.bin_accuracy[bin]);
+    }
 
     free(candidate_inputs);
     free(scores);
@@ -991,7 +1233,33 @@ static MTMetrics mt_evaluate_task(NeuralNet *net,
     return metrics;
 }
 
-static void mt_print_metrics_json(const char *model_kind,
+static void mt_print_reliability_bins_json(const MTMetrics *metrics)
+{
+    int first = 1;
+    fputs(",\"reliability_bins\":[", stdout);
+    if (metrics != NULL) {
+        for (size_t bin = 0; bin < MT_CALIBRATION_BINS; ++bin) {
+            if (metrics->bin_count[bin] == 0) {
+                continue;
+            }
+            if (!first) {
+                fputc(',', stdout);
+            }
+            first = 0;
+            printf("{\"low\":%.2f,\"high\":%.2f,\"count\":%zu,"
+                   "\"confidence\":%.8f,\"accuracy\":%.8f}",
+                   (double)bin / (double)MT_CALIBRATION_BINS,
+                   (double)(bin + 1u) / (double)MT_CALIBRATION_BINS,
+                   metrics->bin_count[bin],
+                   metrics->bin_confidence[bin],
+                   metrics->bin_accuracy[bin]);
+        }
+    }
+    fputc(']', stdout);
+}
+
+static void mt_print_metrics_json(const NeuralNet *net,
+                                  const char *model_kind,
                                   const char *training_order,
                                   MTTask task,
                                   size_t train_updates,
@@ -1001,8 +1269,10 @@ static void mt_print_metrics_json(const char *model_kind,
     double samples = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
     char task_set[128];
     char eval_task_set[128];
+    char hidden[32];
     mt_task_set_name(config->task_mask, task_set, sizeof(task_set));
     mt_task_set_name(config->eval_task_mask, eval_task_set, sizeof(eval_task_set));
+    mt_hidden_text(config, hidden, sizeof(hidden));
     printf("{\"schema\":\"crlp.multitask.summary.v1\","
            "\"task\":\"multi_domain\","
            "\"domain\":\"%s\","
@@ -1014,6 +1284,9 @@ static void mt_print_metrics_json(const char *model_kind,
            "\"train_updates\":%zu,"
            "\"epochs\":%zu,"
            "\"steps_per_epoch\":%zu,"
+           "\"hidden\":\"%s\","
+           "\"parameters\":%zu,"
+           "\"forward_flops\":%zu,"
            "\"learning_rate\":%.8f,"
            "\"seed\":%llu,"
            "\"sample_count\":%zu,"
@@ -1022,9 +1295,13 @@ static void mt_print_metrics_json(const char *model_kind,
            "\"top5\":%.8f,"
            "\"top10\":%.8f,"
            "\"nll\":%.8f,"
+           "\"ece\":%.8f,"
+           "\"confidence_mean\":%.8f,"
+           "\"correct_confidence_mean\":%.8f,"
+           "\"incorrect_confidence_mean\":%.8f,"
            "\"mean_rank\":%.8f,"
            "\"decision_utility\":%.8f,"
-           "\"baseline_steps\":%.8f}\n",
+           "\"baseline_steps\":%.8f",
            mt_task_name(task),
            task_set,
            eval_task_set,
@@ -1034,6 +1311,9 @@ static void mt_print_metrics_json(const char *model_kind,
            train_updates,
            config->epochs,
            config->steps_per_epoch,
+           hidden,
+           net == NULL ? (size_t)0 : nn_parameter_count(net),
+           net == NULL ? (size_t)0 : nn_forward_flop_count(net),
            (double)config->learning_rate,
            (unsigned long long)config->seed,
            metrics.samples,
@@ -1042,22 +1322,29 @@ static void mt_print_metrics_json(const char *model_kind,
            (double)metrics.top5 / samples,
            (double)metrics.top10 / samples,
            metrics.nll,
+           metrics.ece,
+           metrics.confidence_sum,
+           metrics.correct_confidence_sum,
+           metrics.incorrect_confidence_sum,
            metrics.mean_rank,
            metrics.utility,
            metrics.baseline_steps);
+    mt_print_reliability_bins_json(&metrics);
+    printf("}\n");
 }
 
 static void mt_print_metrics_line(const char *model_kind, MTTask task, MTMetrics metrics)
 {
     double samples = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
     printf("[%s %s] top1=%.2f%% top5=%.2f%% top10=%.2f%% nll=%.4f "
-           "mean_rank=%.2f candidates=%.2f utility=%.4f samples=%zu\n",
+           "ece=%.4f mean_rank=%.2f candidates=%.2f utility=%.4f samples=%zu\n",
            model_kind,
            mt_task_name(task),
            100.0 * (double)metrics.top1 / samples,
            100.0 * (double)metrics.top5 / samples,
            100.0 * (double)metrics.top10 / samples,
            metrics.nll,
+           metrics.ece,
            metrics.mean_rank,
            metrics.candidate_count,
            metrics.utility,
@@ -1068,6 +1355,8 @@ static void mt_print_usage(FILE *stream)
 {
     fputs("usage: multitask_domain [--epochs count] [--steps-per-epoch count] "
           "[--eval-samples count] [--learning-rate rate] [--seed seed] "
+          "[--hidden h1xh2] "
+          "[--training-order uniform_random|round_robin|arc_heavy|prime_light] "
           "[--tasks prime,grid,claim,arc|all] [--eval-tasks prime,grid,claim,arc|all] "
           "[--no-task-tags] [--no-task-baselines]\n",
           stream);
@@ -1080,6 +1369,8 @@ static int mt_parse_config(int argc, char **argv, MTConfig *config)
     config->eval_samples = MT_DEFAULT_EVAL_SAMPLES;
     config->seed = 20240516u;
     config->learning_rate = (nn_real)0.006;
+    config->hidden1 = 64;
+    config->hidden2 = 32;
     config->run_task_baselines = 1;
     config->use_task_tags = 1;
     config->task_mask = mt_task_bit(MT_TASK_PRIME_GAP) |
@@ -1087,6 +1378,7 @@ static int mt_parse_config(int argc, char **argv, MTConfig *config)
                         mt_task_bit(MT_TASK_DELAYED_CLAIM) |
                         mt_task_bit(MT_TASK_ARC_AGI);
     config->eval_task_mask = 0;
+    config->training_order = MT_TRAINING_UNIFORM_RANDOM;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--epochs") == 0 && i + 1 < argc) {
@@ -1105,6 +1397,16 @@ static int mt_parse_config(int argc, char **argv, MTConfig *config)
             if (!mt_parse_real_text(argv[++i], &config->learning_rate)) {
                 return 0;
             }
+        } else if (strcmp(argv[i], "--hidden") == 0 && i + 1 < argc) {
+            if (!mt_parse_hidden_text(argv[++i], &config->hidden1, &config->hidden2)) {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--training-order") == 0 && i + 1 < argc) {
+            MTTrainingOrder order = MT_TRAINING_UNIFORM_RANDOM;
+            if (!mt_parse_training_order(argv[++i], &order)) {
+                return 0;
+            }
+            config->training_order = order;
         } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
             if (!mt_parse_u64_text(argv[++i], &config->seed)) {
                 return 0;
@@ -1145,7 +1447,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    NeuralNet *shared = mt_create_model((unsigned int)(config.seed & 0xffffffffu));
+    NeuralNet *shared = mt_create_model(&config, (unsigned int)(config.seed & 0xffffffffu));
     if (shared == NULL) {
         mt_free_data(&data);
         return EXIT_FAILURE;
@@ -1153,21 +1455,25 @@ int main(int argc, char **argv)
 
     char task_set[128];
     char eval_task_set[128];
+    char hidden[32];
     mt_task_set_name(config.task_mask, task_set, sizeof(task_set));
     mt_task_set_name(config.eval_task_mask, eval_task_set, sizeof(eval_task_set));
+    mt_hidden_text(&config, hidden, sizeof(hidden));
     printf("[multitask_domain] feature_envelope=%s "
            "task_set=%s eval_task_set=%s epochs=%zu steps_per_epoch=%zu "
-           "eval_samples=%zu lr=%.6f seed=%llu\n",
+           "eval_samples=%zu hidden=%s training_order=%s lr=%.6f seed=%llu\n",
            mt_feature_envelope_name(&config),
            task_set,
            eval_task_set,
            config.epochs,
            config.steps_per_epoch,
            config.eval_samples,
+           hidden,
+           mt_training_order_name((MTTrainingOrder)config.training_order),
            (double)config.learning_rate,
            (unsigned long long)config.seed);
 
-    size_t shared_updates[MT_TASK_COUNT] = {0, 0, 0};
+    size_t shared_updates[MT_TASK_COUNT] = {0, 0, 0, 0};
     if (!mt_train_mixed(shared, &data, &config, shared_updates)) {
         nn_free(shared);
         mt_free_data(&data);
@@ -1185,7 +1491,13 @@ int main(int argc, char **argv)
     for (size_t task_index = 0; task_index < eval_count; ++task_index) {
         MTTask task = eval_tasks[task_index];
         MTMetrics metrics = mt_evaluate_task(shared, &data, &config, task, config.eval_samples);
-        mt_print_metrics_json("shared", "uniform_random", task, shared_updates[task], &config, metrics);
+        mt_print_metrics_json(shared,
+                              "shared",
+                              mt_training_order_name((MTTrainingOrder)config.training_order),
+                              task,
+                              shared_updates[task],
+                              &config,
+                              metrics);
         mt_print_metrics_line("shared", task, metrics);
     }
 
@@ -1198,7 +1510,9 @@ int main(int argc, char **argv)
         for (size_t task_index = 0; task_index < active_count; ++task_index) {
             MTTask task = active_tasks[task_index];
             NeuralNet *single =
-                mt_create_model((unsigned int)((config.seed + 101u + task_index) & 0xffffffffu));
+                mt_create_model(&config,
+                                (unsigned int)((config.seed + 101u + task_index) &
+                                               0xffffffffu));
             if (single == NULL ||
                 !mt_train_single_task(single, &data, &config, task, baseline_updates)) {
                 nn_free(single);
@@ -1207,7 +1521,8 @@ int main(int argc, char **argv)
                 return EXIT_FAILURE;
             }
             MTMetrics metrics = mt_evaluate_task(single, &data, &config, task, config.eval_samples);
-            mt_print_metrics_json("single_task",
+            mt_print_metrics_json(single,
+                                  "single_task",
                                   "domain_only_random",
                                   task,
                                   baseline_updates,

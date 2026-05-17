@@ -392,10 +392,10 @@
 )
 
 #let multitask_shared_vs_single = (
-  (domain: "prime_gap", shared_top1: 0.109000, single_top1: 0.109000, shared_nll: 2.663878, single_nll: 2.697013, candidate_count: 129, samples: 1000),
-  (domain: "grid_path", shared_top1: 0.897000, single_top1: 0.910000, shared_nll: 0.371303, single_nll: 0.349729, candidate_count: 4, samples: 1000),
-  (domain: "delayed_claim", shared_top1: 0.984000, single_top1: 0.957000, shared_nll: 0.068422, single_nll: 0.098921, candidate_count: 4, samples: 1000),
-  (domain: "arc_agi", shared_top1: 0.142000, single_top1: 0.428000, shared_nll: 2.198120, single_nll: 3.925826, candidate_count: 10, samples: 1000),
+  (domain: "prime_gap", shared_top1: 0.109000, single_top1: 0.109000, shared_nll: 2.663878, single_nll: 2.697013, shared_ece: none, single_ece: none, hidden: "", candidate_count: 129, samples: 1000),
+  (domain: "grid_path", shared_top1: 0.897000, single_top1: 0.910000, shared_nll: 0.371303, single_nll: 0.349729, shared_ece: none, single_ece: none, hidden: "", candidate_count: 4, samples: 1000),
+  (domain: "delayed_claim", shared_top1: 0.984000, single_top1: 0.957000, shared_nll: 0.068422, single_nll: 0.098921, shared_ece: none, single_ece: none, hidden: "", candidate_count: 4, samples: 1000),
+  (domain: "arc_agi", shared_top1: 0.142000, single_top1: 0.428000, shared_nll: 2.198120, single_nll: 3.925826, shared_ece: none, single_ece: none, hidden: "", candidate_count: 10, samples: 1000),
 )
 
 #let gate_ablation = (

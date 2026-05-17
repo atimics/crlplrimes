@@ -255,13 +255,13 @@ Fields:
 | `domain` | evaluated domain, such as `prime_gap`, `grid_path`, `delayed_claim`, or `arc_agi` |
 | `task_set` | domains used for training, with `all` meaning every configured domain |
 | `eval_task_set` | domains requested for evaluation |
-| `model_kind` | current model family, usually `shared_action_scorer` |
-| `training_order` | sampling schedule, currently `shuffled` |
+| `model_kind` | current model family, usually `shared` or `single_task` |
+| `training_order` | sampling schedule, e.g. `uniform_random`, `round_robin`, `arc_heavy`, `prime_light`, or `domain_only_random` |
 | `feature_envelope` | shared row layout, currently `task_tagged_action_rows_v1` or `untagged_action_rows_v1` |
 | `train_updates` | number of SGD updates received from this domain |
-| `epochs`, `steps_per_epoch`, `learning_rate`, `seed` | training configuration |
+| `epochs`, `steps_per_epoch`, `hidden`, `parameters`, `forward_flops`, `learning_rate`, `seed` | training and capacity configuration |
 | `sample_count`, `candidate_count` | evaluation size and mean action count |
-| `top1`, `top5`, `top10`, `nll`, `mean_rank` | ranking metrics |
+| `top1`, `top5`, `top10`, `nll`, `ece`, `reliability_bins`, `confidence_mean`, `correct_confidence_mean`, `incorrect_confidence_mean`, `mean_rank` | ranking and calibration metrics |
 | `decision_utility`, `baseline_steps` | task-specific utility/probe fields when available |
 
 The removed `prime_features` key should not reappear in multitask outputs.

@@ -96,6 +96,7 @@ def summarize(rows: list[dict[str, object]], trained_only: bool) -> list[dict[st
     for (variant, run_label, domain), group in sorted(grouped.items()):
         top1_values = [float(row["top1"]) for row in group]
         nll_values = [float(row["nll"]) for row in group]
+        ece_values = [float(row["ece"]) for row in group if row.get("ece") is not None]
         update_values = [float(row["train_updates"]) for row in group]
         summary.append(
             {
@@ -107,6 +108,8 @@ def summarize(rows: list[dict[str, object]], trained_only: bool) -> list[dict[st
                 "top1_stdev": sample_stdev(top1_values),
                 "nll_mean": mean(nll_values),
                 "nll_stdev": sample_stdev(nll_values),
+                "ece_mean": mean(ece_values),
+                "ece_stdev": sample_stdev(ece_values),
                 "train_updates_mean": mean(update_values),
             }
         )
@@ -123,6 +126,8 @@ def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
         "top1_stdev",
         "nll_mean",
         "nll_stdev",
+        "ece_mean",
+        "ece_stdev",
         "train_updates_mean",
     ]
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -186,6 +191,12 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--epochs", type=int, default=4)
     parser.add_argument("--steps-per-domain", type=int, default=3000)
     parser.add_argument("--eval-samples", type=int, default=1000)
+    parser.add_argument("--hidden", default="64x32")
+    parser.add_argument(
+        "--training-order",
+        default="uniform_random",
+        choices=["uniform_random", "round_robin", "arc_heavy", "prime_light"],
+    )
     args = parser.parse_args(argv)
 
     repo = Path(__file__).resolve().parents[1]
@@ -216,6 +227,10 @@ def main(argv: list[str]) -> int:
                     str(steps_per_epoch),
                     "--eval-samples",
                     str(args.eval_samples),
+                    "--hidden",
+                    args.hidden,
+                    "--training-order",
+                    args.training_order,
                     "--seed",
                     str(seed),
                     "--no-task-baselines",

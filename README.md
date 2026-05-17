@@ -280,7 +280,7 @@ make neurosymbolic-tune
 
 This runs `scripts/neurosymbolic_tuning.py` over the prime rule-search grammars, grid legality rule search, delayed-claim replay, and grid replay under one profile. It writes raw task rows to `build/float/neurosymbolic_tuning/raw.jsonl`, a cross-task score table to `normalized.csv`, and a compact `summary.md`. Grid replay tuning defaults to `with-priors`, because that is the feature set currently supported by the trace/replay path. Use `scripts/neurosymbolic_tuning.py --profile full` for larger budgets and sample counts.
 
-The shared-model smoke test trains one action scorer across all configured domains in shuffled order:
+The shared-model smoke test trains one action scorer across all configured domains:
 
 ```sh
 make multitask-domain
@@ -288,7 +288,7 @@ make multitask-domain
 
 `examples/multitask_domain.c` wraps prime-gap, grid-path, delayed-claim, and one ARC-AGI-1 sample into one fixed-width action-row envelope. The ARC sample is training task `0520fde7`, represented as a balanced cell-color action task: given a train/test input grid and an output-cell coordinate, choose the output color from actions `0..9`. ARC rows expose the flattened input grid, the output coordinate, and the candidate action, but not the direct overlap/intersection rule. This is a useful integration test for grid-to-grid symbolic tasks, not a full ARC solver claim.
 
-Use `--tasks prime,grid,claim,arc|all` for combination ablations and `--eval-tasks all` to evaluate held-out domains after training on a subset. A matched per-domain update comparison can scale `--steps-per-epoch` by the number of active domains, for example `--tasks prime --steps-per-epoch 3000`, `--tasks prime,grid --steps-per-epoch 6000`, and `--tasks all --steps-per-epoch 12000`. The remaining feature ablation is explicit: `--no-task-tags` removes the task one-hot fields. The shared multitask envelope excludes prime residue flags so the prime row receives no hand-coded modular predicates.
+Use `--tasks prime,grid,claim,arc|all` for combination ablations and `--eval-tasks all` to evaluate held-out domains after training on a subset. A matched per-domain update comparison can scale `--steps-per-epoch` by the number of active domains, for example `--tasks prime --steps-per-epoch 3000`, `--tasks prime,grid --steps-per-epoch 6000`, and `--tasks all --steps-per-epoch 12000`. Capacity and sampling are explicit with `--hidden 64x32` and `--training-order uniform_random|round_robin|arc_heavy|prime_light`; emitted multitask rows include ECE, reliability bins, parameter count, and forward FLOPs. The remaining feature ablation is explicit: `--no-task-tags` removes the task one-hot fields. The shared multitask envelope excludes prime residue flags so the prime row receives no hand-coded modular predicates.
 
 The shared formal-system smoke test trains one certificate-status rule classifier across rule rows from all symbolic domains:
 

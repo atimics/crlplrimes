@@ -159,8 +159,11 @@ def multitask_shared_vs_single(rows: list[dict]) -> dict:
                 "domain": domain,
                 "shared_top1": s.get("top1"),
                 "shared_nll": s.get("nll"),
+                "shared_ece": s.get("ece"),
                 "single_top1": st.get("top1"),
                 "single_nll": st.get("nll"),
+                "single_ece": st.get("ece"),
+                "hidden": s.get("hidden"),
                 "candidate_count": s.get("candidate_count"),
                 "samples": s.get("sample_count"),
             }
@@ -295,12 +298,17 @@ def main() -> int:
         f.write("#let multitask_shared_vs_single = (\n")
         for m in multitask:
             domain = m["domain"]
+            shared_ece = "none" if m["shared_ece"] is None else f"{m['shared_ece']:.6f}"
+            single_ece = "none" if m["single_ece"] is None else f"{m['single_ece']:.6f}"
             f.write(
                 f"  (domain: \"{domain}\","
                 f" shared_top1: {m['shared_top1']:.6f},"
                 f" single_top1: {m['single_top1']:.6f},"
                 f" shared_nll: {m['shared_nll']:.6f},"
                 f" single_nll: {m['single_nll']:.6f},"
+                f" shared_ece: {shared_ece},"
+                f" single_ece: {single_ece},"
+                f" hidden: \"{m['hidden'] or ''}\","
                 f" candidate_count: {m['candidate_count']:.0f},"
                 f" samples: {m['samples']}),\n"
             )
