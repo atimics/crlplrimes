@@ -179,6 +179,12 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
         if row.get("task") == "arc_agi"
         and row.get("schema") == "crlp.hypothesis.evidence.v1"
     ]
+    program_synthesis_hypotheses = [
+        row
+        for row in rows
+        if row.get("task") == "program_synthesis"
+        and row.get("schema") == "crlp.hypothesis.evidence.v1"
+    ]
     arc_induction_parity = [
         row
         for row in rows
@@ -407,6 +413,16 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                         str(row.get("train_induction_certified", "")),
                         str(row.get("eval_baseline_certified", "")),
                         str(row.get("eval_induction_certified", "")),
+                        str(
+                            int(row.get("eval_induction_certified", 0) or 0)
+                            - int(row.get("eval_baseline_certified", 0) or 0)
+                        ),
+                        ", ".join(row.get("eval_added_tasks", []))
+                        if isinstance(row.get("eval_added_tasks"), list)
+                        else "",
+                        ", ".join(row.get("eval_regressions", []))
+                        if isinstance(row.get("eval_regressions"), list)
+                        else "",
                         fmt_bool(row, "parity_holds"),
                     ]
                     for row in arc_induction_parity
@@ -417,7 +433,37 @@ def write_summary(path: Path, rows: list[dict[str, object]], real: str) -> None:
                     "train induction",
                     "eval baseline",
                     "eval induction",
+                    "eval delta",
+                    "eval added",
+                    "eval regressions",
                     "parity",
+                ],
+            )
+        )
+    if program_synthesis_hypotheses:
+        lines.extend(["", "### Program Synthesis Hypothesis Evidence", ""])
+        lines.append(
+            markdown_table(
+                [
+                    [
+                        str(row.get("task_instance", "")),
+                        str(row.get("template_name", "")),
+                        str(row.get("certificate_status", "")),
+                        str(row.get("covered_events", "")),
+                        str(row.get("event_count", "")),
+                        fmt_percent(row, "utility"),
+                        str(row.get("program_canonical_hash", ""))[:12],
+                    ]
+                    for row in program_synthesis_hypotheses
+                ],
+                [
+                    "task",
+                    "template",
+                    "certificate",
+                    "covered",
+                    "events",
+                    "utility",
+                    "program hash",
                 ],
             )
         )

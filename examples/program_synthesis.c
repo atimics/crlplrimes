@@ -242,6 +242,132 @@ static const PSAbstractionSpec PS_SPECS[] = {
     {PS_OP_ANY_EVEN, "any_even", PS_TYPE_BOOL, 4, 8, 3, 0, 1, 1, 1, 1, 0},
 };
 
+static const NNHypothesisTemplate *ps_hypothesis_template_filter_then_reduce(void)
+{
+    static NNHypothesisTemplate template_ref;
+    static int initialized = 0;
+    if (initialized) {
+        return &template_ref;
+    }
+    nn_hypothesis_template_init(&template_ref,
+                                "program_synthesis",
+                                "filter_then_reduce",
+                                2048,
+                                NN_PROGRAM_VALUE_SEQUENCE,
+                                NN_PROGRAM_VALUE_CUSTOM);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "enumerate",
+                                     NN_PROGRAM_KIND_TRANSFORM,
+                                     NN_PROGRAM_VALUE_SEQUENCE,
+                                     NN_PROGRAM_VALUE_SEQUENCE,
+                                     210);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "filter",
+                                     NN_PROGRAM_KIND_PREDICATE,
+                                     NN_PROGRAM_VALUE_SEQUENCE,
+                                     NN_PROGRAM_VALUE_SEQUENCE,
+                                     211);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "reduce",
+                                     NN_PROGRAM_KIND_TRANSFORM,
+                                     NN_PROGRAM_VALUE_SEQUENCE,
+                                     NN_PROGRAM_VALUE_CUSTOM,
+                                     212);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "filter.predicate_id",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "reduce.kind",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "output.type",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    initialized = 1;
+    return &template_ref;
+}
+
+static int ps_filter_reduce_slots_for_op(PSOp op,
+                                         int64_t *predicate_out,
+                                         int64_t *reduce_out)
+{
+    int64_t predicate = 0;
+    int64_t reduce = 0;
+    switch (op) {
+    case PS_OP_COUNT_POSITIVE:
+        predicate = 1;
+        reduce = 1;
+        break;
+    case PS_OP_COUNT_NEGATIVE:
+        predicate = 2;
+        reduce = 1;
+        break;
+    case PS_OP_COUNT_EVEN:
+        predicate = 3;
+        reduce = 1;
+        break;
+    case PS_OP_SUM_POSITIVE:
+        predicate = 1;
+        reduce = 2;
+        break;
+    case PS_OP_SUM_NEGATIVE:
+        predicate = 2;
+        reduce = 2;
+        break;
+    case PS_OP_ANY_POSITIVE:
+        predicate = 1;
+        reduce = 3;
+        break;
+    case PS_OP_ALL_POSITIVE:
+        predicate = 1;
+        reduce = 4;
+        break;
+    case PS_OP_FIRST_POSITIVE:
+        predicate = 1;
+        reduce = 5;
+        break;
+    case PS_OP_ANY_EVEN:
+        predicate = 3;
+        reduce = 3;
+        break;
+    default:
+        return 0;
+    }
+    if (predicate_out != NULL) {
+        *predicate_out = predicate;
+    }
+    if (reduce_out != NULL) {
+        *reduce_out = reduce;
+    }
+    return 1;
+}
+
+static int ps_bind_filter_reduce_hypothesis(const PSAbstractionSpec *spec,
+                                            NNHypothesis *hypothesis)
+{
+    int64_t predicate = 0;
+    int64_t reduce = 0;
+    if (spec == NULL || hypothesis == NULL ||
+        !ps_filter_reduce_slots_for_op(spec->op, &predicate, &reduce) ||
+        !nn_hypothesis_init(hypothesis, ps_hypothesis_template_filter_then_reduce())) {
+        return 0;
+    }
+    return nn_hypothesis_bind(hypothesis,
+                              "filter.predicate_id",
+                              (double)predicate,
+                              predicate) &&
+           nn_hypothesis_bind(hypothesis,
+                              "reduce.kind",
+                              (double)reduce,
+                              reduce) &&
+           nn_hypothesis_bind(hypothesis,
+                              "output.type",
+                              (double)spec->output_type,
+                              spec->output_type);
+}
+
 static PSList ps_list(size_t length,
                       int a,
                       int b,
@@ -1153,6 +1279,65 @@ static size_t ps_selected_covered(const NNRuleCoverage *coverage,
     return out;
 }
 
+static size_t ps_rule_covered_events(const NNRuleCoverage *coverage, size_t rule_index)
+{
+    if (coverage == NULL || rule_index >= coverage->rule_count) {
+        return 0;
+    }
+    size_t covered = 0;
+    for (size_t event = 0; event < coverage->event_count; ++event) {
+        covered += nn_rule_coverage_get(coverage, rule_index, event) ? 1u : 0u;
+    }
+    return covered;
+}
+
+static int ps_emit_hypothesis_evidence(const PSContext *context,
+                                       const NNRule *rules,
+                                       size_t rule_count,
+                                       const uint8_t *certified,
+                                       const NNRuleCoverage *train_coverage,
+                                       const NNRuleCoverage *validation_coverage,
+                                       const NNRuleCoverage *test_coverage)
+{
+    if (context == NULL || rules == NULL || certified == NULL ||
+        train_coverage == NULL || validation_coverage == NULL || test_coverage == NULL) {
+        return 0;
+    }
+    for (size_t i = 0; i < rule_count; ++i) {
+        if (!certified[i] || rules[i].template_id >= context->spec_count) {
+            continue;
+        }
+        const PSAbstractionSpec *spec = &context->specs[rules[i].template_id];
+        NNHypothesis hypothesis;
+        NNProgram program;
+        if (!ps_bind_filter_reduce_hypothesis(spec, &hypothesis) ||
+            !nn_hypothesis_compile(&hypothesis, &program)) {
+            continue;
+        }
+        size_t covered = ps_rule_covered_events(train_coverage, i) +
+                         ps_rule_covered_events(validation_coverage, i) +
+                         ps_rule_covered_events(test_coverage, i);
+        size_t events = train_coverage->event_count +
+                        validation_coverage->event_count +
+                        test_coverage->event_count;
+        NNHypothesisEvidence evidence = {
+            .task = "program_synthesis",
+            .task_instance = spec->name,
+            .program = &program,
+            .certificate_status = rules[i].certificate.status,
+            .proof_kind = rules[i].certificate.proof_kind,
+            .reason = rules[i].certificate.reason,
+            .event_count = events,
+            .covered_events = covered,
+            .support = rules[i].certificate.support,
+            .false_rejections = rules[i].certificate.false_rejections,
+            .utility = events == 0 ? 0.0 : (double)covered / (double)events,
+        };
+        nn_hypothesis_write_evidence_json(stdout, &hypothesis, &evidence);
+    }
+    return 1;
+}
+
 static uint64_t ps_rng_next(uint64_t *state)
 {
     *state ^= *state >> 12;
@@ -1897,6 +2082,22 @@ int main(int argc, char **argv)
                                      rule_count,
                                      certified,
                                      PS_SPLIT_TEST,
+                                     &test_coverage)) {
+        nn_rule_coverage_free(&train_coverage);
+        nn_rule_coverage_free(&validation_coverage);
+        nn_rule_coverage_free(&test_coverage);
+        free(rules);
+        free(certified);
+        free(tasks);
+        return EXIT_FAILURE;
+    }
+
+    if (!ps_emit_hypothesis_evidence(&context,
+                                     rules,
+                                     rule_count,
+                                     certified,
+                                     &train_coverage,
+                                     &validation_coverage,
                                      &test_coverage)) {
         nn_rule_coverage_free(&train_coverage);
         nn_rule_coverage_free(&validation_coverage);
