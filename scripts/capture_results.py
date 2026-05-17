@@ -19,6 +19,7 @@ COMMANDS = (
     ("prime_rule_search", ("prime-rule-search",)),
     ("prime_rule_search_baselines", ("prime-rule-search-baselines",)),
     ("program_synthesis_baselines", ("program-synthesis-baselines",)),
+    ("multitask_domain", ("multitask-domain",)),
     ("prime_gap", ("prime-gap-eval",)),
 )
 
@@ -59,6 +60,7 @@ def run_make(
             "crlp.arc_loader.summary.v1",
             "crlp.hypothesis.evidence.v1",
             "crlp.arc_induction.parity.v1",
+            "crlp.multitask.summary.v1",
         }:
             row["source_target"] = target
             rows.append(row)

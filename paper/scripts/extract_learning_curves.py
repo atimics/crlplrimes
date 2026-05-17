@@ -136,6 +136,38 @@ def reliability(rows: list[dict], task: str, prefer_mode: str | None = None) -> 
     return best or []
 
 
+def multitask_shared_vs_single(rows: list[dict]) -> dict:
+    """Pair shared and single_task crlp.multitask.summary.v1 rows by domain."""
+    shared: dict[str, dict] = {}
+    single: dict[str, dict] = {}
+    for r in rows:
+        if r.get("schema") != "crlp.multitask.summary.v1":
+            continue
+        domain = r.get("domain")
+        if r.get("model_kind") == "shared":
+            shared[domain] = r
+        elif r.get("model_kind") == "single_task":
+            single[domain] = r
+    out = []
+    for domain in ("prime_gap", "grid_path", "delayed_claim", "arc_agi"):
+        if domain not in shared or domain not in single:
+            continue
+        s = shared[domain]
+        st = single[domain]
+        out.append(
+            {
+                "domain": domain,
+                "shared_top1": s.get("top1"),
+                "shared_nll": s.get("nll"),
+                "single_top1": st.get("top1"),
+                "single_nll": st.get("nll"),
+                "candidate_count": s.get("candidate_count"),
+                "samples": s.get("sample_count"),
+            }
+        )
+    return out
+
+
 def arc_per_epoch_eval() -> list[tuple[int, float, float]]:
     """Run arc_agi once per epoch count in ARC_EPOCH_GRID, capture (epoch, top1, nll)."""
     if not ARC_AGI.exists():
@@ -223,6 +255,7 @@ def main() -> int:
 
     arc_curve = arc_per_epoch_eval()
     prime_loss = prime_gap_per_epoch_loss()
+    multitask = multitask_shared_vs_single(rows)
 
     blob = {
         "learning_curves": curves,
@@ -231,6 +264,7 @@ def main() -> int:
         "gate_ablation": gates,
         "reliability": rel,
         "arc_hypothesis": hyp,
+        "multitask_shared_vs_single": multitask,
     }
     json.dump(blob, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
@@ -257,6 +291,19 @@ def main() -> int:
             raw_str = "0.0" if raw_loss != raw_loss else f"{raw_loss:.6f}"  # NaN check
             gated_str = "0.0" if gated_loss != gated_loss else f"{gated_loss:.6f}"
             f.write(f"  ({epoch}, {raw_str}, {gated_str}),\n")
+        f.write(")\n\n")
+        f.write("#let multitask_shared_vs_single = (\n")
+        for m in multitask:
+            domain = m["domain"]
+            f.write(
+                f"  (domain: \"{domain}\","
+                f" shared_top1: {m['shared_top1']:.6f},"
+                f" single_top1: {m['single_top1']:.6f},"
+                f" shared_nll: {m['shared_nll']:.6f},"
+                f" single_nll: {m['single_nll']:.6f},"
+                f" candidate_count: {m['candidate_count']:.0f},"
+                f" samples: {m['samples']}),\n"
+            )
         f.write(")\n\n")
         f.write("#let gate_ablation = (\n")
         for task, gs in gates.items():

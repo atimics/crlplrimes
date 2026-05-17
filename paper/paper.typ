@@ -1,6 +1,6 @@
 #import "@preview/cetz:0.3.4"
 #import "@preview/cetz-plot:0.1.1": plot, chart
-#import "data.typ": learning_curves, gate_ablation, arc_epoch_eval, prime_gap_epoch_loss
+#import "data.typ": learning_curves, gate_ablation, arc_epoch_eval, prime_gap_epoch_loss, multitask_shared_vs_single
 
 #set document(
   title: "Certificate-Gated Neural Proposers for Verifier-Grounded Action Scoring",
