@@ -4860,31 +4860,30 @@ typedef enum {
     ARC_HYPOTHESIS_INSERT_REPLACED = 2,
 } ARCHypothesisInsertResult;
 
-static void arc_hypothesis_record_pre_cap_proposal(ARCHypothesisSelectionStats *stats,
-                                                   size_t template_index,
-                                                   const ARCTask *task,
-                                                   const ARCTransformCandidate *candidate)
+static int arc_hypothesis_record_pre_cap_proposal(ARCHypothesisSelectionStats *stats,
+                                                  size_t template_index,
+                                                  const ARCTask *task,
+                                                  const ARCTransformCandidate *candidate)
 {
-    if (stats == NULL || task == NULL || candidate == NULL) {
-        return;
+    if (task == NULL || candidate == NULL) {
+        return 0;
+    }
+    int train_consistent =
+        arc_candidate_matches_train(task, candidate, NULL, NULL, NULL);
+    if (stats == NULL) {
+        return train_consistent;
     }
     ++stats->proposals_attempted;
     if (template_index < ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY) {
         ++stats->template_attempted[template_index];
     }
-    size_t checked_cells = 0;
-    size_t mismatches = 0;
-    size_t unsupported = 0;
-    if (arc_candidate_matches_train(task,
-                                    candidate,
-                                    &checked_cells,
-                                    &mismatches,
-                                    &unsupported)) {
+    if (train_consistent) {
         ++stats->proposals_train_consistent_pre_cap;
         if (template_index < ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY) {
             ++stats->template_train_consistent_pre_cap[template_index];
         }
     }
+    return train_consistent;
 }
 
 static ARCHypothesisInsertResult arc_hypothesis_insert_proposal(
@@ -4963,6 +4962,12 @@ static size_t arc_try_add_hypothesis_proposal(
                                             candidate->name)) {
         return proposal_count;
     }
+    if (!arc_hypothesis_record_pre_cap_proposal(stats,
+                                                template_index,
+                                                task,
+                                                candidate)) {
+        return proposal_count;
+    }
     ARCHypothesisProposal proposal;
     proposal.hypothesis = *hypothesis;
     proposal.candidate = *candidate;
@@ -4972,10 +4977,6 @@ static size_t arc_try_add_hypothesis_proposal(
                                                         input_object,
                                                         output_object,
                                                         task_features);
-    arc_hypothesis_record_pre_cap_proposal(stats,
-                                           template_index,
-                                           task,
-                                           candidate);
     ARCHypothesisInsertResult insert_result =
         arc_hypothesis_insert_proposal(proposals,
                                        &proposal_count,
@@ -5173,43 +5174,24 @@ static size_t arc_induce_translate_hypotheses(const ARCHypothesisTemplateBinding
                                                   (double)output_object->color,
                                                   output_object->color);
                     if (!ok ||
-                        !binding->to_candidate(&hypothesis, &candidate) ||
-                        arc_candidate_name_exists(existing_candidates,
-                                                  existing_count,
-                                                  candidate.name) ||
-                        arc_hypothesis_proposal_name_exists(proposals,
-                                                            proposal_count,
-                                                            candidate.name)) {
+                        !binding->to_candidate(&hypothesis, &candidate)) {
                         continue;
                     }
-                    ARCHypothesisProposal proposal;
-                    proposal.hypothesis = hypothesis;
-                    proposal.candidate = candidate;
-                    proposal.score = arc_hypothesis_slot_proposal_score(learned,
-                                                                        &hypothesis,
-                                                                        &candidate,
-                                                                        input_object,
-                                                                        output_object,
-                                                                        &task_features);
-                    arc_hypothesis_record_pre_cap_proposal(stats,
-                                                           template_index,
-                                                           task,
-                                                           &candidate);
-                    ARCHypothesisInsertResult insert_result =
-                        arc_hypothesis_insert_proposal(proposals,
-                                                       &proposal_count,
-                                                       proposal_capacity,
-                                                       &proposal);
-                    if (stats != NULL) {
-                        if (insert_result == ARC_HYPOTHESIS_INSERT_REPLACED) {
-                            ++stats->proposals_heap_replaced;
-                        } else if (insert_result == ARC_HYPOTHESIS_INSERT_DROPPED) {
-                            ++stats->proposals_heap_dropped;
-                            if (template_index < ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY) {
-                                ++stats->template_heap_dropped[template_index];
-                            }
-                        }
-                    }
+                    proposal_count =
+                        arc_try_add_hypothesis_proposal(learned,
+                                                        task,
+                                                        existing_candidates,
+                                                        existing_count,
+                                                        proposals,
+                                                        proposal_capacity,
+                                                        proposal_count,
+                                                        stats,
+                                                        template_index,
+                                                        &task_features,
+                                                        &hypothesis,
+                                                        &candidate,
+                                                        input_object,
+                                                        output_object);
                 }
             }
         }
@@ -5283,38 +5265,24 @@ static void arc_consider_move_to_anchor_proposal(
                                   "render.output_color",
                                   (double)output_object->color,
                                   output_object->color);
-    if (!ok || !binding->to_candidate(&hypothesis, &candidate) ||
-        arc_candidate_name_exists(existing_candidates, existing_count, candidate.name) ||
-        arc_hypothesis_proposal_name_exists(proposals,
-                                            *proposal_count,
-                                            candidate.name)) {
+    if (!ok || !binding->to_candidate(&hypothesis, &candidate)) {
         return;
     }
-    ARCHypothesisProposal proposal;
-    proposal.hypothesis = hypothesis;
-    proposal.candidate = candidate;
-    proposal.score = arc_hypothesis_slot_proposal_score(learned,
-                                                        &hypothesis,
-                                                        &candidate,
-                                                        subject,
-                                                        output_object,
-                                                        task_features);
-    arc_hypothesis_record_pre_cap_proposal(stats, template_index, task, &candidate);
-    ARCHypothesisInsertResult insert_result =
-        arc_hypothesis_insert_proposal(proposals,
-                                       proposal_count,
-                                       proposal_capacity,
-                                       &proposal);
-    if (stats != NULL) {
-        if (insert_result == ARC_HYPOTHESIS_INSERT_REPLACED) {
-            ++stats->proposals_heap_replaced;
-        } else if (insert_result == ARC_HYPOTHESIS_INSERT_DROPPED) {
-            ++stats->proposals_heap_dropped;
-            if (template_index < ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY) {
-                ++stats->template_heap_dropped[template_index];
-            }
-        }
-    }
+    *proposal_count =
+        arc_try_add_hypothesis_proposal(learned,
+                                        task,
+                                        existing_candidates,
+                                        existing_count,
+                                        proposals,
+                                        proposal_capacity,
+                                        *proposal_count,
+                                        stats,
+                                        template_index,
+                                        task_features,
+                                        &hypothesis,
+                                        &candidate,
+                                        subject,
+                                        output_object);
 }
 
 static size_t arc_induce_move_to_anchor_hypotheses(const ARCHypothesisTemplateBinding *binding,
