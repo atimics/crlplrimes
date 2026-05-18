@@ -56,7 +56,7 @@ The active feature-envelope names are:
 
 | Variant | CLI flag | `feature_envelope` |
 | --- | --- | --- |
-| Task tagged | default | `task_tagged_action_rows_v1` |
+| Task/role tagged | default | `task_role_tagged_action_rule_rows_v1` |
 | Untagged | `--no-task-tags` | `untagged_action_rows_v1` |
 
 Prime residue features were removed from this envelope. That keeps the
@@ -150,7 +150,7 @@ Each evaluated domain emits one JSON row:
   "eval_task_set": "all",
   "model_kind": "shared",
   "training_order": "uniform_random",
-  "feature_envelope": "task_tagged_action_rows_v1",
+  "feature_envelope": "task_role_tagged_action_rule_rows_v1",
   "train_updates": 12000,
   "epochs": 4,
   "steps_per_epoch": 12000,

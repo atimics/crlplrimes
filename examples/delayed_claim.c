@@ -1720,54 +1720,64 @@ static void emit_claim_rule_summary_json(const ClaimRuleSearchConfig *config,
     for (size_t i = 0; i < rule_count; ++i) {
         verified += rules[i].certified ? 1u : 0u;
     }
-    printf("{\"schema\":\"crlp.rule_search.summary.v1\",\"report_version\":1,"
-           "\"task\":\"delayed_claim\","
-           "\"rule_set_hash\":\"%016llx\","
-           "\"grammar_version\":\"%s\","
-           "\"rule_family\":\"%s\","
-           "\"include_state_conditions\":true,"
-           "\"include_candidate_filters\":false,"
-           "\"include_gap_filters\":false,"
-           "\"proposer_feature_set\":\"%s\","
-           "\"proposer_target\":\"%s\","
-           "\"selection_strategy\":\"%s\","
-           "\"selection_seed\":%llu,"
-           "\"max_rules\":%zu,"
-           "\"proposed_rules\":%zu,"
-           "\"verified_rules\":%zu,"
-           "\"accepted_rules\":%zu,"
-           "\"false_rejections\":%zu,"
-           "\"train_marginal_samples\":%u,"
-           "\"train_rejects\":%zu,"
-           "\"validation_rejects\":%zu,"
-           "\"test_rejects\":%zu,"
-           "\"direct_exact\":%.8f,"
-           "\"expanded_exact\":%.8f,"
-           "\"expanded_saved_pct\":%.8f,"
-           "\"accepted_rule_ids\":[",
-           (unsigned long long)metrics->rule_set_hash,
-           claim_rule_grammar_version(config->rule_family),
-           claim_rule_family_name(config->rule_family),
-           claim_proposer_feature_set_name(config->mode),
-           claim_proposer_target_name(config->mode),
-           config->selection_strategy,
-           (unsigned long long)config->seed,
-           config->max_rules,
-           rule_count,
-           verified,
-           metrics->accepted_rules,
-           metrics->false_rejections,
-           (unsigned int)DC_VALIDATION_SAMPLES,
-           metrics->train_rejects,
-           metrics->validation_rejects,
-           metrics->test_rejects,
-           metrics->direct_exact,
-           metrics->expanded_exact,
-           metrics->expanded_saved_pct);
-    for (size_t i = 0; i < metrics->accepted_rules; ++i) {
-        printf("%s%zu", i == 0 ? "" : ",", accepted[i]);
+    char rule_hash[32];
+    snprintf(rule_hash, sizeof(rule_hash), "%016llx", (unsigned long long)metrics->rule_set_hash);
+    char grammar_json[64];
+    snprintf(grammar_json,
+             sizeof(grammar_json),
+             "\"%s\"",
+             claim_rule_grammar_version(config->rule_family));
+    char accepted_json[512];
+    size_t written = 0;
+    if (sizeof(accepted_json) != 0) {
+        accepted_json[0] = '\0';
     }
-    printf("]}\n");
+    for (size_t i = 0; i < metrics->accepted_rules; ++i) {
+        int added = snprintf(&accepted_json[written],
+                             sizeof(accepted_json) - written,
+                             "%s%zu",
+                             i == 0 ? "" : ",",
+                             accepted[i]);
+        if (added < 0 || (size_t)added >= sizeof(accepted_json) - written) {
+            accepted_json[sizeof(accepted_json) - 1u] = '\0';
+            break;
+        }
+        written += (size_t)added;
+    }
+    char extra_json[1024];
+    snprintf(extra_json,
+             sizeof(extra_json),
+             "\"rule_family\":\"%s\","
+             "\"include_state_conditions\":true,"
+             "\"include_candidate_filters\":false,"
+             "\"include_gap_filters\":false,"
+             "\"accepted_rule_ids\":[%s]",
+             claim_rule_family_name(config->rule_family),
+             accepted_json);
+    NNRuleSearchSummary summary = {
+        .report_version = 1,
+        .task_name = "delayed_claim",
+        .grammar_version_json = grammar_json,
+        .rule_set_hash = rule_hash,
+        .max_rules = config->max_rules,
+        .selection_strategy = config->selection_strategy,
+        .selection_seed = config->seed,
+        .proposed_rules = rule_count,
+        .verified_rules = verified,
+        .accepted_rules = metrics->accepted_rules,
+        .false_rejections = metrics->false_rejections,
+        .proposer_feature_set = claim_proposer_feature_set_name(config->mode),
+        .proposer_target = claim_proposer_target_name(config->mode),
+        .train_marginal_samples = DC_VALIDATION_SAMPLES,
+        .train_rejects = metrics->train_rejects,
+        .validation_rejects = metrics->validation_rejects,
+        .test_rejects = metrics->test_rejects,
+        .direct_exact = metrics->direct_exact,
+        .expanded_exact = metrics->expanded_exact,
+        .expanded_saved_pct = metrics->expanded_saved_pct,
+        .extra_json = extra_json,
+    };
+    nn_rule_search_summary_write_json(stdout, &summary);
 }
 
 static int claim_rule_accepted_rank(const size_t *accepted,
@@ -1809,56 +1819,48 @@ static void emit_claim_rule_trace_json(FILE *trace,
     if (trace == NULL) {
         return;
     }
-    fprintf(trace,
-            "{\"schema\":\"crlp.delayed_claim.rule_trace.v1\","
-            "\"task\":\"delayed_claim\","
-            "\"selection_strategy\":\"%s\","
-            "\"rule_id\":%zu,"
-            "\"rule_kind\":\"%s\","
-            "\"action\":%zu,"
-            "\"action_name\":\"%s\","
-            "\"feature\":%zu,"
-            "\"other_action\":%zu,"
-            "\"direction\":%d,"
-            "\"threshold\":%.12g,"
-            "\"margin\":%.12g,"
-            "\"accepted\":%s,"
-            "\"rank\":%zu,"
-            "\"verifier_result\":\"%s\","
-            "\"certificate\":\"finite_train_validation_safety\","
-            "\"model_score\":%.12g,"
-            "\"structural_score\":%.12g,"
-            "\"train_rejects\":%zu,"
-            "\"train_marginal_utility\":%zu,"
-            "\"train_false_rejections\":%zu,"
-            "\"validation_rejects\":%zu,"
-            "\"validation_marginal_utility\":%zu,"
-            "\"validation_false_rejections\":%zu,"
-            "\"test_rejects\":%zu,"
-            "\"test_false_rejections\":%zu}\n",
-            config->selection_strategy,
-            rule->id,
-            claim_rule_kind_name(rule->kind),
-            rule->action,
-            claim_action_name(rule->action),
-            rule->feature,
-            rule->other_action,
-            rule->direction,
-            rule->threshold,
-            rule->margin,
-            accepted ? "true" : "false",
-            rank,
-            claim_rule_verifier_result(rule, accepted),
-            rule->neural_score,
-            rule->structural_score,
-            rule->train_rejects,
-            rule->train_rejects,
-            rule->train_false_rejections,
-            rule->validation_rejects,
-            rule->validation_rejects,
-            rule->validation_false_rejections,
-            rule->test_rejects,
-            rule->test_false_rejections);
+    char extra_json[512];
+    snprintf(extra_json,
+             sizeof(extra_json),
+             "\"action\":%zu,"
+             "\"action_name\":\"%s\","
+             "\"feature\":%zu,"
+             "\"other_action\":%zu,"
+             "\"direction\":%d,"
+             "\"threshold\":%.12g,"
+             "\"margin\":%.12g,"
+             "\"rank\":%zu",
+             rule->action,
+             claim_action_name(rule->action),
+             rule->feature,
+             rule->other_action,
+             rule->direction,
+             rule->threshold,
+             rule->margin,
+             rank);
+    NNRuleTraceRecord record = {
+        .schema = "crlp.delayed_claim.rule_trace.v1",
+        .task_name = "delayed_claim",
+        .selection_strategy = config->selection_strategy,
+        .rule_id = rule->id,
+        .rule_rank = rank,
+        .rule_kind = claim_rule_kind_name(rule->kind),
+        .accepted = accepted,
+        .verifier_result = claim_rule_verifier_result(rule, accepted),
+        .certificate = "finite_train_validation_safety",
+        .model_score = rule->neural_score,
+        .structural_score = rule->structural_score,
+        .train_rejects = rule->train_rejects,
+        .train_false_rejections = rule->train_false_rejections,
+        .validation_rejects = rule->validation_rejects,
+        .validation_false_rejections = rule->validation_false_rejections,
+        .test_rejects = rule->test_rejects,
+        .test_false_rejections = rule->test_false_rejections,
+        .train_marginal_utility = (double)rule->train_rejects,
+        .validation_marginal_utility = (double)rule->validation_rejects,
+        .extra_json = extra_json,
+    };
+    nn_rule_trace_write_json(trace, &record);
 }
 
 static int parse_claim_proposer_mode(const char *text, ClaimProposerMode *out_mode)

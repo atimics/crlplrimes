@@ -51,20 +51,20 @@ typedef struct {
 static RuleCoverageCacheStats RULE_COVERAGE_CACHE_STATS;
 
 enum {
-    UNIFIED_SCORER_FEATURE_COUNT = 96,
-    UNIFIED_F_BIAS = 0,
-    UNIFIED_F_ROLE_RULE = 1,
-    UNIFIED_F_DOMAIN_PRIME_RULE = 2,
-    UNIFIED_F_ROLE_ACTION = 3,
-    UNIFIED_F_DOMAIN_PRIME_ACTION = 4,
-    UNIFIED_F_RULE_INDEX = 5,
-    UNIFIED_F_CANDIDATE_COUNT = 6,
-    UNIFIED_F_DOMAIN_GRID_ACTION = 7,
-    UNIFIED_F_DOMAIN_CLAIM_ACTION = 8,
-    UNIFIED_F_DOMAIN_ARC_ACTION = 9,
-    UNIFIED_F_ACTION_COMMON = 10,
-    UNIFIED_F_ACTION_STATE = 20,
-    UNIFIED_F_RULE_FEATURES = 32,
+    UNIFIED_SCORER_FEATURE_COUNT = NN_SCORER_ENVELOPE_FEATURE_COUNT,
+    UNIFIED_F_BIAS = NN_SCORER_ENVELOPE_F_BIAS,
+    UNIFIED_F_ROLE_RULE = NN_SCORER_ENVELOPE_F_ROLE_RULE,
+    UNIFIED_F_DOMAIN_PRIME_RULE = NN_SCORER_ENVELOPE_F_DOMAIN_PRIME_RULE,
+    UNIFIED_F_ROLE_ACTION = NN_SCORER_ENVELOPE_F_ROLE_ACTION,
+    UNIFIED_F_DOMAIN_PRIME_ACTION = NN_SCORER_ENVELOPE_F_DOMAIN_PRIME_ACTION,
+    UNIFIED_F_RULE_INDEX = NN_SCORER_ENVELOPE_F_CANDIDATE_INDEX,
+    UNIFIED_F_CANDIDATE_COUNT = NN_SCORER_ENVELOPE_F_CANDIDATE_COUNT,
+    UNIFIED_F_DOMAIN_GRID_ACTION = NN_SCORER_ENVELOPE_F_DOMAIN_GRID_ACTION,
+    UNIFIED_F_DOMAIN_CLAIM_ACTION = NN_SCORER_ENVELOPE_F_DOMAIN_CLAIM_ACTION,
+    UNIFIED_F_DOMAIN_ARC_ACTION = NN_SCORER_ENVELOPE_F_DOMAIN_ARC_ACTION,
+    UNIFIED_F_ACTION_COMMON = NN_SCORER_ENVELOPE_F_ACTION_COMMON,
+    UNIFIED_F_ACTION_STATE = NN_SCORER_ENVELOPE_F_ACTION_STATE,
+    UNIFIED_F_RULE_FEATURES = NN_SCORER_ENVELOPE_F_RESIDUAL_FEATURES,
     UNIFIED_TRANSFER_MIN_RULE_UPDATES = 128,
     UNIFIED_TRANSFER_RULE_UPDATES_PER_BUDGET = 8,
 };
@@ -189,7 +189,7 @@ static const char *rule_proposer_feature_set_name(RuleProposerMode mode)
     case RULE_PROPOSER_CLOSED_LOOP:
         return "structural_residual_set";
     case RULE_PROPOSER_UNIFIED:
-        return "task_role_tagged_action_rule_rows_v1";
+        return nn_scorer_envelope_feature_set();
     }
     return "unknown";
 }
@@ -531,22 +531,37 @@ static uint32_t expanded_rule_structural_candidate_residue(const ExpandedRule *r
     return rule->filter_residue;
 }
 
+static int format_expanded_rule_text(char *buffer, size_t buffer_size, const ExpandedRule *rule)
+{
+    if (buffer == NULL || buffer_size == 0 || rule == NULL) {
+        return 0;
+    }
+    int written = 0;
+    if (expanded_rule_is_conditional(rule)) {
+        written = snprintf(buffer,
+                           buffer_size,
+                           "if p %% %u == %u then reject %s %% %u == %u",
+                           rule->state_modulus,
+                           rule->state_residue,
+                           rule->kind == RULE_FILTER_GAP_MOD ? "gap" : "candidate",
+                           rule->filter_modulus,
+                           rule->filter_residue);
+    } else {
+        written = snprintf(buffer,
+                           buffer_size,
+                           "reject %s %% %u == %u",
+                           rule->kind == RULE_FILTER_GAP_MOD ? "gap" : "candidate",
+                           rule->filter_modulus,
+                           rule->filter_residue);
+    }
+    return written >= 0 && (size_t)written < buffer_size;
+}
+
 static void print_expanded_rule_text(FILE *fp, const ExpandedRule *rule)
 {
-    if (expanded_rule_is_conditional(rule)) {
-        fprintf(fp,
-                "if p %% %u == %u then reject %s %% %u == %u",
-                rule->state_modulus,
-                rule->state_residue,
-                rule->kind == RULE_FILTER_GAP_MOD ? "gap" : "candidate",
-                rule->filter_modulus,
-                rule->filter_residue);
-    } else {
-        fprintf(fp,
-                "reject %s %% %u == %u",
-                rule->kind == RULE_FILTER_GAP_MOD ? "gap" : "candidate",
-                rule->filter_modulus,
-                rule->filter_residue);
+    char text[160];
+    if (format_expanded_rule_text(text, sizeof(text), rule)) {
+        fputs(text, fp);
     }
 }
 
@@ -1821,31 +1836,28 @@ static int prime_closed_loop_encode_features(size_t rule_index,
 static void prime_unified_feature_schema(NNFeatureSchema *schema, char names[UNIFIED_SCORER_FEATURE_COUNT][64])
 {
     for (size_t i = 0; i < (size_t)UNIFIED_SCORER_FEATURE_COUNT; ++i) {
-        snprintf(names[i], 64, "unified_padding_%02zu", i);
+        const char *slot_name = nn_scorer_envelope_slot_name(i);
+        snprintf(names[i],
+                 64,
+                 "%s",
+                 slot_name == NULL ? "unified_padding" : slot_name);
+        if (slot_name == NULL) {
+            snprintf(names[i], 64, "unified_padding_%02zu", i);
+        }
         schema[i].name = names[i];
         schema[i].provenance = NN_FEATURE_STRUCTURAL_PRIOR;
         schema[i].enabled_by_default = 0;
     }
 
-    snprintf(names[UNIFIED_F_BIAS], 64, "bias");
     schema[UNIFIED_F_BIAS].enabled_by_default = 1;
-    snprintf(names[UNIFIED_F_ROLE_RULE], 64, "role_rule");
     schema[UNIFIED_F_ROLE_RULE].enabled_by_default = 1;
-    snprintf(names[UNIFIED_F_DOMAIN_PRIME_RULE], 64, "domain_prime_rule_propose");
     schema[UNIFIED_F_DOMAIN_PRIME_RULE].enabled_by_default = 1;
-    snprintf(names[UNIFIED_F_ROLE_ACTION], 64, "role_action");
     schema[UNIFIED_F_ROLE_ACTION].enabled_by_default = 1;
-    snprintf(names[UNIFIED_F_DOMAIN_PRIME_ACTION], 64, "domain_prime_gap_action");
     schema[UNIFIED_F_DOMAIN_PRIME_ACTION].enabled_by_default = 1;
-    snprintf(names[UNIFIED_F_RULE_INDEX], 64, "normalized_rule_index");
     schema[UNIFIED_F_RULE_INDEX].enabled_by_default = 1;
-    snprintf(names[UNIFIED_F_CANDIDATE_COUNT], 64, "normalized_candidate_count");
     schema[UNIFIED_F_CANDIDATE_COUNT].enabled_by_default = 1;
-    snprintf(names[UNIFIED_F_DOMAIN_GRID_ACTION], 64, "domain_grid_path_action");
     schema[UNIFIED_F_DOMAIN_GRID_ACTION].enabled_by_default = 1;
-    snprintf(names[UNIFIED_F_DOMAIN_CLAIM_ACTION], 64, "domain_delayed_claim_action");
     schema[UNIFIED_F_DOMAIN_CLAIM_ACTION].enabled_by_default = 1;
-    snprintf(names[UNIFIED_F_DOMAIN_ARC_ACTION], 64, "domain_arc_agi_action");
     schema[UNIFIED_F_DOMAIN_ARC_ACTION].enabled_by_default = 1;
 
     for (size_t i = 0; i < (size_t)RULE_DISCOVERY_FEATURE_COUNT; ++i) {
@@ -1885,16 +1897,18 @@ static int prime_unified_encode_features(size_t rule_index,
         return 0;
     }
 
-    memset(features, 0, capacity * sizeof(*features));
-    features[UNIFIED_F_BIAS] = (nn_real)1;
-    features[UNIFIED_F_ROLE_RULE] = (nn_real)1;
-    features[UNIFIED_F_DOMAIN_PRIME_RULE] = (nn_real)1;
-    features[UNIFIED_F_RULE_INDEX] =
-        prime->rules->count <= 1
-            ? (nn_real)0
-            : (nn_real)((double)rule_index / (double)(prime->rules->count - 1u));
-    features[UNIFIED_F_CANDIDATE_COUNT] =
-        (nn_real)((double)prime->rules->count / 65536.0);
+    NNScorerEnvelopeRow spec = {
+        .role = NN_SCORER_ROLE_RULE,
+        .domain = NN_SCORER_DOMAIN_PRIME_RULE_PROPOSE,
+        .candidate_index = rule_index,
+        .candidate_count = prime->rules->count,
+        .candidate_count_scale = 65536u,
+        .include_role_tag = 1,
+        .include_domain_tag = 1,
+    };
+    if (!nn_scorer_envelope_fill_base(features, capacity, &spec)) {
+        return 0;
+    }
     memcpy(&features[UNIFIED_F_RULE_FEATURES],
            discovery_features,
            (size_t)RULE_DISCOVERY_FEATURE_COUNT * sizeof(*features));
@@ -1999,29 +2013,33 @@ static void unified_fill_action_base(nn_real *row,
                                      size_t action,
                                      size_t candidate_count)
 {
-    memset(row, 0, (size_t)UNIFIED_SCORER_FEATURE_COUNT * sizeof(*row));
-    row[UNIFIED_F_BIAS] = (nn_real)1;
-    row[UNIFIED_F_ROLE_ACTION] = (nn_real)1;
+    NNScorerDomain domain = NN_SCORER_DOMAIN_PRIME_GAP_ACTION;
     switch (task) {
     case UNIFIED_ACTION_PRIME_GAP:
-        row[UNIFIED_F_DOMAIN_PRIME_ACTION] = (nn_real)1;
+        domain = NN_SCORER_DOMAIN_PRIME_GAP_ACTION;
         break;
     case UNIFIED_ACTION_GRID_PATH:
-        row[UNIFIED_F_DOMAIN_GRID_ACTION] = (nn_real)1;
+        domain = NN_SCORER_DOMAIN_GRID_PATH_ACTION;
         break;
     case UNIFIED_ACTION_DELAYED_CLAIM:
-        row[UNIFIED_F_DOMAIN_CLAIM_ACTION] = (nn_real)1;
+        domain = NN_SCORER_DOMAIN_DELAYED_CLAIM_ACTION;
         break;
     case UNIFIED_ACTION_ARC_AGI:
-        row[UNIFIED_F_DOMAIN_ARC_ACTION] = (nn_real)1;
+        domain = NN_SCORER_DOMAIN_ARC_AGI_ACTION;
         break;
     case UNIFIED_ACTION_TASK_COUNT:
         break;
     }
-    row[UNIFIED_F_RULE_INDEX] =
-        candidate_count <= 1 ? (nn_real)0 : (nn_real)((double)action / (double)(candidate_count - 1u));
-    row[UNIFIED_F_CANDIDATE_COUNT] =
-        (nn_real)((double)candidate_count / (double)ACTION_COUNT);
+    NNScorerEnvelopeRow spec = {
+        .role = NN_SCORER_ROLE_ACTION,
+        .domain = domain,
+        .candidate_index = action,
+        .candidate_count = candidate_count,
+        .candidate_count_scale = ACTION_COUNT,
+        .include_role_tag = 1,
+        .include_domain_tag = 1,
+    };
+    (void)nn_scorer_envelope_fill_base(row, (size_t)UNIFIED_SCORER_FEATURE_COUNT, &spec);
 }
 
 static size_t unified_fill_prime_action_sample(const GapDataset *dataset,
@@ -3379,30 +3397,24 @@ static int write_expanded_rule_trace(const char *path,
             result = "accepted";
         }
 
-        ok = fprintf(fp,
-                     "{\"schema\":\"crlp.rule_trace.v1\",\"trace_version\":1,"
-                     "\"task\":\"prime_gap\",\"grammar_version\":%u,"
-                     "\"rule_rank\":%zu,\"rule_kind\":\"%s\","
-                     "\"state_modulus\":%u,\"state_residue\":%u,"
-                     "\"filter_modulus\":%u,\"filter_residue\":%u,"
-                     "\"conditional\":%s,\"derived_divisibility\":%s,"
+        char grammar_json[32];
+        snprintf(grammar_json, sizeof(grammar_json), "%u", (uint32_t)RULE_SEARCH_GRAMMAR_VERSION);
+        char rule_text[160];
+        ok = format_expanded_rule_text(rule_text, sizeof(rule_text), rule);
+        char extra_json[512];
+        if (ok) {
+            snprintf(extra_json,
+                     sizeof(extra_json),
+                     "\"state_modulus\":%u,"
+                     "\"state_residue\":%u,"
+                     "\"filter_modulus\":%u,"
+                     "\"filter_residue\":%u,"
+                     "\"conditional\":%s,"
+                     "\"derived_divisibility\":%s,"
                      "\"deterministic_certificate\":%s,"
-                     "\"selection_strategy\":\"%s\","
-                     "\"proposer_feature_set\":\"%s\","
-                     "\"proposer_target\":\"%s\","
                      "\"state_conditions_enabled\":%s,"
-                     "\"train_limit\":%zu,\"test_limit\":%zu,"
-                     "\"train_rejects\":%zu,\"train_false_rejections\":%zu,"
-                     "\"validation_rejects\":%zu,"
-                     "\"validation_false_rejections\":%zu,"
-                     "\"train_marginal_utility\":%.9g,"
-                     "\"validation_marginal_utility\":%.9g,"
-                     "\"model_score\":%.9g,\"utility\":%.9g,"
-                     "\"accepted\":%s,\"verifier_result\":\"%s\","
-                     "\"rule_text\":\"",
-                     (uint32_t)RULE_SEARCH_GRAMMAR_VERSION,
-                     i,
-                     rule_filter_kind_name(rule->kind),
+                     "\"train_limit\":%zu,"
+                     "\"test_limit\":%zu",
                      rule->state_modulus,
                      rule->state_residue,
                      rule->filter_modulus,
@@ -3410,25 +3422,36 @@ static int write_expanded_rule_trace(const char *path,
                      expanded_rule_is_conditional(rule) ? "true" : "false",
                      expanded_rule_is_derived_divisibility(rule) ? "true" : "false",
                      expanded_rule_has_deterministic_certificate(rule) ? "true" : "false",
-                     rule_proposer_mode_name(config->proposer_mode),
-                     rule_proposer_feature_set_name(config->proposer_mode),
-                     rule_proposer_target_name(config->proposer_mode),
                      config->include_state_conditions ? "true" : "false",
                      config->train_limit,
-                     config->test_limit,
-                     rule->train_rejects,
-                     rule->train_false_rejections,
-                     rule->validation_rejects,
-                     rule->validation_false_rejections,
-                     rule->train_marginal_utility,
-                     rule->validation_marginal_utility,
-                     (double)rule->model_score,
-                     rule->utility,
-                     rule->accepted ? "true" : "false",
-                     result) >= 0;
-        if (ok) {
-            print_expanded_rule_text(fp, rule);
-            ok = fprintf(fp, "\"}\n") >= 0;
+                     config->test_limit);
+            NNRuleTraceRecord record = {
+                .trace_version = 1,
+                .task_name = "prime_gap",
+                .grammar_version_json = grammar_json,
+                .selection_strategy = rule_proposer_mode_name(config->proposer_mode),
+                .proposer_feature_set = rule_proposer_feature_set_name(config->proposer_mode),
+                .proposer_target = rule_proposer_target_name(config->proposer_mode),
+                .rule_id = i,
+                .rule_rank = i,
+                .rule_kind = rule_filter_kind_name(rule->kind),
+                .accepted = rule->accepted,
+                .verifier_result = result,
+                .certificate = expanded_rule_has_deterministic_certificate(rule)
+                                   ? "deterministic_modular_divisibility"
+                                   : "none",
+                .model_score = (double)rule->model_score,
+                .utility = rule->utility,
+                .train_rejects = rule->train_rejects,
+                .train_false_rejections = rule->train_false_rejections,
+                .validation_rejects = rule->validation_rejects,
+                .validation_false_rejections = rule->validation_false_rejections,
+                .train_marginal_utility = rule->train_marginal_utility,
+                .validation_marginal_utility = rule->validation_marginal_utility,
+                .rule_text = rule_text,
+                .extra_json = extra_json,
+            };
+            ok = nn_rule_trace_write_json(fp, &record);
         }
     }
     if (fclose(fp) != 0) {
@@ -3459,87 +3482,68 @@ static void print_rule_search_report(const ExpandedRuleSet *accepted,
                                     unified_hidden_json,
                                     sizeof(unified_hidden_json));
 
-    printf("{\"schema\":\"crlp.rule_search.summary.v1\",\"task\":\"prime_gap\","
-           "\"grammar_version\":%u,\"rule_set_hash\":\"%s\","
-           "\"train_limit\":%zu,\"test_limit\":%zu,\"sample_count\":%zu,"
-           "\"include_state_conditions\":%s,"
-           "\"include_candidate_filters\":%s,\"include_gap_filters\":%s,"
-           "\"max_rules\":%zu,\"max_marginal_states\":%zu,"
-           "\"softmax_group_size\":%zu,"
-           "\"closed_loop_hidden\":%s,"
-           "\"unified_scorer_hidden\":%s,"
-           "\"selection_strategy\":\"%s\","
-           "\"selection_seed\":%llu,"
-           "\"proposed_rules\":%zu,\"proposer_calls\":%zu,"
-           "\"verified_rules\":%zu,"
-           "\"unsafe_rules\":%zu,\"no_support_rules\":%zu,"
-           "\"uncertified_rules\":%zu,"
-           "\"accepted_rules\":%zu,\"accepted_conditional_rules\":%zu,"
-           "\"accepted_candidate_rules\":%zu,\"accepted_gap_rules\":%zu,"
-           "\"false_rejections\":%zu,\"proposer_feature_set\":\"%s\","
-           "\"proposer_target\":\"%s\","
-           "\"residual_train_samples\":%zu,"
-           "\"train_marginal_samples\":%zu,"
-           "\"validation_marginal_samples\":%zu,"
-           "\"train_marginal_events\":%zu,"
-           "\"validation_marginal_events\":%zu,"
-           "\"coverage_cache_hits\":%zu,"
-           "\"coverage_cache_misses\":%zu,"
-           "\"coverage_cache_writes\":%zu,"
-           "\"parameters\":%zu,"
-           "\"forward_flops\":%zu,"
-           "\"unified_action_updates\":%zu,"
-           "\"unified_rule_updates\":%zu,"
-           "\"proposer_loss\":%.8f,"
-           "\"direct_exact\":%.8f,\"hand_wheel_exact\":%.8f,"
-           "\"expanded_exact\":%.8f,\"expanded_mod\":%.8f,"
-           "\"expanded_saved_pct\":%.8f}\n",
-           (uint32_t)RULE_SEARCH_GRAMMAR_VERSION,
-           rule_hash == NULL ? "unknown" : rule_hash,
-           config->train_limit,
-           config->test_limit,
-           metrics->samples,
-           config->include_state_conditions ? "true" : "false",
-           config->include_candidate_filters ? "true" : "false",
-           config->include_gap_filters ? "true" : "false",
-           config->max_rules,
-           config->max_marginal_states,
-           metrics->softmax_group_size,
-           closed_loop_hidden_json,
-           unified_hidden_json,
-           rule_proposer_mode_name(config->proposer_mode),
-           (unsigned long long)config->proposer_seed,
-           metrics->proposed_rules,
-           metrics->proposer_calls,
-           metrics->verified_rules,
-           metrics->unsafe_rules,
-           metrics->no_support_rules,
-           metrics->uncertified_rules,
-           metrics->accepted_rules,
-           metrics->accepted_conditional_rules,
-           metrics->accepted_candidate_rules,
-           metrics->accepted_gap_rules,
-           metrics->false_rejections,
-           rule_proposer_feature_set_name(config->proposer_mode),
-           rule_proposer_target_name(config->proposer_mode),
-           metrics->residual_train_samples,
-           metrics->train_marginal_samples,
-           metrics->validation_marginal_samples,
-           metrics->train_marginal_events,
-           metrics->validation_marginal_events,
-           metrics->coverage_cache_hits,
-           metrics->coverage_cache_misses,
-           metrics->coverage_cache_writes,
-           metrics->parameters,
-           metrics->forward_flops,
-           metrics->unified_action_updates,
-           metrics->unified_rule_updates,
-           metrics->proposer_loss,
-           metrics->direct_exact_tests,
-           metrics->hand_wheel_exact_tests,
-           metrics->expanded_exact_tests,
-           metrics->expanded_mod_tests,
-           expanded_saved_pct);
+    char grammar_json[32];
+    snprintf(grammar_json, sizeof(grammar_json), "%u", (uint32_t)RULE_SEARCH_GRAMMAR_VERSION);
+    char extra_json[512];
+    snprintf(extra_json,
+             sizeof(extra_json),
+             "\"include_state_conditions\":%s,"
+             "\"include_candidate_filters\":%s,"
+             "\"include_gap_filters\":%s,"
+             "\"accepted_conditional_rules\":%zu,"
+             "\"accepted_candidate_rules\":%zu,"
+             "\"accepted_gap_rules\":%zu",
+             config->include_state_conditions ? "true" : "false",
+             config->include_candidate_filters ? "true" : "false",
+             config->include_gap_filters ? "true" : "false",
+             metrics->accepted_conditional_rules,
+             metrics->accepted_candidate_rules,
+             metrics->accepted_gap_rules);
+    NNRuleSearchSummary summary = {
+        .task_name = "prime_gap",
+        .grammar_version_json = grammar_json,
+        .rule_set_hash = rule_hash == NULL ? "unknown" : rule_hash,
+        .train_limit = config->train_limit,
+        .test_limit = config->test_limit,
+        .sample_count = metrics->samples,
+        .max_rules = config->max_rules,
+        .max_marginal_states = config->max_marginal_states,
+        .softmax_group_size = metrics->softmax_group_size,
+        .closed_loop_hidden_json = closed_loop_hidden_json,
+        .unified_scorer_hidden_json = unified_hidden_json,
+        .selection_strategy = rule_proposer_mode_name(config->proposer_mode),
+        .selection_seed = config->proposer_seed,
+        .proposed_rules = metrics->proposed_rules,
+        .proposer_calls = metrics->proposer_calls,
+        .verified_rules = metrics->verified_rules,
+        .unsafe_rules = metrics->unsafe_rules,
+        .no_support_rules = metrics->no_support_rules,
+        .uncertified_rules = metrics->uncertified_rules,
+        .accepted_rules = metrics->accepted_rules,
+        .false_rejections = metrics->false_rejections,
+        .proposer_feature_set = rule_proposer_feature_set_name(config->proposer_mode),
+        .proposer_target = rule_proposer_target_name(config->proposer_mode),
+        .residual_train_samples = metrics->residual_train_samples,
+        .train_marginal_samples = metrics->train_marginal_samples,
+        .validation_marginal_samples = metrics->validation_marginal_samples,
+        .train_marginal_events = metrics->train_marginal_events,
+        .validation_marginal_events = metrics->validation_marginal_events,
+        .coverage_cache_hits = metrics->coverage_cache_hits,
+        .coverage_cache_misses = metrics->coverage_cache_misses,
+        .coverage_cache_writes = metrics->coverage_cache_writes,
+        .parameters = metrics->parameters,
+        .forward_flops = metrics->forward_flops,
+        .unified_action_updates = metrics->unified_action_updates,
+        .unified_rule_updates = metrics->unified_rule_updates,
+        .proposer_loss = metrics->proposer_loss,
+        .direct_exact = metrics->direct_exact_tests,
+        .hand_wheel_exact = metrics->hand_wheel_exact_tests,
+        .expanded_exact = metrics->expanded_exact_tests,
+        .expanded_mod = metrics->expanded_mod_tests,
+        .expanded_saved_pct = expanded_saved_pct,
+        .extra_json = extra_json,
+    };
+    nn_rule_search_summary_write_json(stdout, &summary);
 
     printf("\n[expanded prime rule search]\n");
     printf("  grammar_version=%u moduli=", (uint32_t)RULE_SEARCH_GRAMMAR_VERSION);

@@ -23,6 +23,8 @@ typedef struct NeuralNet NeuralNet;
 #define NN_TRACE_VERSION 1u
 #define NN_TRACE_ACTION_ID_CONTRACT "stable_unique_action_ids"
 #define NN_RANKING_POLICY "score_desc_action_id_tiebreak_epsilon"
+#define NN_SCORER_ENVELOPE_FEATURE_COUNT 96u
+#define NN_SCORER_ENVELOPE_FEATURE_SET "task_role_tagged_action_rule_rows_v1"
 #if NN_REAL_IS_FLOAT
 #define NN_RANK_SCORE_EPSILON ((nn_real)1e-6f)
 #else
@@ -56,6 +58,46 @@ typedef struct {
     nn_real score;
     nn_real probability;
 } NNActionCandidate;
+
+typedef enum {
+    NN_SCORER_ROLE_ACTION = 0,
+    NN_SCORER_ROLE_RULE = 1,
+} NNScorerRole;
+
+typedef enum {
+    NN_SCORER_DOMAIN_PRIME_GAP_ACTION = 0,
+    NN_SCORER_DOMAIN_GRID_PATH_ACTION = 1,
+    NN_SCORER_DOMAIN_DELAYED_CLAIM_ACTION = 2,
+    NN_SCORER_DOMAIN_ARC_AGI_ACTION = 3,
+    NN_SCORER_DOMAIN_PRIME_RULE_PROPOSE = 4,
+} NNScorerDomain;
+
+typedef enum {
+    NN_SCORER_ENVELOPE_F_BIAS = 0,
+    NN_SCORER_ENVELOPE_F_ROLE_RULE = 1,
+    NN_SCORER_ENVELOPE_F_DOMAIN_PRIME_RULE = 2,
+    NN_SCORER_ENVELOPE_F_ROLE_ACTION = 3,
+    NN_SCORER_ENVELOPE_F_DOMAIN_PRIME_ACTION = 4,
+    NN_SCORER_ENVELOPE_F_CANDIDATE_INDEX = 5,
+    NN_SCORER_ENVELOPE_F_CANDIDATE_COUNT = 6,
+    NN_SCORER_ENVELOPE_F_DOMAIN_GRID_ACTION = 7,
+    NN_SCORER_ENVELOPE_F_DOMAIN_CLAIM_ACTION = 8,
+    NN_SCORER_ENVELOPE_F_DOMAIN_ARC_ACTION = 9,
+    NN_SCORER_ENVELOPE_F_ACTION_COMMON = 10,
+    NN_SCORER_ENVELOPE_F_ACTION_STATE = 20,
+    NN_SCORER_ENVELOPE_F_ROLE_PAYLOAD = 32,
+    NN_SCORER_ENVELOPE_F_RESIDUAL_FEATURES = NN_SCORER_ENVELOPE_F_ROLE_PAYLOAD,
+} NNScorerEnvelopeSlot;
+
+typedef struct {
+    NNScorerRole role;
+    NNScorerDomain domain;
+    size_t candidate_index;
+    size_t candidate_count;
+    size_t candidate_count_scale;
+    int include_role_tag;
+    int include_domain_tag;
+} NNScorerEnvelopeRow;
 
 typedef struct {
     size_t candidate_count;
@@ -140,6 +182,12 @@ int nn_score_action_rows(NeuralNet *net,
                          size_t candidate_count,
                          nn_real *scores,
                          nn_real *probabilities);
+const char *nn_scorer_envelope_feature_set(void);
+const char *nn_scorer_envelope_slot_name(size_t slot);
+int nn_scorer_envelope_domain_slot(NNScorerDomain domain, size_t *out_slot);
+int nn_scorer_envelope_fill_base(nn_real *row,
+                                 size_t row_capacity,
+                                 const NNScorerEnvelopeRow *spec);
 int nn_rank_action_scores(const nn_real *scores, size_t count, size_t *ranked_indices);
 int nn_rank_action_scores_with_ids(const nn_real *scores,
                                    const uint32_t *action_ids,

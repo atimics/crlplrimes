@@ -1963,61 +1963,58 @@ static int discover_grid_gate_rules(GridGateRuleSet *rules, const GridRuleSearch
 static void print_grid_rule_search_json(const GridGateRuleSet *rules,
                                         const GridRuleSearchConfig *config)
 {
-    printf("{\"schema\":\"crlp.rule_search.summary.v1\",\"task\":\"grid_path\","
-           "\"grammar_version\":%u,\"rule_set_hash\":\"%s\","
-           "\"rule_family\":\"%s\","
-           "\"gate_cost_model\":\"%s\","
-           "\"proposer_feature_set\":\"%s\","
-           "\"proposer_target\":\"%s\","
-           "\"selection_strategy\":\"%s\","
-           "\"selection_seed\":%llu,"
-           "\"proposed_rules\":%zu,\"verified_rules\":%zu,\"max_rules\":%u,"
-           "\"accepted_rules\":%zu,\"false_rejections\":%zu,"
-           "\"cheap_rules\":%zu,\"exact_distance_rules\":%zu,"
-           "\"accepted_cheap_rules\":%zu,"
-           "\"accepted_exact_distance_rules\":%zu,"
-           "\"train_rejects\":%zu,\"validation_rejects\":%zu,"
-           "\"test_rejects\":%zu,"
-           "\"train_marginal_rejects\":%zu,"
-           "\"validation_marginal_rejects\":%zu,"
-           "\"test_marginal_rejects\":%zu,"
-           "\"train_false_rejections\":%zu,"
-           "\"validation_false_rejections\":%zu,"
-           "\"test_false_rejections\":%zu,"
-           "\"train_marginal_false_rejections\":%zu,"
-           "\"validation_marginal_false_rejections\":%zu,"
-           "\"test_marginal_false_rejections\":%zu,"
-           "\"proposer_loss\":%.8f}\n",
-           (unsigned int)GP_RULE_SEARCH_GRAMMAR_VERSION,
-           grid_rule_set_hash(config),
-           grid_rule_family_name(config->rule_family),
-           grid_rule_family_cost_model(config->rule_family),
-           grid_rule_proposer_feature_set_name(config->proposer_mode),
-           grid_rule_proposer_target_name(config->proposer_mode),
-           grid_rule_proposer_mode_name(config->proposer_mode),
-           (unsigned long long)config->proposer_seed,
-           rules->count,
-           rules->count,
-           (unsigned int)config->max_rules,
-           rules->accepted_rules,
-           rules->test_false_rejections,
-           rules->cheap_rules,
-           rules->exact_distance_rules,
-           rules->accepted_cheap_rules,
-           rules->accepted_exact_distance_rules,
-           rules->train_rejects,
-           rules->validation_rejects,
-           rules->test_rejects,
-           rules->train_marginal_rejects,
-           rules->validation_marginal_rejects,
-           rules->test_marginal_rejects,
-           rules->train_false_rejections,
-           rules->validation_false_rejections,
-           rules->test_false_rejections,
-           rules->train_marginal_false_rejections,
-           rules->validation_marginal_false_rejections,
-           rules->test_marginal_false_rejections,
-           rules->proposer_loss);
+    char grammar_json[32];
+    snprintf(grammar_json, sizeof(grammar_json), "%u", (unsigned int)GP_RULE_SEARCH_GRAMMAR_VERSION);
+    char extra_json[1024];
+    snprintf(extra_json,
+             sizeof(extra_json),
+             "\"rule_family\":\"%s\","
+             "\"gate_cost_model\":\"%s\","
+             "\"cheap_rules\":%zu,"
+             "\"exact_distance_rules\":%zu,"
+             "\"accepted_cheap_rules\":%zu,"
+             "\"accepted_exact_distance_rules\":%zu,"
+             "\"train_false_rejections\":%zu,"
+             "\"validation_false_rejections\":%zu,"
+             "\"test_false_rejections\":%zu,"
+             "\"train_marginal_false_rejections\":%zu,"
+             "\"validation_marginal_false_rejections\":%zu,"
+             "\"test_marginal_false_rejections\":%zu",
+             grid_rule_family_name(config->rule_family),
+             grid_rule_family_cost_model(config->rule_family),
+             rules->cheap_rules,
+             rules->exact_distance_rules,
+             rules->accepted_cheap_rules,
+             rules->accepted_exact_distance_rules,
+             rules->train_false_rejections,
+             rules->validation_false_rejections,
+             rules->test_false_rejections,
+             rules->train_marginal_false_rejections,
+             rules->validation_marginal_false_rejections,
+             rules->test_marginal_false_rejections);
+    NNRuleSearchSummary summary = {
+        .task_name = "grid_path",
+        .grammar_version_json = grammar_json,
+        .rule_set_hash = grid_rule_set_hash(config),
+        .max_rules = config->max_rules,
+        .selection_strategy = grid_rule_proposer_mode_name(config->proposer_mode),
+        .selection_seed = config->proposer_seed,
+        .proposed_rules = rules->count,
+        .verified_rules = rules->count,
+        .accepted_rules = rules->accepted_rules,
+        .false_rejections = rules->test_false_rejections,
+        .proposer_feature_set = grid_rule_proposer_feature_set_name(config->proposer_mode),
+        .proposer_target = grid_rule_proposer_target_name(config->proposer_mode),
+        .train_rejects = rules->train_rejects,
+        .validation_rejects = rules->validation_rejects,
+        .test_rejects = rules->test_rejects,
+        .train_marginal_rejects = rules->train_marginal_rejects,
+        .validation_marginal_rejects = rules->validation_marginal_rejects,
+        .test_marginal_rejects = rules->test_marginal_rejects,
+        .proposer_loss = rules->proposer_loss,
+        .extra_json = extra_json,
+    };
+    nn_rule_search_summary_write_json(stdout, &summary);
 }
 
 static void print_grid_rule_search_report(const GridGateRuleSet *rules,

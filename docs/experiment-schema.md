@@ -336,7 +336,7 @@ Fields:
 | `eval_task_set` | domains requested for evaluation |
 | `model_kind` | current model family, usually `shared` or `single_task` |
 | `training_order` | sampling schedule, e.g. `uniform_random`, `round_robin`, `arc_heavy`, `prime_light`, or `domain_only_random` |
-| `feature_envelope` | shared row layout, currently `task_tagged_action_rows_v1` or `untagged_action_rows_v1` |
+| `feature_envelope` | shared row layout, currently `task_role_tagged_action_rule_rows_v1` or `untagged_action_rows_v1` |
 | `train_updates` | number of SGD updates received from this domain |
 | `epochs`, `steps_per_epoch`, `hidden`, `parameters`, `forward_flops`, `learning_rate`, `seed` | training and capacity configuration |
 | `sample_count`, `candidate_count` | evaluation size and mean action count |

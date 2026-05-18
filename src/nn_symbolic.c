@@ -22,6 +22,104 @@ static int nn_text_is_present(const char *text)
     return text != NULL && text[0] != '\0';
 }
 
+static void nn_symbolic_json_string(FILE *fp, const char *value)
+{
+    fputc('"', fp);
+    if (value != NULL) {
+        for (const unsigned char *p = (const unsigned char *)value; *p != '\0'; ++p) {
+            switch (*p) {
+            case '"':
+                fputs("\\\"", fp);
+                break;
+            case '\\':
+                fputs("\\\\", fp);
+                break;
+            case '\n':
+                fputs("\\n", fp);
+                break;
+            case '\r':
+                fputs("\\r", fp);
+                break;
+            case '\t':
+                fputs("\\t", fp);
+                break;
+            default:
+                if (*p < 0x20u) {
+                    fprintf(fp, "\\u%04x", (unsigned int)*p);
+                } else {
+                    fputc((int)*p, fp);
+                }
+                break;
+            }
+        }
+    }
+    fputc('"', fp);
+}
+
+static void nn_rule_summary_field_prefix(FILE *fp, int *first, const char *name)
+{
+    if (!*first) {
+        fputc(',', fp);
+    }
+    *first = 0;
+    nn_symbolic_json_string(fp, name);
+    fputc(':', fp);
+}
+
+static void nn_rule_summary_string(FILE *fp, int *first, const char *name, const char *value)
+{
+    if (!nn_text_is_present(value)) {
+        return;
+    }
+    nn_rule_summary_field_prefix(fp, first, name);
+    nn_symbolic_json_string(fp, value);
+}
+
+static void nn_rule_summary_json(FILE *fp, int *first, const char *name, const char *value)
+{
+    if (!nn_text_is_present(value)) {
+        return;
+    }
+    nn_rule_summary_field_prefix(fp, first, name);
+    fputs(value, fp);
+}
+
+static void nn_rule_summary_size(FILE *fp, int *first, const char *name, size_t value)
+{
+    if (value == 0) {
+        return;
+    }
+    nn_rule_summary_field_prefix(fp, first, name);
+    fprintf(fp, "%zu", value);
+}
+
+static void nn_rule_summary_size_always(FILE *fp, int *first, const char *name, size_t value)
+{
+    nn_rule_summary_field_prefix(fp, first, name);
+    fprintf(fp, "%zu", value);
+}
+
+static void nn_rule_summary_bool(FILE *fp, int *first, const char *name, int value)
+{
+    nn_rule_summary_field_prefix(fp, first, name);
+    fputs(value ? "true" : "false", fp);
+}
+
+static void nn_rule_summary_u64(FILE *fp, int *first, const char *name, uint64_t value)
+{
+    nn_rule_summary_field_prefix(fp, first, name);
+    fprintf(fp, "%llu", (unsigned long long)value);
+}
+
+static void nn_rule_summary_double(FILE *fp, int *first, const char *name, double value)
+{
+    if (!isfinite(value)) {
+        return;
+    }
+    nn_rule_summary_field_prefix(fp, first, name);
+    fprintf(fp, "%.8f", value);
+}
+
 static size_t nn_popcount_u64(uint64_t value)
 {
 #if defined(__GNUC__) || defined(__clang__)
@@ -959,4 +1057,117 @@ int nn_closed_loop_rule_policy_select(const NNRuleCoverage *coverage,
     free(covered);
     free(features);
     return 1;
+}
+
+int nn_rule_search_summary_write_json(FILE *fp, const NNRuleSearchSummary *summary)
+{
+    if (fp == NULL || summary == NULL || !nn_text_is_present(summary->task_name)) {
+        return 0;
+    }
+
+    int first = 1;
+    fputc('{', fp);
+    nn_rule_summary_string(fp, &first, "schema", NN_RULE_SEARCH_SUMMARY_SCHEMA);
+    nn_rule_summary_size(fp, &first, "report_version", summary->report_version);
+    nn_rule_summary_string(fp, &first, "task", summary->task_name);
+    nn_rule_summary_json(fp, &first, "grammar_version", summary->grammar_version_json);
+    nn_rule_summary_string(fp, &first, "rule_set_hash", summary->rule_set_hash);
+    nn_rule_summary_size(fp, &first, "train_limit", summary->train_limit);
+    nn_rule_summary_size(fp, &first, "test_limit", summary->test_limit);
+    nn_rule_summary_size(fp, &first, "sample_count", summary->sample_count);
+    nn_rule_summary_size(fp, &first, "max_rules", summary->max_rules);
+    nn_rule_summary_size(fp, &first, "max_marginal_states", summary->max_marginal_states);
+    nn_rule_summary_size(fp, &first, "softmax_group_size", summary->softmax_group_size);
+    nn_rule_summary_json(fp, &first, "closed_loop_hidden", summary->closed_loop_hidden_json);
+    nn_rule_summary_json(fp, &first, "unified_scorer_hidden", summary->unified_scorer_hidden_json);
+    nn_rule_summary_string(fp, &first, "selection_strategy", summary->selection_strategy);
+    nn_rule_summary_u64(fp, &first, "selection_seed", summary->selection_seed);
+    nn_rule_summary_size(fp, &first, "proposed_rules", summary->proposed_rules);
+    nn_rule_summary_size(fp, &first, "proposer_calls", summary->proposer_calls);
+    nn_rule_summary_size(fp, &first, "verified_rules", summary->verified_rules);
+    nn_rule_summary_size(fp, &first, "unsafe_rules", summary->unsafe_rules);
+    nn_rule_summary_size(fp, &first, "no_support_rules", summary->no_support_rules);
+    nn_rule_summary_size(fp, &first, "uncertified_rules", summary->uncertified_rules);
+    nn_rule_summary_size(fp, &first, "accepted_rules", summary->accepted_rules);
+    nn_rule_summary_size(fp, &first, "false_rejections", summary->false_rejections);
+    nn_rule_summary_string(fp, &first, "proposer_feature_set", summary->proposer_feature_set);
+    nn_rule_summary_string(fp, &first, "proposer_target", summary->proposer_target);
+    nn_rule_summary_size(fp, &first, "residual_train_samples", summary->residual_train_samples);
+    nn_rule_summary_size(fp, &first, "train_marginal_samples", summary->train_marginal_samples);
+    nn_rule_summary_size(fp, &first, "validation_marginal_samples", summary->validation_marginal_samples);
+    nn_rule_summary_size(fp, &first, "train_marginal_events", summary->train_marginal_events);
+    nn_rule_summary_size(fp, &first, "validation_marginal_events", summary->validation_marginal_events);
+    nn_rule_summary_size(fp, &first, "train_rejects", summary->train_rejects);
+    nn_rule_summary_size(fp, &first, "validation_rejects", summary->validation_rejects);
+    nn_rule_summary_size(fp, &first, "test_rejects", summary->test_rejects);
+    nn_rule_summary_size(fp, &first, "train_marginal_rejects", summary->train_marginal_rejects);
+    nn_rule_summary_size(fp, &first, "validation_marginal_rejects", summary->validation_marginal_rejects);
+    nn_rule_summary_size(fp, &first, "test_marginal_rejects", summary->test_marginal_rejects);
+    nn_rule_summary_size(fp, &first, "coverage_cache_hits", summary->coverage_cache_hits);
+    nn_rule_summary_size(fp, &first, "coverage_cache_misses", summary->coverage_cache_misses);
+    nn_rule_summary_size(fp, &first, "coverage_cache_writes", summary->coverage_cache_writes);
+    nn_rule_summary_size(fp, &first, "parameters", summary->parameters);
+    nn_rule_summary_size(fp, &first, "forward_flops", summary->forward_flops);
+    nn_rule_summary_size(fp, &first, "unified_action_updates", summary->unified_action_updates);
+    nn_rule_summary_size(fp, &first, "unified_rule_updates", summary->unified_rule_updates);
+    nn_rule_summary_double(fp, &first, "proposer_loss", summary->proposer_loss);
+    nn_rule_summary_double(fp, &first, "direct_exact", summary->direct_exact);
+    nn_rule_summary_double(fp, &first, "hand_wheel_exact", summary->hand_wheel_exact);
+    nn_rule_summary_double(fp, &first, "expanded_exact", summary->expanded_exact);
+    nn_rule_summary_double(fp, &first, "expanded_mod", summary->expanded_mod);
+    nn_rule_summary_double(fp, &first, "expanded_saved_pct", summary->expanded_saved_pct);
+    if (nn_text_is_present(summary->extra_json)) {
+        if (!first) {
+            fputc(',', fp);
+        }
+        fputs(summary->extra_json, fp);
+    }
+    fputs("}\n", fp);
+    return ferror(fp) == 0;
+}
+
+int nn_rule_trace_write_json(FILE *fp, const NNRuleTraceRecord *record)
+{
+    if (fp == NULL || record == NULL || !nn_text_is_present(record->task_name)) {
+        return 0;
+    }
+
+    int first = 1;
+    fputc('{', fp);
+    nn_rule_summary_string(fp,
+                           &first,
+                           "schema",
+                           nn_text_is_present(record->schema) ? record->schema : NN_RULE_TRACE_SCHEMA);
+    nn_rule_summary_size(fp, &first, "trace_version", record->trace_version);
+    nn_rule_summary_string(fp, &first, "task", record->task_name);
+    nn_rule_summary_json(fp, &first, "grammar_version", record->grammar_version_json);
+    nn_rule_summary_string(fp, &first, "selection_strategy", record->selection_strategy);
+    nn_rule_summary_string(fp, &first, "proposer_feature_set", record->proposer_feature_set);
+    nn_rule_summary_string(fp, &first, "proposer_target", record->proposer_target);
+    nn_rule_summary_size_always(fp, &first, "rule_id", record->rule_id);
+    nn_rule_summary_size_always(fp, &first, "rule_rank", record->rule_rank);
+    nn_rule_summary_string(fp, &first, "rule_kind", record->rule_kind);
+    nn_rule_summary_bool(fp, &first, "accepted", record->accepted);
+    nn_rule_summary_string(fp, &first, "verifier_result", record->verifier_result);
+    nn_rule_summary_string(fp, &first, "certificate", record->certificate);
+    nn_rule_summary_double(fp, &first, "model_score", record->model_score);
+    nn_rule_summary_double(fp, &first, "structural_score", record->structural_score);
+    nn_rule_summary_double(fp, &first, "utility", record->utility);
+    nn_rule_summary_size(fp, &first, "train_rejects", record->train_rejects);
+    nn_rule_summary_size(fp, &first, "train_false_rejections", record->train_false_rejections);
+    nn_rule_summary_size(fp, &first, "validation_rejects", record->validation_rejects);
+    nn_rule_summary_size(fp, &first, "validation_false_rejections", record->validation_false_rejections);
+    nn_rule_summary_size(fp, &first, "test_rejects", record->test_rejects);
+    nn_rule_summary_size(fp, &first, "test_false_rejections", record->test_false_rejections);
+    nn_rule_summary_double(fp, &first, "train_marginal_utility", record->train_marginal_utility);
+    nn_rule_summary_double(fp, &first, "validation_marginal_utility", record->validation_marginal_utility);
+    nn_rule_summary_string(fp, &first, "rule_text", record->rule_text);
+    if (nn_text_is_present(record->extra_json)) {
+        if (!first) {
+            fputc(',', fp);
+        }
+        fputs(record->extra_json, fp);
+    }
+    fputs("}\n", fp);
+    return ferror(fp) == 0;
 }

@@ -125,6 +125,151 @@ static int test_experiment_schema_json_contract(void)
            strstr(buffer, "\"provenance\":\"structural_prior\"") != NULL;
 }
 
+static int test_role_tagged_scorer_envelope_contract(void)
+{
+    nn_real action_row[NN_SCORER_ENVELOPE_FEATURE_COUNT];
+    NNScorerEnvelopeRow action = {
+        .role = NN_SCORER_ROLE_ACTION,
+        .domain = NN_SCORER_DOMAIN_GRID_PATH_ACTION,
+        .candidate_index = 2,
+        .candidate_count = 4,
+        .candidate_count_scale = 129,
+        .include_role_tag = 1,
+        .include_domain_tag = 1,
+    };
+    int ok = nn_scorer_envelope_fill_base(action_row,
+                                          NN_SCORER_ENVELOPE_FEATURE_COUNT,
+                                          &action) &&
+             strcmp(nn_scorer_envelope_feature_set(),
+                    "task_role_tagged_action_rule_rows_v1") == 0 &&
+             action_row[NN_SCORER_ENVELOPE_F_BIAS] == (nn_real)1 &&
+             action_row[NN_SCORER_ENVELOPE_F_ROLE_ACTION] == (nn_real)1 &&
+             action_row[NN_SCORER_ENVELOPE_F_ROLE_RULE] == (nn_real)0 &&
+             action_row[NN_SCORER_ENVELOPE_F_DOMAIN_GRID_ACTION] == (nn_real)1 &&
+             action_row[NN_SCORER_ENVELOPE_F_DOMAIN_PRIME_RULE] == (nn_real)0 &&
+             nearly_equal(action_row[NN_SCORER_ENVELOPE_F_CANDIDATE_INDEX],
+                          (nn_real)(2.0 / 3.0),
+                          TEST_ABS_TOL,
+                          TEST_REL_TOL) &&
+             nearly_equal(action_row[NN_SCORER_ENVELOPE_F_CANDIDATE_COUNT],
+                          (nn_real)(4.0 / 129.0),
+                          TEST_ABS_TOL,
+                          TEST_REL_TOL) &&
+             action_row[NN_SCORER_ENVELOPE_F_RESIDUAL_FEATURES] == (nn_real)0;
+
+    nn_real rule_row[NN_SCORER_ENVELOPE_FEATURE_COUNT];
+    NNScorerEnvelopeRow rule = {
+        .role = NN_SCORER_ROLE_RULE,
+        .domain = NN_SCORER_DOMAIN_PRIME_RULE_PROPOSE,
+        .candidate_index = 7,
+        .candidate_count = 100,
+        .candidate_count_scale = 65536,
+        .include_role_tag = 1,
+        .include_domain_tag = 1,
+    };
+    ok = ok && nn_scorer_envelope_fill_base(rule_row,
+                                            NN_SCORER_ENVELOPE_FEATURE_COUNT,
+                                            &rule) &&
+         rule_row[NN_SCORER_ENVELOPE_F_ROLE_RULE] == (nn_real)1 &&
+         rule_row[NN_SCORER_ENVELOPE_F_ROLE_ACTION] == (nn_real)0 &&
+         rule_row[NN_SCORER_ENVELOPE_F_DOMAIN_PRIME_RULE] == (nn_real)1 &&
+         rule_row[NN_SCORER_ENVELOPE_F_DOMAIN_GRID_ACTION] == (nn_real)0 &&
+         nearly_equal(rule_row[NN_SCORER_ENVELOPE_F_CANDIDATE_INDEX],
+                      (nn_real)(7.0 / 99.0),
+                      TEST_ABS_TOL,
+                      TEST_REL_TOL) &&
+         nearly_equal(rule_row[NN_SCORER_ENVELOPE_F_CANDIDATE_COUNT],
+                      (nn_real)(100.0 / 65536.0),
+                      TEST_ABS_TOL,
+                      TEST_REL_TOL);
+
+    NNScorerEnvelopeRow invalid = action;
+    invalid.candidate_index = invalid.candidate_count;
+    return ok &&
+           !nn_scorer_envelope_fill_base(action_row,
+                                         NN_SCORER_ENVELOPE_FEATURE_COUNT,
+                                         &invalid);
+}
+
+static int test_rule_search_summary_writer_contract(void)
+{
+    FILE *fp = tmpfile();
+    if (fp == NULL) {
+        return 0;
+    }
+    NNRuleSearchSummary summary = {
+        .report_version = 1,
+        .task_name = "toy_rules",
+        .grammar_version_json = "\"toy-v1\"",
+        .rule_set_hash = "abc123",
+        .max_rules = 3,
+        .selection_strategy = "grammar_order",
+        .selection_seed = 17,
+        .proposed_rules = 5,
+        .verified_rules = 4,
+        .accepted_rules = 2,
+        .false_rejections = 0,
+        .proposer_feature_set = "none",
+        .proposer_target = "none",
+        .expanded_saved_pct = 25.0,
+        .extra_json = "\"domain_note\":\"kept\"",
+    };
+    int ok = nn_rule_search_summary_write_json(fp, &summary);
+    fflush(fp);
+    rewind(fp);
+    char buffer[2048];
+    size_t read = fread(buffer, 1, sizeof(buffer) - 1, fp);
+    buffer[read] = '\0';
+    fclose(fp);
+    return ok &&
+           strstr(buffer, "\"schema\":\"crlp.rule_search.summary.v1\"") != NULL &&
+           strstr(buffer, "\"report_version\":1") != NULL &&
+           strstr(buffer, "\"task\":\"toy_rules\"") != NULL &&
+           strstr(buffer, "\"grammar_version\":\"toy-v1\"") != NULL &&
+           strstr(buffer, "\"selection_strategy\":\"grammar_order\"") != NULL &&
+           strstr(buffer, "\"domain_note\":\"kept\"") != NULL;
+}
+
+static int test_rule_trace_writer_contract(void)
+{
+    FILE *fp = tmpfile();
+    if (fp == NULL) {
+        return 0;
+    }
+    NNRuleTraceRecord record = {
+        .trace_version = 1,
+        .task_name = "toy_rules",
+        .grammar_version_json = "\"toy-v1\"",
+        .selection_strategy = "grammar_order",
+        .proposer_feature_set = "none",
+        .proposer_target = "none",
+        .rule_id = 0,
+        .rule_rank = 0,
+        .rule_kind = "reject_action",
+        .accepted = 1,
+        .verifier_result = "accepted",
+        .certificate = "finite_check",
+        .model_score = 1.25,
+        .train_rejects = 3,
+        .rule_text = "reject action 1",
+        .extra_json = "\"domain_field\":7",
+    };
+    int ok = nn_rule_trace_write_json(fp, &record);
+    fflush(fp);
+    rewind(fp);
+    char buffer[2048];
+    size_t read = fread(buffer, 1, sizeof(buffer) - 1, fp);
+    buffer[read] = '\0';
+    fclose(fp);
+    return ok &&
+           strstr(buffer, "\"schema\":\"crlp.rule_trace.v1\"") != NULL &&
+           strstr(buffer, "\"rule_id\":0") != NULL &&
+           strstr(buffer, "\"rule_rank\":0") != NULL &&
+           strstr(buffer, "\"accepted\":true") != NULL &&
+           strstr(buffer, "\"rule_text\":\"reject action 1\"") != NULL &&
+           strstr(buffer, "\"domain_field\":7") != NULL;
+}
+
 static size_t toy_symbolic_enumerate_rules(const NNSymbolicDomain *domain,
                                            NNRule *rules,
                                            size_t capacity)
@@ -3217,6 +3362,12 @@ static int test_unified_rule_search_trains_joint_action_rule_scorer(void)
 int main(void)
 {
     check(test_forward_batch_matches_scalar(), "batched forward matches scalar");
+    check(test_role_tagged_scorer_envelope_contract(),
+          "role-tagged scorer envelope contract");
+    check(test_rule_search_summary_writer_contract(),
+          "rule search summary writer contract");
+    check(test_rule_trace_writer_contract(),
+          "rule trace writer contract");
     check(test_clone_matches_and_detaches(), "clone matches and detaches");
     check(test_gradient_buffers_are_lazy(), "gradient buffers are lazy");
     check(test_batch_size_one_matches_sample_training(), "batch size 1 matches sample training");

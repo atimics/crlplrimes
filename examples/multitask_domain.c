@@ -45,7 +45,7 @@ typedef struct {
 } MTArcOODTask;
 
 enum {
-    MT_FEATURE_COUNT = 96,
+    MT_FEATURE_COUNT = NN_SCORER_ENVELOPE_FEATURE_COUNT,
     MT_MAX_CANDIDATES = ACTION_COUNT,
     MT_CALIBRATION_BINS = 10,
     MT_GRID_SIZE = 7,
@@ -69,13 +69,12 @@ enum {
     MT_ARC_ACTION_COUNT = 10,
     MT_ARC_TRAIN_PAIR_COUNT = 3,
     MT_ARC_OOD_TASK_COUNT = 12,
-    MT_F_BIAS = 0,
-    MT_F_TASK = 1,
-    MT_F_ACTION_INDEX = 5,
-    MT_F_CANDIDATE_COUNT = 6,
-    MT_F_COMMON = 7,
-    MT_F_STATE = 16,
-    MT_F_TASK_SPECIFIC = 32,
+    MT_F_BIAS = NN_SCORER_ENVELOPE_F_BIAS,
+    MT_F_ACTION_INDEX = NN_SCORER_ENVELOPE_F_CANDIDATE_INDEX,
+    MT_F_CANDIDATE_COUNT = NN_SCORER_ENVELOPE_F_CANDIDATE_COUNT,
+    MT_F_COMMON = NN_SCORER_ENVELOPE_F_ACTION_COMMON,
+    MT_F_STATE = NN_SCORER_ENVELOPE_F_ACTION_STATE,
+    MT_F_TASK_SPECIFIC = NN_SCORER_ENVELOPE_F_ROLE_PAYLOAD,
     MT_DEFAULT_EPOCHS = 4,
     MT_DEFAULT_STEPS_PER_EPOCH = 6000,
     MT_DEFAULT_EVAL_SAMPLES = 1000,
@@ -529,8 +528,25 @@ static int mt_parse_task_set(const char *text, uint32_t *out_mask)
 
 static const char *mt_feature_envelope_name(const MTConfig *config)
 {
-    return config->use_task_tags ? "task_tagged_action_rows_v1"
+    return config->use_task_tags ? nn_scorer_envelope_feature_set()
                                  : "untagged_action_rows_v1";
+}
+
+static NNScorerDomain mt_scorer_domain(MTTask task)
+{
+    switch (task) {
+    case MT_TASK_PRIME_GAP:
+        return NN_SCORER_DOMAIN_PRIME_GAP_ACTION;
+    case MT_TASK_GRID_PATH:
+        return NN_SCORER_DOMAIN_GRID_PATH_ACTION;
+    case MT_TASK_DELAYED_CLAIM:
+        return NN_SCORER_DOMAIN_DELAYED_CLAIM_ACTION;
+    case MT_TASK_ARC_AGI:
+        return NN_SCORER_DOMAIN_ARC_AGI_ACTION;
+    case MT_TASK_COUNT:
+        break;
+    }
+    return NN_SCORER_DOMAIN_PRIME_GAP_ACTION;
 }
 
 static void mt_fill_base_row(const MTConfig *config,
@@ -539,14 +555,16 @@ static void mt_fill_base_row(const MTConfig *config,
                              size_t action,
                              size_t candidate_count)
 {
-    memset(row, 0, MT_FEATURE_COUNT * sizeof(*row));
-    row[MT_F_BIAS] = (nn_real)1;
-    if (config->use_task_tags) {
-        row[MT_F_TASK + (size_t)task] = (nn_real)1;
-    }
-    row[MT_F_ACTION_INDEX] =
-        candidate_count <= 1 ? (nn_real)0 : (nn_real)((double)action / (double)(candidate_count - 1));
-    row[MT_F_CANDIDATE_COUNT] = (nn_real)((double)candidate_count / (double)MT_MAX_CANDIDATES);
+    NNScorerEnvelopeRow spec = {
+        .role = NN_SCORER_ROLE_ACTION,
+        .domain = mt_scorer_domain(task),
+        .candidate_index = action,
+        .candidate_count = candidate_count,
+        .candidate_count_scale = MT_MAX_CANDIDATES,
+        .include_role_tag = config->use_task_tags,
+        .include_domain_tag = config->use_task_tags,
+    };
+    (void)nn_scorer_envelope_fill_base(row, MT_FEATURE_COUNT, &spec);
 }
 
 static int mt_grid_cell_index(int x, int y)

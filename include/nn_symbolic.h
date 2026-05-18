@@ -14,6 +14,8 @@
 #define NN_RULE_MAX_FEATURES 64u
 #define NN_CERTIFICATE_MAX_TEXT 160u
 #define NN_SYMBOLIC_MAX_TYPE_COUNTS 8u
+#define NN_RULE_SEARCH_SUMMARY_SCHEMA "crlp.rule_search.summary.v1"
+#define NN_RULE_TRACE_SCHEMA "crlp.rule_trace.v1"
 
 typedef enum {
     NN_RULE_KIND_REJECT_ACTION = 0,
@@ -170,6 +172,87 @@ typedef struct {
     size_t sample_count;
 } NNClosedLoopRulePolicy;
 
+typedef struct {
+    uint32_t report_version;
+    const char *task_name;
+    const char *grammar_version_json;
+    const char *rule_set_hash;
+    size_t train_limit;
+    size_t test_limit;
+    size_t sample_count;
+    size_t max_rules;
+    size_t max_marginal_states;
+    size_t softmax_group_size;
+    const char *closed_loop_hidden_json;
+    const char *unified_scorer_hidden_json;
+    const char *selection_strategy;
+    uint64_t selection_seed;
+    size_t proposed_rules;
+    size_t proposer_calls;
+    size_t verified_rules;
+    size_t unsafe_rules;
+    size_t no_support_rules;
+    size_t uncertified_rules;
+    size_t accepted_rules;
+    size_t false_rejections;
+    const char *proposer_feature_set;
+    const char *proposer_target;
+    size_t residual_train_samples;
+    size_t train_marginal_samples;
+    size_t validation_marginal_samples;
+    size_t train_marginal_events;
+    size_t validation_marginal_events;
+    size_t train_rejects;
+    size_t validation_rejects;
+    size_t test_rejects;
+    size_t train_marginal_rejects;
+    size_t validation_marginal_rejects;
+    size_t test_marginal_rejects;
+    size_t coverage_cache_hits;
+    size_t coverage_cache_misses;
+    size_t coverage_cache_writes;
+    size_t parameters;
+    size_t forward_flops;
+    size_t unified_action_updates;
+    size_t unified_rule_updates;
+    double proposer_loss;
+    double direct_exact;
+    double hand_wheel_exact;
+    double expanded_exact;
+    double expanded_mod;
+    double expanded_saved_pct;
+    const char *extra_json;
+} NNRuleSearchSummary;
+
+typedef struct {
+    const char *schema;
+    uint32_t trace_version;
+    const char *task_name;
+    const char *grammar_version_json;
+    const char *selection_strategy;
+    const char *proposer_feature_set;
+    const char *proposer_target;
+    size_t rule_id;
+    size_t rule_rank;
+    const char *rule_kind;
+    int accepted;
+    const char *verifier_result;
+    const char *certificate;
+    double model_score;
+    double structural_score;
+    double utility;
+    size_t train_rejects;
+    size_t train_false_rejections;
+    size_t validation_rejects;
+    size_t validation_false_rejections;
+    size_t test_rejects;
+    size_t test_false_rejections;
+    double train_marginal_utility;
+    double validation_marginal_utility;
+    const char *rule_text;
+    const char *extra_json;
+} NNRuleTraceRecord;
+
 void nn_certificate_clear(NNCertificate *certificate);
 void nn_certificate_accept(NNCertificate *certificate,
                            const char *proof_kind,
@@ -266,5 +349,7 @@ int nn_closed_loop_rule_policy_select(const NNRuleCoverage *coverage,
                                       size_t accepted_capacity,
                                       size_t *accepted_count_out,
                                       size_t *proposal_calls_out);
+int nn_rule_search_summary_write_json(FILE *fp, const NNRuleSearchSummary *summary);
+int nn_rule_trace_write_json(FILE *fp, const NNRuleTraceRecord *record);
 
 #endif
