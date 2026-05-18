@@ -961,93 +961,246 @@ def evaluate_tiny_net_plateau_audit(claim: dict[str, Any], repo: Path) -> dict[s
         0,
         "crlp.multitask.tiny_net_width_help.v1",
     )
+    verdict_rows = secondary_jsonl(
+        claim,
+        repo,
+        1,
+        "crlp.multitask.tiny_net_audit_verdict.v1",
+    )
     verdict_source = source.with_name("tiny_net_audit_verdict.jsonl")
-    verdict_rows = [
-        row
-        for row in read_jsonl(verdict_source)
-        if row.get("schema") == "crlp.multitask.tiny_net_audit_verdict.v1"
-    ]
-    shared_rows = [
-        row for row in plateau_rows if row.get("model_kind") == "shared"
-    ]
-    shared_verdicts = [
-        row for row in verdict_rows if row.get("model_kind") == "shared"
-    ]
+    if not verdict_rows:
+        verdict_rows = [
+            row
+            for row in read_jsonl(verdict_source)
+            if row.get("schema") == "crlp.multitask.tiny_net_audit_verdict.v1"
+        ]
     core_domains = {"prime_gap", "grid_path", "delayed_claim", "arc_agi"}
-    capacities = sorted({str(row.get("hidden")) for row in shared_rows})
-    domains = {str(row.get("domain")) for row in shared_rows}
+    required_model_kinds = set(
+        claim.get("evidence", {})
+        .get("filters", {})
+        .get("model_kinds", ["shared", "shared_task_heads", "single_task"])
+    )
+    required_pairs = [
+        (domain, model_kind)
+        for domain in sorted(core_domains)
+        for model_kind in sorted(required_model_kinds)
+    ]
+    required_plateau_rows = [
+        row
+        for row in plateau_rows
+        if row.get("domain") in core_domains and row.get("model_kind") in required_model_kinds
+    ]
+    required_width_rows = [
+        row
+        for row in width_rows
+        if row.get("domain") in core_domains and row.get("model_kind") in required_model_kinds
+    ]
+    required_verdict_rows = [
+        row
+        for row in verdict_rows
+        if row.get("domain") in core_domains and row.get("model_kind") in required_model_kinds
+    ]
+    capacity_sets = {
+        pair: {
+            str(row.get("hidden"))
+            for row in required_plateau_rows
+            if row.get("domain") == pair[0] and row.get("model_kind") == pair[1]
+        }
+        for pair in required_pairs
+    }
+    complete_pairs = sum(1 for capacities in capacity_sets.values() if len(capacities) >= 4)
+    ladder_signatures = {tuple(sorted(capacities)) for capacities in capacity_sets.values() if capacities}
+    same_ladder = len(ladder_signatures) == 1 and complete_pairs == len(required_pairs)
+    plateau_count = sum(1 for row in required_plateau_rows if row.get("plateau_detected") is True)
+    required_count = len(required_plateau_rows)
+    audit_ready_count = sum(1 for row in required_verdict_rows if row.get("audit_ready") is True)
+    capacities = sorted(set().union(*capacity_sets.values())) if capacity_sets else []
+    domains = {str(row.get("domain")) for row in required_plateau_rows}
+    model_kinds_seen = {str(row.get("model_kind")) for row in required_plateau_rows}
     arc_width = find_first(width_rows, domain="arc_agi", model_kind="shared")
+    arc_head_width = find_first(width_rows, domain="arc_agi", model_kind="shared_task_heads")
     claim_width = find_first(width_rows, domain="delayed_claim", model_kind="shared")
     result["evidence_rows"] = [
         {"label": "tiny_net_plateau_rows", "present": bool(plateau_rows), "rows": len(plateau_rows)},
+        {"label": "tiny_net_required_plateau_rows", "present": bool(required_plateau_rows), "rows": len(required_plateau_rows)},
         {"label": "tiny_net_width_rows", "present": bool(width_rows), "rows": len(width_rows)},
+        {"label": "tiny_net_required_width_rows", "present": bool(required_width_rows), "rows": len(required_width_rows)},
         {"label": "tiny_net_audit_verdict_rows", "present": bool(verdict_rows), "rows": len(verdict_rows)},
-        metric_row("arc_width_help", arc_width, ["best_hidden", "best_top1_mean", "largest_minus_smallest_top1", "larger_width_helped"]),
-        metric_row("delayed_width_help", claim_width, ["best_hidden", "best_top1_mean", "largest_minus_smallest_top1", "larger_width_helped"]),
+        {"label": "tiny_net_required_audit_verdict_rows", "present": bool(required_verdict_rows), "rows": len(required_verdict_rows)},
+        metric_row("arc_width_help_shared", arc_width, ["best_hidden", "best_top1_mean", "largest_minus_smallest_top1", "larger_width_helped"]),
+        metric_row("arc_width_help_task_heads", arc_head_width, ["best_hidden", "best_top1_mean", "largest_minus_smallest_top1", "larger_width_helped"]),
+        metric_row("delayed_width_help_shared", claim_width, ["best_hidden", "best_top1_mean", "largest_minus_smallest_top1", "larger_width_helped"]),
     ]
-    if not plateau_rows or not width_rows:
+    if not plateau_rows or not width_rows or not verdict_rows:
         result["status"] = "missing"
         result["residual"] = claim.get("residual_when_not_supported", [])
-        result["summary"] = "Missing tiny-net plateau summary or width-help rows."
+        result["summary"] = "Missing tiny-net plateau, width-help, or audit-verdict rows."
         return result
 
-    plateau_count = sum(1 for row in shared_rows if row.get("plateau_detected") is True)
-    shared_count = len(shared_rows)
-    min_capacities_per_domain = min(
-        (
-            len({str(row.get("hidden")) for row in shared_rows if row.get("domain") == domain})
-            for domain in core_domains
-        ),
-        default=0,
-    )
     result["metrics"] = {
         "plateau_rows": len(plateau_rows),
-        "shared_rows": shared_count,
+        "required_plateau_rows": required_count,
         "width_rows": len(width_rows),
+        "required_width_rows": len(required_width_rows),
         "audit_verdict_rows": len(verdict_rows),
+        "required_audit_verdict_rows": len(required_verdict_rows),
+        "required_pair_count": len(required_pairs),
+        "complete_pair_count": complete_pairs,
+        "same_ladder": same_ladder,
         "capacities": capacities,
         "domains": sorted(domains),
-        "min_capacities_per_core_domain": min_capacities_per_domain,
-        "shared_plateau_count": plateau_count,
-        "shared_plateau_rate": plateau_count / shared_count if shared_count else 0.0,
-        "shared_audit_ready_count": sum(
-            1 for row in shared_verdicts if row.get("audit_ready") is True
-        ),
-        "arc_best_hidden": arc_width.get("best_hidden") if arc_width else None,
+        "model_kinds": sorted(model_kinds_seen),
+        "required_model_kinds": sorted(required_model_kinds),
+        "plateau_count": plateau_count,
+        "plateau_rate": plateau_count / required_count if required_count else 0.0,
+        "audit_ready_count": audit_ready_count,
+        "arc_shared_best_hidden": arc_width.get("best_hidden") if arc_width else None,
+        "arc_task_head_best_hidden": arc_head_width.get("best_hidden") if arc_head_width else None,
         "arc_larger_width_helped": arc_width.get("larger_width_helped") if arc_width else None,
     }
-    if not core_domains.issubset(domains) or min_capacities_per_domain < 4:
+    if not core_domains.issubset(domains) or not required_model_kinds.issubset(model_kinds_seen):
         result["status"] = "underpowered"
-    elif plateau_count < shared_count:
+    elif not same_ladder or complete_pairs < len(required_pairs):
+        result["status"] = "underpowered"
+    elif plateau_count < required_count or audit_ready_count < len(required_pairs):
         result["status"] = "underpowered"
     else:
         result["status"] = "supported"
     if result["status"] != "supported":
         result["residual"] = claim.get("residual_when_not_supported", [])
     result["summary"] = (
-        f"tiny-net plateau audit covers {len(capacities)} capacities across "
-        f"{len(domains)} domains; {plateau_count}/{shared_count} shared rows meet the "
-        f"plateau threshold, and ARC shared width verdict picks "
-        f"{arc_width.get('best_hidden') if arc_width else 'n/a'} as best hidden."
+        f"tiny-net plateau audit covers {len(capacities)} capacities, "
+        f"{len(domains)} domains, and variants {', '.join(sorted(model_kinds_seen)) or 'n/a'}; "
+        f"{plateau_count}/{required_count} required rows meet the plateau threshold and "
+        f"{audit_ready_count}/{len(required_pairs)} domain/variant verdicts are audit-ready."
     )
     result["paper_explanation"] = (
         "This turns the width discussion into an audit: the paper can distinguish "
         "undertraining from representation limits using learning curves, restarts, "
-        "best checkpoints, parameter counts, FLOPs, plateau flags, and width-help rows."
+        "best checkpoints, parameter counts, FLOPs, plateau flags, width-help rows, "
+        "and per-domain/variant audit verdicts."
     )
     result["chart"] = {
         "kind": "coverage_bar",
         "unit": "top-1",
-        "y_label": "best shared top-1",
+        "y_label": "best ARC top-1",
         "rows": [
             {
-                "label": str(row.get("hidden")),
+                "label": f"{row.get('model_kind')} {row.get('hidden')}",
                 "value": 100.0 * as_float(row, "best_top1_mean"),
                 "domain": row.get("domain"),
+                "model_kind": row.get("model_kind"),
                 "plateau_detected": bool(row.get("plateau_detected")),
             }
-            for row in shared_rows
+            for row in required_plateau_rows
             if row.get("domain") == "arc_agi"
+        ],
+    }
+    return result
+
+
+def evaluate_adapter_heads_shared_trunk(claim: dict[str, Any], repo: Path) -> dict[str, Any]:
+    result = base_result(claim)
+    source = repo / claim["evidence"]["source"]
+    deltas = read_csv(source)
+    summary_source = None
+    decision_source = None
+    secondary = claim.get("evidence", {}).get("secondary_sources", [])
+    if secondary:
+        summary_source = repo / secondary[0]
+    if len(secondary) > 1:
+        decision_source = repo / secondary[1]
+    summary_rows = read_csv(summary_source) if summary_source is not None else []
+    decision_rows = [
+        row
+        for row in read_jsonl(decision_source) if row.get("schema") == "crlp.multitask.adapter_heads_decision.v1"
+    ] if decision_source is not None else []
+    fixed_arc = find_first(deltas, eval_suite="fixed", domain="arc_agi")
+    ood_arc = find_first(deltas, eval_suite="ood", domain="arc_agi")
+    delayed = find_first(deltas, eval_suite="fixed", domain="delayed_claim")
+    grid = find_first(deltas, eval_suite="fixed", domain="grid_path")
+    prime = find_first(deltas, eval_suite="fixed", domain="prime_gap")
+    result["evidence_rows"] = [
+        metric_row("adapter_fixed_arc", fixed_arc, ["eval_suite", "domain", "seeds", "headed_top1_mean", "shared_top1_mean", "single_top1_mean", "top1_delta_headed_minus_shared", "nll_delta_headed_minus_shared", "ece_delta_headed_minus_shared"]),
+        metric_row("adapter_ood_arc", ood_arc, ["eval_suite", "domain", "seeds", "headed_top1_mean", "shared_top1_mean", "single_top1_mean", "top1_delta_headed_minus_single", "nll_delta_headed_minus_single", "ece_delta_headed_minus_single"]),
+        metric_row("adapter_delayed_claim", delayed, ["eval_suite", "domain", "seeds", "headed_top1_mean", "shared_top1_mean", "top1_delta_headed_minus_shared"]),
+        metric_row("adapter_grid_path", grid, ["eval_suite", "domain", "seeds", "headed_top1_mean", "shared_top1_mean", "top1_delta_headed_minus_shared"]),
+        metric_row("adapter_prime_gap", prime, ["eval_suite", "domain", "seeds", "headed_top1_mean", "shared_top1_mean", "top1_delta_headed_minus_shared"]),
+        {"label": "adapter_summary_rows", "present": bool(summary_rows), "rows": len(summary_rows)},
+        {"label": "adapter_decision_rows", "present": bool(decision_rows), "rows": len(decision_rows)},
+    ]
+    if any(row is None for row in (fixed_arc, ood_arc, delayed, grid, prime)):
+        result["status"] = "missing"
+        result["residual"] = claim.get("residual_when_not_supported", [])
+        result["summary"] = "Missing adapter-head delta rows for fixed ARC, ARC OOD, delayed_claim, grid_path, or prime_gap."
+        return result
+
+    seeds = min(
+        as_int(fixed_arc, "seeds"),
+        as_int(ood_arc, "seeds"),
+        as_int(delayed, "seeds"),
+        as_int(grid, "seeds"),
+        as_int(prime, "seeds"),
+    )
+    fixed_arc_delta = as_float(fixed_arc, "top1_delta_headed_minus_shared")
+    delayed_delta = as_float(delayed, "top1_delta_headed_minus_shared")
+    grid_delta = as_float(grid, "top1_delta_headed_minus_shared")
+    ood_arc_top1_delta = as_float(ood_arc, "top1_delta_headed_minus_single")
+    ood_arc_nll_delta = as_float(ood_arc, "nll_delta_headed_minus_single")
+    transfer_margin = 0.005
+    fixed_arc_gate = fixed_arc_delta > 0.0
+    delayed_gate = delayed_delta >= -transfer_margin
+    grid_gate = grid_delta >= -transfer_margin
+    ood_gate = ood_arc_top1_delta >= 0.0 and ood_arc_nll_delta <= 0.0
+    decision = decision_rows[0] if decision_rows else {}
+    promote = fixed_arc_gate and delayed_gate and grid_gate and ood_gate and seeds >= 3
+    result["metrics"] = {
+        "seeds": seeds,
+        "fixed_arc_top1_delta_heads_minus_flat_shared_pp": 100.0 * fixed_arc_delta,
+        "delayed_claim_top1_delta_heads_minus_flat_shared_pp": 100.0 * delayed_delta,
+        "grid_path_top1_delta_heads_minus_flat_shared_pp": 100.0 * grid_delta,
+        "arc_ood_top1_delta_heads_minus_single_task_pp": 100.0 * ood_arc_top1_delta,
+        "arc_ood_nll_delta_heads_minus_single_task": ood_arc_nll_delta,
+        "fixed_arc_gate": fixed_arc_gate,
+        "delayed_claim_gate": delayed_gate,
+        "grid_path_gate": grid_gate,
+        "arc_ood_gate": ood_gate,
+        "promote_shared_trunk_heads": promote,
+        "decision_row": decision.get("decision"),
+        "headed_parameters_fixed_arc": as_float(fixed_arc, "headed_parameters_mean"),
+        "headed_forward_flops_fixed_arc": as_float(fixed_arc, "headed_forward_flops_mean"),
+        "headed_train_updates_fixed_arc": as_float(fixed_arc, "headed_train_updates_mean"),
+    }
+    if seeds < 3:
+        result["status"] = "underpowered"
+    elif promote:
+        result["status"] = "supported"
+    else:
+        result["status"] = "contradicted"
+    if result["status"] != "supported":
+        result["residual"] = claim.get("residual_when_not_supported", [])
+    result["summary"] = (
+        "adapter-head audit: fixed ARC heads-flat delta "
+        f"{100.0 * fixed_arc_delta:+.2f}pp; delayed_claim heads-flat "
+        f"{100.0 * delayed_delta:+.2f}pp; grid_path heads-flat "
+        f"{100.0 * grid_delta:+.2f}pp; ARC OOD heads-single "
+        f"{100.0 * ood_arc_top1_delta:+.2f}pp top-1 and {ood_arc_nll_delta:+.4f} NLL."
+    )
+    result["paper_explanation"] = (
+        "The adapter-head result is treated as an architecture gate, not a broad one-model "
+        "claim. A shared trunk plus domain heads is promoted only if it helps fixed ARC "
+        "without erasing delayed-claim transfer, materially regressing grid_path, or "
+        "losing same-envelope ARC OOD against the matched single-task baseline."
+    )
+    result["chart"] = {
+        "kind": "delta_bar",
+        "unit": "pp",
+        "y_label": "task-head top-1 delta",
+        "rows": [
+            {"label": "fixed ARC vs flat", "value": 100.0 * fixed_arc_delta},
+            {"label": "delayed vs flat", "value": 100.0 * delayed_delta},
+            {"label": "grid vs flat", "value": 100.0 * grid_delta},
+            {"label": "ARC OOD vs single", "value": 100.0 * ood_arc_top1_delta},
         ],
     }
     return result
@@ -1362,7 +1515,18 @@ def evaluate_signal_flight_replay_control(claim: dict[str, Any], repo: Path) -> 
         0,
         "crlp.signal_shadow_replay_audit.v1",
     )
+    rollout_rows = secondary_jsonl(
+        claim,
+        repo,
+        1,
+        "crlp.signal_flight_rollout.summary.v1",
+    )
     shadow = shadow_rows[-1] if shadow_rows else None
+    rollout_by_controller = {
+        str(row.get("controller")): row
+        for row in rollout_rows
+        if row.get("controller")
+    }
     row = rows[-1] if rows else None
     result["evidence_rows"] = [
         metric_row(
@@ -1388,6 +1552,32 @@ def evaluate_signal_flight_replay_control(claim: dict[str, Any], repo: Path) -> 
             ],
         )
     ]
+    for controller in (
+        "goal_heading_no_safety",
+        "flight_steer_to",
+        "neural_raw",
+        "neural_guarded",
+    ):
+        result["evidence_rows"].append(
+            metric_row(
+                f"signal_flight_rollout:{controller}",
+                rollout_by_controller.get(controller),
+                [
+                    "episodes",
+                    "ticks_per_episode",
+                    "reach_rate",
+                    "death_rate",
+                    "stuck_rate",
+                    "damage_episode_rate",
+                    "avg_progress",
+                    "avg_hull_loss",
+                    "avg_utility",
+                    "hypothesis_layer",
+                    "hypothesis_certified_candidate_rate",
+                    "hypothesis_selected_certified_rate",
+                ],
+            )
+        )
     result["evidence_rows"].append(
         metric_row(
             "signal_live_shadow",
@@ -1421,6 +1611,8 @@ def evaluate_signal_flight_replay_control(claim: dict[str, Any], repo: Path) -> 
     target_mask = as_float(row, "target_candidate_mask_rate")
     groups = as_int(row, "utility_groups")
     parameter_count = as_int(row, "parameter_count")
+    rollout_guarded = rollout_by_controller.get("neural_guarded")
+    rollout_baseline = rollout_by_controller.get("goal_heading_no_safety")
     result["metrics"] = {
         "top1": top1,
         "baseline_top1": baseline_top1,
@@ -1441,6 +1633,18 @@ def evaluate_signal_flight_replay_control(claim: dict[str, Any], repo: Path) -> 
         "shadow_frames": as_int(shadow, "shadow_frames", 0),
         "shadow_disagreement_rate": as_float(shadow, "shadow_disagreement_rate", 0.0),
         "shadow_counterfactual_replay_available": bool(shadow.get("counterfactual_replay_available")) if shadow else False,
+        "rollout_controller_count": len(rollout_by_controller),
+        "rollout_neural_guarded_utility": as_float(rollout_guarded, "avg_utility", 0.0),
+        "rollout_baseline_utility": as_float(rollout_baseline, "avg_utility", 0.0),
+        "rollout_neural_guarded_reach_rate": as_float(rollout_guarded, "reach_rate", 0.0),
+        "rollout_baseline_reach_rate": as_float(rollout_baseline, "reach_rate", 0.0),
+        "rollout_neural_guarded_damage_episode_rate": as_float(rollout_guarded, "damage_episode_rate", 0.0),
+        "rollout_baseline_damage_episode_rate": as_float(rollout_baseline, "damage_episode_rate", 0.0),
+        "rollout_hypothesis_selected_certified_rate": as_float(
+            rollout_guarded,
+            "hypothesis_selected_certified_rate",
+            0.0,
+        ),
     }
 
     if groups < 50:
@@ -1462,17 +1666,30 @@ def evaluate_signal_flight_replay_control(claim: dict[str, Any], repo: Path) -> 
     if result["status"] != "supported":
         result["residual"] = claim.get("residual_when_not_supported", [])
 
+    rollout_summary = ""
+    if rollout_guarded is not None and rollout_baseline is not None:
+        rollout_summary = (
+            f" Closed-loop rollout neural_guarded utility "
+            f"{num(as_float(rollout_guarded, 'avg_utility'))} vs baseline "
+            f"{num(as_float(rollout_baseline, 'avg_utility'))}, reach "
+            f"{pct(as_float(rollout_guarded, 'reach_rate'))} vs "
+            f"{pct(as_float(rollout_baseline, 'reach_rate'))}."
+        )
+
     result["summary"] = (
         f"Signal offline replay ranker top-1 {pct(top1)} vs baseline {pct(baseline_top1)} "
         f"({100.0 * (top1 - baseline_top1):+.2f}pp), utility {num(selected_utility)} vs "
         f"{num(baseline_utility)}, regret {num(regret)} vs {num(baseline_regret)}, "
         f"damage {pct(damage)} vs {pct(baseline_damage)}, deaths {pct(death)} vs {pct(baseline_death)}; "
         f"live shadow frames={as_int(shadow, 'shadow_frames', 0)}."
+        f"{rollout_summary}"
     )
     result["paper_explanation"] = (
         "This is an application vignette, not a live-control claim: Signal contributes a "
         "replay-certified bounded-control surface where the neural component ranks nine "
-        "WASD candidates and simulator replay owns the outcome labels."
+        "WASD candidates and simulator replay owns the outcome labels. The rollout "
+        "summary is a closed-loop bridge around certified control-target hypotheses, "
+        "not a multiplayer performance claim."
     )
     result["chart"] = {
         "kind": "coverage_bar",
@@ -1515,6 +1732,10 @@ def evaluate_signal_live_neural_active(claim: dict[str, Any], repo: Path) -> dic
                 "candidate_score_rows",
                 "candidate_score_min_count",
                 "safety_gate_rows",
+                "protocol_checked_rows",
+                "protocol_compatible_rows",
+                "protocol_hash",
+                "protocol_statuses",
                 "replay_ready_rows",
                 "damage_events",
                 "death_events",
@@ -1540,6 +1761,8 @@ def evaluate_signal_live_neural_active(claim: dict[str, Any], repo: Path) -> dic
     candidate_score_rows = as_int(row, "candidate_score_rows")
     candidate_score_min_count = as_int(row, "candidate_score_min_count")
     safety_gate_rows = as_int(row, "safety_gate_rows")
+    protocol_checked_rows = as_int(row, "protocol_checked_rows")
+    protocol_compatible_rows = as_int(row, "protocol_compatible_rows")
     replay_ready_rows = as_int(row, "replay_ready_rows")
     damage_events = as_int(row, "damage_events")
     death_events = as_int(row, "death_events")
@@ -1560,6 +1783,9 @@ def evaluate_signal_live_neural_active(claim: dict[str, Any], repo: Path) -> dic
         "candidate_score_rows": candidate_score_rows,
         "candidate_score_min_count": candidate_score_min_count,
         "safety_gate_rows": safety_gate_rows,
+        "protocol_checked_rows": protocol_checked_rows,
+        "protocol_compatible_rows": protocol_compatible_rows,
+        "protocol_hash": str(row.get("protocol_hash") or ""),
         "replay_ready_rows": replay_ready_rows,
         "active_frame_rows": len(frames),
         "damage_events": damage_events,
@@ -1588,6 +1814,8 @@ def evaluate_signal_live_neural_active(claim: dict[str, Any], repo: Path) -> dic
         or candidate_score_rows < min_rows
         or candidate_score_min_count < 9
         or safety_gate_rows < min_rows
+        or protocol_checked_rows < min_rows
+        or protocol_compatible_rows < min_rows
         or replay_ready_rows < min_rows
         or len(frames) < min_rows
         or not math.isfinite(inference_p95)
@@ -1607,13 +1835,15 @@ def evaluate_signal_live_neural_active(claim: dict[str, Any], repo: Path) -> dic
         "Signal live neural-active pilot executed "
         f"{window_active_rows} recent neural-source rows from checkpoint "
         f"{checkpoint_hash[:12] or 'missing'} with p95 inference {num(inference_p95, 3)} ms, "
-        f"{replay_ready_rows} replay-ready rows, safety-gate rows={safety_gate_rows}, "
+        f"{replay_ready_rows} replay-ready rows, protocol-compatible rows={protocol_compatible_rows}, "
+        f"safety-gate rows={safety_gate_rows}, "
         f"damage events={damage_events}, deaths={death_events}; no baseline comparison is claimed."
     )
     result["paper_explanation"] = (
         "This supports only the existence of guarded live neural-active execution: "
         "the running Signal pilot applies checkpoint-ranked WASD actions and logs "
-        "the fields needed for replay. It does not yet show that active neural "
+        "the fields needed for replay, with a source-header protocol drift guard. "
+        "It does not yet show that active neural "
         "control improves utility or safety versus the heuristic baseline."
     )
     result["chart"] = {
@@ -1623,6 +1853,7 @@ def evaluate_signal_live_neural_active(claim: dict[str, Any], repo: Path) -> dic
         "rows": [
             {"label": "active", "value": window_active_rows, "p95_ms": inference_p95},
             {"label": "replay-ready", "value": replay_ready_rows, "p95_ms": inference_p95},
+            {"label": "protocol-compatible", "value": protocol_compatible_rows, "p95_ms": inference_p95},
             {"label": "active frames", "value": len(frames), "p95_ms": inference_p95},
         ],
     }
@@ -1746,6 +1977,7 @@ EVALUATORS = {
     "delayed_claim_leave_one_out": evaluate_delayed_claim_leave_one_out,
     "multitask_capacity_sweep": evaluate_multitask_capacity_sweep,
     "tiny_net_plateau_audit": evaluate_tiny_net_plateau_audit,
+    "adapter_heads_shared_trunk": evaluate_adapter_heads_shared_trunk,
     "rejected_candidate_reason_learning": evaluate_rejected_candidate_reason_learning,
     "hypothesis_library_promotion": evaluate_hypothesis_library_promotion,
     "signal_flight_replay_control": evaluate_signal_flight_replay_control,

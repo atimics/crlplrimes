@@ -186,6 +186,18 @@ def summarize(rows: list[dict[str, Any]], log_path: Path, window_rows: int, stal
     for row in window:
         for reason in row.get("safety_reject_reasons") or []:
             safety_reasons[str(reason)] += 1
+    protocol_statuses = collections.Counter(
+        str(row.get("protocol_status") or "missing") for row in window
+    )
+    protocol_hashes = collections.Counter(
+        str(row.get("protocol_hash")) for row in window if row.get("protocol_hash")
+    )
+    protocol_checked_rows = sum(
+        1 for row in window if row.get("protocol_status") not in (None, "", "missing")
+    )
+    protocol_compatible_rows = sum(
+        1 for row in window if row.get("protocol_compatible") is True or row.get("protocol_status") == "ok"
+    )
 
     candidate_counts = [
         len(row.get("candidate_scores") or [])
@@ -235,6 +247,11 @@ def summarize(rows: list[dict[str, Any]], log_path: Path, window_rows: int, stal
         "safety_gate_rows": len(window) - safety_gates.get("missing", 0),
         "safety_gates": counter_dict(safety_gates),
         "safety_reject_reasons": counter_dict(safety_reasons),
+        "protocol_checked_rows": protocol_checked_rows,
+        "protocol_compatible_rows": protocol_compatible_rows,
+        "protocol_statuses": counter_dict(protocol_statuses),
+        "protocol_hash": protocol_hashes.most_common(1)[0][0] if protocol_hashes else None,
+        "protocol_hashes": counter_dict(protocol_hashes),
         "replay_ready_rows": len(replay_rows),
         "top_actions": top_counts(actions),
         "shadow_compared_rows": shadow_compared,
@@ -266,6 +283,11 @@ def frame_row(row: dict[str, Any]) -> dict[str, Any]:
         "checkpoint_path": row.get("checkpoint_path"),
         "feature_set": row.get("feature_set"),
         "policy": row.get("policy"),
+        "protocol_status": row.get("protocol_status"),
+        "protocol_compatible": row.get("protocol_compatible"),
+        "protocol_hash": row.get("protocol_hash"),
+        "protocol_mismatch_count": row.get("protocol_mismatch_count"),
+        "protocol_missing_count": row.get("protocol_missing_count"),
         "safety_gate": row.get("safety_gate"),
         "safety_reject_reasons": row.get("safety_reject_reasons") or [],
         "inference_ms": row.get("inference_ms"),
@@ -304,6 +326,7 @@ def write_report(path: Path, summary: dict[str, Any]) -> None:
         f"| Active source | `{summary['latest_active_source']}` |",
         f"| Checkpoint | `{str(summary['checkpoint_hash'] or '')[:12]}` |",
         f"| Inference p95 ms | {summary['inference_ms_p95']} |",
+        f"| Protocol-compatible rows | {summary['protocol_compatible_rows']} |",
         f"| Replay-ready rows | {summary['replay_ready_rows']} |",
         f"| Damage events | {summary['damage_events']} |",
         f"| Death events | {summary['death_events']} |",

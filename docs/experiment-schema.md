@@ -20,7 +20,9 @@ evaluator that first enumerates certified control-target hypotheses (`direct`,
 checkpoints rank WASD actions around the selected hypothesis. The rollout
 compares `goal_heading_no_safety`, `flight_steer_to`, `neural_raw`, and
 `neural_guarded` controllers on identical deterministic episodes. The external
-websocket pilot remains available with no hand rock-avoidance safety wrapper.
+websocket pilot records a compatibility hash from Signal's protocol headers
+before active play, so protocol drift turns into underpowered live evidence
+instead of silent decoder reuse.
 The summary rows report neural utility/regret/damage/death metrics beside
 primitive and deterministic flight baselines.
 Signal mining now adds the next tactical layer: sampled states enumerate
@@ -146,8 +148,8 @@ Verifier-backed first-class task schemas:
 | `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality, local-dead-end, component-trap, clear-path admissible-bound, and distance-dominance predicates | cannot reject an optimal move | budgeted certified gate with family/budget proposer sweep |
 | `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold predicates plus direct utility-margin and indirect risk-margin predicates | finite-generator safety check over train+validation support | production threshold+margin gate plus matched proposer baselines and shifted/noisy stress rows; direct clean residual resolved, proxy/noisy frontier exposed |
 | `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | copy/mask/intersection/layer-relation/geometric/object transform grammar | train-pair consistency plus unique grammar-consistent test prediction | fixed-sample certified transform gate plus ARC JSON directory loader and matched `NNProgram` proposer rows for narrow geometry/object evidence |
-| `signal_flight` | Signal ship kinematics, hull, path, clearance observations, and target/control-point geometry | WASD key combinations around certified control-target hypotheses | deterministic replay of WASD hypotheses in Signal's authoritative simulator | WASD controls plus direct/nav/bypass/brake control-target hypotheses; richer predicates planned | replay-certified progress, hull loss, damage, death outcomes, and rollout-time control-target clearance/progress certificates | counterfactual utility scorer, certified-hypothesis rollout evaluator, and external websocket pilot |
-| `signal_mining` | Signal tactical mining state after deterministic scenario prefixes: ship state, tow chain, rocks, fragments, refinery/dock demand | bounded tactical options: autopilot loop, mine nearest clear rock, mine richest rock, collect fragments, deliver refinery, dock/repair | fresh deterministic replay of each tactical option in Signal's authoritative simulator | mine/tow/smelt option hypotheses that compile to normal player input intents | replay-certified utility, smelts, pickups, fractures, tow count, repair-kit deltas, hull loss, damage, and death | tactical option ranker prototype with fixed-priority baseline via `make signal-mining` |
+| `signal_flight` | Signal ship kinematics, hull, path, clearance observations, and target/control-point geometry | WASD key combinations around certified control-target hypotheses | deterministic replay of WASD hypotheses in Signal's authoritative simulator | WASD controls plus direct/nav/bypass/brake control-target hypotheses; richer predicates planned | replay-certified progress, hull loss, damage, death outcomes, rollout-time control-target clearance/progress certificates, and live websocket protocol compatibility | counterfactual utility scorer, certified-hypothesis rollout evaluator, and protocol-checked external websocket pilot |
+| `signal_mining` | Signal tactical mining state after deterministic scenario prefixes: ship state, tow chain, rocks, fragments, refinery/dock demand | bounded policy hypotheses from target selector, route constraint, speed/contact profile, and interaction primitive | fresh deterministic replay of each grammar hypothesis in Signal's authoritative simulator | mine/tow/smelt/trade hypotheses that compile to normal player input intents | replay-certified utility, smelts, pickups, fractures, tow count, repair-kit deltas, hull loss, damage, and death | grammar hypothesis ranker with fixed-priority grammar baseline via `make signal-mining` |
 
 Verifier-backed case-study discovery schemas:
 
@@ -165,7 +167,7 @@ Leakage status today:
 | `program_synthesis` | `priors_allowed` | 18 enabled structural-prior DSL abstraction features |
 | `arc_agi` | `forbidden` | 49 enabled observations over grid cells, output coordinate, candidate color, and action one-hot |
 | `signal_flight` | `forbidden` | 48 enabled observations over WASD candidate controls, kinematics, clearances, path state, hull, and heading |
-| `signal_mining` | `forbidden` | 40 enabled observations over tactical option id, ship state, tow state, rock/fragment distances, refinery/dock demand, and prefix context |
+| `signal_mining` | `forbidden` | 70 enabled observations over grammar hypothesis id, target/route/speed/interaction primitives, ship state, tow state, rock/fragment distances, refinery/dock demand, and prefix context |
 
 ## Certified Modular Gate Search
 

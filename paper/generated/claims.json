@@ -1641,6 +1641,11 @@
           "rows": 8
         },
         {
+          "label": "tiny_net_audit_verdict_rows",
+          "present": false,
+          "rows": 0
+        },
+        {
           "best_hidden": "16x8",
           "best_top1_mean": 0.4163333333333334,
           "label": "arc_width_help",
@@ -1662,6 +1667,7 @@
       "metrics": {
         "arc_best_hidden": "16x8",
         "arc_larger_width_helped": true,
+        "audit_verdict_rows": 0,
         "capacities": [
           "16x8",
           "32x16",
@@ -1676,6 +1682,7 @@
         ],
         "min_capacities_per_core_domain": 4,
         "plateau_rows": 32,
+        "shared_audit_ready_count": 0,
         "shared_plateau_count": 10,
         "shared_plateau_rate": 0.625,
         "shared_rows": 16,
@@ -1885,7 +1892,8 @@
           "neural selected_utility exceeds baseline_selected_utility",
           "neural regret is lower than baseline_regret",
           "neural damage and death rates are no worse than baseline on the held-out trace",
-          "candidate mask sanity rates remain 1.0"
+          "candidate mask sanity rates remain 1.0",
+          "closed-loop rollout evidence is reported separately as a bridge metric, not as an active multiplayer performance claim"
         ]
       },
       "derived_claims": [
@@ -1915,13 +1923,77 @@
           "utility_groups": 84
         },
         {
+          "avg_hull_loss": 35.37015152,
+          "avg_progress": 1865.129677455,
+          "avg_utility": -1.464186632,
+          "damage_episode_rate": 0.791666667,
+          "death_rate": 0.083333333,
+          "episodes": 24,
+          "hypothesis_certified_candidate_rate": 0.0,
+          "hypothesis_layer": "certified_control_target_v1",
+          "hypothesis_selected_certified_rate": 0.0,
+          "label": "signal_flight_rollout:goal_heading_no_safety",
+          "present": true,
+          "reach_rate": 0.083333333,
+          "stuck_rate": 0.0,
+          "ticks_per_episode": 900
+        },
+        {
+          "avg_hull_loss": 0.759572347,
+          "avg_progress": 699.84318161,
+          "avg_utility": 0.160493886,
+          "damage_episode_rate": 0.208333333,
+          "death_rate": 0.0,
+          "episodes": 24,
+          "hypothesis_certified_candidate_rate": 0.0,
+          "hypothesis_layer": "certified_control_target_v1",
+          "hypothesis_selected_certified_rate": 0.0,
+          "label": "signal_flight_rollout:flight_steer_to",
+          "present": true,
+          "reach_rate": 0.0,
+          "stuck_rate": 0.0,
+          "ticks_per_episode": 900
+        },
+        {
+          "avg_hull_loss": 11.393864314,
+          "avg_progress": 694.467800458,
+          "avg_utility": 0.092008972,
+          "damage_episode_rate": 0.625,
+          "death_rate": 0.0,
+          "episodes": 24,
+          "hypothesis_certified_candidate_rate": 0.152406391,
+          "hypothesis_layer": "certified_control_target_v1",
+          "hypothesis_selected_certified_rate": 0.40449711,
+          "label": "signal_flight_rollout:neural_raw",
+          "present": true,
+          "reach_rate": 0.125,
+          "stuck_rate": 0.0,
+          "ticks_per_episode": 900
+        },
+        {
+          "avg_hull_loss": 2.606704076,
+          "avg_progress": 696.215846062,
+          "avg_utility": 0.356352311,
+          "damage_episode_rate": 0.25,
+          "death_rate": 0.0,
+          "episodes": 24,
+          "hypothesis_certified_candidate_rate": 0.163805534,
+          "hypothesis_layer": "certified_control_target_v1",
+          "hypothesis_selected_certified_rate": 0.408758769,
+          "label": "signal_flight_rollout:neural_guarded",
+          "present": true,
+          "reach_rate": 0.125,
+          "stuck_rate": 0.0,
+          "ticks_per_episode": 900
+        },
+        {
           "counterfactual_replay_available": false,
-          "inference_ms_p95": 0.750708,
+          "inference_ms_p95": 0.088958,
           "label": "signal_live_shadow",
           "present": true,
-          "shadow_disagreement_rate": 0.7351178405659953,
-          "shadow_disagreements": 16313,
-          "shadow_frames": 22191
+          "shadow_disagreement_rate": 0.7567567567567568,
+          "shadow_disagreements": 56,
+          "shadow_frames": 74
         }
       ],
       "experiments": [],
@@ -1936,18 +2008,26 @@
         "regret": 0.007348488,
         "regret_delta": -0.007241118999999999,
         "regret_reduction_pct": 49.63203601029143,
+        "rollout_baseline_damage_episode_rate": 0.791666667,
+        "rollout_baseline_reach_rate": 0.083333333,
+        "rollout_baseline_utility": -1.464186632,
+        "rollout_controller_count": 4,
+        "rollout_hypothesis_selected_certified_rate": 0.408758769,
+        "rollout_neural_guarded_damage_episode_rate": 0.25,
+        "rollout_neural_guarded_reach_rate": 0.125,
+        "rollout_neural_guarded_utility": 0.356352311,
         "selected_damage_rate": 0.023809524,
         "selected_death_rate": 0.0,
         "selected_utility": 0.14317231,
         "shadow_counterfactual_replay_available": false,
-        "shadow_disagreement_rate": 0.7351178405659953,
-        "shadow_frames": 22191,
+        "shadow_disagreement_rate": 0.7567567567567568,
+        "shadow_frames": 74,
         "top1": 0.797619048,
         "top1_delta_pp": 11.904761900000004,
         "utility_delta": 0.00724111999999999,
         "utility_groups": 84
       },
-      "paper_explanation": "This is an application vignette, not a live-control claim: Signal contributes a replay-certified bounded-control surface where the neural component ranks nine WASD candidates and simulator replay owns the outcome labels.",
+      "paper_explanation": "This is an application vignette, not a live-control claim: Signal contributes a replay-certified bounded-control surface where the neural component ranks nine WASD candidates and simulator replay owns the outcome labels. The rollout summary is a closed-loop bridge around certified control-target hypotheses, not a multiplayer performance claim.",
       "paper_surfaces": [
         "abstract",
         "schema_table",
@@ -1970,10 +2050,12 @@
         ],
         "schemas": [
           "crlp.signal_flight.summary.v1",
-          "crlp.signal_shadow_replay_audit.v1"
+          "crlp.signal_shadow_replay_audit.v1",
+          "crlp.signal_flight_rollout.summary.v1"
         ],
         "secondary_sources": [
-          "results/2026-05-17-signal-flight/shadow_replay_audit.jsonl"
+          "results/2026-05-17-signal-flight/shadow_replay_audit.jsonl",
+          "results/2026-05-17-signal-flight/rollout_summary.jsonl"
         ],
         "source": "results/2026-05-17-signal-flight/summary.jsonl",
         "source_command": "make signal-flight",
@@ -1988,7 +2070,7 @@
         "R-SIG.3"
       ],
       "status": "supported",
-      "summary": "Signal offline replay ranker top-1 79.76% vs baseline 67.86% (+11.90pp), utility 0.1432 vs 0.1359, regret 0.0073 vs 0.0146, damage 2.38% vs 2.38%, deaths 0.00% vs 0.00%; live shadow frames=22191.",
+      "summary": "Signal offline replay ranker top-1 79.76% vs baseline 67.86% (+11.90pp), utility 0.1432 vs 0.1359, regret 0.0073 vs 0.0146, damage 2.38% vs 2.38%, deaths 0.00% vs 0.00%; live shadow frames=74. Closed-loop rollout neural_guarded utility 0.3564 vs baseline -1.4642, reach 12.50% vs 8.33%.",
       "title": "Signal replay-certified WASD ranker improves held-out control utility"
     },
     {
@@ -1997,24 +2079,29 @@
         "rows": [
           {
             "label": "active",
-            "p95_ms": 0.123958,
-            "value": 250
+            "p95_ms": 0.088958,
+            "value": 74
           },
           {
             "label": "replay-ready",
-            "p95_ms": 0.123958,
-            "value": 249
+            "p95_ms": 0.088958,
+            "value": 74
+          },
+          {
+            "label": "protocol-compatible",
+            "p95_ms": 0.088958,
+            "value": 74
           },
           {
             "label": "active frames",
-            "p95_ms": 0.123958,
-            "value": 249
+            "p95_ms": 0.088958,
+            "value": 74
           }
         ],
         "unit": "rows",
         "y_label": "logged live rows"
       },
-      "claim_text": "A guarded Signal neural_active live pilot executes checkpoint-ranked WASD actions on a running local server with logged active-source, checkpoint hash, inference latency, safety gates, damage/death telemetry, and replay-ready trace rows.",
+      "claim_text": "A guarded Signal neural_active live pilot executes checkpoint-ranked WASD actions on a running local server with logged active-source, checkpoint hash, inference latency, protocol compatibility, safety gates, damage/death telemetry, and replay-ready trace rows.",
       "claim_type": "application_vignette",
       "decision_rule": {
         "max_inference_p95_ms": 5.0,
@@ -2028,6 +2115,7 @@
           "window_active_rows >= 50",
           "candidate_score_rows >= 50 and candidate_score_min_count >= 9",
           "safety_gate_rows >= 50",
+          "protocol_checked_rows >= 50 and protocol_compatible_rows >= 50",
           "replay_ready_rows >= 50",
           "inference_ms_p95 <= 5.0",
           "stale_within_log == false"
@@ -2040,57 +2128,66 @@
       ],
       "evidence_rows": [
         {
-          "active_rows": 10078,
+          "active_rows": 74,
           "candidate_score_min_count": 9,
-          "candidate_score_rows": 249,
+          "candidate_score_rows": 74,
           "checkpoint_hash": "f12b644ed9fa840e5af7ab8721c2cf5e387239660aa97f161ab10bf948660b19",
           "checkpoint_path": "build/float/signal_flight_wall_probe/signal_flight_epochs60.nnckpt",
-          "damage_events": 0,
+          "damage_events": 2,
           "death_events": 0,
           "dry_run_rows": 0,
           "feature_set": "signal-flight-live-v2",
-          "inference_ms_p95": 0.123958,
+          "inference_ms_p95": 0.088958,
           "label": "signal_live_active",
           "latest_active_source": "neural",
           "latest_brain_mode": "neural_active",
-          "latest_row_age_at_capture_ms": 0,
-          "log_path": "build/float/signal_live_brain/live-9093-reset-20260518.jsonl",
+          "latest_row_age_at_capture_ms": 1,
+          "log_path": "build/float/signal_live_brain/live-protocol-20260518.jsonl",
           "present": true,
-          "replay_ready_rows": 249,
-          "rows_seen": 10079,
-          "safety_gate_rows": 250,
+          "protocol_checked_rows": 74,
+          "protocol_compatible_rows": 74,
+          "protocol_hash": "8c886558a0146c519eddfe30f785fddd9bb00ffe05dbe815c2ad8271d1e336c1",
+          "protocol_statuses": {
+            "ok": 74
+          },
+          "replay_ready_rows": 74,
+          "rows_seen": 74,
+          "safety_gate_rows": 74,
           "stale_within_log": false,
-          "window_active_rows": 250
+          "window_active_rows": 74
         },
         {
           "label": "signal_live_active_frames",
           "present": true,
-          "rows": 249
+          "rows": 74
         }
       ],
       "experiments": [],
       "id": "C9.signal_live_neural_active",
       "metrics": {
-        "active_frame_rows": 249,
-        "active_rows": 10078,
+        "active_frame_rows": 74,
+        "active_rows": 74,
         "candidate_score_min_count": 9,
-        "candidate_score_rows": 249,
+        "candidate_score_rows": 74,
         "checkpoint_hash": "f12b644ed9fa840e5af7ab8721c2cf5e387239660aa97f161ab10bf948660b19",
         "checkpoint_hash_short": "f12b644ed9fa",
         "checkpoint_path": "build/float/signal_flight_wall_probe/signal_flight_epochs60.nnckpt",
-        "damage_events": 0,
+        "damage_events": 2,
         "death_events": 0,
         "dry_run_rows": 0,
         "feature_set": "signal-flight-live-v2",
-        "inference_ms_p95": 0.123958,
+        "inference_ms_p95": 0.088958,
         "latest_active_source": "neural",
         "latest_brain_mode": "neural_active",
-        "replay_ready_rows": 249,
-        "safety_gate_rows": 250,
+        "protocol_checked_rows": 74,
+        "protocol_compatible_rows": 74,
+        "protocol_hash": "8c886558a0146c519eddfe30f785fddd9bb00ffe05dbe815c2ad8271d1e336c1",
+        "replay_ready_rows": 74,
+        "safety_gate_rows": 74,
         "stale_within_log": false,
-        "window_active_rows": 250
+        "window_active_rows": 74
       },
-      "paper_explanation": "This supports only the existence of guarded live neural-active execution: the running Signal pilot applies checkpoint-ranked WASD actions and logs the fields needed for replay. It does not yet show that active neural control improves utility or safety versus the heuristic baseline.",
+      "paper_explanation": "This supports only the existence of guarded live neural-active execution: the running Signal pilot applies checkpoint-ranked WASD actions and logs the fields needed for replay, with a source-header protocol drift guard. It does not yet show that active neural control improves utility or safety versus the heuristic baseline.",
       "paper_surfaces": [
         "schema_table",
         "application_vignette",
@@ -2120,7 +2217,7 @@
         "source": "results/2026-05-17-signal-flight/live_active_summary.jsonl",
         "source_command": "make signal-live-active-summary SIGNAL_LIVE_ACTIVE_LOG=<live-brain-log>",
         "source_row_count": 1,
-        "source_sha256": "6b8680c343bafb58a92ee68c2fe2d0d045be085df30976df5d00ef560ca235c6"
+        "source_sha256": "c5a36919d98552fd62bdbc0c3ed9b4f99a1bd0eff6fa4f787a5b8de012342d51"
       },
       "required_for_submission": true,
       "residual": [],
@@ -2129,7 +2226,7 @@
         "R-SIG.3"
       ],
       "status": "supported",
-      "summary": "Signal live neural-active pilot executed 250 recent neural-source rows from checkpoint f12b644ed9fa with p95 inference 0.124 ms, 249 replay-ready rows, safety-gate rows=250, damage events=0, deaths=0; no baseline comparison is claimed.",
+      "summary": "Signal live neural-active pilot executed 74 recent neural-source rows from checkpoint f12b644ed9fa with p95 inference 0.089 ms, 74 replay-ready rows, protocol-compatible rows=74, safety-gate rows=74, damage events=2, deaths=0; no baseline comparison is claimed.",
       "title": "Signal guarded neural-active pilot executes live checkpoint-ranked actions"
     }
   ],
@@ -2217,7 +2314,7 @@
             "required_for_submission": true,
             "residual": [],
             "status": "supported",
-            "summary": "Signal offline replay ranker top-1 79.76% vs baseline 67.86% (+11.90pp), utility 0.1432 vs 0.1359, regret 0.0073 vs 0.0146, damage 2.38% vs 2.38%, deaths 0.00% vs 0.00%; live shadow frames=22191.",
+            "summary": "Signal offline replay ranker top-1 79.76% vs baseline 67.86% (+11.90pp), utility 0.1432 vs 0.1359, regret 0.0073 vs 0.0146, damage 2.38% vs 2.38%, deaths 0.00% vs 0.00%; live shadow frames=74. Closed-loop rollout neural_guarded utility 0.3564 vs baseline -1.4642, reach 12.50% vs 8.33%.",
             "title": "Signal replay-certified WASD ranker improves held-out control utility"
           }
         ],
@@ -2881,7 +2978,7 @@
     ],
     "schema": "crlp.paper_claim_experiment_map.v1"
   },
-  "generated_at": "2026-05-18T04:19:22.620508+00:00",
+  "generated_at": "2026-05-18T08:28:40.561976+00:00",
   "limitations": [
     {
       "claim_id": "C2.prime_proposer_fixed_budget",
@@ -3016,24 +3113,31 @@
     },
     "results/2026-05-17-signal-flight/live_active_frames.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-18T04:15:46.588076+00:00",
-      "row_count": 249,
-      "sha256": "24d7a8dfe6c51ce7a28775c8b893670f377fc4b2ba084b49f6c32ef65325f354",
-      "size_bytes": 462768
+      "modified_utc": "2026-05-18T08:27:46.704281+00:00",
+      "row_count": 74,
+      "sha256": "fb8d89c397079607f7adc5fa9e191e2ef0b8402fa873a62356568fa416b4bd21",
+      "size_bytes": 166874
     },
     "results/2026-05-17-signal-flight/live_active_summary.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-18T04:15:46.584954+00:00",
+      "modified_utc": "2026-05-18T08:27:46.693444+00:00",
       "row_count": 1,
-      "sha256": "6b8680c343bafb58a92ee68c2fe2d0d045be085df30976df5d00ef560ca235c6",
-      "size_bytes": 1882
+      "sha256": "c5a36919d98552fd62bdbc0c3ed9b4f99a1bd0eff6fa4f787a5b8de012342d51",
+      "size_bytes": 2203
+    },
+    "results/2026-05-17-signal-flight/rollout_summary.jsonl": {
+      "exists": true,
+      "modified_utc": "2026-05-18T08:21:29.186262+00:00",
+      "row_count": 4,
+      "sha256": "a643884573ea161686a685fb86f9f11208b8914931d58583e4a7cd9b257cfb96",
+      "size_bytes": 4233
     },
     "results/2026-05-17-signal-flight/shadow_replay_audit.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:46:18.288289+00:00",
+      "modified_utc": "2026-05-18T08:27:46.788093+00:00",
       "row_count": 1,
-      "sha256": "583310933cca99557e4536289b804f496637e155db08da3e6b80c0a8eb94bde3",
-      "size_bytes": 807
+      "sha256": "6120a26e0c9715a54a85226675c02f168c451ba05f799704c75c06c25cd51f1c",
+      "size_bytes": 780
     },
     "results/2026-05-17-signal-flight/summary.jsonl": {
       "exists": true,
@@ -3121,7 +3225,7 @@
     },
     "results/latest/trace_determinism.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-18T04:19:22.546168+00:00",
+      "modified_utc": "2026-05-18T08:28:40.487262+00:00",
       "row_count": 3,
       "sha256": "476f76325fea0cec2327485185b09a8c7bb55e16aefa8aca676fb50121318cd9",
       "size_bytes": 2201

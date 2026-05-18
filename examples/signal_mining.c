@@ -18,8 +18,9 @@
 #define SM_TRACE_SCHEMA "signal.mining_counterfactual.v1"
 #define SM_SUMMARY_SCHEMA "crlp.signal_mining.summary.v1"
 #define SM_TASK_NAME "signal_mining"
-#define SM_OPTION_COUNT 6u
-#define SM_FEATURE_COUNT 40u
+#define SM_BASE_OPTION_COUNT 8u
+#define SM_OPTION_COUNT 14u
+#define SM_FEATURE_COUNT 70u
 #define SM_SIM_DT (1.0f / 120.0f)
 
 typedef enum {
@@ -29,7 +30,44 @@ typedef enum {
     SM_OPT_COLLECT_LOCAL = 3,
     SM_OPT_DELIVER_REFINERY = 4,
     SM_OPT_DOCK_REPAIR = 5,
+    SM_OPT_SUPPLY_SHIPYARD = 6,
+    SM_OPT_EXPORT_REPAIR_KITS = 7,
 } sm_option_t;
+
+typedef enum {
+    SM_ROUTE_DIRECT = 0,
+    SM_ROUTE_CLEAR_APPROACH = 1,
+    SM_ROUTE_STATION_EGRESS = 2,
+    SM_ROUTE_DOCK_LANE = 3,
+    SM_ROUTE_COUNT = 4,
+} sm_route_rule_t;
+
+typedef enum {
+    SM_SPEED_CRUISE = 0,
+    SM_SPEED_SLOW_CONTACT = 1,
+    SM_SPEED_FAST_TRANSIT = 2,
+    SM_SPEED_COUNT = 3,
+} sm_speed_rule_t;
+
+typedef enum {
+    SM_INTERACT_NONE = 0,
+    SM_INTERACT_MINE = 1,
+    SM_INTERACT_TRACTOR = 2,
+    SM_INTERACT_DOCK = 3,
+    SM_INTERACT_TRADE = 4,
+    SM_INTERACT_COUNT = 5,
+} sm_interaction_rule_t;
+
+typedef struct {
+    sm_option_t option;
+    const char *name;
+    const char *target_rule;
+    sm_route_rule_t route_rule;
+    sm_speed_rule_t speed_rule;
+    sm_interaction_rule_t interaction_rule;
+    bool opportunistic;
+    bool station_legal;
+} sm_policy_hypothesis_t;
 
 typedef struct {
     uint32_t world_seed;
@@ -40,6 +78,9 @@ typedef struct {
     vec2 spawn_pos;
     vec2 spawn_vel;
     float spawn_angle;
+    float spawn_hull;
+    bool enable_npcs;
+    bool start_docked;
 } sm_scenario_init_t;
 
 typedef struct {
@@ -84,6 +125,15 @@ typedef struct {
     int final_towed;
     int station_ingots_delta;
     int repair_kits_delta;
+    double hull_gain;
+    double dock_progress;
+    int final_docked;
+    int start_repair_kits;
+    int final_repair_kits;
+    int final_ship_repair_kits;
+    int final_ship_shipyard_inputs;
+    int shipyard_inputs_delta;
+    int repair_dock_kits_delta;
 } sm_outcome_t;
 
 typedef struct {
@@ -134,24 +184,62 @@ typedef struct {
     size_t option_target[SM_OPTION_COUNT];
 } sm_metrics_t;
 
-static const char *SM_OPTION_NAMES[SM_OPTION_COUNT] = {
-    "autopilot_loop",
-    "mine_nearest_clear",
-    "mine_richest",
-    "collect_local_fragments",
-    "deliver_refinery",
-    "dock_repair",
+static const sm_policy_hypothesis_t SM_HYPOTHESES[SM_OPTION_COUNT] = {
+    {SM_OPT_AUTOPILOT_LOOP, "autopilot_loop", "autopilot_target", SM_ROUTE_DIRECT, SM_SPEED_CRUISE, SM_INTERACT_NONE, false, false},
+    {SM_OPT_MINE_CLEAR, "mine_clear_cruise", "nearest_clear_rock", SM_ROUTE_CLEAR_APPROACH, SM_SPEED_CRUISE, SM_INTERACT_MINE, false, false},
+    {SM_OPT_MINE_CLEAR, "mine_clear_slow_contact", "nearest_clear_rock", SM_ROUTE_CLEAR_APPROACH, SM_SPEED_SLOW_CONTACT, SM_INTERACT_MINE, false, false},
+    {SM_OPT_MINE_CLEAR, "mine_clear_station_egress", "nearest_clear_rock", SM_ROUTE_STATION_EGRESS, SM_SPEED_CRUISE, SM_INTERACT_MINE, false, false},
+    {SM_OPT_MINE_RICH, "mine_rich_cruise", "richest_visible_rock", SM_ROUTE_CLEAR_APPROACH, SM_SPEED_CRUISE, SM_INTERACT_MINE, false, false},
+    {SM_OPT_MINE_RICH, "mine_rich_slow_contact", "richest_visible_rock", SM_ROUTE_CLEAR_APPROACH, SM_SPEED_SLOW_CONTACT, SM_INTERACT_MINE, false, false},
+    {SM_OPT_COLLECT_LOCAL, "collect_fragment_slow", "nearest_visible_fragment", SM_ROUTE_CLEAR_APPROACH, SM_SPEED_SLOW_CONTACT, SM_INTERACT_TRACTOR, true, false},
+    {SM_OPT_COLLECT_LOCAL, "collect_fragment_fast", "nearest_visible_fragment", SM_ROUTE_CLEAR_APPROACH, SM_SPEED_FAST_TRANSIT, SM_INTERACT_TRACTOR, true, false},
+    {SM_OPT_DELIVER_REFINERY, "deliver_refinery_lane", "nearest_matching_refinery", SM_ROUTE_DOCK_LANE, SM_SPEED_CRUISE, SM_INTERACT_DOCK, false, true},
+    {SM_OPT_DELIVER_REFINERY, "deliver_refinery_fast", "nearest_matching_refinery", SM_ROUTE_DOCK_LANE, SM_SPEED_FAST_TRANSIT, SM_INTERACT_DOCK, false, true},
+    {SM_OPT_DOCK_REPAIR, "dock_repair_slow", "repair_capable_dock", SM_ROUTE_DOCK_LANE, SM_SPEED_SLOW_CONTACT, SM_INTERACT_DOCK, false, true},
+    {SM_OPT_DOCK_REPAIR, "dock_repair_fast", "repair_capable_dock", SM_ROUTE_DOCK_LANE, SM_SPEED_FAST_TRANSIT, SM_INTERACT_DOCK, false, true},
+    {SM_OPT_SUPPLY_SHIPYARD, "supply_shipyard_inputs", "shipyard_input_trade", SM_ROUTE_DOCK_LANE, SM_SPEED_CRUISE, SM_INTERACT_TRADE, false, true},
+    {SM_OPT_EXPORT_REPAIR_KITS, "export_repair_kits", "repair_kit_trade", SM_ROUTE_DOCK_LANE, SM_SPEED_CRUISE, SM_INTERACT_TRADE, false, true},
 };
 
 static const NNFeatureSchema SM_FEATURES[SM_FEATURE_COUNT] = {
     {"bias", NN_FEATURE_STATE_OBSERVATION, 1},
-    {"candidate_option_index", NN_FEATURE_STATE_OBSERVATION, 1},
-    {"candidate_autopilot_loop", NN_FEATURE_STATE_OBSERVATION, 1},
-    {"candidate_mine_nearest_clear", NN_FEATURE_STATE_OBSERVATION, 1},
-    {"candidate_mine_richest", NN_FEATURE_STATE_OBSERVATION, 1},
-    {"candidate_collect_local_fragments", NN_FEATURE_STATE_OBSERVATION, 1},
-    {"candidate_deliver_refinery", NN_FEATURE_STATE_OBSERVATION, 1},
-    {"candidate_dock_repair", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"candidate_hypothesis_index", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"hypothesis_autopilot_loop", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"hypothesis_mine_clear_cruise", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"hypothesis_mine_clear_slow_contact", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"hypothesis_mine_clear_station_egress", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"hypothesis_mine_rich_cruise", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"hypothesis_mine_rich_slow_contact", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"hypothesis_collect_fragment_slow", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"hypothesis_collect_fragment_fast", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"hypothesis_deliver_refinery_lane", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"hypothesis_deliver_refinery_fast", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"hypothesis_dock_repair_slow", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"hypothesis_dock_repair_fast", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"hypothesis_supply_shipyard_inputs", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"hypothesis_export_repair_kits", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"route_direct", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"route_clear_approach", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"route_station_egress", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"route_dock_lane", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"speed_cruise", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"speed_slow_contact", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"speed_fast_transit", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"interaction_none", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"interaction_mine", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"interaction_tractor", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"interaction_dock", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"interaction_trade", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"candidate_opportunistic", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"candidate_station_legal", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"candidate_base_autopilot_loop", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"candidate_base_mine_nearest_clear", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"candidate_base_mine_richest", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"candidate_base_collect_local_fragments", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"candidate_base_deliver_refinery", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"candidate_base_dock_repair", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"candidate_base_supply_shipyard_inputs", NN_FEATURE_STATE_OBSERVATION, 1},
+    {"candidate_base_export_repair_kits", NN_FEATURE_STATE_OBSERVATION, 1},
     {"hull_ratio", NN_FEATURE_STATE_OBSERVATION, 1},
     {"speed", NN_FEATURE_STATE_OBSERVATION, 1},
     {"forward_speed", NN_FEATURE_STATE_OBSERVATION, 1},
@@ -188,30 +276,50 @@ static const NNFeatureSchema SM_FEATURES[SM_FEATURE_COUNT] = {
 
 static const NNExperimentSpec SM_EXPERIMENT_SPEC = {
     .task_name = SM_TASK_NAME,
-    .role = "Signal tactical mining option ranker over simulator-certified mine/tow/smelt candidates",
-    .state_space = "authoritative Signal world state after deterministic scenario prefix: ship hull/kinematics, towed fragments, nearby rocks, fragments, docks, and refinery demand",
-    .state_distribution = "deterministic Signal world seeds with station starts, rock approaches, and autopilot-generated mining prefixes",
-    .action_space = "six tactical options that compile to legal player controls: autopilot loop, mine nearest clear rock, mine richest rock, collect fragments, deliver to refinery, and dock/repair",
-    .candidate_enumerator = "enumerate the fixed tactical option menu for every sampled state; each option owns a deterministic controller for the replay horizon",
-    .observable_features = "candidate option id plus observable ship, rock, fragment, station, demand, and prefix-state features",
+    .role = "Signal tactical mining and supply-chain hypothesis ranker over simulator-certified candidates",
+    .state_space = "authoritative Signal world state after deterministic scenario prefix: ship hull/kinematics, towed fragments, nearby rocks, fragments, docks, refinery demand, shipyard inputs, and repair-kit stock",
+    .state_distribution = "deterministic Signal world seeds with station starts, rock approaches, autopilot-generated mining prefixes, and live NPC economy prefixes",
+    .action_space = "fourteen bounded policy hypotheses generated from a grammar over target rule, route constraint, speed/contact profile, and interaction primitive; each compiles to legal player controls",
+    .candidate_enumerator = "enumerate the bounded policy grammar for every sampled state; each hypothesis owns a deterministic controller for the replay horizon",
+    .observable_features = "candidate hypothesis id, grammar primitive one-hots, base option id, plus observable ship, rock, fragment, station, demand, and prefix-state features",
     .leakage_policy = NN_LEAKAGE_FORBIDDEN,
     .neural_scorer = "tiny MLP scores one tactical option row and softmax ranks options within a replay group",
     .exact_verifier = "fresh deterministic Signal simulator replay from the same scenario seed and prefix for each candidate option",
-    .verifier_feedback = "certified utility, smelts, pickups, fractures, mining ticks, towed fragments, repair-kit deltas, hull loss, damage events, and death events",
-    .rule_grammar = "bounded tactical hypotheses that compile to the same input fields available to human players",
+    .verifier_feedback = "certified utility, smelts, pickups, fractures, mining ticks, towed fragments, shipyard-input deltas, repair-kit deltas, hull loss, damage events, and death events",
+    .rule_grammar = "target selector x route constraint x speed/contact profile x interaction primitive; neural scorer ranks only replay-certified grammar hypotheses",
     .certificate_checker = "authoritative replay records candidate outcomes; verifier outputs are labels/diagnostics and are not scorer inputs",
     .gate_executor = "candidate policies drive normal Signal input_intent_t controls through world_sim_step; no sim state is shallow-copied",
     .proposer_inputs = "observable state/action features only; replay utility and event counters are targets",
     .proposer_targets = "argmax over replay-certified tactical utility",
     .proposer_mode = NN_PROPOSER_SELECTION,
-    .baseline_orderings = "fixed priority baseline: repair when damaged, deliver when towing, collect visible fragments, otherwise mine nearest clear rock",
-    .generalization_axis = "train deterministic world seeds to held-out deterministic world seeds and prefixes",
+    .baseline_orderings = "fixed grammar baseline: slow repair when damaged, refinery lane when towing, slow fragment collection when visible, otherwise nearest-clear-rock cruise",
+    .generalization_axis = "train deterministic world seeds to held-out deterministic world seeds, economy prefixes, and supply-chain starts",
     .trace_schema = SM_TRACE_SCHEMA,
     .replay_protocol = "JSONL counterfactual groups with stable tactical option ids and identical deterministic scenario prefixes",
     .rl_protocol = "offline simulator replay ranking; later live shadow rows can append the same option ids",
     .features = SM_FEATURES,
     .feature_count = sizeof(SM_FEATURES) / sizeof(SM_FEATURES[0]),
 };
+
+static const sm_policy_hypothesis_t *sm_hypothesis(size_t candidate)
+{
+    if (candidate >= SM_OPTION_COUNT) candidate = 0u;
+    return &SM_HYPOTHESES[candidate];
+}
+
+static float sm_hypothesis_speed(const sm_policy_hypothesis_t *hyp, float cruise_speed)
+{
+    if (hyp == NULL) return cruise_speed;
+    switch (hyp->speed_rule) {
+    case SM_SPEED_SLOW_CONTACT:
+        return fminf(cruise_speed, 125.0f);
+    case SM_SPEED_FAST_TRANSIT:
+        return fmaxf(cruise_speed, 360.0f);
+    case SM_SPEED_CRUISE:
+    default:
+        return cruise_speed;
+    }
+}
 
 static double sm_clip(double x, double lo, double hi)
 {
@@ -327,6 +435,10 @@ static const char *sm_scenario_name(int kind)
     case 1: return "rock_approach";
     case 2: return "mid_mining_prefix";
     case 3: return "tow_or_return_prefix";
+    case 4: return "damaged_station_recovery";
+    case 5: return "damaged_field_recovery";
+    case 6: return "shipyard_supply_chain";
+    case 7: return "repair_kit_export";
     default: return "mixed";
     }
 }
@@ -378,6 +490,65 @@ static int sm_count_station_ingots(const world_t *w)
     return sm_count_station_finished(w, COMMODITY_FERRITE_INGOT) +
            sm_count_station_finished(w, COMMODITY_CUPRITE_INGOT) +
            sm_count_station_finished(w, COMMODITY_CRYSTAL_INGOT);
+}
+
+static int sm_count_shipyard_inputs(const world_t *w)
+{
+    int count = 0;
+    for (int s = 0; s < MAX_STATIONS; ++s) {
+        const station_t *st = &w->stations[s];
+        if (!station_is_active(st)) continue;
+        if (!station_has_module(st, MODULE_SHIPYARD)) continue;
+        if (!station_produces(st, COMMODITY_FRAME)) {
+            count += station_finished_count(st, COMMODITY_FRAME);
+        }
+        if (!station_produces(st, COMMODITY_LASER_MODULE)) {
+            count += station_finished_count(st, COMMODITY_LASER_MODULE);
+        }
+        if (!station_produces(st, COMMODITY_TRACTOR_MODULE)) {
+            count += station_finished_count(st, COMMODITY_TRACTOR_MODULE);
+        }
+    }
+    return count;
+}
+
+static int sm_count_repair_dock_kits(const world_t *w)
+{
+    int count = 0;
+    for (int s = 0; s < MAX_STATIONS; ++s) {
+        const station_t *st = &w->stations[s];
+        if (!station_is_active(st)) continue;
+        if (!station_has_module(st, MODULE_DOCK)) continue;
+        if (station_has_module(st, MODULE_SHIPYARD)) continue;
+        count += station_finished_count(st, COMMODITY_REPAIR_KIT);
+    }
+    return count;
+}
+
+static void sm_seed_supply_chain_fixture(world_t *w, const server_player_t *sp)
+{
+    static const uint8_t origin[8] = { 'B', 'R', 'N', 'T', 'R', 'A', 'D', 'E' };
+    if (w == NULL || sp == NULL) return;
+    for (int s = 0; s < MAX_STATIONS; ++s) {
+        station_t *st = &w->stations[s];
+        if (!station_is_active(st)) continue;
+        ledger_earn(st, sp->session_token, 500.0f);
+        if (station_produces(st, COMMODITY_FRAME)) {
+            station_finished_mint(st, COMMODITY_FRAME, 8, origin);
+        }
+        if (station_produces(st, COMMODITY_LASER_MODULE)) {
+            station_finished_mint(st, COMMODITY_LASER_MODULE, 8, origin);
+        }
+        if (station_produces(st, COMMODITY_TRACTOR_MODULE)) {
+            station_finished_mint(st, COMMODITY_TRACTOR_MODULE, 8, origin);
+        }
+        if (station_has_module(st, MODULE_SHIPYARD)) {
+            station_finished_mint(st, COMMODITY_REPAIR_KIT, 20, origin);
+        } else if (station_has_module(st, MODULE_DOCK)) {
+            station_finished_drain(st, COMMODITY_REPAIR_KIT, 1000);
+            st->_inventory_cache[COMMODITY_REPAIR_KIT] = 0.0f;
+        }
+    }
 }
 
 static bool sm_station_can_smelt_ore(const station_t *st, commodity_t ore)
@@ -567,6 +738,146 @@ static int sm_find_nearest_dock(const world_t *w, const server_player_t *sp)
     return best;
 }
 
+static int sm_find_repair_dock(const world_t *w, const server_player_t *sp)
+{
+    int best = -1;
+    float best_score = 1e18f;
+    for (int s = 0; s < MAX_STATIONS; ++s) {
+        const station_t *st = &w->stations[s];
+        if (!station_is_active(st)) continue;
+        if (!station_has_module(st, MODULE_DOCK)) continue;
+        float dist = sqrtf(v2_dist_sq(sp->ship.pos, st->pos));
+        float score = dist;
+        if (station_finished_count(st, COMMODITY_REPAIR_KIT) > 0) score -= 3000.0f;
+        if (station_has_module(st, MODULE_SHIPYARD)) score -= 1200.0f;
+        if (score < best_score) {
+            best_score = score;
+            best = s;
+        }
+    }
+    return best >= 0 ? best : sm_find_nearest_dock(w, sp);
+}
+
+static double sm_repair_dock_distance(const world_t *w, const server_player_t *sp)
+{
+    int s = sm_find_repair_dock(w, sp);
+    if (s < 0) return 9000.0;
+    return sqrt((double)v2_dist_sq(sp->ship.pos, w->stations[s].pos));
+}
+
+static bool sm_is_shipyard_input(commodity_t c)
+{
+    return c == COMMODITY_FRAME ||
+           c == COMMODITY_LASER_MODULE ||
+           c == COMMODITY_TRACTOR_MODULE;
+}
+
+static commodity_t sm_carried_shipyard_input(const server_player_t *sp)
+{
+    if (ship_finished_count(&sp->ship, COMMODITY_FRAME) > 0) return COMMODITY_FRAME;
+    if (ship_finished_count(&sp->ship, COMMODITY_LASER_MODULE) > 0) return COMMODITY_LASER_MODULE;
+    if (ship_finished_count(&sp->ship, COMMODITY_TRACTOR_MODULE) > 0) return COMMODITY_TRACTOR_MODULE;
+    return COMMODITY_COUNT;
+}
+
+static int sm_count_ship_shipyard_inputs(const server_player_t *sp)
+{
+    return ship_finished_count(&sp->ship, COMMODITY_FRAME) +
+           ship_finished_count(&sp->ship, COMMODITY_LASER_MODULE) +
+           ship_finished_count(&sp->ship, COMMODITY_TRACTOR_MODULE);
+}
+
+static int sm_find_product_source(const world_t *w,
+                                  const server_player_t *sp,
+                                  commodity_t commodity)
+{
+    int best = -1;
+    float best_score = 1e18f;
+    for (int s = 0; s < MAX_STATIONS; ++s) {
+        const station_t *st = &w->stations[s];
+        if (!station_is_active(st)) continue;
+        if (!station_has_module(st, MODULE_DOCK)) continue;
+        if (!station_produces(st, commodity)) continue;
+        int stock = station_finished_count(st, commodity);
+        float dist = sqrtf(v2_dist_sq(sp->ship.pos, st->pos));
+        float score = dist - (float)stock * 80.0f;
+        if (stock > 0) score -= 2500.0f;
+        if (score < best_score) {
+            best_score = score;
+            best = s;
+        }
+    }
+    return best;
+}
+
+static int sm_find_shipyard_needing(const world_t *w,
+                                    const server_player_t *sp,
+                                    commodity_t commodity)
+{
+    int best = -1;
+    float best_score = -1e18f;
+    for (int s = 0; s < MAX_STATIONS; ++s) {
+        const station_t *st = &w->stations[s];
+        if (!station_is_active(st)) continue;
+        if (!station_has_module(st, MODULE_DOCK)) continue;
+        if (!station_has_module(st, MODULE_SHIPYARD)) continue;
+        station_demand_t demand = station_demand_for(st, commodity);
+        float dist = sqrtf(v2_dist_sq(sp->ship.pos, st->pos));
+        float score = demand.severity * 6000.0f - dist * 0.15f;
+        if (score > best_score) {
+            best_score = score;
+            best = s;
+        }
+    }
+    return best;
+}
+
+static int sm_find_repair_kit_importer(const world_t *w, const server_player_t *sp)
+{
+    int best = -1;
+    float best_score = -1e18f;
+    for (int s = 0; s < MAX_STATIONS; ++s) {
+        const station_t *st = &w->stations[s];
+        if (!station_is_active(st)) continue;
+        if (!station_has_module(st, MODULE_DOCK)) continue;
+        if (station_has_module(st, MODULE_SHIPYARD)) continue;
+        station_demand_t demand = station_demand_for(st, COMMODITY_REPAIR_KIT);
+        float dist = sqrtf(v2_dist_sq(sp->ship.pos, st->pos));
+        float score = demand.severity * 7000.0f - dist * 0.12f;
+        if (score > best_score) {
+            best_score = score;
+            best = s;
+        }
+    }
+    return best;
+}
+
+static commodity_t sm_best_shipyard_input_need(const world_t *w,
+                                               const server_player_t *sp)
+{
+    commodity_t choices[3] = {
+        COMMODITY_FRAME,
+        COMMODITY_LASER_MODULE,
+        COMMODITY_TRACTOR_MODULE,
+    };
+    commodity_t best = COMMODITY_COUNT;
+    float best_score = -1e18f;
+    for (size_t i = 0; i < 3u; ++i) {
+        commodity_t c = choices[i];
+        int dest = sm_find_shipyard_needing(w, sp, c);
+        int src = sm_find_product_source(w, sp, c);
+        if (dest < 0 || src < 0) continue;
+        float severity = station_demand_for(&w->stations[dest], c).severity;
+        float stock = (float)station_finished_count(&w->stations[src], c);
+        float score = severity * 8.0f + sm_clip(stock, 0.0, 12.0) * 0.2f;
+        if (score > best_score) {
+            best_score = score;
+            best = c;
+        }
+    }
+    return best;
+}
+
 static void sm_reset_player(world_t *w, server_player_t *sp)
 {
     ship_cleanup(&sp->ship);
@@ -594,20 +905,38 @@ static void sm_setup_world(const sm_scenario_init_t *init,
     w->rng = init->world_seed;
     world_reset(w);
     world_seed_station_manifests(w);
-    for (int n = 0; n < MAX_NPC_SHIPS; ++n) {
-        w->npc_ships[n].active = false;
+    if (!init->enable_npcs) {
+        for (int n = 0; n < MAX_NPC_SHIPS; ++n) {
+            w->npc_ships[n].active = false;
+        }
     }
     server_player_t *sp = &w->players[0];
     sm_reset_player(w, sp);
     sp->ship.pos = init->spawn_pos;
     sp->ship.vel = init->spawn_vel;
     sp->ship.angle = init->spawn_angle;
-    sp->ship.hull = ship_max_hull(&sp->ship);
+    {
+        float max_hull = ship_max_hull(&sp->ship);
+        sp->ship.hull = init->spawn_hull > 0.0f
+                            ? fminf(max_hull, fmaxf(1.0f, init->spawn_hull))
+                            : max_hull;
+    }
     sp->ship.towed_count = 0;
     memset(sp->ship.towed_fragments, -1, sizeof(sp->ship.towed_fragments));
     sp->ship.towed_scaffold = -1;
     sp->docked = false;
+    sp->current_station = -1;
     memset(&sp->input, 0, sizeof(sp->input));
+    if (init->start_docked &&
+        init->station_index >= 0 &&
+        init->station_index < MAX_STATIONS &&
+        station_is_active(&w->stations[init->station_index])) {
+        sp->docked = true;
+        sp->current_station = init->station_index;
+        sp->nearby_station = init->station_index;
+        sp->in_dock_range = true;
+        anchor_ship_in_station(sp, w);
+    }
     *out_sp = sp;
 }
 
@@ -646,7 +975,8 @@ static void sm_fly_to_point(const world_t *w,
 static void sm_policy_mine_target(world_t *w,
                                   server_player_t *sp,
                                   nav_path_t *path,
-                                  int target)
+                                  int target,
+                                  const sm_policy_hypothesis_t *hyp)
 {
     if (sp->ship.towed_count >= sm_tow_capacity(&sp->ship)) {
         target = -1;
@@ -670,12 +1000,12 @@ static void sm_policy_mine_target(world_t *w,
     float standoff = a->radius + 118.0f;
     float dist = v2_len(v2_sub(a->pos, sp->ship.pos));
     if (dist > standoff + 45.0f) {
-        sm_fly_to_point(w, sp, path, a->pos, standoff, 220.0f);
+        sm_fly_to_point(w, sp, path, a->pos, standoff, sm_hypothesis_speed(hyp, 220.0f));
         sp->input.tractor_hold = true;
         return;
     }
 
-    sm_fly_to_point(w, sp, path, a->pos, standoff, 150.0f);
+    sm_fly_to_point(w, sp, path, a->pos, standoff, sm_hypothesis_speed(hyp, 150.0f));
     vec2 to_rock = v2_sub(a->pos, sp->ship.pos);
     float heading = atan2f(to_rock.y, to_rock.x);
     float diff = wrap_angle(heading - sp->ship.angle);
@@ -685,7 +1015,10 @@ static void sm_policy_mine_target(world_t *w,
     sp->input.tractor_hold = true;
 }
 
-static void sm_policy_collect(world_t *w, server_player_t *sp, nav_path_t *path)
+static void sm_policy_collect(world_t *w,
+                              server_player_t *sp,
+                              nav_path_t *path,
+                              const sm_policy_hypothesis_t *hyp)
 {
     int cap = sm_tow_capacity(&sp->ship);
     if (sp->ship.towed_count >= cap) {
@@ -694,7 +1027,7 @@ static void sm_policy_collect(world_t *w, server_player_t *sp, nav_path_t *path)
             commodity_t ore = sm_towed_commodity(w, sp);
             const asteroid_t *fragment = sm_first_towed_fragment(w, sp);
             vec2 pt = sm_station_smelt_drop_point(&w->stations[s], s, ore, fragment);
-            sm_fly_to_point(w, sp, path, pt, 55.0f, 210.0f);
+            sm_fly_to_point(w, sp, path, pt, 55.0f, sm_hypothesis_speed(hyp, 210.0f));
             sp->input.tractor_hold = true;
             return;
         }
@@ -702,14 +1035,17 @@ static void sm_policy_collect(world_t *w, server_player_t *sp, nav_path_t *path)
 
     int fragment = sm_find_nearest_fragment(w, sp);
     if (fragment >= 0) {
-        sm_fly_to_point(w, sp, path, w->asteroids[fragment].pos, 55.0f, 190.0f);
+        sm_fly_to_point(w, sp, path, w->asteroids[fragment].pos, 55.0f, sm_hypothesis_speed(hyp, 190.0f));
         sp->input.tractor_hold = true;
         return;
     }
-    sm_policy_mine_target(w, sp, path, sm_find_nearest_mineable(w, sp, true));
+    sm_policy_mine_target(w, sp, path, sm_find_nearest_mineable(w, sp, true), hyp);
 }
 
-static void sm_policy_deliver(world_t *w, server_player_t *sp, nav_path_t *path)
+static void sm_policy_deliver(world_t *w,
+                              server_player_t *sp,
+                              nav_path_t *path,
+                              const sm_policy_hypothesis_t *hyp)
 {
     int s = sm_find_refinery(w, sp);
     if (s < 0) {
@@ -719,7 +1055,7 @@ static void sm_policy_deliver(world_t *w, server_player_t *sp, nav_path_t *path)
     commodity_t ore = sm_towed_commodity(w, sp);
     const asteroid_t *fragment = sm_first_towed_fragment(w, sp);
     vec2 smelt_pt = sm_station_smelt_drop_point(&w->stations[s], s, ore, fragment);
-    sm_fly_to_point(w, sp, path, smelt_pt, 50.0f, 220.0f);
+    sm_fly_to_point(w, sp, path, smelt_pt, 50.0f, sm_hypothesis_speed(hyp, 220.0f));
     sp->input.tractor_hold = true;
     if (v2_dist_sq(sp->ship.pos, w->stations[s].pos) < w->stations[s].dock_radius * w->stations[s].dock_radius) {
         sp->input.dock = true;
@@ -727,35 +1063,165 @@ static void sm_policy_deliver(world_t *w, server_player_t *sp, nav_path_t *path)
     }
 }
 
-static void sm_policy_dock_repair(world_t *w, server_player_t *sp, nav_path_t *path)
+static void sm_policy_dock_repair(world_t *w,
+                                  server_player_t *sp,
+                                  nav_path_t *path,
+                                  const sm_policy_hypothesis_t *hyp)
 {
-    int s = sm_find_nearest_dock(w, sp);
+    int s = sm_find_repair_dock(w, sp);
     if (s < 0) {
         sm_apply_cmd(sp, flight_brake(&sp->ship));
         return;
     }
-    station_t *st = &w->stations[s];
     if (sp->docked) {
+        station_t *dock_st = &w->stations[sp->current_station];
         memset(&sp->input, 0, sizeof(sp->input));
+        if (station_produces(dock_st, COMMODITY_REPAIR_KIT) &&
+            ship_finished_count(&sp->ship, COMMODITY_REPAIR_KIT) <= 0) {
+            sp->input.buy_product = true;
+            sp->input.buy_commodity = COMMODITY_REPAIR_KIT;
+            sp->input.buy_grade = MINING_GRADE_COUNT;
+        }
         sp->input.service_repair = true;
         return;
     }
+    if (sp->docking_approach) {
+        memset(&sp->input, 0, sizeof(sp->input));
+        sp->input.dock = true;
+        sp->input.interact = true;
+        return;
+    }
+    station_t *st = &w->stations[s];
+    float center_dist = v2_len(v2_sub(sp->ship.pos, st->pos));
     vec2 approach = station_approach_target(st, sp->ship.pos);
-    sm_fly_to_point(w, sp, path, approach, 35.0f, 190.0f);
-    float dock_range = st->dock_radius + 80.0f;
-    if (v2_dist_sq(sp->ship.pos, st->pos) < dock_range * dock_range) {
+    vec2 entry = station_entry_target(st, sp->ship.pos);
+    vec2 target = center_dist > st->dock_radius + 260.0f ? entry : approach;
+    sm_fly_to_point(w, sp, path, target, 25.0f, sm_hypothesis_speed(hyp, 150.0f));
+    if (center_dist < DOCK_APPROACH_RANGE + 40.0f || sp->in_dock_range) {
         sp->input.dock = true;
         sp->input.interact = true;
         sp->input.service_repair = true;
     }
 }
 
+static void sm_route_to_dock(world_t *w,
+                             server_player_t *sp,
+                             nav_path_t *path,
+                             int station_index,
+                             float max_speed)
+{
+    if (station_index < 0 || station_index >= MAX_STATIONS ||
+        !station_is_active(&w->stations[station_index])) {
+        sm_apply_cmd(sp, flight_brake(&sp->ship));
+        return;
+    }
+    if (sp->docked) {
+        memset(&sp->input, 0, sizeof(sp->input));
+        if (sp->current_station != station_index) {
+            sp->input.launch = true;
+            sp->input.interact = true;
+        }
+        return;
+    }
+    if (sp->docking_approach) {
+        memset(&sp->input, 0, sizeof(sp->input));
+        sp->input.dock = true;
+        sp->input.interact = true;
+        return;
+    }
+
+    station_t *st = &w->stations[station_index];
+    float center_dist = v2_len(v2_sub(sp->ship.pos, st->pos));
+    vec2 approach = station_approach_target(st, sp->ship.pos);
+    vec2 entry = station_entry_target(st, sp->ship.pos);
+    vec2 target = center_dist > st->dock_radius + 260.0f ? entry : approach;
+    sm_fly_to_point(w, sp, path, target, 25.0f, max_speed);
+    if (center_dist < DOCK_APPROACH_RANGE + 40.0f || sp->in_dock_range) {
+        sp->input.dock = true;
+        sp->input.interact = true;
+    }
+}
+
+static void sm_policy_buy_deliver_product(world_t *w,
+                                          server_player_t *sp,
+                                          nav_path_t *path,
+                                          commodity_t commodity,
+                                          int destination,
+                                          const sm_policy_hypothesis_t *hyp)
+{
+    if (commodity >= COMMODITY_COUNT) {
+        sm_apply_cmd(sp, flight_brake(&sp->ship));
+        return;
+    }
+
+    int carried = ship_finished_count(&sp->ship, commodity);
+    if (sp->docked) {
+        station_t *st = &w->stations[sp->current_station];
+        memset(&sp->input, 0, sizeof(sp->input));
+        if (carried > 0) {
+            if (sp->current_station == destination ||
+                station_demand_for(st, commodity).severity > 0.0f) {
+                sp->input.service_sell = true;
+                sp->input.service_sell_only = commodity;
+                sp->input.service_sell_grade = MINING_GRADE_COUNT;
+                return;
+            }
+            sp->input.launch = true;
+            sp->input.interact = true;
+            return;
+        }
+        if (station_produces(st, commodity)) {
+            sp->input.buy_product = true;
+            sp->input.buy_commodity = commodity;
+            sp->input.buy_grade = MINING_GRADE_COUNT;
+            return;
+        }
+        sp->input.launch = true;
+        sp->input.interact = true;
+        return;
+    }
+
+    int target = carried > 0 ? destination : sm_find_product_source(w, sp, commodity);
+    if (target < 0 && carried > 0) target = destination;
+    if (target < 0) {
+        sm_apply_cmd(sp, flight_brake(&sp->ship));
+        return;
+    }
+    sm_route_to_dock(w, sp, path, target, sm_hypothesis_speed(hyp, 550.0f));
+}
+
+static void sm_policy_supply_shipyard(world_t *w,
+                                      server_player_t *sp,
+                                      nav_path_t *path,
+                                      const sm_policy_hypothesis_t *hyp)
+{
+    commodity_t c = sm_carried_shipyard_input(sp);
+    if (c == COMMODITY_COUNT) c = sm_best_shipyard_input_need(w, sp);
+    if (!sm_is_shipyard_input(c)) {
+        sm_policy_collect(w, sp, path, hyp);
+        return;
+    }
+    int dest = sm_find_shipyard_needing(w, sp, c);
+    sm_policy_buy_deliver_product(w, sp, path, c, dest, hyp);
+}
+
+static void sm_policy_export_repair_kits(world_t *w,
+                                         server_player_t *sp,
+                                         nav_path_t *path,
+                                         const sm_policy_hypothesis_t *hyp)
+{
+    int dest = sm_find_repair_kit_importer(w, sp);
+    sm_policy_buy_deliver_product(w, sp, path, COMMODITY_REPAIR_KIT, dest, hyp);
+}
+
 static void sm_apply_option_policy(world_t *w,
                                    server_player_t *sp,
-                                   sm_option_t option,
+                                   size_t candidate,
                                    nav_path_t *path,
                                    int sticky_target)
 {
+    const sm_policy_hypothesis_t *hyp = sm_hypothesis(candidate);
+    sm_option_t option = hyp->option;
     if (option == SM_OPT_AUTOPILOT_LOOP) {
         memset(&sp->input, 0, sizeof(sp->input));
         sp->autopilot_mode = 1;
@@ -768,21 +1234,29 @@ static void sm_apply_option_policy(world_t *w,
     case SM_OPT_MINE_CLEAR:
         sm_policy_mine_target(w, sp, path,
                               sticky_target >= 0 ? sticky_target
-                                                 : sm_find_nearest_mineable(w, sp, true));
+                                                 : sm_find_nearest_mineable(w, sp, true),
+                              hyp);
         break;
     case SM_OPT_MINE_RICH:
         sm_policy_mine_target(w, sp, path,
                               sticky_target >= 0 ? sticky_target
-                                                 : sm_find_richest_mineable(w, sp));
+                                                 : sm_find_richest_mineable(w, sp),
+                              hyp);
         break;
     case SM_OPT_COLLECT_LOCAL:
-        sm_policy_collect(w, sp, path);
+        sm_policy_collect(w, sp, path, hyp);
         break;
     case SM_OPT_DELIVER_REFINERY:
-        sm_policy_deliver(w, sp, path);
+        sm_policy_deliver(w, sp, path, hyp);
         break;
     case SM_OPT_DOCK_REPAIR:
-        sm_policy_dock_repair(w, sp, path);
+        sm_policy_dock_repair(w, sp, path, hyp);
+        break;
+    case SM_OPT_SUPPLY_SHIPYARD:
+        sm_policy_supply_shipyard(w, sp, path, hyp);
+        break;
+    case SM_OPT_EXPORT_REPAIR_KITS:
+        sm_policy_export_repair_kits(w, sp, path, hyp);
         break;
     case SM_OPT_AUTOPILOT_LOOP:
     default:
@@ -846,26 +1320,35 @@ static void sm_accumulate_events(const world_t *w, int player_id, sm_outcome_t *
 
 static sm_outcome_t sm_replay_option(const sm_config_t *config,
                                      const sm_scenario_init_t *init,
-                                     sm_option_t option,
+                                     size_t candidate,
                                      int sticky_target)
 {
+    const sm_policy_hypothesis_t *hyp = sm_hypothesis(candidate);
+    sm_option_t option = hyp->option;
     world_t w;
     server_player_t *sp = NULL;
     sm_setup_world(init, &w, &sp);
     sm_run_prefix(init, &w, sp);
+    if (init->enable_npcs) {
+        sm_seed_supply_chain_fixture(&w, sp);
+    }
 
     sm_outcome_t outcome;
     memset(&outcome, 0, sizeof(outcome));
     double start_hull = sp->ship.hull;
+    double start_dock_dist = sm_repair_dock_distance(&w, sp);
     double start_credits = sp->ship.stat_credits_earned;
     double start_ore = sp->ship.stat_ore_mined;
     int start_ingots = sm_count_station_ingots(&w);
     int start_repair_kits = sm_count_station_finished(&w, COMMODITY_REPAIR_KIT);
+    int start_shipyard_inputs = sm_count_shipyard_inputs(&w);
+    int start_repair_dock_kits = sm_count_repair_dock_kits(&w);
+    outcome.start_repair_kits = start_repair_kits;
     nav_path_t path;
     memset(&path, 0, sizeof(path));
 
     for (int tick = 0; tick < config->horizon_ticks; ++tick) {
-        sm_apply_option_policy(&w, sp, option, &path, sticky_target);
+        sm_apply_option_policy(&w, sp, candidate, &path, sticky_target);
         world_sim_step(&w, SM_SIM_DT);
         sm_accumulate_events(&w, sp->id, &outcome);
         if (sp->ship.towed_count > outcome.peak_towed) {
@@ -874,12 +1357,23 @@ static sm_outcome_t sm_replay_option(const sm_config_t *config,
     }
 
     outcome.final_towed = sp->ship.towed_count;
+    outcome.final_docked = sp->docked ? 1 : 0;
     outcome.hull_loss = fmax(0.0, start_hull - (double)sp->ship.hull);
+    outcome.hull_gain = fmax(0.0, (double)sp->ship.hull - start_hull);
+    {
+        double final_dock_dist = sm_repair_dock_distance(&w, sp);
+        outcome.dock_progress =
+            sm_clip((start_dock_dist - final_dock_dist) / 2200.0, 0.0, 1.0);
+    }
     outcome.credits_delta = (double)sp->ship.stat_credits_earned - start_credits;
     outcome.ore_delta = (double)sp->ship.stat_ore_mined - start_ore;
     outcome.station_ingots_delta = sm_count_station_ingots(&w) - start_ingots;
-    outcome.repair_kits_delta =
-        sm_count_station_finished(&w, COMMODITY_REPAIR_KIT) - start_repair_kits;
+    outcome.final_repair_kits = sm_count_station_finished(&w, COMMODITY_REPAIR_KIT);
+    outcome.final_ship_repair_kits = ship_finished_count(&sp->ship, COMMODITY_REPAIR_KIT);
+    outcome.final_ship_shipyard_inputs = sm_count_ship_shipyard_inputs(sp);
+    outcome.repair_kits_delta = outcome.final_repair_kits - start_repair_kits;
+    outcome.shipyard_inputs_delta = sm_count_shipyard_inputs(&w) - start_shipyard_inputs;
+    outcome.repair_dock_kits_delta = sm_count_repair_dock_kits(&w) - start_repair_dock_kits;
 
     outcome.utility =
         (double)outcome.smelts * 18.0 +
@@ -894,10 +1388,38 @@ static sm_outcome_t sm_replay_option(const sm_config_t *config,
         (double)outcome.damage_events * 2.0 -
         (double)outcome.death_events * 80.0;
     if (option == SM_OPT_DOCK_REPAIR && outcome.repair_events > 0) {
-        outcome.utility += 2.0;
+        outcome.utility += 2.0 + outcome.hull_gain * 0.65;
+    }
+    if (start_hull < 55.0 && outcome.hull_gain > 0.0) {
+        outcome.utility += outcome.hull_gain * 0.35;
+    }
+    if (option == SM_OPT_DOCK_REPAIR && start_hull < 55.0) {
+        outcome.utility += outcome.dock_progress * 3.0;
+        if (outcome.final_docked) outcome.utility += 2.0;
     }
     if (option == SM_OPT_DELIVER_REFINERY && outcome.final_towed < outcome.peak_towed) {
         outcome.utility += 4.0;
+    }
+    if (option == SM_OPT_SUPPLY_SHIPYARD) {
+        if (outcome.shipyard_inputs_delta > 0) {
+            outcome.utility += (double)outcome.shipyard_inputs_delta * 4.0;
+        }
+        if (outcome.repair_kits_delta > 0) {
+            outcome.utility += (double)outcome.repair_kits_delta * 0.35;
+        }
+        if (outcome.final_ship_shipyard_inputs > 0) {
+            outcome.utility += (double)outcome.final_ship_shipyard_inputs * 2.5;
+            if (init->scenario_kind == 6) outcome.utility += 18.0;
+        }
+    }
+    if (option == SM_OPT_EXPORT_REPAIR_KITS) {
+        if (outcome.repair_dock_kits_delta > 0) {
+            outcome.utility += (double)outcome.repair_dock_kits_delta * 0.9;
+        }
+        if (outcome.final_ship_repair_kits > 0) {
+            outcome.utility += (double)outcome.final_ship_repair_kits * 2.5;
+            if (init->scenario_kind == 7) outcome.utility += 18.0;
+        }
     }
 
     world_cleanup(&w);
@@ -928,27 +1450,54 @@ static void sm_init_scenario(const sm_config_t *config,
     init->station_index = (int)(sm_rng_next(&rng) % 3u);
     if (init->station_index < 0 || init->station_index >= MAX_STATIONS) init->station_index = 0;
     station_t *station = &template_world.stations[init->station_index];
-    init->scenario_kind = (int)(index % 4u);
+    init->scenario_kind = (int)(index % 8u);
+    init->enable_npcs = init->scenario_kind >= 6;
 
     int target = sm_find_nearest_mineable(&template_world, sp, true);
     if (target < 0) target = sm_find_nearest_mineable(&template_world, sp, false);
-    if (target >= 0 && init->scenario_kind == 1) {
+    if (target >= 0 && (init->scenario_kind == 1 || init->scenario_kind == 5)) {
         asteroid_t *a = &template_world.asteroids[target];
         float angle = sm_rng_range(&rng, -PI_F, PI_F);
-        float radius = a->radius + sm_rng_range(&rng, 420.0f, 950.0f);
+        float radius = a->radius + sm_rng_range(&rng,
+                                                 init->scenario_kind == 5 ? 240.0f : 420.0f,
+                                                 init->scenario_kind == 5 ? 720.0f : 950.0f);
         vec2 dir = v2(cosf(angle), sinf(angle));
         init->spawn_pos = v2_add(a->pos, v2_scale(dir, radius));
         vec2 to_rock = v2_sub(a->pos, init->spawn_pos);
         init->spawn_angle = atan2f(to_rock.y, to_rock.x);
-        init->spawn_vel = v2_scale(ship_forward(init->spawn_angle), sm_rng_range(&rng, 0.0f, 90.0f));
+        init->spawn_vel = v2_scale(ship_forward(init->spawn_angle),
+                                   sm_rng_range(&rng,
+                                                init->scenario_kind == 5 ? 40.0f : 0.0f,
+                                                init->scenario_kind == 5 ? 180.0f : 90.0f));
+        if (init->scenario_kind == 5) {
+            init->spawn_hull = sm_rng_range(&rng, 8.0f, 34.0f);
+        }
         init->prefix_ticks = 0;
+    } else if (init->scenario_kind >= 6) {
+        int station_slot = 1;
+        if (station_slot >= template_world.station_count) station_slot = init->station_index;
+        station = &template_world.stations[station_slot];
+        init->station_index = station_slot;
+        init->spawn_pos = station->pos;
+        init->spawn_vel = v2(0.0f, 0.0f);
+        init->spawn_angle = sm_rng_range(&rng, -PI_F, PI_F);
+        init->start_docked = true;
+        init->prefix_ticks = config->horizon_ticks;
     } else {
-        init->spawn_pos = sm_random_station_nearby(&rng, station, 850.0f, 2600.0f);
+        init->spawn_pos = sm_random_station_nearby(&rng,
+                                                   station,
+                                                   init->scenario_kind == 4 ? 620.0f : 850.0f,
+                                                   init->scenario_kind == 4 ? 1500.0f : 2600.0f);
         init->spawn_vel = v2(sm_rng_range(&rng, -45.0f, 45.0f),
                              sm_rng_range(&rng, -45.0f, 45.0f));
         vec2 to_station = v2_sub(station->pos, init->spawn_pos);
         init->spawn_angle = atan2f(to_station.y, to_station.x) +
                             sm_rng_range(&rng, -0.65f, 0.65f);
+        if (init->scenario_kind == 4) {
+            init->spawn_hull = sm_rng_range(&rng, 12.0f, 45.0f);
+            init->spawn_vel = v2(sm_rng_range(&rng, -120.0f, 120.0f),
+                                 sm_rng_range(&rng, -120.0f, 120.0f));
+        }
         if (init->scenario_kind == 2) {
             init->prefix_ticks = config->horizon_ticks / 2;
         } else if (init->scenario_kind == 3) {
@@ -963,9 +1512,10 @@ static void sm_init_scenario(const sm_config_t *config,
 
 static void sm_build_state_view(const world_t *w,
                                 const server_player_t *sp,
-                                sm_option_t option,
+                                size_t candidate,
                                 sm_state_view_t *view)
 {
+    sm_option_t option = sm_hypothesis(candidate)->option;
     memset(view, 0, sizeof(*view));
     view->target_asteroid = -1;
     view->target_fragment = -1;
@@ -985,12 +1535,14 @@ static void sm_build_state_view(const world_t *w,
     int fragment = sm_find_nearest_fragment(w, sp);
     int refinery = sm_find_refinery(w, sp);
     int dock = sm_find_nearest_dock(w, sp);
+    int repair_dock = sm_find_repair_dock(w, sp);
     if (nearest >= 0) view->nearest_mine_dist = sqrt((double)v2_dist_sq(sp->ship.pos, w->asteroids[nearest].pos));
     if (clear >= 0) view->nearest_clear_mine_dist = sqrt((double)v2_dist_sq(sp->ship.pos, w->asteroids[clear].pos));
     if (rich >= 0) view->richest_mine_dist = sqrt((double)v2_dist_sq(sp->ship.pos, w->asteroids[rich].pos));
     if (fragment >= 0) view->nearest_fragment_dist = sqrt((double)v2_dist_sq(sp->ship.pos, w->asteroids[fragment].pos));
     if (refinery >= 0) view->refinery_dist = sqrt((double)v2_dist_sq(sp->ship.pos, w->stations[refinery].pos));
-    if (dock >= 0) view->dock_dist = sqrt((double)v2_dist_sq(sp->ship.pos, w->stations[dock].pos));
+    if (repair_dock >= 0) view->dock_dist = sqrt((double)v2_dist_sq(sp->ship.pos, w->stations[repair_dock].pos));
+    else if (dock >= 0) view->dock_dist = sqrt((double)v2_dist_sq(sp->ship.pos, w->stations[dock].pos));
 
     for (int i = 0; i < MAX_ASTEROIDS; ++i) {
         const asteroid_t *a = &w->asteroids[i];
@@ -1017,9 +1569,27 @@ static void sm_build_state_view(const world_t *w,
             view->target_pos = sm_station_smelt_drop_point(&w->stations[refinery], refinery, ore, towed);
         }
     } else if (option == SM_OPT_DOCK_REPAIR) {
-        if (dock >= 0) {
-            view->target_station = dock;
-            view->target_pos = station_approach_target(&w->stations[dock], sp->ship.pos);
+        if (repair_dock >= 0) {
+            view->target_station = repair_dock;
+            view->target_pos = station_approach_target(&w->stations[repair_dock], sp->ship.pos);
+        }
+    } else if (option == SM_OPT_SUPPLY_SHIPYARD) {
+        commodity_t c = sm_carried_shipyard_input(sp);
+        if (c == COMMODITY_COUNT) c = sm_best_shipyard_input_need(w, sp);
+        int dest = sm_find_shipyard_needing(w, sp, c);
+        int src = sm_find_product_source(w, sp, c);
+        int station_target = ship_finished_count(&sp->ship, c) > 0 ? dest : src;
+        if (station_target >= 0) {
+            view->target_station = station_target;
+            view->target_pos = station_approach_target(&w->stations[station_target], sp->ship.pos);
+        }
+    } else if (option == SM_OPT_EXPORT_REPAIR_KITS) {
+        int dest = sm_find_repair_kit_importer(w, sp);
+        int src = sm_find_product_source(w, sp, COMMODITY_REPAIR_KIT);
+        int station_target = ship_finished_count(&sp->ship, COMMODITY_REPAIR_KIT) > 0 ? dest : src;
+        if (station_target >= 0) {
+            view->target_station = station_target;
+            view->target_pos = station_approach_target(&w->stations[station_target], sp->ship.pos);
         }
     }
 
@@ -1068,11 +1638,13 @@ static void sm_build_state_view(const world_t *w,
 static void sm_encode_features(const sm_scenario_init_t *init,
                                const world_t *w,
                                const server_player_t *sp,
-                               sm_option_t option,
+                               size_t candidate,
                                nn_real out_features[SM_FEATURE_COUNT])
 {
+    const sm_policy_hypothesis_t *hyp = sm_hypothesis(candidate);
+    sm_option_t option = hyp->option;
     sm_state_view_t view;
-    sm_build_state_view(w, sp, option, &view);
+    sm_build_state_view(w, sp, candidate, &view);
     vec2 fwd = ship_forward(sp->ship.angle);
     double max_hull = fmax(1.0, (double)ship_max_hull(&sp->ship));
     double speed = sqrt((double)v2_len_sq(sp->ship.vel));
@@ -1082,59 +1654,74 @@ static void sm_encode_features(const sm_scenario_init_t *init,
 
     memset(out_features, 0, sizeof(nn_real) * SM_FEATURE_COUNT);
     out_features[0] = (nn_real)1.0;
-    out_features[1] = (nn_real)sm_scale((double)option, (double)(SM_OPTION_COUNT - 1u));
+    out_features[1] = (nn_real)sm_scale((double)candidate, (double)(SM_OPTION_COUNT - 1u));
     for (size_t i = 0; i < SM_OPTION_COUNT; ++i) {
-        out_features[2u + i] = (nn_real)(i == (size_t)option ? 1.0 : 0.0);
+        out_features[2u + i] = (nn_real)(i == candidate ? 1.0 : 0.0);
     }
-    out_features[8] = (nn_real)hull_ratio;
-    out_features[9] = (nn_real)sm_scale(speed, 450.0);
-    out_features[10] = (nn_real)sm_signed_scale(forward_speed, 300.0);
-    out_features[11] = (nn_real)sm_clip(signal_strength_at(w, sp->ship.pos), 0.0, 1.0);
-    out_features[12] = (nn_real)(sp->docked ? 1.0 : 0.0);
-    out_features[13] = (nn_real)towed_ratio;
-    out_features[14] = (nn_real)sm_scale((double)sp->ship.towed_count, 10.0);
-    out_features[15] = (nn_real)sm_scale(view.nearest_mine_dist, 6000.0);
-    out_features[16] = (nn_real)sm_scale(view.nearest_clear_mine_dist, 6000.0);
-    out_features[17] = (nn_real)sm_scale(view.richest_mine_dist, 6000.0);
-    out_features[18] = (nn_real)sm_scale(view.nearest_fragment_dist, 4000.0);
-    out_features[19] = (nn_real)sm_scale(view.refinery_dist, 9000.0);
-    out_features[20] = (nn_real)sm_scale(view.dock_dist, 9000.0);
-    out_features[21] = (nn_real)sm_scale(view.target_dist, 9000.0);
-    out_features[22] = (nn_real)sm_clip(view.target_alignment_cos, -1.0, 1.0);
-    out_features[23] = (nn_real)sm_clip(view.target_alignment_sin, -1.0, 1.0);
-    out_features[24] = (nn_real)sm_scale(view.target_ore, 80.0);
-    out_features[25] = (nn_real)sm_scale(view.target_hp, 260.0);
-    out_features[26] = (nn_real)sm_scale(view.target_radius, 220.0);
-    out_features[27] = (nn_real)sm_scale(view.target_grade, 4.0);
-    out_features[28] = (nn_real)view.target_clear;
-    out_features[29] = (nn_real)(option == SM_OPT_MINE_CLEAR || option == SM_OPT_MINE_RICH);
-    out_features[30] = (nn_real)(option == SM_OPT_DELIVER_REFINERY);
-    out_features[31] = (nn_real)(option == SM_OPT_DOCK_REPAIR);
-    out_features[32] = (nn_real)sm_clip(view.raw_ore_need, 0.0, 1.0);
-    out_features[33] = (nn_real)sm_scale(view.repair_kit_level, 100.0);
-    out_features[34] = (nn_real)sm_scale((double)view.local_fragment_count, 8.0);
-    out_features[35] = (nn_real)sm_scale((double)view.mineable_count, 40.0);
-    out_features[36] = (nn_real)(hull_ratio < 0.82 ? 1.0 : 0.0);
-    out_features[37] = (nn_real)(sp->ship.towed_count > 0 ? 1.0 : 0.0);
-    out_features[38] = (nn_real)sm_scale((double)init->prefix_ticks, 2400.0);
-    out_features[39] = (nn_real)sm_scale((double)init->scenario_kind, 3.0);
+    for (size_t i = 0; i < SM_ROUTE_COUNT; ++i) {
+        out_features[16u + i] = (nn_real)(i == (size_t)hyp->route_rule ? 1.0 : 0.0);
+    }
+    for (size_t i = 0; i < SM_SPEED_COUNT; ++i) {
+        out_features[20u + i] = (nn_real)(i == (size_t)hyp->speed_rule ? 1.0 : 0.0);
+    }
+    for (size_t i = 0; i < SM_INTERACT_COUNT; ++i) {
+        out_features[23u + i] = (nn_real)(i == (size_t)hyp->interaction_rule ? 1.0 : 0.0);
+    }
+    out_features[28] = (nn_real)(hyp->opportunistic ? 1.0 : 0.0);
+    out_features[29] = (nn_real)(hyp->station_legal ? 1.0 : 0.0);
+    for (size_t i = 0; i < SM_BASE_OPTION_COUNT; ++i) {
+        out_features[30u + i] = (nn_real)(i == (size_t)option ? 1.0 : 0.0);
+    }
+    out_features[38] = (nn_real)hull_ratio;
+    out_features[39] = (nn_real)sm_scale(speed, 450.0);
+    out_features[40] = (nn_real)sm_signed_scale(forward_speed, 300.0);
+    out_features[41] = (nn_real)sm_clip(signal_strength_at(w, sp->ship.pos), 0.0, 1.0);
+    out_features[42] = (nn_real)(sp->docked ? 1.0 : 0.0);
+    out_features[43] = (nn_real)towed_ratio;
+    out_features[44] = (nn_real)sm_scale((double)sp->ship.towed_count, 10.0);
+    out_features[45] = (nn_real)sm_scale(view.nearest_mine_dist, 6000.0);
+    out_features[46] = (nn_real)sm_scale(view.nearest_clear_mine_dist, 6000.0);
+    out_features[47] = (nn_real)sm_scale(view.richest_mine_dist, 6000.0);
+    out_features[48] = (nn_real)sm_scale(view.nearest_fragment_dist, 4000.0);
+    out_features[49] = (nn_real)sm_scale(view.refinery_dist, 9000.0);
+    out_features[50] = (nn_real)sm_scale(view.dock_dist, 9000.0);
+    out_features[51] = (nn_real)sm_scale(view.target_dist, 9000.0);
+    out_features[52] = (nn_real)sm_clip(view.target_alignment_cos, -1.0, 1.0);
+    out_features[53] = (nn_real)sm_clip(view.target_alignment_sin, -1.0, 1.0);
+    out_features[54] = (nn_real)sm_scale(view.target_ore, 80.0);
+    out_features[55] = (nn_real)sm_scale(view.target_hp, 260.0);
+    out_features[56] = (nn_real)sm_scale(view.target_radius, 220.0);
+    out_features[57] = (nn_real)sm_scale(view.target_grade, 4.0);
+    out_features[58] = (nn_real)view.target_clear;
+    out_features[59] = (nn_real)(option == SM_OPT_MINE_CLEAR || option == SM_OPT_MINE_RICH);
+    out_features[60] = (nn_real)(option == SM_OPT_DELIVER_REFINERY);
+    out_features[61] = (nn_real)(option == SM_OPT_DOCK_REPAIR);
+    out_features[62] = (nn_real)sm_clip(view.raw_ore_need, 0.0, 1.0);
+    out_features[63] = (nn_real)sm_scale(view.repair_kit_level, 100.0);
+    out_features[64] = (nn_real)sm_scale((double)view.local_fragment_count, 8.0);
+    out_features[65] = (nn_real)sm_scale((double)view.mineable_count, 40.0);
+    out_features[66] = (nn_real)(hull_ratio < 0.82 ? 1.0 : 0.0);
+    out_features[67] = (nn_real)(sp->ship.towed_count > 0 ? 1.0 : 0.0);
+    out_features[68] = (nn_real)sm_scale((double)init->prefix_ticks, 7200.0);
+    out_features[69] = (nn_real)sm_scale((double)init->scenario_kind, 7.0);
 }
 
 static size_t sm_fixed_priority_baseline(const nn_real features[SM_OPTION_COUNT][SM_FEATURE_COUNT])
 {
-    double hull_ratio = (double)features[0][8];
-    double has_tow = (double)features[0][37];
-    double local_fragments = (double)features[0][34];
-    if (hull_ratio < 0.55) return SM_OPT_DOCK_REPAIR;
-    if (has_tow > 0.5) return SM_OPT_DELIVER_REFINERY;
-    if (local_fragments > 0.0) return SM_OPT_COLLECT_LOCAL;
-    return SM_OPT_MINE_CLEAR;
+    double hull_ratio = (double)features[0][38];
+    double has_tow = (double)features[0][67];
+    double local_fragments = (double)features[0][64];
+    if (hull_ratio < 0.55) return 10u;
+    if (has_tow > 0.5) return 8u;
+    if (local_fragments > 0.0) return 6u;
+    return 1u;
 }
 
 static int sm_select_target_for_option(const world_t *w,
                                        const server_player_t *sp,
-                                       sm_option_t option)
+                                       size_t candidate)
 {
+    sm_option_t option = sm_hypothesis(candidate)->option;
     if (option == SM_OPT_MINE_CLEAR) return sm_find_nearest_mineable(w, sp, true);
     if (option == SM_OPT_MINE_RICH) return sm_find_richest_mineable(w, sp);
     return -1;
@@ -1156,6 +1743,7 @@ static void sm_write_trace_row(FILE *fp,
                                size_t option)
 {
     if (fp == NULL || group == NULL || option >= SM_OPTION_COUNT) return;
+    const sm_policy_hypothesis_t *hyp = sm_hypothesis(option);
     const sm_outcome_t *out = &group->outcomes[option];
     fprintf(fp, "{\"schema\":");
     sm_json_string(fp, SM_TRACE_SCHEMA);
@@ -1170,7 +1758,15 @@ static void sm_write_trace_row(FILE *fp,
     fprintf(fp, ",\"prefix_ticks\":%d", group->init.prefix_ticks);
     fprintf(fp, ",\"candidate_id\":%zu", option);
     fprintf(fp, ",\"candidate\":");
-    sm_json_string(fp, SM_OPTION_NAMES[option]);
+    sm_json_string(fp, hyp->name);
+    fprintf(fp, ",\"base_option\":%d", (int)hyp->option);
+    fprintf(fp, ",\"target_rule\":");
+    sm_json_string(fp, hyp->target_rule);
+    fprintf(fp, ",\"route_rule\":%d", (int)hyp->route_rule);
+    fprintf(fp, ",\"speed_rule\":%d", (int)hyp->speed_rule);
+    fprintf(fp, ",\"interaction_rule\":%d", (int)hyp->interaction_rule);
+    fprintf(fp, ",\"opportunistic\":%s", hyp->opportunistic ? "true" : "false");
+    fprintf(fp, ",\"station_legal\":%s", hyp->station_legal ? "true" : "false");
     fprintf(fp, ",\"certified\":true");
     fprintf(fp, ",\"is_oracle\":%s", option == group->target ? "true" : "false");
     fprintf(fp, ",\"is_baseline\":%s", option == group->baseline ? "true" : "false");
@@ -1181,8 +1777,17 @@ static void sm_write_trace_row(FILE *fp,
     fprintf(fp, ",\"mining_ticks\":%d", out->mining_ticks);
     fprintf(fp, ",\"peak_towed\":%d", out->peak_towed);
     fprintf(fp, ",\"final_towed\":%d", out->final_towed);
+    fprintf(fp, ",\"final_docked\":%d", out->final_docked);
     fprintf(fp, ",\"station_ingots_delta\":%d", out->station_ingots_delta);
     fprintf(fp, ",\"repair_kits_delta\":%d", out->repair_kits_delta);
+    fprintf(fp, ",\"start_repair_kits\":%d", out->start_repair_kits);
+    fprintf(fp, ",\"final_repair_kits\":%d", out->final_repair_kits);
+    fprintf(fp, ",\"final_ship_repair_kits\":%d", out->final_ship_repair_kits);
+    fprintf(fp, ",\"final_ship_shipyard_inputs\":%d", out->final_ship_shipyard_inputs);
+    fprintf(fp, ",\"shipyard_inputs_delta\":%d", out->shipyard_inputs_delta);
+    fprintf(fp, ",\"repair_dock_kits_delta\":%d", out->repair_dock_kits_delta);
+    fprintf(fp, ",\"hull_gain\":%.9g", out->hull_gain);
+    fprintf(fp, ",\"dock_progress\":%.9g", out->dock_progress);
     fprintf(fp, ",\"credits_delta\":%.9g", out->credits_delta);
     fprintf(fp, ",\"hull_loss\":%.9g", out->hull_loss);
     fprintf(fp, ",\"damage_amount\":%.9g", out->damage_amount);
@@ -1212,11 +1817,14 @@ static int sm_evaluate_group(const sm_config_t *config,
     server_player_t *base_sp = NULL;
     sm_setup_world(init, &base_world, &base_sp);
     sm_run_prefix(init, &base_world, base_sp);
+    if (init->enable_npcs) {
+        sm_seed_supply_chain_fixture(&base_world, base_sp);
+    }
 
     int sticky_targets[SM_OPTION_COUNT];
     for (size_t option = 0; option < SM_OPTION_COUNT; ++option) {
-        sticky_targets[option] = sm_select_target_for_option(&base_world, base_sp, (sm_option_t)option);
-        sm_encode_features(init, &base_world, base_sp, (sm_option_t)option, group->features[option]);
+        sticky_targets[option] = sm_select_target_for_option(&base_world, base_sp, option);
+        sm_encode_features(init, &base_world, base_sp, option, group->features[option]);
     }
     group->baseline = sm_fixed_priority_baseline(group->features);
     world_cleanup(&base_world);
@@ -1225,7 +1833,7 @@ static int sm_evaluate_group(const sm_config_t *config,
     double second = -1e18;
     for (size_t option = 0; option < SM_OPTION_COUNT; ++option) {
         group->outcomes[option] =
-            sm_replay_option(config, init, (sm_option_t)option, sticky_targets[option]);
+            sm_replay_option(config, init, option, sticky_targets[option]);
         double utility = group->outcomes[option].utility;
         if (utility > best) {
             second = best;
@@ -1388,7 +1996,7 @@ static int sm_save_checkpoint(NeuralNet *net,
     NNCheckpointMeta meta;
     memset(&meta, 0, sizeof(meta));
     meta.checkpoint_version = 1u;
-    meta.feature_encoder_version = 1u;
+    meta.feature_encoder_version = 3u;
     strcpy(meta.parent_model_hash, "none");
     strcpy(meta.benchmark_report_hash, "pending");
     if (trace_path != NULL) {
@@ -1396,8 +2004,8 @@ static int sm_save_checkpoint(NeuralNet *net,
     } else {
         strcpy(meta.training_trace_root, "generated_in_memory");
     }
-    strcpy(meta.notes, "Signal mining/tow/smelt tactical option scorer trained from replay-certified utility");
-    strcpy(meta.feature_set, "signal-mining-option-v1");
+    strcpy(meta.notes, "Signal mining/tow/smelt/supply grammar scorer trained from replay-certified utility");
+    strcpy(meta.feature_set, "signal-mining-grammar-v1");
     return nn_save_checkpoint(net, path, &meta) && nn_hash_checkpoint_hex(path, out_hash);
 }
 
@@ -1411,7 +2019,7 @@ static void sm_write_option_counts(FILE *fp, const size_t counts[SM_OPTION_COUNT
     fputc('{', fp);
     for (size_t i = 0; i < SM_OPTION_COUNT; ++i) {
         if (i > 0) fputc(',', fp);
-        sm_json_string(fp, SM_OPTION_NAMES[i]);
+        sm_json_string(fp, sm_hypothesis(i)->name);
         fprintf(fp, ":%zu", counts[i]);
     }
     fputc('}', fp);
@@ -1431,8 +2039,8 @@ static void sm_write_summary(FILE *fp,
     sm_json_string(fp, SM_TASK_NAME);
     fprintf(fp, ",\"trace_schema\":");
     sm_json_string(fp, SM_TRACE_SCHEMA);
-    fprintf(fp, ",\"training_mode\":\"counterfactual_tactical_utility\"");
-    fprintf(fp, ",\"candidate_layer\":\"mine_tow_smelt_option_v1\"");
+    fprintf(fp, ",\"training_mode\":\"counterfactual_grammar_utility\"");
+    fprintf(fp, ",\"candidate_layer\":\"mine_tow_smelt_supply_grammar_v1\"");
     fprintf(fp, ",\"model_hash\":");
     sm_json_string(fp, model_hash != NULL ? model_hash : "unsaved");
     fprintf(fp, ",\"trace_path\":");

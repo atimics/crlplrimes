@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { mkdir, readFile, writeFile, appendFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { createConnection } from "node:net";
 import { connect as tlsConnect } from "node:tls";
@@ -24,11 +24,31 @@ const NET_INPUT_TRACTOR = 1 << 5;
 const NET_ACTION_NONE = 0;
 const NET_ACTION_DOCK = 1;
 const NET_ACTION_LAUNCH = 2;
+const NET_ACTION_SELL_CARGO = 3;
 const NET_ACTION_REPAIR = 4;
+const NET_ACTION_BUY_PRODUCT = 30;
+const NET_ACTION_DELIVER_COMMODITY = 70;
+const COMMODITY_FRAME = 6;
+const COMMODITY_LASER_MODULE = 7;
+const COMMODITY_TRACTOR_MODULE = 8;
+const COMMODITY_REPAIR_KIT = 9;
+const NET_ACTION_BUY_REPAIR_KIT = NET_ACTION_BUY_PRODUCT + COMMODITY_REPAIR_KIT;
 
 const PLAYER_RECORD_SIZE = 77;
 const ASTEROID_RECORD_SIZE = 34;
 const STATION_IDENTITY_MIN_SIZE = 59;
+const COMMODITY_COUNT = 10;
+const MODULE_DOCK = 0;
+const MODULE_FRAME_PRESS = 5;
+const MODULE_LASER_FAB = 6;
+const MODULE_TRACTOR_FAB = 7;
+const MODULE_SHIPYARD = 9;
+const MAX_MODULES_PER_STATION = 16;
+const MAX_ARMS = 4;
+const STATION_MODULE_RECORD_SIZE = 9;
+const STATION_NUM_RINGS = 3;
+const STATION_RING_RADIUS = [0, 180, 340, 520];
+const STATION_RING_SLOTS = [0, 3, 6, 9];
 
 const SHIP_BRAKE = 180.0;
 const OBJECTIVE_WAYPOINTS_PER_STATION = 4;
@@ -40,9 +60,14 @@ const NAV_ASTEROID_CLEARANCE = 300;
 const NAV_ASTEROID_LOOKAHEAD = 1700;
 const TACTICAL_OBJECTIVE_TTL_MS = 45000;
 const TACTICAL_FRAGMENT_RADIUS = 82;
+const TACTICAL_FRAGMENT_OPPORTUNITY_RADIUS = 650;
+const TACTICAL_FRAGMENT_FAST_OPPORTUNITY_RADIUS = 320;
+const TACTICAL_FRAGMENT_FAST_SPEED = 220;
 const TACTICAL_MINE_RANGE = 430;
 const TACTICAL_TRACTOR_RANGE = 260;
 const TACTICAL_OPTION_REPLAN_MS = 2500;
+const STATION_BODY_PADDING = 145;
+const STATION_EGRESS_PADDING = 260;
 
 function usage() {
   console.log(`usage: node scripts/signal_live_brain.mjs [options]
@@ -62,9 +87,17 @@ Options:
                     load a signal-flight-live-v2 checkpoint for WASD scoring
   --brain-mode MODE  heuristic, shadow_neural, or neural_active (default shadow_neural)
   --option-checkpoint PATH
-                    load a signal-mining-option-v1 checkpoint for tactical scoring
+                    load a signal-mining-grammar-v1 checkpoint for tactical scoring
   --option-mode MODE
                     off, fixed, shadow_neural, or neural_active (default off)
+  --protocol-root PATH
+                    Signal source root for websocket protocol drift checks (default ../signal)
+  --skip-protocol-check
+                    skip Signal header compatibility checks
+  --allow-protocol-drift
+                    log protocol mismatches instead of failing fast
+  --protocol-check-only
+                    run the protocol check and exit before connecting
   --dry-run          connect and decode, but do not send movement inputs
 `);
 }
@@ -85,6 +118,10 @@ function parseArgs(argv) {
     brainMode: "shadow_neural",
     optionCheckpointPath: null,
     optionMode: "off",
+    protocolRoot: "../signal",
+    skipProtocolCheck: false,
+    allowProtocolDrift: false,
+    protocolCheckOnly: false,
     dryRun: false,
   };
 
@@ -147,6 +184,15 @@ function parseArgs(argv) {
       }
       config.optionMode = value;
       i += 1;
+    } else if (arg === "--protocol-root" && value) {
+      config.protocolRoot = value;
+      i += 1;
+    } else if (arg === "--skip-protocol-check") {
+      config.skipProtocolCheck = true;
+    } else if (arg === "--allow-protocol-drift") {
+      config.allowProtocolDrift = true;
+    } else if (arg === "--protocol-check-only") {
+      config.protocolCheckOnly = true;
     } else if (arg === "--dry-run") {
       config.dryRun = true;
     } else {
@@ -493,12 +539,20 @@ const SIGNAL_FLIGHT_ACTIONS = [
 ];
 
 const SIGNAL_MINING_OPTIONS = [
-  { id: 0, name: "autopilot_loop" },
-  { id: 1, name: "mine_nearest_clear" },
-  { id: 2, name: "mine_richest" },
-  { id: 3, name: "collect_local_fragments" },
-  { id: 4, name: "deliver_refinery" },
-  { id: 5, name: "dock_repair" },
+  { id: 0, name: "autopilot_loop", base: "autopilot_loop", baseId: 0, routeRule: 0, speedRule: 0, interactionRule: 0, opportunistic: false, stationLegal: false },
+  { id: 1, name: "mine_clear_cruise", base: "mine_nearest_clear", baseId: 1, routeRule: 1, speedRule: 0, interactionRule: 1, opportunistic: false, stationLegal: false },
+  { id: 2, name: "mine_clear_slow_contact", base: "mine_nearest_clear", baseId: 1, routeRule: 1, speedRule: 1, interactionRule: 1, opportunistic: false, stationLegal: false },
+  { id: 3, name: "mine_clear_station_egress", base: "mine_nearest_clear", baseId: 1, routeRule: 2, speedRule: 0, interactionRule: 1, opportunistic: false, stationLegal: false },
+  { id: 4, name: "mine_rich_cruise", base: "mine_richest", baseId: 2, routeRule: 1, speedRule: 0, interactionRule: 1, opportunistic: false, stationLegal: false },
+  { id: 5, name: "mine_rich_slow_contact", base: "mine_richest", baseId: 2, routeRule: 1, speedRule: 1, interactionRule: 1, opportunistic: false, stationLegal: false },
+  { id: 6, name: "collect_fragment_slow", base: "collect_local_fragments", baseId: 3, routeRule: 1, speedRule: 1, interactionRule: 2, opportunistic: true, stationLegal: false },
+  { id: 7, name: "collect_fragment_fast", base: "collect_local_fragments", baseId: 3, routeRule: 1, speedRule: 2, interactionRule: 2, opportunistic: true, stationLegal: false },
+  { id: 8, name: "deliver_refinery_lane", base: "deliver_refinery", baseId: 4, routeRule: 3, speedRule: 0, interactionRule: 3, opportunistic: false, stationLegal: true },
+  { id: 9, name: "deliver_refinery_fast", base: "deliver_refinery", baseId: 4, routeRule: 3, speedRule: 2, interactionRule: 3, opportunistic: false, stationLegal: true },
+  { id: 10, name: "dock_repair_slow", base: "dock_repair", baseId: 5, routeRule: 3, speedRule: 1, interactionRule: 3, opportunistic: false, stationLegal: true },
+  { id: 11, name: "dock_repair_fast", base: "dock_repair", baseId: 5, routeRule: 3, speedRule: 2, interactionRule: 3, opportunistic: false, stationLegal: true },
+  { id: 12, name: "supply_shipyard_inputs", base: "supply_shipyard_inputs", baseId: 6, routeRule: 3, speedRule: 0, interactionRule: 4, opportunistic: false, stationLegal: true },
+  { id: 13, name: "export_repair_kits", base: "export_repair_kits", baseId: 7, routeRule: 3, speedRule: 0, interactionRule: 4, opportunistic: false, stationLegal: true },
 ];
 
 const NN_ACTIVATION_SIGMOID = 0;
@@ -628,10 +682,10 @@ async function loadSignalMiningOptionModel(path) {
   const model = await loadNNCheckpoint(path);
   if (!model) return null;
   const sizes = model.sizes;
-  if (sizes.length !== 4 || sizes[0] !== 40 || sizes[1] !== 32 || sizes[2] !== 16 || sizes[3] !== 1) {
+  if (sizes.length !== 4 || sizes[0] !== 70 || sizes[1] !== 32 || sizes[2] !== 16 || sizes[3] !== 1) {
     throw new Error(`unsupported signal mining option checkpoint shape: ${sizes.join("x")}`);
   }
-  if (model.metadata.featureEncoderVersion !== 1 || model.metadata.featureSet !== "signal-mining-option-v1") {
+  if (model.metadata.featureEncoderVersion !== 3 || model.metadata.featureSet !== "signal-mining-grammar-v1") {
     throw new Error(
       `refusing non-mining checkpoint ${path}: feature_encoder_version=${model.metadata.featureEncoderVersion} feature_set=${model.metadata.featureSet}`,
     );
@@ -705,12 +759,241 @@ function optionScoreProbabilities(scores) {
   }));
 }
 
+function commodityName(commodity) {
+  switch (commodity) {
+    case COMMODITY_FRAME:
+      return "FRAME";
+    case COMMODITY_LASER_MODULE:
+      return "LASER_MODULE";
+    case COMMODITY_TRACTOR_MODULE:
+      return "TRACTOR_MODULE";
+    case COMMODITY_REPAIR_KIT:
+      return "REPAIR_KIT";
+    default:
+      return `COMMODITY_${commodity}`;
+  }
+}
+
+function actionName(action) {
+  if (action === NET_ACTION_NONE) return "";
+  if (action === NET_ACTION_LAUNCH) return "LAUNCH";
+  if (action === NET_ACTION_DOCK) return "DOCK";
+  if (action === NET_ACTION_SELL_CARGO) return "SELL_CARGO";
+  if (action === NET_ACTION_REPAIR) return "REPAIR";
+  if (action >= NET_ACTION_BUY_PRODUCT && action < NET_ACTION_BUY_PRODUCT + COMMODITY_COUNT) {
+    return `BUY_${commodityName(action - NET_ACTION_BUY_PRODUCT)}`;
+  }
+  if (action >= NET_ACTION_DELIVER_COMMODITY && action < NET_ACTION_DELIVER_COMMODITY + COMMODITY_COUNT) {
+    return `DELIVER_${commodityName(action - NET_ACTION_DELIVER_COMMODITY)}`;
+  }
+  return `ACTION_${action}`;
+}
+
+function stripCComments(text) {
+  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+}
+
+function normalizeCExpression(text) {
+  return String(text)
+    .replace(/\\\n/g, " ")
+    .replace(/\b(0x[0-9a-fA-F]+|\d+)(?:[uUlLfF]+)\b/g, "$1")
+    .trim();
+}
+
+function evaluateCExpression(expression, constants) {
+  const normalized = normalizeCExpression(expression);
+  if (!normalized || !/^[A-Za-z0-9_\s()+\-*/%<>&|^~.]+$/.test(normalized)) {
+    return null;
+  }
+  const substituted = normalized.replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (name) => {
+    if (!constants.has(name)) return "NaN";
+    return String(constants.get(name));
+  });
+  try {
+    const value = Function(`"use strict"; return (${substituted});`)();
+    return Number.isFinite(value) ? Number(value) : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseCConstants(texts) {
+  const constants = new Map();
+  for (const source of texts) {
+    const text = stripCComments(source);
+
+    const enumPattern = /(?:typedef\s+)?enum(?:\s+[A-Za-z_][A-Za-z0-9_]*)?\s*\{([\s\S]*?)\}\s*(?:[A-Za-z_][A-Za-z0-9_]*)?\s*;/g;
+    for (const match of text.matchAll(enumPattern)) {
+      let current = -1;
+      for (const rawItem of match[1].split(",")) {
+        const item = rawItem.trim();
+        if (!item) continue;
+        const parts = item.split("=");
+        const name = parts[0].trim().match(/^([A-Za-z_][A-Za-z0-9_]*)/)?.[1];
+        if (!name) continue;
+        if (parts.length > 1) {
+          const value = evaluateCExpression(parts.slice(1).join("="), constants);
+          if (value === null) continue;
+          current = value;
+        } else {
+          current += 1;
+        }
+        constants.set(name, current);
+      }
+    }
+
+    const definePattern = /^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)\s+(.+)$/gm;
+    for (const match of text.matchAll(definePattern)) {
+      const value = evaluateCExpression(match[2], constants);
+      if (value !== null) constants.set(match[1], value);
+    }
+  }
+  return constants;
+}
+
+function parseCArray(texts, name) {
+  const pattern = new RegExp(
+    `static\\s+const\\s+(?:float|int)\\s+${name}\\s*\\[\\s*\\]\\s*=\\s*\\{([^}]*)\\}`,
+    "m",
+  );
+  for (const source of texts) {
+    const match = stripCComments(source).match(pattern);
+    if (!match) continue;
+    return match[1]
+      .split(",")
+      .map((item) => Number(normalizeCExpression(item).replace(/f$/i, "")))
+      .filter((value) => Number.isFinite(value));
+  }
+  return null;
+}
+
+const PROTOCOL_CONSTANT_EXPECTATIONS = {
+  NET_MSG_JOIN,
+  NET_MSG_INPUT,
+  NET_MSG_WORLD_ASTEROIDS,
+  NET_MSG_PLAYER_SHIP,
+  NET_MSG_STATION_IDENTITY,
+  NET_MSG_WORLD_PLAYERS,
+  NET_MSG_SESSION,
+  NET_INPUT_THRUST,
+  NET_INPUT_LEFT,
+  NET_INPUT_RIGHT,
+  NET_INPUT_FIRE,
+  NET_INPUT_BRAKE,
+  NET_INPUT_TRACTOR,
+  NET_ACTION_NONE,
+  NET_ACTION_DOCK,
+  NET_ACTION_LAUNCH,
+  NET_ACTION_SELL_CARGO,
+  NET_ACTION_REPAIR,
+  NET_ACTION_BUY_PRODUCT,
+  NET_ACTION_DELIVER_COMMODITY,
+  COMMODITY_FRAME,
+  COMMODITY_LASER_MODULE,
+  COMMODITY_TRACTOR_MODULE,
+  COMMODITY_REPAIR_KIT,
+  PLAYER_RECORD_SIZE,
+  ASTEROID_RECORD_SIZE,
+  COMMODITY_COUNT,
+  MODULE_DOCK,
+  MODULE_FRAME_PRESS,
+  MODULE_LASER_FAB,
+  MODULE_TRACTOR_FAB,
+  MODULE_SHIPYARD,
+  MAX_MODULES_PER_STATION,
+  MAX_ARMS,
+  STATION_MODULE_RECORD_SIZE,
+  STATION_NUM_RINGS,
+};
+
+const PROTOCOL_ARRAY_EXPECTATIONS = {
+  STATION_RING_RADIUS,
+  STATION_RING_SLOTS,
+};
+
+async function checkSignalProtocolCompatibility(config) {
+  if (config.skipProtocolCheck) {
+    return {
+      status: "skipped",
+      compatible: null,
+      root: config.protocolRoot,
+      hash: null,
+      mismatches: [],
+      missing: [],
+      checked_constants: 0,
+      checked_arrays: 0,
+    };
+  }
+
+  const root = resolve(config.protocolRoot);
+  const files = [
+    join(root, "shared", "types.h"),
+    join(root, "shared", "protocol.h"),
+  ];
+  const texts = [];
+  for (const file of files) {
+    texts.push(await readFile(file, "utf8"));
+  }
+  const hash = createHash("sha256")
+    .update(texts.join("\n/* crlp-signal-protocol-boundary */\n"))
+    .digest("hex");
+  const constants = parseCConstants(texts);
+  const mismatches = [];
+  const missing = [];
+
+  for (const [name, expected] of Object.entries(PROTOCOL_CONSTANT_EXPECTATIONS)) {
+    if (!constants.has(name)) {
+      missing.push(name);
+      continue;
+    }
+    const actual = constants.get(name);
+    if (Number(actual) !== Number(expected)) {
+      mismatches.push({ name, expected, actual });
+    }
+  }
+
+  for (const [name, expected] of Object.entries(PROTOCOL_ARRAY_EXPECTATIONS)) {
+    const actual = parseCArray(texts, name);
+    if (!actual) {
+      missing.push(name);
+      continue;
+    }
+    if (
+      actual.length !== expected.length ||
+      actual.some((value, index) => Math.abs(Number(value) - Number(expected[index])) > 1e-6)
+    ) {
+      mismatches.push({ name, expected, actual });
+    }
+  }
+
+  const compatible = missing.length === 0 && mismatches.length === 0;
+  const result = {
+    status: compatible ? "ok" : "mismatch",
+    compatible,
+    root,
+    hash,
+    mismatches,
+    missing,
+    checked_constants: Object.keys(PROTOCOL_CONSTANT_EXPECTATIONS).length,
+    checked_arrays: Object.keys(PROTOCOL_ARRAY_EXPECTATIONS).length,
+  };
+  if (!compatible && !config.allowProtocolDrift) {
+    const details = [
+      ...missing.map((name) => `${name}=missing`),
+      ...mismatches.map((row) => `${row.name}=expected ${row.expected} actual ${row.actual}`),
+    ];
+    throw new Error(`Signal protocol compatibility check failed: ${details.slice(0, 6).join("; ")}`);
+  }
+  return result;
+}
+
 class SignalLiveBrain {
-  constructor(config, sessionToken, model, optionModel) {
+  constructor(config, sessionToken, model, optionModel, protocolCompatibility) {
     this.config = config;
     this.sessionToken = sessionToken;
     this.model = model;
     this.optionModel = optionModel;
+    this.protocolCompatibility = protocolCompatibility;
     this.ws = null;
     this.opened = false;
     this.localId = null;
@@ -732,6 +1015,7 @@ class SignalLiveBrain {
     this.tacticalSerial = 1;
     this.lastTacticalDecision = null;
     this.lastTacticalScoreAt = 0;
+    this.repairActionFlip = false;
     this.navWaypoint = null;
     this.navSerial = 1;
     this.players = new Map();
@@ -782,6 +1066,10 @@ class SignalLiveBrain {
   onOpen() {
     this.opened = true;
     console.log(`[brain] connected ${this.config.server}`);
+    console.log(
+      `[brain] protocol ${this.protocolCompatibility.status}` +
+        (this.protocolCompatibility.hash ? ` hash=${this.protocolCompatibility.hash.slice(0, 12)}` : ""),
+    );
     if (this.model) {
       console.log(`[brain] model ${this.model.hash} feature_set=${this.model.metadata.featureSet}`);
     }
@@ -906,16 +1194,57 @@ class SignalLiveBrain {
   handleStationIdentity(buffer) {
     if (buffer.length < STATION_IDENTITY_MIN_SIZE) return;
     const id = buffer[1];
-    this.stations.set(id, {
+    const station = {
       id,
       flags: buffer[2],
+      services: buffer.length >= 7 ? readU32(buffer, 3) : 0,
       x: readF32(buffer, 7),
       y: readF32(buffer, 11),
       radius: readF32(buffer, 15),
       dockRadius: readF32(buffer, 19),
       signalRange: readF32(buffer, 23),
       name: stationName(buffer, 27),
-    });
+      inventory: [],
+      modules: [],
+      ringOffset: Array(MAX_ARMS).fill(0),
+      armRotation: Array(MAX_ARMS).fill(0),
+    };
+
+    for (let i = 0; i < COMMODITY_COUNT && 59 + i * 4 + 4 <= buffer.length; i += 1) {
+      station.inventory[i] = readF32(buffer, 59 + i * 4);
+    }
+
+    let offset = 59 + COMMODITY_COUNT * 4 + 4;
+    if (buffer.length > offset) {
+      const moduleCount = Math.min(buffer[offset], MAX_MODULES_PER_STATION);
+      offset += 1;
+      for (let i = 0; i < moduleCount && offset + STATION_MODULE_RECORD_SIZE <= buffer.length; i += 1) {
+        station.modules.push({
+          type: buffer[offset],
+          scaffold: buffer[offset + 1] !== 0,
+          ring: buffer[offset + 2],
+          slot: buffer[offset + 3],
+          buildProgress: readF32(buffer, offset + 4),
+          commodity: buffer[offset + 8],
+        });
+        offset += STATION_MODULE_RECORD_SIZE;
+      }
+    }
+
+    offset = 59 + COMMODITY_COUNT * 4 + 4 + 1 + MAX_MODULES_PER_STATION * STATION_MODULE_RECORD_SIZE;
+    if (buffer.length > offset) {
+      offset += 1; // arm_count
+      offset += MAX_ARMS * 4; // arm_speed
+      if (buffer.length >= offset + MAX_ARMS * 4) {
+        for (let i = 0; i < MAX_ARMS; i += 1) station.ringOffset[i] = readF32(buffer, offset + i * 4);
+      }
+      offset += MAX_ARMS * 4;
+      if (buffer.length >= offset + MAX_ARMS * 4) {
+        for (let i = 0; i < MAX_ARMS; i += 1) station.armRotation[i] = readF32(buffer, offset + i * 4);
+      }
+    }
+
+    this.stations.set(id, station);
   }
 
   async controlTick() {
@@ -990,12 +1319,27 @@ class SignalLiveBrain {
     }
 
     const state = this.flightState(player, target);
+    const stationRecovery = this.stationEscapeRecoveryDecision(player, target, state);
+    if (stationRecovery) return stationRecovery;
+    const fragmentCollection = this.fragmentCollectionDecision(player, target, state);
+    if (fragmentCollection) return fragmentCollection;
 
     const targetTurn = turnFlagForHeading(state.headingError);
 
     let flags = targetTurn;
+    const slowProfile = target.speedRule === 1;
+    const fastProfile = target.speedRule === 2;
+    const brakePadding = slowProfile ? 260 : fastProfile ? 40 : 90;
+    const thrustDistance = slowProfile ? 240 : 180;
+    const thrustHeading = slowProfile ? 0.95 : fastProfile ? 1.45 : 1.25;
 
-    if (state.dist > 180 && Math.abs(state.headingError) < 1.25) {
+    const brakingForTarget =
+      state.speed > 70 &&
+      state.closingSpeed > 20 &&
+      state.brakeDistance + (target.tractor && !target.mine ? brakePadding + 130 : brakePadding) > state.dist;
+    if (brakingForTarget) {
+      flags |= NET_INPUT_BRAKE;
+    } else if (state.dist > thrustDistance && Math.abs(state.headingError) < thrustHeading) {
       flags |= NET_INPUT_THRUST;
     }
     if (target.tractor) {
@@ -1024,6 +1368,130 @@ class SignalLiveBrain {
       miningTarget: miningTarget?.index ?? null,
       tacticalOption: target.tacticalOption ?? this.lastTacticalDecision,
       policy: "heuristic",
+      state,
+    };
+  }
+
+  fragmentCollectionDecision(player, target, state) {
+    const collectTarget =
+      target?.objectiveKind === "tactical_collect_fragment" ||
+      target?.parentObjectiveKind === "tactical_collect_fragment";
+    if (!collectTarget || target.mine) return null;
+
+    const targetTurn = turnFlagForHeading(state.headingError, 0.1);
+    let flags = targetTurn | NET_INPUT_TRACTOR;
+    const slowProfile = target.speedRule === 1;
+    const fastProfile = target.speedRule === 2;
+    const closePickup = state.dist <= TACTICAL_TRACTOR_RANGE + 180;
+    const closeSpeedLimit = slowProfile ? 80 : fastProfile ? 180 : 120;
+    const approachSpeedLimit = slowProfile ? 135 : fastProfile ? 260 : 180;
+    const brakePadding = slowProfile ? 220 : fastProfile ? 70 : 140;
+    const tooFast = state.speed > (closePickup ? closeSpeedLimit : approachSpeedLimit);
+    if (tooFast || (state.closingSpeed > 20 && state.brakeDistance + brakePadding > state.dist)) {
+      flags |= NET_INPUT_BRAKE;
+    } else if (state.dist > TACTICAL_TRACTOR_RANGE * 0.65 && Math.abs(state.headingError) < (fastProfile ? 1.25 : 0.95)) {
+      flags |= NET_INPUT_THRUST;
+    }
+
+    const miningTarget = this.miningTargetFor(player, target);
+    if (miningTarget) {
+      flags |= NET_INPUT_FIRE | NET_INPUT_TRACTOR;
+    }
+
+    return {
+      flags,
+      actionName: flagsToActionName(flags),
+      target,
+      obstacle: state.obstacle,
+      dist: state.dist,
+      headingError: state.headingError,
+      velocityHeadingError: state.velocityHeadingError,
+      speed: state.speed,
+      forwardSpeed: state.forwardSpeed,
+      lateralSpeed: state.lateralSpeed,
+      closingSpeed: state.closingSpeed,
+      velocityGoalCos: state.velocityGoalCos,
+      brakeDistance: state.brakeDistance,
+      oneShotAction: target.oneShotAction ?? NET_ACTION_NONE,
+      miningTarget: miningTarget?.index ?? null,
+      tacticalOption: target.tacticalOption ?? this.lastTacticalDecision,
+      policy: "fragment_collect",
+      state,
+    };
+  }
+
+  stationEscapeRecoveryDecision(player, target, state) {
+    const containing = this.containingStation(player);
+    if (!containing) return null;
+
+    const station = containing.station;
+    let ux = player.x - station.x;
+    let uy = player.y - station.y;
+    let radial = len(ux, uy);
+    if (radial < 1) {
+      ux = target.x - station.x;
+      uy = target.y - station.y;
+      radial = Math.max(1, len(ux, uy));
+    }
+    ux /= radial;
+    uy /= radial;
+
+    const lane = this.stationExitTarget(station, player);
+    if (lane) {
+      ux = lane.x - player.x;
+      uy = lane.y - player.y;
+      radial = Math.max(1, len(ux, uy));
+      ux /= radial;
+      uy /= radial;
+    }
+
+    const desired = Math.atan2(uy, ux);
+    const headingError = wrapAngle(desired - player.angle);
+    const radialSpeed = player.vx * ux + player.vy * uy;
+    const turnFlag = turnFlagForHeading(headingError, 0.08);
+    const shouldBrake = radialSpeed < -8 || (state.speed > 80 && Math.abs(headingError) > 0.7);
+    const shouldThrust = !shouldBrake && Math.abs(headingError) < 0.55 && radialSpeed < 150;
+    const flags = turnFlag | (shouldBrake ? NET_INPUT_BRAKE : shouldThrust ? NET_INPUT_THRUST : 0);
+    const clearance = this.stationClearanceRadius(station);
+    const oneShotAction =
+      containing.stationDist <= (station.dockRadius || 240) + 80 && state.speed < 12
+        ? NET_ACTION_DOCK
+        : NET_ACTION_NONE;
+    const recoveryTarget = {
+      ...target,
+      x: lane?.x ?? station.x + ux * clearance,
+      y: lane?.y ?? station.y + uy * clearance,
+      objectiveKind: "station_escape_recovery",
+      parentObjectiveKind: target.objectiveKind,
+      navKind: "station_escape_recovery",
+      station: station.id,
+      escapeRadius: clearance,
+      stationDistance: containing.stationDist,
+      tractor: false,
+      mine: false,
+      miningTarget: null,
+      oneShotAction,
+    };
+    return {
+      flags,
+      actionName: flagsToActionName(flags),
+      target: recoveryTarget,
+      obstacle: state.obstacle,
+      dist: len(recoveryTarget.x - player.x, recoveryTarget.y - player.y),
+      headingError,
+      velocityHeadingError: state.velocityHeadingError,
+      speed: state.speed,
+      forwardSpeed: state.forwardSpeed,
+      lateralSpeed: state.lateralSpeed,
+      closingSpeed: radialSpeed,
+      velocityGoalCos: state.velocityGoalCos,
+      brakeDistance: state.brakeDistance,
+      oneShotAction,
+      miningTarget: null,
+      tacticalOption: target.tacticalOption ?? this.lastTacticalDecision,
+      policy: "station_escape_recovery",
+      safetyGate: "station_escape_recovery",
+      safetyRejectReasons: ["inside_station_exclusion"],
       state,
     };
   }
@@ -1527,12 +1995,18 @@ class SignalLiveBrain {
           : fixedOption;
     return {
       optionMode: this.optionModel ? this.config.optionMode : "fixed",
-      activeOption: active.name,
+      activeOption: active.base,
       activeOptionId: active.id,
-      fixedOption: fixedOption.name,
+      activeHypothesis: active.name,
+      fixedOption: fixedOption.base,
       fixedOptionId: fixedOption.id,
-      neuralOption: neural?.name ?? null,
+      fixedHypothesis: fixedOption.name,
+      neuralOption: neural?.base ?? null,
       neuralOptionId: neural?.id ?? null,
+      neuralHypothesis: neural?.name ?? null,
+      activeRouteRule: active.routeRule,
+      activeSpeedRule: active.speedRule,
+      activeInteractionRule: active.interactionRule,
       optionDisagrees: neural ? neural.id !== fixedOption.id : false,
       optionCheckpointPath: this.optionModel?.path ?? null,
       optionCheckpointHash: this.optionModel?.hash ?? null,
@@ -1548,9 +2022,9 @@ class SignalLiveBrain {
 
   fixedTacticalOption(player) {
     const hullRatio = this.ship.hull > 0 ? clip(this.ship.hull / 100, 0, 1) : 1;
-    if (hullRatio < 0.55) return 5;
-    if ((player.towedCount ?? 0) > 0) return 4;
-    if (this.nearestFragment(player)) return 3;
+    if (hullRatio < 0.55) return 10;
+    if ((player.towedCount ?? 0) > 0) return 8;
+    if (this.fragmentOpportunity(player)) return 6;
     return 1;
   }
 
@@ -1561,6 +2035,7 @@ class SignalLiveBrain {
     }
     if (decision.activeOption !== objective.optionName && now - objective.startedAt > TACTICAL_OPTION_REPLAN_MS) {
       if (decision.activeOption === "dock_repair" || decision.activeOption === "deliver_refinery") return true;
+      if (decision.activeOption === "mine_nearest_clear" && objective.optionName === "collect_local_fragments") return true;
       if (objective.optionName === "autopilot_loop") return true;
     }
     return false;
@@ -1575,13 +2050,23 @@ class SignalLiveBrain {
     return this.makeTacticalObjective(player, optionName, decision, now);
   }
 
+  objectiveGrammar(decision) {
+    return {
+      hypothesisName: decision.activeHypothesis ?? null,
+      routeRule: decision.activeRouteRule ?? null,
+      speedRule: decision.activeSpeedRule ?? null,
+      interactionRule: decision.activeInteractionRule ?? null,
+    };
+  }
+
   makeTacticalObjective(player, optionName, decision, now) {
     if (optionName === "dock_repair") {
-      const station = this.selectedStation(player);
+      const station = this.selectedRepairStation(player);
       if (!station) return null;
       const approach = this.stationApproachPoint(station, player);
       return {
         kind: "tactical_dock_repair",
+        ...this.objectiveGrammar(decision),
         id: this.tacticalSerial++,
         optionName,
         stationId: station.id,
@@ -1596,12 +2081,69 @@ class SignalLiveBrain {
       };
     }
 
+    if (optionName === "supply_shipyard_inputs") {
+      const commodity = this.selectedShipyardInputCommodity(player);
+      if (commodity === null) return this.makeTacticalObjective(player, "mine_nearest_clear", decision, now);
+      const source = this.selectedProductSource(player, commodity);
+      const destination = this.selectedShipyardNeeding(player, commodity);
+      const station = source ?? destination;
+      if (!station) return this.makeTacticalObjective(player, "mine_nearest_clear", decision, now);
+      const approach = this.stationApproachPoint(station, player);
+      return {
+        kind: "tactical_supply_shipyard_buy",
+        ...this.objectiveGrammar(decision),
+        id: this.tacticalSerial++,
+        optionName,
+        commodity,
+        sourceStationId: source?.id ?? null,
+        destinationStationId: destination?.id ?? null,
+        phase: "buy",
+        stationId: station.id,
+        stationName: station.name,
+        x: approach.x,
+        y: approach.y,
+        completeRadius: Math.max(180, station.dockRadius || 180),
+        oneShotAction: NET_ACTION_DOCK,
+        tacticalOption: decision,
+        startedAt: now,
+        expiresAt: now + TACTICAL_OBJECTIVE_TTL_MS * 2,
+      };
+    }
+
+    if (optionName === "export_repair_kits") {
+      const source = this.selectedProductSource(player, COMMODITY_REPAIR_KIT);
+      const destination = this.selectedRepairKitImporter(player);
+      const station = source ?? destination;
+      if (!station) return this.makeTacticalObjective(player, "mine_nearest_clear", decision, now);
+      const approach = this.stationApproachPoint(station, player);
+      return {
+        kind: "tactical_export_repair_kits_buy",
+        ...this.objectiveGrammar(decision),
+        id: this.tacticalSerial++,
+        optionName,
+        commodity: COMMODITY_REPAIR_KIT,
+        sourceStationId: source?.id ?? null,
+        destinationStationId: destination?.id ?? null,
+        phase: "buy",
+        stationId: station.id,
+        stationName: station.name,
+        x: approach.x,
+        y: approach.y,
+        completeRadius: Math.max(180, station.dockRadius || 180),
+        oneShotAction: NET_ACTION_DOCK,
+        tacticalOption: decision,
+        startedAt: now,
+        expiresAt: now + TACTICAL_OBJECTIVE_TTL_MS * 2,
+      };
+    }
+
     if (optionName === "deliver_refinery") {
       const station = this.selectedStation(player);
       if (!station) return null;
       const approach = this.stationApproachPoint(station, player);
       return {
         kind: "tactical_deliver_refinery",
+        ...this.objectiveGrammar(decision),
         id: this.tacticalSerial++,
         optionName,
         stationId: station.id,
@@ -1622,6 +2164,7 @@ class SignalLiveBrain {
       if (!fragment) return this.makeTacticalObjective(player, "mine_nearest_clear", decision, now);
       return {
         kind: "tactical_collect_fragment",
+        ...this.objectiveGrammar(decision),
         id: this.tacticalSerial++,
         optionName,
         targetAsteroid: fragment.index,
@@ -1643,6 +2186,7 @@ class SignalLiveBrain {
       const approach = this.asteroidApproachPoint(player, asteroid);
       return {
         kind: optionName === "mine_richest" ? "tactical_mine_richest" : "tactical_mine_nearest_clear",
+        ...this.objectiveGrammar(decision),
         id: this.tacticalSerial++,
         optionName,
         targetAsteroid: asteroid.index,
@@ -1669,13 +2213,23 @@ class SignalLiveBrain {
       objectiveId: objective.id,
       completeRadius: objective.completeRadius,
       station: objective.stationId,
+      commodity: objective.commodity ?? null,
+      tradePhase: objective.phase ?? null,
       targetAsteroid: objective.targetAsteroid ?? null,
       mine: objective.mine ?? false,
       tractor: objective.tractor ?? false,
       miningTarget: objective.miningTarget ?? null,
       mineRange: objective.mineRange ?? undefined,
       oneShotAction: this.tacticalActionFor(player, objective),
-      allowStationApproach: objective.optionName === "dock_repair" || objective.optionName === "deliver_refinery",
+      allowStationApproach:
+        objective.optionName === "dock_repair" ||
+        objective.optionName === "deliver_refinery" ||
+        objective.optionName === "supply_shipyard_inputs" ||
+        objective.optionName === "export_repair_kits",
+      hypothesisName: objective.hypothesisName ?? null,
+      routeRule: objective.routeRule ?? null,
+      speedRule: objective.speedRule ?? null,
+      interactionRule: objective.interactionRule ?? null,
       tacticalOption: decision,
     };
     if (objective.targetAsteroid !== undefined && objective.targetAsteroid !== null) {
@@ -1712,10 +2266,67 @@ class SignalLiveBrain {
     };
   }
 
+  tradeObjectiveActionFor(player, objective) {
+    const commodity = objective.commodity;
+    if (!Number.isInteger(commodity)) return NET_ACTION_NONE;
+
+    if (this.ship.docked) {
+      const currentStationId = this.ship.currentStation;
+      const currentStation = this.stations.get(currentStationId);
+      if (objective.phase === "buy") {
+        if (currentStation && this.stationProduces(currentStation, commodity)) {
+          objective.phase = "deliver";
+          objective.kind = objective.optionName === "export_repair_kits"
+            ? "tactical_export_repair_kits_deliver"
+            : "tactical_supply_shipyard_deliver";
+          if (objective.destinationStationId !== null && objective.destinationStationId !== undefined) {
+            objective.stationId = objective.destinationStationId;
+          }
+          objective.expiresAt = Date.now() + TACTICAL_OBJECTIVE_TTL_MS * 2;
+          return NET_ACTION_BUY_PRODUCT + commodity;
+        }
+        if (objective.destinationStationId !== null && objective.destinationStationId !== undefined) {
+          objective.phase = "deliver";
+          objective.stationId = objective.destinationStationId;
+        }
+        return NET_ACTION_LAUNCH;
+      }
+
+      if (objective.phase === "deliver") {
+        const shouldDeliver =
+          currentStationId === objective.destinationStationId ||
+          objective.destinationStationId === null ||
+          objective.destinationStationId === undefined ||
+          (commodity === COMMODITY_REPAIR_KIT
+            ? this.repairKitImportDemandScore(currentStation) > 0
+            : this.shipyardInputDemandScore(currentStation, commodity) > 0);
+        if (shouldDeliver) {
+          objective.phase = "done";
+          objective.completedAt = Date.now();
+          return NET_ACTION_DELIVER_COMMODITY + commodity;
+        }
+        return NET_ACTION_LAUNCH;
+      }
+
+      return NET_ACTION_LAUNCH;
+    }
+
+    const station = this.stations.get(objective.stationId);
+    if (station && len(player.x - station.x, player.y - station.y) <= (station.dockRadius || 240) + 80) {
+      return NET_ACTION_DOCK;
+    }
+    return NET_ACTION_NONE;
+  }
+
   tacticalActionFor(player, objective) {
     if (!objective) return NET_ACTION_NONE;
     if (objective.optionName === "dock_repair") {
-      if (this.ship.docked) return NET_ACTION_REPAIR;
+      if (this.ship.docked) {
+        if (Date.now() - this.lastActionAt > 900) {
+          this.repairActionFlip = !this.repairActionFlip;
+        }
+        return this.repairActionFlip ? NET_ACTION_BUY_REPAIR_KIT : NET_ACTION_REPAIR;
+      }
       const station = this.stations.get(objective.stationId);
       if (station && len(player.x - station.x, player.y - station.y) <= (station.dockRadius || 240) + 80) {
         return NET_ACTION_DOCK;
@@ -1727,20 +2338,36 @@ class SignalLiveBrain {
         return NET_ACTION_DOCK;
       }
     }
+    if (objective.optionName === "supply_shipyard_inputs" || objective.optionName === "export_repair_kits") {
+      return this.tradeObjectiveActionFor(player, objective);
+    }
     return NET_ACTION_NONE;
   }
 
   tacticalObjectiveComplete(player, objective, now) {
     if (!objective) return true;
+    if (now >= objective.expiresAt) return true;
     if (objective.optionName === "deliver_refinery" && (player.towedCount ?? 0) <= 0) return true;
     if (objective.optionName === "dock_repair" && this.ship.hull >= 98) return true;
+    if (objective.optionName === "supply_shipyard_inputs" || objective.optionName === "export_repair_kits") {
+      return objective.phase === "done" && now - (objective.completedAt ?? now) > 1000;
+    }
     if (objective.targetAsteroid !== undefined && objective.targetAsteroid !== null) {
+      if (objective.optionName === "collect_local_fragments") {
+        if (this.playerTowsAsteroid(player, objective.targetAsteroid)) return true;
+        const fragment = this.asteroids.get(objective.targetAsteroid);
+        return !fragment || now - fragment.seenAt > 3000;
+      }
       const asteroid = this.asteroids.get(objective.targetAsteroid);
       if (!asteroid || now - asteroid.seenAt > 3000) return true;
       if (!objective.mine && len(player.x - asteroid.x, player.y - asteroid.y) <= objective.completeRadius) return true;
       return false;
     }
     return len(objective.x - player.x, objective.y - player.y) <= objective.completeRadius;
+  }
+
+  playerTowsAsteroid(player, asteroidId) {
+    return (player.towedFragments ?? []).includes(asteroidId);
   }
 
   logTacticalObjective(event, objective) {
@@ -1807,9 +2434,15 @@ class SignalLiveBrain {
 
   stationWaypoint(player, target, key, now) {
     if (target.allowStationApproach) return null;
+    if (target.routeRule === 0) return null;
     const containingStation = this.containingStation(player);
     if (containingStation) {
       return this.makeStationBypassWaypoint(player, target, containingStation, key, now, "station_escape");
+    }
+
+    const stationHalo = this.stationSafetyHaloContainingPoint(player.x, player.y, 0);
+    if (stationHalo && target.routeRule === 2) {
+      return this.makeStationBypassWaypoint(player, target, stationHalo, key, now, "station_egress");
     }
 
     let best = null;
@@ -1824,9 +2457,23 @@ class SignalLiveBrain {
   }
 
   containingStation(player) {
+    return this.stationContainingPoint(player.x, player.y, 0);
+  }
+
+  stationContainingPoint(x, y, margin = 0) {
     for (const station of this.stations.values()) {
-      const stationDist = len(player.x - station.x, player.y - station.y);
-      if (stationDist < this.stationClearanceRadius(station)) {
+      const stationDist = len(x - station.x, y - station.y);
+      if (stationDist < this.stationBodyRadius(station) + margin) {
+        return { station, stationDist };
+      }
+    }
+    return null;
+  }
+
+  stationSafetyHaloContainingPoint(x, y, margin = 0) {
+    for (const station of this.stations.values()) {
+      const stationDist = len(x - station.x, y - station.y);
+      if (stationDist < this.stationClearanceRadius(station) + margin) {
         return { station, stationDist };
       }
     }
@@ -1841,8 +2488,8 @@ class SignalLiveBrain {
     const tx = target.x - station.x;
     const ty = target.y - station.y;
     const basis = stationDist > 1 ? { x: dx, y: dy } : { x: tx, y: ty };
-    const escapeRadius = this.stationClearanceRadius(station);
-    const offset = navKind === "station_escape" ? 0.95 : 0.72;
+    const escapeRadius = this.stationClearanceRadius(station) + (navKind === "station_egress" ? STATION_EGRESS_PADDING : 0);
+    const offset = navKind === "station_escape" ? 0.0 : 0.72;
     const escapeAngle = Math.atan2(basis.y, basis.x) + this.stationEscapeTurnSign * offset;
     return {
       id: this.navSerial++,
@@ -1850,7 +2497,12 @@ class SignalLiveBrain {
       navKind,
       x: station.x + Math.cos(escapeAngle) * escapeRadius,
       y: station.y + Math.sin(escapeAngle) * escapeRadius,
-      completeRadius: NAV_WAYPOINT_REACHED_RADIUS,
+      completeRadius:
+        navKind === "station_escape"
+          ? Math.max(NAV_WAYPOINT_REACHED_RADIUS, 420)
+          : navKind === "station_egress"
+            ? Math.min(NAV_WAYPOINT_REACHED_RADIUS, 220)
+            : NAV_WAYPOINT_REACHED_RADIUS,
       expiresAt: now + NAV_WAYPOINT_TTL_MS,
       escapeRadius,
       stationDistance: stationDist,
@@ -1868,6 +2520,143 @@ class SignalLiveBrain {
       (station.radius || 0) + STATION_ESCAPE_PADDING,
       (station.dockRadius || 0) + STATION_ESCAPE_PADDING * 0.7,
     );
+  }
+
+  stationBodyRadius(station) {
+    const outerRing = this.stationMaxRing(station);
+    return Math.max(
+      (station.radius || 0) + 120,
+      (STATION_RING_RADIUS[outerRing] || 0) + STATION_BODY_PADDING,
+    );
+  }
+
+  stationRingRotation(station, ring) {
+    if (ring < 1 || ring > STATION_NUM_RINGS) return 0;
+    const index = ring - 1;
+    return (station.armRotation?.[index] ?? 0) + (station.ringOffset?.[index] ?? 0);
+  }
+
+  moduleAngleRing(station, ring, slot) {
+    if (ring < 1 || ring > STATION_NUM_RINGS) return 0;
+    const slots = STATION_RING_SLOTS[ring] || 1;
+    return (Math.PI * 2 * slot) / slots + this.stationRingRotation(station, ring);
+  }
+
+  moduleWorldPosRing(station, ring, slot) {
+    const angle = this.moduleAngleRing(station, ring, slot);
+    const radius = STATION_RING_RADIUS[ring] || 0;
+    return {
+      x: station.x + Math.cos(angle) * radius,
+      y: station.y + Math.sin(angle) * radius,
+    };
+  }
+
+  stationDockLaneAngle(station, ring, slot) {
+    if (ring < 1 || ring > STATION_NUM_RINGS) return 0;
+    const slots = STATION_RING_SLOTS[ring] || 1;
+    const slotArc = (Math.PI * 2) / slots;
+    const dir = slot === 0 ? -1 : 1;
+    return this.moduleAngleRing(station, ring, slot) + dir * slotArc * 0.5;
+  }
+
+  stationDockLanePos(station, ring, slot, radius) {
+    const angle = this.stationDockLaneAngle(station, ring, slot);
+    return {
+      x: station.x + Math.cos(angle) * radius,
+      y: station.y + Math.sin(angle) * radius,
+    };
+  }
+
+  ringModuleCount(station, ring) {
+    return (station.modules ?? []).filter((module) => module.ring === ring).length;
+  }
+
+  stationMaxRing(station) {
+    let maxRing = 1;
+    for (const module of station.modules ?? []) {
+      if (module.scaffold) continue;
+      if (module.ring > maxRing && module.ring <= STATION_NUM_RINGS) maxRing = module.ring;
+    }
+    return maxRing;
+  }
+
+  stationRingOpenGapLane(station, ring) {
+    if (ring < 1 || ring > STATION_NUM_RINGS) return null;
+    const slotCount = STATION_RING_SLOTS[ring] || 0;
+    if (slotCount <= 0) return null;
+    const slots = (station.modules ?? [])
+      .filter((module) => module.ring === ring)
+      .map((module) => module.slot)
+      .sort((a, b) => a - b);
+    if (!slots.length) return null;
+    const first = slots[0];
+    const last = slots[slots.length - 1];
+    let gapSlots = first + slotCount - last;
+    if (gapSlots <= 0) gapSlots += slotCount;
+    return {
+      slot: last,
+      offset: ((Math.PI * 2) / slotCount) * gapSlots * 0.5,
+    };
+  }
+
+  stationRingOpenGapAngle(station, ring) {
+    const gap = this.stationRingOpenGapLane(station, ring);
+    return gap ? this.moduleAngleRing(station, ring, gap.slot) + gap.offset : null;
+  }
+
+  stationRingOpenGapLanePos(station, ring, radius) {
+    const angle = this.stationRingOpenGapAngle(station, ring);
+    if (angle === null) return null;
+    return {
+      x: station.x + Math.cos(angle) * radius,
+      y: station.y + Math.sin(angle) * radius,
+    };
+  }
+
+  stationEntryTarget(station) {
+    const outerRing = this.stationMaxRing(station);
+    let roadRing = outerRing;
+    while (roadRing > 1 && this.ringModuleCount(station, roadRing) <= 1) {
+      roadRing -= 1;
+    }
+    if (roadRing >= 1 && roadRing <= STATION_NUM_RINGS) {
+      const radius = (STATION_RING_RADIUS[outerRing] || 0) + 160;
+      const lane = this.stationRingOpenGapLanePos(station, roadRing, radius);
+      if (lane) return lane;
+    }
+    const radius = Math.max((station.dockRadius || 0) + 160, (station.radius || 0) + 160);
+    return { x: station.x + radius, y: station.y };
+  }
+
+  stationExitTarget(station, from) {
+    const docks = (station.modules ?? []).filter((module) =>
+      module.type === MODULE_DOCK && !module.scaffold && module.ring >= 1 && module.ring <= STATION_NUM_RINGS,
+    );
+    if (!docks.length) return this.stationEntryTarget(station);
+
+    let best = null;
+    let bestDist = Infinity;
+    for (const dock of docks) {
+      const pos = this.moduleWorldPosRing(station, dock.ring, dock.slot);
+      const d = len(from.x - pos.x, from.y - pos.y);
+      if (d < bestDist) {
+        best = dock;
+        bestDist = d;
+      }
+    }
+    if (!best) return this.stationEntryTarget(station);
+
+    let innerRadius = (STATION_RING_RADIUS[best.ring] || 0) - 60;
+    innerRadius = Math.max(innerRadius, (station.radius || 0) + 80);
+    const innerLane = this.stationDockLanePos(station, best.ring, best.slot, innerRadius);
+    const fromRadius = len(from.x - station.x, from.y - station.y);
+    if (
+      fromRadius < (STATION_RING_RADIUS[best.ring] || 0) - 20 &&
+      len(from.x - innerLane.x, from.y - innerLane.y) > 80
+    ) {
+      return innerLane;
+    }
+    return this.stationEntryTarget(station);
   }
 
   asteroidWaypoint(player, target, key, now) {
@@ -1979,6 +2768,140 @@ class SignalLiveBrain {
     return best;
   }
 
+  selectedRepairStation(player) {
+    if (this.config.station !== null) {
+      return this.stations.get(this.config.station) ?? null;
+    }
+    let best = null;
+    let bestScore = Infinity;
+    for (const station of this.stations.values()) {
+      const dist = len(station.x - player.x, station.y - player.y);
+      const kitStock = station.inventory?.[COMMODITY_REPAIR_KIT] ?? 0;
+      const hasShipyard = (station.modules ?? []).some((module) =>
+        module.type === MODULE_SHIPYARD && !module.scaffold,
+      );
+      let score = dist;
+      if (kitStock >= 1) score -= 3000;
+      if (hasShipyard) score -= 1200;
+      if (score < bestScore) {
+        best = station;
+        bestScore = score;
+      }
+    }
+    return best ?? this.selectedStation(player);
+  }
+
+  stationHasModule(station, type) {
+    return (station?.modules ?? []).some((module) => module.type === type && !module.scaffold);
+  }
+
+  stationProduces(station, commodity) {
+    switch (commodity) {
+      case COMMODITY_FRAME:
+        return this.stationHasModule(station, MODULE_FRAME_PRESS);
+      case COMMODITY_LASER_MODULE:
+        return this.stationHasModule(station, MODULE_LASER_FAB);
+      case COMMODITY_TRACTOR_MODULE:
+        return this.stationHasModule(station, MODULE_TRACTOR_FAB);
+      case COMMODITY_REPAIR_KIT:
+        return this.stationHasModule(station, MODULE_SHIPYARD);
+      default:
+        return false;
+    }
+  }
+
+  shipyardInputDemandScore(station, commodity) {
+    if (!station || !this.stationHasModule(station, MODULE_SHIPYARD)) return 0;
+    if (
+      commodity !== COMMODITY_FRAME &&
+      commodity !== COMMODITY_LASER_MODULE &&
+      commodity !== COMMODITY_TRACTOR_MODULE
+    ) {
+      return 0;
+    }
+    const stock = station.inventory?.[commodity] ?? 0;
+    return clip((12 - stock) / 12, 0, 1);
+  }
+
+  repairKitImportDemandScore(station) {
+    if (!station || !this.stationHasModule(station, MODULE_DOCK) || this.stationHasModule(station, MODULE_SHIPYARD)) {
+      return 0;
+    }
+    const stock = station.inventory?.[COMMODITY_REPAIR_KIT] ?? 0;
+    return clip((100 - stock) / 100, 0, 1);
+  }
+
+  selectedProductSource(player, commodity) {
+    let best = null;
+    let bestScore = Infinity;
+    for (const station of this.stations.values()) {
+      if (!this.stationHasModule(station, MODULE_DOCK)) continue;
+      if (!this.stationProduces(station, commodity)) continue;
+      const stock = station.inventory?.[commodity] ?? 0;
+      const dist = len(station.x - player.x, station.y - player.y);
+      let score = dist - stock * 80;
+      if (stock > 0) score -= 2500;
+      if (score < bestScore) {
+        best = station;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  selectedShipyardNeeding(player, commodity) {
+    let best = null;
+    let bestScore = -Infinity;
+    for (const station of this.stations.values()) {
+      if (!this.stationHasModule(station, MODULE_DOCK)) continue;
+      if (!this.stationHasModule(station, MODULE_SHIPYARD)) continue;
+      const demand = this.shipyardInputDemandScore(station, commodity);
+      const dist = len(station.x - player.x, station.y - player.y);
+      const score = demand * 6000 - dist * 0.15;
+      if (score > bestScore) {
+        best = station;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  selectedRepairKitImporter(player) {
+    let best = null;
+    let bestScore = -Infinity;
+    for (const station of this.stations.values()) {
+      if (!this.stationHasModule(station, MODULE_DOCK)) continue;
+      if (this.stationHasModule(station, MODULE_SHIPYARD)) continue;
+      const demand = this.repairKitImportDemandScore(station);
+      const dist = len(station.x - player.x, station.y - player.y);
+      const score = demand * 7000 - dist * 0.12;
+      if (score > bestScore) {
+        best = station;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  selectedShipyardInputCommodity(player) {
+    const choices = [COMMODITY_FRAME, COMMODITY_LASER_MODULE, COMMODITY_TRACTOR_MODULE];
+    let best = null;
+    let bestScore = -Infinity;
+    for (const commodity of choices) {
+      const dest = this.selectedShipyardNeeding(player, commodity);
+      const src = this.selectedProductSource(player, commodity);
+      if (!dest || !src) continue;
+      const demand = this.shipyardInputDemandScore(dest, commodity);
+      const stock = src.inventory?.[commodity] ?? 0;
+      const score = demand * 8 + clip(stock, 0, 12) * 0.2;
+      if (score > bestScore) {
+        best = commodity;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
   optionFeatures(player, option) {
     const view = this.tacticalStateView(player, option);
     const forwardX = Math.cos(player.angle);
@@ -1989,44 +2912,50 @@ class SignalLiveBrain {
     const towCapacity = Math.max(1, Math.min(10, 2 + (player.tractorLevel ?? 0) * 2));
     const hullRatio = this.ship.hull > 0 ? clip(this.ship.hull / 100, 0, 1) : 1;
 
-    const row = new Float64Array(40);
+    const row = new Float64Array(70);
     row[0] = 1;
     row[1] = scale(option.id, SIGNAL_MINING_OPTIONS.length - 1);
     for (let i = 0; i < SIGNAL_MINING_OPTIONS.length; i += 1) {
       row[2 + i] = i === option.id ? 1 : 0;
     }
-    row[8] = hullRatio;
-    row[9] = scale(speed, 450);
-    row[10] = signedScale(forwardSpeed, 300);
-    row[11] = this.signalStrength(player);
-    row[12] = this.ship.docked ? 1 : 0;
-    row[13] = scale(towedCount, towCapacity);
-    row[14] = scale(towedCount, 10);
-    row[15] = scale(view.nearestMineDist, 6000);
-    row[16] = scale(view.nearestClearMineDist, 6000);
-    row[17] = scale(view.richestMineDist, 6000);
-    row[18] = scale(view.nearestFragmentDist, 4000);
-    row[19] = scale(view.refineryDist, 9000);
-    row[20] = scale(view.dockDist, 9000);
-    row[21] = scale(view.targetDist, 9000);
-    row[22] = clip(view.targetAlignmentCos, -1, 1);
-    row[23] = clip(view.targetAlignmentSin, -1, 1);
-    row[24] = scale(view.targetOre, 80);
-    row[25] = scale(view.targetHp, 260);
-    row[26] = scale(view.targetRadius, 220);
-    row[27] = scale(view.targetGrade, 4);
-    row[28] = view.targetClear ? 1 : 0;
-    row[29] = option.name === "mine_nearest_clear" || option.name === "mine_richest" ? 1 : 0;
-    row[30] = option.name === "deliver_refinery" ? 1 : 0;
-    row[31] = option.name === "dock_repair" ? 1 : 0;
-    row[32] = 0;
-    row[33] = 0;
-    row[34] = scale(view.localFragmentCount, 8);
-    row[35] = scale(view.mineableCount, 40);
-    row[36] = hullRatio < 0.82 ? 1 : 0;
-    row[37] = towedCount > 0 ? 1 : 0;
-    row[38] = 0;
-    row[39] = 0;
+    for (let i = 0; i < 4; i += 1) row[16 + i] = i === option.routeRule ? 1 : 0;
+    for (let i = 0; i < 3; i += 1) row[20 + i] = i === option.speedRule ? 1 : 0;
+    for (let i = 0; i < 5; i += 1) row[23 + i] = i === option.interactionRule ? 1 : 0;
+    row[28] = option.opportunistic ? 1 : 0;
+    row[29] = option.stationLegal ? 1 : 0;
+    for (let i = 0; i < 8; i += 1) row[30 + i] = i === option.baseId ? 1 : 0;
+    row[38] = hullRatio;
+    row[39] = scale(speed, 450);
+    row[40] = signedScale(forwardSpeed, 300);
+    row[41] = this.signalStrength(player);
+    row[42] = this.ship.docked ? 1 : 0;
+    row[43] = scale(towedCount, towCapacity);
+    row[44] = scale(towedCount, 10);
+    row[45] = scale(view.nearestMineDist, 6000);
+    row[46] = scale(view.nearestClearMineDist, 6000);
+    row[47] = scale(view.richestMineDist, 6000);
+    row[48] = scale(view.nearestFragmentDist, 4000);
+    row[49] = scale(view.refineryDist, 9000);
+    row[50] = scale(view.dockDist, 9000);
+    row[51] = scale(view.targetDist, 9000);
+    row[52] = clip(view.targetAlignmentCos, -1, 1);
+    row[53] = clip(view.targetAlignmentSin, -1, 1);
+    row[54] = scale(view.targetOre, 80);
+    row[55] = scale(view.targetHp, 260);
+    row[56] = scale(view.targetRadius, 220);
+    row[57] = scale(view.targetGrade, 4);
+    row[58] = view.targetClear ? 1 : 0;
+    row[59] = option.base === "mine_nearest_clear" || option.base === "mine_richest" ? 1 : 0;
+    row[60] = option.base === "deliver_refinery" ? 1 : 0;
+    row[61] = option.base === "dock_repair" ? 1 : 0;
+    row[62] = clip(view.rawOreNeed ?? 0, 0, 1);
+    row[63] = scale(view.repairKitLevel ?? 0, 100);
+    row[64] = scale(view.localFragmentCount, 8);
+    row[65] = scale(view.mineableCount, 40);
+    row[66] = hullRatio < 0.82 ? 1 : 0;
+    row[67] = towedCount > 0 ? 1 : 0;
+    row[68] = 0;
+    row[69] = 0;
     return row;
   }
 
@@ -2037,12 +2966,28 @@ class SignalLiveBrain {
     const richestMine = this.richestMineableAsteroid(player);
     const nearestFragment = this.nearestFragment(player);
     const station = this.selectedStation(player);
+    const repairStation = this.selectedRepairStation(player);
+    const shipyardInputCommodity = this.selectedShipyardInputCommodity(player);
+    const supplySource = shipyardInputCommodity !== null
+      ? this.selectedProductSource(player, shipyardInputCommodity)
+      : null;
+    const supplyDest = shipyardInputCommodity !== null
+      ? this.selectedShipyardNeeding(player, shipyardInputCommodity)
+      : null;
+    const kitSource = this.selectedProductSource(player, COMMODITY_REPAIR_KIT);
+    const kitImporter = this.selectedRepairKitImporter(player);
     const target = this.targetForOption(player, option, {
       nearestMine,
       nearestClearMine,
       richestMine,
       nearestFragment,
       station,
+      repairStation,
+      shipyardInputCommodity,
+      supplySource,
+      supplyDest,
+      kitSource,
+      kitImporter,
     });
     const targetDx = target ? target.x - player.x : 0;
     const targetDy = target ? target.y - player.y : 0;
@@ -2057,7 +3002,7 @@ class SignalLiveBrain {
       richestMineDist: richestMine ? len(richestMine.x - player.x, richestMine.y - player.y) : 6000,
       nearestFragmentDist: nearestFragment ? len(nearestFragment.x - player.x, nearestFragment.y - player.y) : 4000,
       refineryDist: station ? len(station.x - player.x, station.y - player.y) : 9000,
-      dockDist: station ? len(station.x - player.x, station.y - player.y) : 9000,
+      dockDist: repairStation ? len(repairStation.x - player.x, repairStation.y - player.y) : 9000,
       targetDist,
       targetAlignmentCos: forwardX * targetDir.x + forwardY * targetDir.y,
       targetAlignmentSin: forwardX * targetDir.y - forwardY * targetDir.x,
@@ -2066,16 +3011,41 @@ class SignalLiveBrain {
       targetRadius: target?.radius ?? 0,
       targetGrade: target?.grade ?? 0,
       targetClear: target && target.index !== undefined ? this.clearApproach(player, target) : Boolean(target),
-      localFragmentCount: activeAsteroids.filter((a) => this.isFragment(a) && len(a.x - player.x, a.y - player.y) < 1800).length,
+      rawOreNeed: target?.rawOreNeed ?? 0,
+      repairKitLevel: target?.repairKitLevel ?? target?.inventory?.[COMMODITY_REPAIR_KIT] ?? 0,
+      localFragmentCount: activeAsteroids.filter((a) =>
+        this.validFragmentTarget(a) && len(a.x - player.x, a.y - player.y) < 1800,
+      ).length,
       mineableCount: mineable.length,
     };
   }
 
   targetForOption(player, option, refs) {
-    if (option.name === "mine_nearest_clear") return refs.nearestClearMine ?? refs.nearestMine;
-    if (option.name === "mine_richest") return refs.richestMine ?? refs.nearestMine;
-    if (option.name === "collect_local_fragments") return refs.nearestFragment;
-    if (option.name === "deliver_refinery" || option.name === "dock_repair") return refs.station;
+    if (option.base === "mine_nearest_clear") return refs.nearestClearMine ?? refs.nearestMine;
+    if (option.base === "mine_richest") return refs.richestMine ?? refs.nearestMine;
+    if (option.base === "collect_local_fragments") return refs.nearestFragment;
+    if (option.base === "dock_repair") return refs.repairStation ?? refs.station;
+    if (option.base === "deliver_refinery") return refs.station;
+    if (option.base === "supply_shipyard_inputs") {
+      const station = refs.supplySource ?? refs.supplyDest;
+      if (!station) return refs.station;
+      return {
+        ...station,
+        rawOreNeed: refs.supplyDest && refs.shipyardInputCommodity !== null
+          ? this.shipyardInputDemandScore(refs.supplyDest, refs.shipyardInputCommodity)
+          : 0,
+        repairKitLevel: station.inventory?.[COMMODITY_REPAIR_KIT] ?? 0,
+      };
+    }
+    if (option.base === "export_repair_kits") {
+      const station = refs.kitSource ?? refs.kitImporter;
+      if (!station) return refs.station;
+      return {
+        ...station,
+        rawOreNeed: refs.kitImporter ? this.repairKitImportDemandScore(refs.kitImporter) : 0,
+        repairKitLevel: station.inventory?.[COMMODITY_REPAIR_KIT] ?? 0,
+      };
+    }
     if ((player.towedCount ?? 0) > 0) return refs.station;
     return refs.nearestClearMine ?? refs.nearestMine ?? refs.nearestFragment ?? refs.station;
   }
@@ -2116,10 +3086,31 @@ class SignalLiveBrain {
       player,
       Array.from(this.asteroids.values()).filter((asteroid) =>
         now - asteroid.seenAt <= 3000 &&
-        this.isFragment(asteroid) &&
+        this.validFragmentTarget(asteroid) &&
         this.signalStrengthAt(asteroid.x, asteroid.y) >= 0.2,
       ),
     );
+  }
+
+  nearestFragmentWithin(player, radius) {
+    const fragment = this.nearestFragment(player);
+    if (!fragment) return null;
+    return len(fragment.x - player.x, fragment.y - player.y) <= radius ? fragment : null;
+  }
+
+  fragmentOpportunity(player) {
+    const fragment = this.nearestFragmentWithin(player, TACTICAL_FRAGMENT_OPPORTUNITY_RADIUS);
+    if (!fragment) return null;
+    const dist = len(fragment.x - player.x, fragment.y - player.y);
+    const speed = len(player.vx ?? 0, player.vy ?? 0);
+    if (speed > TACTICAL_FRAGMENT_FAST_SPEED && dist > TACTICAL_FRAGMENT_FAST_OPPORTUNITY_RADIUS) {
+      return null;
+    }
+    return fragment;
+  }
+
+  validFragmentTarget(asteroid) {
+    return this.isFragment(asteroid);
   }
 
   nearestByDistance(player, items) {
@@ -2306,6 +3297,14 @@ class SignalLiveBrain {
       t_ms: now,
       player_id: this.localId,
       dry_run: this.config.dryRun,
+      protocol_status: this.protocolCompatibility.status,
+      protocol_compatible: this.protocolCompatibility.compatible,
+      protocol_root: this.protocolCompatibility.root ?? null,
+      protocol_hash: this.protocolCompatibility.hash ?? null,
+      protocol_mismatch_count: this.protocolCompatibility.mismatches?.length ?? 0,
+      protocol_missing_count: this.protocolCompatibility.missing?.length ?? 0,
+      protocol_mismatches: this.protocolCompatibility.mismatches ?? [],
+      protocol_missing: this.protocolCompatibility.missing ?? [],
       policy: decision.policy ?? "unknown",
       brain_mode: decision.brainMode ?? "heuristic",
       active_source: decision.activeSource ?? "heuristic",
@@ -2339,8 +3338,11 @@ class SignalLiveBrain {
       option_mode: decision.tacticalOption?.optionMode ?? null,
       active_option: decision.tacticalOption?.activeOption ?? null,
       active_option_id: decision.tacticalOption?.activeOptionId ?? null,
+      active_hypothesis: decision.tacticalOption?.activeHypothesis ?? null,
       fixed_option: decision.tacticalOption?.fixedOption ?? null,
+      fixed_hypothesis: decision.tacticalOption?.fixedHypothesis ?? null,
       neural_option: decision.tacticalOption?.neuralOption ?? null,
+      neural_hypothesis: decision.tacticalOption?.neuralHypothesis ?? null,
       option_disagrees: decision.tacticalOption?.optionDisagrees ?? false,
       option_checkpoint_hash: decision.tacticalOption?.optionCheckpointHash ?? null,
       option_feature_set: decision.tacticalOption?.optionFeatureSet ?? null,
@@ -2351,6 +3353,12 @@ class SignalLiveBrain {
             x: round3(decision.target.x),
             y: round3(decision.target.y),
             station: decision.target.station ?? null,
+            commodity: decision.target.commodity ?? null,
+            trade_phase: decision.target.tradePhase ?? null,
+            hypothesis: decision.target.hypothesisName ?? null,
+            route_rule: decision.target.routeRule ?? null,
+            speed_rule: decision.target.speedRule ?? null,
+            interaction_rule: decision.target.interactionRule ?? null,
             objective_kind: decision.target.objectiveKind ?? null,
             parent_objective_kind: decision.target.parentObjectiveKind ?? null,
             nav_kind: decision.target.navKind ?? null,
@@ -2399,14 +3407,8 @@ class SignalLiveBrain {
   statusText(player, decision, action) {
     const stationText = decision.target?.station !== undefined ? ` station=${decision.target.station}` : "";
     const objectiveText = decision.target?.objectiveId ? ` obj=${decision.target.objectiveId}` : "";
-    const actionText =
-      action === NET_ACTION_LAUNCH
-        ? " +LAUNCH"
-        : action === NET_ACTION_DOCK
-          ? " +DOCK"
-          : action === NET_ACTION_REPAIR
-            ? " +REPAIR"
-            : "";
+    const namedAction = actionName(action);
+    const actionText = namedAction ? ` +${namedAction}` : "";
     const policyText =
       decision.policy === "model"
         ? " model"
@@ -2421,7 +3423,7 @@ class SignalLiveBrain {
     const maskText = decision.maskedAction ? ` masked=${decision.maskedAction}` : "";
     const modeText = decision.brainMode ? ` mode=${decision.brainMode}/${decision.activeSource}` : "";
     const optionText = decision.tacticalOption?.activeOption
-      ? ` opt=${decision.tacticalOption.activeOption}`
+      ? ` opt=${decision.tacticalOption.activeOption}/${decision.tacticalOption.activeHypothesis ?? "hyp"}`
       : "";
     const shadowText = decision.shadowDisagrees ? ` shadow=${decision.neuralAction}` : "";
     return `${decision.actionName}${actionText}${policyText}${modeText}${optionText}${shadowText}${maskText}${scoreText} pos=(${player.x.toFixed(0)},${player.y.toFixed(0)}) dist=${decision.dist.toFixed(0)} heading=${decision.headingError.toFixed(2)}${stationText}${objectiveText}`;
@@ -2449,6 +3451,11 @@ function round6(value) {
 
 async function main() {
   const config = parseArgs(process.argv);
+  const protocolCompatibility = await checkSignalProtocolCompatibility(config);
+  if (config.protocolCheckOnly) {
+    console.log(JSON.stringify(protocolCompatibility, null, 2));
+    return;
+  }
   const sessionToken = await loadSessionToken(config.sessionPath);
   const model = await loadSignalFlightModel(config.checkpointPath);
   const optionModel = await loadSignalMiningOptionModel(config.optionCheckpointPath);
@@ -2458,7 +3465,7 @@ async function main() {
   if (config.optionMode === "shadow_neural" && !optionModel) {
     throw new Error("--option-mode shadow_neural requires --option-checkpoint");
   }
-  const brain = new SignalLiveBrain(config, sessionToken, model, optionModel);
+  const brain = new SignalLiveBrain(config, sessionToken, model, optionModel, protocolCompatibility);
   await brain.run();
 }
 

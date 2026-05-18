@@ -2,6 +2,7 @@
 #let experiment_matrix_rows = (
   (
     domain: "prime_gap",
+    domain_display: "prime gap",
     data_domain: "prime gaps over segmented sieve windows",
     grammar: "local modular filters over residues, gap classes, and wheel support",
     candidate_set: "next-gap actions plus certified modular rule filters",
@@ -18,6 +19,7 @@
   ),
   (
     domain: "grid_path",
+    domain_display: "grid path",
     data_domain: "grid mazes with deterministic shortest-path labels",
     grammar: "local moves plus boundary, trap, path-clear, and distance predicates",
     candidate_set: "four moves plus symbolic local/topology/bound predicates",
@@ -34,6 +36,7 @@
   ),
   (
     domain: "delayed_claim",
+    domain_display: "delayed claim",
     data_domain: "delayed reward/claim rows with hidden outcomes and margins",
     grammar: "threshold, margin, and sibling-claim predicates",
     candidate_set: "claim actions, threshold gates, and utility-margin rules",
@@ -50,6 +53,7 @@
   ),
   (
     domain: "rejected_candidate_learning",
+    domain_display: "rejected candidate learning",
     data_domain: "verifier rejection rows grouped by seed, split, and reason family",
     grammar: "the original domain grammars that produced rejected candidate rows",
     candidate_set: "rejected verifier rows grouped by task, split, reason family, and seed",
@@ -66,6 +70,7 @@
   ),
   (
     domain: "hypothesis_library_feedback",
+    domain_display: "hypothesis library feedback",
     data_domain: "ARC-like hypothesis fixtures split into promotion and held-out task ids",
     grammar: "typed templates, slot bindings, and compiled program candidates",
     candidate_set: "certified hypothesis templates, slot bindings, and compiled programs",
@@ -82,6 +87,7 @@
   ),
   (
     domain: "multitask_tiny_net",
+    domain_display: "multitask tiny net",
     data_domain: "shared residual rows from prime, grid, claim, and ARC surfaces",
     grammar: "domain-local grammars encoded through common residual feature rows",
     candidate_set: "shared residual ranking rows across prime/grid/claim/ARC",
@@ -98,6 +104,7 @@
   ),
   (
     domain: "arc_agi_evidence_surface",
+    domain_display: "arc agi evidence surface",
     data_domain: "public and fixture ARC tasks with cell, object, transform, and hypothesis candidates",
     grammar: "typed transforms, object/slot bindings, and bounded program templates",
     candidate_set: "cell colors, typed transforms, programs, and hypothesis-derived candidates",
@@ -114,18 +121,19 @@
   ),
   (
     domain: "signal_flight",
-    data_domain: "Signal flight replay frames, live shadow-control comparisons, and live neural-active rows",
+    domain_display: "signal flight",
+    data_domain: "Signal flight replay frames, closed-loop rollout rows, live shadow-control comparisons, and live neural-active rows",
     grammar: "bounded action/control-option candidates beside the heuristic controller",
     candidate_set: "certified control-target hypotheses plus nine WASD action candidates",
-    verifier: "offline counterfactual simulator replay, live shadow frame comparison, and live active telemetry",
-    certificate_gate: "replay utility, regret, damage/death counters, shadow disagreement logs, and live safety gates",
+    verifier: "offline counterfactual simulator replay, closed-loop rollout replay, live shadow frame comparison, and live active telemetry",
+    certificate_gate: "replay utility, regret, damage/death counters, certified control-target rollout rows, shadow disagreement logs, live safety gates, and protocol compatibility rows",
     scorer_role: "rank bounded control candidates beside heuristic control",
-    trace_artifact: "crlp.signal_flight.summary.v1; crlp.signal_shadow_replay_audit.v1; crlp.signal_live_active_summary.v1",
-    examples: "WASD candidate; counterfactual utility row; shadow disagreement row; live active frame",
-    result_table: "Signal offline replay ranker top-1 79.76% vs baseline 67.86% (+11.90pp), utility 0.1432 vs 0.1359, regret 0.0073 vs 0.0146, damage 2.38% vs 2.38%, deaths 0.00% vs 0.00%; live shadow frames=22191. Signal live neural-active pilot executed 250 recent neural-source rows from checkpoint f12b644ed9fa with p95 inference 0.124 ms, 249 replay-ready rows, safety-gate rows=250, damage events=0, deaths=0; no baseline comparison is claimed.",
-    result: "Signal offline replay ranker top-1 79.76% vs baseline 67.86% (+11.90pp), utility 0.1432 vs 0.1359, regret 0.0073 vs 0.0146, damage 2.38% vs 2.38%, deaths 0.00% vs 0.00%; live shadow frames=22191. Signal live neural-active pilot executed 250 recent neural-source rows from checkpoint f12b644ed9fa with p95 inference 0.124 ms, 249 replay-ready rows, safety-gate rows=250, damage events=0, deaths=0; no baseline comparison is claimed.",
+    trace_artifact: "crlp.signal_flight.summary.v1; crlp.signal_flight_rollout.summary.v1; crlp.signal_shadow_replay_audit.v1; crlp.signal_live_active_summary.v1",
+    examples: "WASD candidate; counterfactual utility row; rollout controller row; shadow disagreement row",
+    result_table: "offline replay, rollout bridge, and live neural-active claims supported; active baseline comparison remains open",
+    result: "Signal offline replay ranker top-1 79.76% vs baseline 67.86% (+11.90pp), utility 0.1432 vs 0.1359, regret 0.0073 vs 0.0146, damage 2.38% vs 2.38%, deaths 0.00% vs 0.00%; live shadow frames=74. Closed-loop rollout neural_guarded utility 0.3564 vs baseline -1.4642, reach 12.50% vs 8.33%. Signal live neural-active pilot executed 74 recent neural-source rows from checkpoint f12b644ed9fa with p95 inference 0.089 ms, 74 replay-ready rows, protocol-compatible rows=74, safety-gate rows=74, damage events=2, deaths=0; no baseline comparison is claimed.",
     claim: "application pressure for replay-grounded residual ranking and guarded live neural-active execution",
-    takeaway: "Signal adds application pressure through replay, shadow, and guarded live neural-active artifacts while keeping active-control performance open.",
+    takeaway: "Signal adds application pressure through replay, rollout, shadow, and guarded live artifacts while keeping active-control performance open.",
     limitation: "active neural versus heuristic performance is not yet claimed",
   ),
 )

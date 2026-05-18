@@ -101,6 +101,11 @@ def frame_rows(rows: list[dict[str, Any]], horizon_ms: int) -> list[dict[str, An
                 "shadow_disagrees": bool(row.get("shadow_disagrees")),
                 "safety_gate": row.get("safety_gate"),
                 "safety_reject_reasons": row.get("safety_reject_reasons") or [],
+                "protocol_status": row.get("protocol_status"),
+                "protocol_compatible": row.get("protocol_compatible"),
+                "protocol_hash": row.get("protocol_hash"),
+                "protocol_mismatch_count": row.get("protocol_mismatch_count"),
+                "protocol_missing_count": row.get("protocol_missing_count"),
                 "candidate_count": len(scores or []),
                 "neural_top_margin": round_or_none(top_margin(scores)),
                 "heuristic_rank_in_neural_scores": action_rank(scores, row.get("heuristic_action")),
@@ -129,6 +134,12 @@ def summary_row(frames: list[dict[str, Any]], log_path: Path, horizon_ms: int) -
     for row in frames:
         for reason in row.get("safety_reject_reasons", []) or []:
             reasons[str(reason)] += 1
+    protocol_statuses = collections.Counter(
+        str(row.get("protocol_status") or "missing") for row in frames
+    )
+    protocol_compatible_rows = sum(
+        1 for row in frames if row.get("protocol_compatible") is True or row.get("protocol_status") == "ok"
+    )
     return {
         "schema": "crlp.signal_shadow_replay_audit.v1",
         "report_version": 1,
@@ -147,6 +158,8 @@ def summary_row(frames: list[dict[str, Any]], log_path: Path, horizon_ms: int) -
         "inference_ms_p99": percentile(latencies, 0.99),
         "safety_gates": dict(gates),
         "safety_reject_reasons": dict(reasons),
+        "protocol_compatible_rows": protocol_compatible_rows,
+        "protocol_statuses": dict(protocol_statuses),
     }
 
 
@@ -170,6 +183,7 @@ def write_summary(path: Path, summary: dict[str, Any]) -> None:
         f"| Disagreements | {summary['shadow_disagreements']} |",
         f"| Disagreement rate | {100.0 * summary['shadow_disagreement_rate']:.2f}% |",
         f"| Inference p95 ms | {summary['inference_ms_p95']} |",
+        f"| Protocol-compatible rows | {summary['protocol_compatible_rows']} |",
         f"| Next observations | {summary['next_observation_rows']} |",
         "",
         "The audit is a same-frame shadow comparison. Neural counterfactual outcomes are "

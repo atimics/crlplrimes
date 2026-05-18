@@ -900,6 +900,91 @@
       ]
     },
     {
+      "id": "C4.adapter_heads_shared_trunk",
+      "title": "Shared trunk plus domain heads is gated as architecture evidence",
+      "claim_type": "architecture_boundary",
+      "claim_text": "A single compact shared trunk with small domain-specific heads is considered the promoted architecture only if it improves fixed ARC versus the flat shared scorer while preserving delayed-claim transfer, grid-path performance, and ARC OOD relative to single-task.",
+      "builtin_evaluator": "adapter_heads_shared_trunk",
+      "required_for_submission": false,
+      "paper_surfaces": [
+        "architecture",
+        "multitask_capacity",
+        "limitations",
+        "roadmap"
+      ],
+      "roadmap_items": [
+        "R-MT.4",
+        "R-F.1",
+        "R-F.5"
+      ],
+      "evidence": {
+        "source": "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_deltas.csv",
+        "secondary_sources": [
+          "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_summary.csv",
+          "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_decision.jsonl"
+        ],
+        "command": "python3 scripts/multitask_adapter_heads.py",
+        "schemas": [
+          "crlp.multitask.summary.v1",
+          "crlp.multitask.adapter_heads_decision.v1"
+        ],
+        "filters": {
+          "domains": [
+            "prime_gap",
+            "grid_path",
+            "delayed_claim",
+            "arc_agi"
+          ],
+          "model_kinds": [
+            "shared",
+            "shared_task_heads",
+            "single_task"
+          ]
+        },
+        "required_rows": [
+          {
+            "eval_suite": "fixed",
+            "domain": "arc_agi"
+          },
+          {
+            "eval_suite": "ood",
+            "domain": "arc_agi"
+          },
+          {
+            "eval_suite": "fixed",
+            "domain": "delayed_claim"
+          },
+          {
+            "eval_suite": "fixed",
+            "domain": "grid_path"
+          },
+          {
+            "eval_suite": "fixed",
+            "domain": "prime_gap"
+          }
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "shared_task_heads fixed ARC top1 > flat_shared fixed ARC top1",
+          "shared_task_heads delayed_claim top1 is no worse than flat_shared by more than 0.5pp",
+          "shared_task_heads grid_path top1 is no worse than flat_shared by more than 0.5pp",
+          "shared_task_heads ARC OOD top1 >= single_task ARC OOD top1",
+          "shared_task_heads ARC OOD NLL <= single_task ARC OOD NLL",
+          "all rows have seeds >= 3"
+        ],
+        "diagnostic_if": [
+          "task heads help fixed ARC but hurt OOD or delayed-claim transfer"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Keep shared trunk plus domain heads as a diagnostic architecture rather than the default.",
+        "Avoid broad all-task competence language; report the fixed ARC, OOD, delayed-claim, grid, and prime rows separately.",
+        "Use the flat shared scorer as the interference control until the gates pass."
+      ],
+      "limitation_when_not_supported": "The shared-trunk/domain-head architecture has not passed all promotion gates, so it should be presented as architecture evidence rather than the default model recipe."
+    },
+    {
       "id": "C5.rejected_candidate_reason_learning",
       "title": "Rejected-candidate reasons repair proposer ranking on prime/modular gates",
       "claim_type": "substrate_feedback",
@@ -1084,12 +1169,14 @@
       "evidence": {
         "source": "results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl",
         "secondary_sources": [
-          "results/2026-05-17-multitask-roadmap/tiny_net_width_help.jsonl"
+          "results/2026-05-17-multitask-roadmap/tiny_net_width_help.jsonl",
+          "results/2026-05-17-multitask-roadmap/tiny_net_audit_verdict.jsonl"
         ],
         "command": "make tiny-net-plateau-audit",
         "schemas": [
           "crlp.multitask.tiny_net_plateau.v1",
-          "crlp.multitask.tiny_net_width_help.v1"
+          "crlp.multitask.tiny_net_width_help.v1",
+          "crlp.multitask.tiny_net_audit_verdict.v1"
         ],
         "filters": {
           "domains": [
@@ -1098,18 +1185,24 @@
             "delayed_claim",
             "arc_agi"
           ],
-          "model_kind": "shared"
+          "model_kinds": [
+            "shared",
+            "shared_task_heads",
+            "single_task"
+          ]
         }
       },
       "decision_rule": {
         "supported_if": [
-          "all core domains have the same four-capacity shared tiny-net ladder",
-          "every shared row has plateau_detected == true",
-          "width-help rows exist for each core domain"
+          "all core domains have the same four-capacity ladder for shared, shared_task_heads, and single_task",
+          "every required domain/variant row has plateau_detected == true",
+          "width-help rows exist for each core domain and required variant",
+          "audit-verdict rows exist and audit_ready == true for each core domain and required variant"
         ]
       },
       "residual_when_not_supported": [
         "Do not explain ARC or learned-wheel failures as capacity limits until this audit is present.",
+        "Keep architecture conclusions under limitations if task-head plateau rows are incomplete.",
         "Run make tiny-net-plateau-audit and inspect the width-help verdicts before increasing default hidden sizes."
       ],
       "limitation_when_not_supported": "The tiny networks have not yet been audited as fully trained, so larger architectures should remain a hypothesis rather than a paper claim."
@@ -1195,12 +1288,14 @@
       "evidence": {
         "source": "results/2026-05-17-signal-flight/summary.jsonl",
         "secondary_sources": [
-          "results/2026-05-17-signal-flight/shadow_replay_audit.jsonl"
+          "results/2026-05-17-signal-flight/shadow_replay_audit.jsonl",
+          "results/2026-05-17-signal-flight/rollout_summary.jsonl"
         ],
         "command": "make signal-flight",
         "schemas": [
           "crlp.signal_flight.summary.v1",
-          "crlp.signal_shadow_replay_audit.v1"
+          "crlp.signal_shadow_replay_audit.v1",
+          "crlp.signal_flight_rollout.summary.v1"
         ],
         "filters": {
           "task": "signal_flight",
@@ -1221,7 +1316,8 @@
           "neural selected_utility exceeds baseline_selected_utility",
           "neural regret is lower than baseline_regret",
           "neural damage and death rates are no worse than baseline on the held-out trace",
-          "candidate mask sanity rates remain 1.0"
+          "candidate mask sanity rates remain 1.0",
+          "closed-loop rollout evidence is reported separately as a bridge metric, not as an active multiplayer performance claim"
         ]
       },
       "residual_when_not_supported": [
@@ -1239,7 +1335,7 @@
       "id": "C9.signal_live_neural_active",
       "title": "Signal guarded neural-active pilot executes live checkpoint-ranked actions",
       "claim_type": "application_vignette",
-      "claim_text": "A guarded Signal neural_active live pilot executes checkpoint-ranked WASD actions on a running local server with logged active-source, checkpoint hash, inference latency, safety gates, damage/death telemetry, and replay-ready trace rows.",
+      "claim_text": "A guarded Signal neural_active live pilot executes checkpoint-ranked WASD actions on a running local server with logged active-source, checkpoint hash, inference latency, protocol compatibility, safety gates, damage/death telemetry, and replay-ready trace rows.",
       "builtin_evaluator": "signal_live_neural_active",
       "required_for_submission": true,
       "paper_surfaces": [
@@ -1287,6 +1383,7 @@
           "window_active_rows >= 50",
           "candidate_score_rows >= 50 and candidate_score_min_count >= 9",
           "safety_gate_rows >= 50",
+          "protocol_checked_rows >= 50 and protocol_compatible_rows >= 50",
           "replay_ready_rows >= 50",
           "inference_ms_p95 <= 5.0",
           "stale_within_log == false"
@@ -1294,7 +1391,7 @@
       },
       "residual_when_not_supported": [
         "Run signal-live-active-summary against the current live-brain log and inspect the emitted summary row.",
-        "Keep live neural-active wording out of the body if the latest active_source is not neural, the checkpoint is missing, or replay-ready rows are absent.",
+        "Keep live neural-active wording out of the body if the latest active_source is not neural, the checkpoint is missing, protocol-compatible rows are absent, or replay-ready rows are absent.",
         "Do not upgrade this to a performance claim without active neural versus heuristic utility/regret/damage/death evidence."
       ],
       "limitation_when_not_supported": "The live Signal pilot is not supported as neural-active by the current live-brain artifact, so the paper should mention only offline replay and shadow evidence.",
