@@ -555,7 +555,7 @@ signal-live-status:
 signal-shadow-replay-audit:
 	$(PYTHON) scripts/signal_shadow_replay_audit.py --log "$(SIGNAL_LIVE_STATUS_LOG)" --output-dir "$(SIGNAL_SHADOW_REPLAY_DIR)" --horizon-ms "$(SIGNAL_SHADOW_REPLAY_HORIZON_MS)"
 
-experiment-matrix: paper-claims
+experiment-matrix: paper-support
 	$(PYTHON) scripts/experiment_matrix.py
 
 results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(ARC_AGI)
@@ -564,7 +564,7 @@ results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PR
 	$(PYTHON) scripts/canonicalize_results.py --input $(RESULTS_DIR)/comparison.jsonl --output $(RESULTS_DIR)/comparison.canonical.jsonl
 	$(MAKE) trace-determinism-compare RESULTS_DIR=$(RESULTS_DIR)
 
-paper-pdf: paper-support paper/paper.typ
+paper-pdf: experiment-matrix paper/paper.typ
 	cd paper && typst compile paper.typ paper.pdf
 
 paper-data:

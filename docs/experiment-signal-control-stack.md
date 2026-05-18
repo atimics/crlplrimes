@@ -69,12 +69,15 @@ make signal-flight-rollout-eval SIGNAL_FLIGHT_ROLLOUT_CHECKPOINT=build/float/sig
 
 The first 24-episode rollout emits `crlp.signal_flight_rollout.summary.v1`.
 `neural_guarded` had the best average utility in this smoke
-(`0.16872` vs `0.16049` for `flight_steer_to`) and zero deaths, but the margin
-is small and damage episodes are still worse than the deterministic steering
-helper. Both neural controllers now receive fresh waypoint control points from
-Signal's nav mesh before ranking WASD actions. This is not a deployment gate
-pass; it is the first closed-loop evidence that more training should target wall
-and approach failures.
+(`0.35635` vs `0.16049` for `flight_steer_to`) with zero deaths and the same
+raw damage-event count as the deterministic steering helper, but its damage
+episode rate remains slightly worse. Both neural controllers now choose among
+certified control-target hypotheses before ranking WASD actions: direct goal,
+Signal nav path, left bypass, right bypass, and brake/escape. The guarded run
+selected a certified hypothesis on about 40.9% of neural ticks, which makes the
+next gap explicit: fallback nav hypotheses still carry too much of the workload.
+This is not a deployment gate pass; it is the first closed-loop evidence that
+more training should target wall and approach failures.
 
 Unsupported wording:
 
@@ -207,9 +210,11 @@ neural top-1 -> send input
 It should be:
 
 ```text
-enumerate WASD candidates
--> apply hard safety mask
--> neural rank surviving candidates
+enumerate/certify control-target hypotheses
+-> select a certified waypoint/path/escape hypothesis
+-> enumerate WASD candidates around that hypothesis
+-> apply hard action mask
+-> neural rank surviving WASD candidates
 -> optionally fall back to heuristic if confidence/safety is weak
 -> send active action
 -> log outcome

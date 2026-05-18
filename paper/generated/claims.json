@@ -445,7 +445,7 @@
         "source": "results/2026-05-17-multitask-roadmap/rmt2_aggregate.csv",
         "source_command": "make multitask-roadmap-experiments",
         "source_row_count": 2,
-        "source_sha256": "c6f95973309254646c22b00a546081b39ce535f8d8b42395efe039f90b1a40ee"
+        "source_sha256": "4a4430abe00e257d659acda29a39567537f338374be610eab6776d23c8bfbfae"
       },
       "required_for_submission": true,
       "residual": [],
@@ -563,7 +563,7 @@
         "source": "results/2026-05-17-multitask-roadmap/rmt7_arc_gate_invariance_summary.csv",
         "source_command": "python3 scripts/arc_gate_invariance.py",
         "source_row_count": 2,
-        "source_sha256": "9ea31ed98f58afce429278d97ef599aa645b7a1df62019d4bf6534e319b4a793"
+        "source_sha256": "0fbc51accf6be6c2955efcee3bf31c8f9010050567bc8a680e76159ab532f218"
       },
       "required_for_submission": true,
       "residual": [],
@@ -697,7 +697,7 @@
         "source": "results/2026-05-17-arc-evidence-surface/arc_evidence_summary.csv",
         "source_command": "make arc-agi-evidence-surface",
         "source_row_count": 10,
-        "source_sha256": "b0f3962aa98906757093394f465a48e373af0593e3e4841fada4e38cb0353e74"
+        "source_sha256": "cf36b4bad642bcc53ce30c234e064e29f7d1339ed2af61c8fd64b232a49151b5"
       },
       "required_for_submission": true,
       "residual": [],
@@ -835,7 +835,7 @@
         "source": "results/2026-05-17-multitask-roadmap/rmt5_calibration_summary.csv",
         "source_command": "python3 scripts/multitask_calibration_audit.py",
         "source_row_count": 34,
-        "source_sha256": "caa5ff1e7a421c2355c8081f6e9b542c6630b5a0688563968cb5353f06ace54f"
+        "source_sha256": "805a2ef03a80e2eadb6499ac33dd45d414ebbd9f8f6bfe31c9e51eb54b5d06e5"
       },
       "required_for_submission": true,
       "residual": [],
@@ -984,7 +984,7 @@
         "source": "results/2026-05-17-multitask-roadmap/rmt3_leave_one_out.csv",
         "source_command": "python3 scripts/multitask_leave_one_out.py",
         "source_row_count": 5,
-        "source_sha256": "92814d1933d5e565af3f0679e04493b21b9d4e14abd415362c8399851359cde7"
+        "source_sha256": "64dcca510a223705a6e9e004129b62678d940f986bd178dc134c3152cd94f80c"
       },
       "required_for_submission": true,
       "residual": [],
@@ -1188,7 +1188,7 @@
         "source": "results/2026-05-17-multitask-roadmap/rmt6_capacity_sweep_deltas.csv",
         "source_command": "python3 scripts/multitask_capacity_sweep.py",
         "source_row_count": 16,
-        "source_sha256": "2a156b2eefafc01fff34344ddafec5018decfcd9efd1c6c0c30b4f978f6d9d49"
+        "source_sha256": "97beca2cd00fbed2580efe5a21ce2f9ca57bee969c6ea3c173f0a743ecc4e73e"
       },
       "required_for_submission": true,
       "residual": [],
@@ -2737,7 +2737,7 @@
     ],
     "schema": "crlp.paper_claim_experiment_map.v1"
   },
-  "generated_at": "2026-05-17T22:40:04.063175+00:00",
+  "generated_at": "2026-05-18T03:30:04.736858+00:00",
   "limitations": [
     {
       "claim_id": "C2.prime_proposer_fixed_budget",
@@ -2788,182 +2788,182 @@
   "sources": {
     "results/2026-05-17-arc-evidence-surface/arc_budget_curves.csv": {
       "exists": true,
-      "modified_utc": "2026-05-17T15:11:06.788194+00:00",
+      "modified_utc": "2026-05-17T22:46:16.567244+00:00",
       "row_count": 40,
-      "sha256": "1bb76b0181a95f9a2eb41b906b5f2291f4f2d61f70d178296d55d168fb8c11f2",
-      "size_bytes": 2054
+      "sha256": "df88d4a43d13d3a6fde9afbcb74c53b5d552386df6d22da437fb10fcddd769cd",
+      "size_bytes": 2013
     },
     "results/2026-05-17-arc-evidence-surface/arc_eval_miss_taxonomy.csv": {
       "exists": true,
-      "modified_utc": "2026-05-17T15:11:06.788403+00:00",
+      "modified_utc": "2026-05-17T22:46:16.617246+00:00",
       "row_count": 10,
-      "sha256": "d2f36478df0139434ef7375bb05b316869ea566389f22b4f9e6bea1b009b1c23",
-      "size_bytes": 1495
+      "sha256": "15be4492fc19dd468da67e99867a996fce30a8b18a47117c9383ea9c6de30286",
+      "size_bytes": 1484
     },
     "results/2026-05-17-arc-evidence-surface/arc_evidence_summary.csv": {
       "exists": true,
-      "modified_utc": "2026-05-17T15:11:06.787752+00:00",
+      "modified_utc": "2026-05-17T22:46:16.605875+00:00",
       "row_count": 10,
-      "sha256": "b0f3962aa98906757093394f465a48e373af0593e3e4841fada4e38cb0353e74",
-      "size_bytes": 984
+      "sha256": "cf36b4bad642bcc53ce30c234e064e29f7d1339ed2af61c8fd64b232a49151b5",
+      "size_bytes": 973
     },
     "results/2026-05-17-multitask-roadmap/rmt2_aggregate.csv": {
       "exists": true,
-      "modified_utc": "2026-05-17T10:27:08.353992+00:00",
+      "modified_utc": "2026-05-17T22:46:17.145802+00:00",
       "row_count": 2,
-      "sha256": "c6f95973309254646c22b00a546081b39ce535f8d8b42395efe039f90b1a40ee",
-      "size_bytes": 376
+      "sha256": "4a4430abe00e257d659acda29a39567537f338374be610eab6776d23c8bfbfae",
+      "size_bytes": 373
     },
     "results/2026-05-17-multitask-roadmap/rmt3_leave_one_out.csv": {
       "exists": true,
-      "modified_utc": "2026-05-17T10:48:42.741044+00:00",
+      "modified_utc": "2026-05-17T22:46:17.099396+00:00",
       "row_count": 5,
-      "sha256": "92814d1933d5e565af3f0679e04493b21b9d4e14abd415362c8399851359cde7",
-      "size_bytes": 1658
+      "sha256": "64dcca510a223705a6e9e004129b62678d940f986bd178dc134c3152cd94f80c",
+      "size_bytes": 1652
     },
     "results/2026-05-17-multitask-roadmap/rmt5_calibration_summary.csv": {
       "exists": true,
-      "modified_utc": "2026-05-17T10:41:03.573379+00:00",
+      "modified_utc": "2026-05-17T22:46:17.041882+00:00",
       "row_count": 34,
-      "sha256": "caa5ff1e7a421c2355c8081f6e9b542c6630b5a0688563968cb5353f06ace54f",
-      "size_bytes": 8238
+      "sha256": "805a2ef03a80e2eadb6499ac33dd45d414ebbd9f8f6bfe31c9e51eb54b5d06e5",
+      "size_bytes": 8203
     },
     "results/2026-05-17-multitask-roadmap/rmt5_reliability_bins.csv": {
       "exists": true,
-      "modified_utc": "2026-05-17T10:41:03.574030+00:00",
+      "modified_utc": "2026-05-17T22:46:17.037639+00:00",
       "row_count": 141,
-      "sha256": "ce17b2374b29c31c89b180c934b181cc5cac906361e9dd5e4833497ca03fc2fc",
-      "size_bytes": 19753
+      "sha256": "02243ddfae266ade73687a3c540757aecbe07b6b9f95e3d92ba8c85d2fe09f56",
+      "size_bytes": 19611
     },
     "results/2026-05-17-multitask-roadmap/rmt6_capacity_sweep_deltas.csv": {
       "exists": true,
-      "modified_utc": "2026-05-17T12:23:46.750987+00:00",
+      "modified_utc": "2026-05-17T22:46:16.915754+00:00",
       "row_count": 16,
-      "sha256": "2a156b2eefafc01fff34344ddafec5018decfcd9efd1c6c0c30b4f978f6d9d49",
-      "size_bytes": 3943
+      "sha256": "97beca2cd00fbed2580efe5a21ce2f9ca57bee969c6ea3c173f0a743ecc4e73e",
+      "size_bytes": 3926
     },
     "results/2026-05-17-multitask-roadmap/rmt7_arc_gate_invariance_mismatches.csv": {
       "exists": true,
-      "modified_utc": "2026-05-17T11:58:21.910290+00:00",
+      "modified_utc": "2026-05-17T22:46:16.805007+00:00",
       "row_count": 0,
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "size_bytes": 0
     },
     "results/2026-05-17-multitask-roadmap/rmt7_arc_gate_invariance_summary.csv": {
       "exists": true,
-      "modified_utc": "2026-05-17T11:58:21.910250+00:00",
+      "modified_utc": "2026-05-17T22:46:17.040843+00:00",
       "row_count": 2,
-      "sha256": "9ea31ed98f58afce429278d97ef599aa645b7a1df62019d4bf6534e319b4a793",
-      "size_bytes": 241
+      "sha256": "0fbc51accf6be6c2955efcee3bf31c8f9010050567bc8a680e76159ab532f218",
+      "size_bytes": 238
     },
     "results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:37:30.069752+00:00",
+      "modified_utc": "2026-05-17T22:46:17.101840+00:00",
       "row_count": 32,
       "sha256": "1a35c10ba271df23ea158cfd03f653b0d0383582fe8ac8a36fc4e7c7772299a1",
       "size_bytes": 14655
     },
     "results/2026-05-17-multitask-roadmap/tiny_net_width_help.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:37:30.075961+00:00",
+      "modified_utc": "2026-05-17T22:46:17.101211+00:00",
       "row_count": 8,
       "sha256": "8bbdd8ddc791c5f06a29aafec7fc7bfeb96d4110f08a94d7bc5d6741943d040d",
       "size_bytes": 2962
     },
     "results/2026-05-17-signal-flight/shadow_replay_audit.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:39:33.827133+00:00",
+      "modified_utc": "2026-05-17T22:46:18.288289+00:00",
       "row_count": 1,
       "sha256": "583310933cca99557e4536289b804f496637e155db08da3e6b80c0a8eb94bde3",
       "size_bytes": 807
     },
     "results/2026-05-17-signal-flight/summary.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T15:56:28.329601+00:00",
+      "modified_utc": "2026-05-17T22:46:18.290483+00:00",
       "row_count": 1,
       "sha256": "9348ce4fa14c324bffde6d2e368db1064772b6d4c7016fd6ce409195ddf1ebd0",
       "size_bytes": 1295
     },
     "results/2026-05-17-substrate-extensions/hypothesis_library_ablation_no_prior.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T14:53:59.277286+00:00",
+      "modified_utc": "2026-05-17T22:46:18.443297+00:00",
       "row_count": 37,
       "sha256": "6dae528d4162823d633b87759d49ad2624ba06c5dd81c41ff1c7e2120bc19aea",
       "size_bytes": 38459
     },
     "results/2026-05-17-substrate-extensions/hypothesis_library_ablation_slot_only.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T14:57:06.679561+00:00",
+      "modified_utc": "2026-05-17T22:46:18.377326+00:00",
       "row_count": 37,
       "sha256": "fa3e00d0fe6acb4f35ac05bbdef1888cf7d5b8335f0c6160ebe29b0a4ce5eb8c",
       "size_bytes": 38226
     },
     "results/2026-05-17-substrate-extensions/hypothesis_library_heldout_result.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:37:30.062433+00:00",
+      "modified_utc": "2026-05-17T22:46:18.298771+00:00",
       "row_count": 30,
       "sha256": "d489d849a4c22ca104399f5e20fddfbbf209bacc18b562b6ad982698c7097170",
       "size_bytes": 29631
     },
     "results/2026-05-17-substrate-extensions/hypothesis_library_promotion.md": {
       "exists": true,
-      "modified_utc": "2026-05-17T14:53:59.268951+00:00",
+      "modified_utc": "2026-05-17T22:46:18.362846+00:00",
       "row_count": null,
       "sha256": "c017346d3b77d979fcf62da8bc324b95e94cef3544de0993ba07985aff2731d8",
       "size_bytes": 2458
     },
     "results/2026-05-17-substrate-extensions/hypothesis_library_promotions.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T14:53:59.314264+00:00",
+      "modified_utc": "2026-05-17T22:46:18.361780+00:00",
       "row_count": 1,
       "sha256": "04fa656d932bcecb48639380d0385eb6ccd726b409ea7da270689cd21c2975ef",
       "size_bytes": 1758
     },
     "results/2026-05-17-substrate-extensions/rejected_candidate_reason_family_seed_interval.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:37:30.054124+00:00",
+      "modified_utc": "2026-05-17T22:46:18.354137+00:00",
       "row_count": 880,
       "sha256": "2a02f6c6dd72400e640d3e700160c0c477f1bacc23a71206f76e3aa4ba7b68ce",
       "size_bytes": 769212
     },
     "results/2026-05-17-substrate-extensions/rejected_candidate_reason_family_sweep.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:37:30.039834+00:00",
+      "modified_utc": "2026-05-17T22:46:18.435716+00:00",
       "row_count": 880,
       "sha256": "64b9b1dfe05aaadf0ef55dac11af5f1f8bd205a0549a82fa4c6e7272809c2810",
       "size_bytes": 427876
     },
     "results/2026-05-17-substrate-extensions/rejected_candidate_reason_learning.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:37:30.027217+00:00",
+      "modified_utc": "2026-05-17T22:46:18.384350+00:00",
       "row_count": 48,
       "sha256": "e952694c69becb69cafe49bbf18a76674e81c47651c8b56051793de51a15d7b3",
       "size_bytes": 250947
     },
     "results/2026-05-17-substrate-extensions/rejected_candidate_seed_interval_summary.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:37:30.046325+00:00",
+      "modified_utc": "2026-05-17T22:46:18.391142+00:00",
       "row_count": 48,
       "sha256": "4f7f3b8213b73a91deec6320ca9baa980a2bca4f2f706d5e6f9841b4e9dbea7d",
       "size_bytes": 30697
     },
     "results/2026-05-17-substrate-extensions/rejected_candidate_split_sweep.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:37:30.034037+00:00",
+      "modified_utc": "2026-05-17T22:46:18.364423+00:00",
       "row_count": 44,
       "sha256": "fe1fb06d1346173efca8437ada30d482b9d5bc765f3c7a390d2b5690def32651",
       "size_bytes": 36118
     },
     "results/latest/comparison.canonical.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T16:34:34.963733+00:00",
+      "modified_utc": "2026-05-17T22:46:16.444245+00:00",
       "row_count": 601,
       "sha256": "2f8238c6688ff9d9fa186d7169907a46b28f651aa4a73e5fcce8dc6b6af19ff0",
       "size_bytes": 618220
     },
     "results/latest/trace_determinism.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T16:58:08.704772+00:00",
+      "modified_utc": "2026-05-18T03:30:04.667345+00:00",
       "row_count": 3,
       "sha256": "476f76325fea0cec2327485185b09a8c7bb55e16aefa8aca676fb50121318cd9",
       "size_bytes": 2201

@@ -1,6 +1,24 @@
 {
   "schema": "crlp.paper_claim_registry.v1",
   "format_note": "This file is a strict JSON subset of YAML so scripts can parse it with the Python standard library.",
+  "paper_contract": {
+    "experiment_families_frozen": true,
+    "primary_contributions": [
+      "rejected_candidate_learning",
+      "held_out_certified_hypothesis_library_feedback"
+    ],
+    "scoped_roles": {
+      "arc_agi": "evidence_surface",
+      "signal_flight": "application_pressure"
+    },
+    "non_claims": [
+      "general task solving",
+      "competitive ARC performance",
+      "live neural control",
+      "generic cross-domain reason-code safety",
+      "wider MLPs solve the ARC geometry failure"
+    ]
+  },
   "claim_families": [
     {
       "id": "C1",

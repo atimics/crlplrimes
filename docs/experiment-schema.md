@@ -15,12 +15,14 @@ fixed-sample scorer plus a narrow corpus-loader transform gate. Signal flight no
 trace path: each sampled state enumerates WASD hypotheses, replays them through
 Signal's authoritative simulator, and trains around certified progress,
 hull-loss, damage, and death outcomes. Signal also has a closed-loop rollout
-evaluator that runs trained checkpoints against `goal_heading_no_safety`,
-`flight_steer_to`, `neural_raw`, and `neural_guarded` controllers on identical
-deterministic episodes. The external websocket pilot remains available with no
-hand rock-avoidance safety wrapper. The summary rows report neural
-utility/regret/damage/death metrics beside primitive and deterministic flight
-baselines.
+evaluator that first enumerates certified control-target hypotheses (`direct`,
+`nav_path`, `left_bypass`, `right_bypass`, `brake_escape`) and then lets trained
+checkpoints rank WASD actions around the selected hypothesis. The rollout
+compares `goal_heading_no_safety`, `flight_steer_to`, `neural_raw`, and
+`neural_guarded` controllers on identical deterministic episodes. The external
+websocket pilot remains available with no hand rock-avoidance safety wrapper.
+The summary rows report neural utility/regret/damage/death metrics beside
+primitive and deterministic flight baselines.
 
 There is also a separate shared-envelope multitask probe that includes the same
 ARC-AGI-1 sample. That probe is useful for testing whether the core C scorer can
@@ -121,7 +123,7 @@ Verifier-backed first-class task schemas:
 | `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality, local-dead-end, component-trap, clear-path admissible-bound, and distance-dominance predicates | cannot reject an optimal move | budgeted certified gate with family/budget proposer sweep |
 | `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold predicates plus direct utility-margin and indirect risk-margin predicates | finite-generator safety check over train+validation support | production threshold+margin gate plus matched proposer baselines and shifted/noisy stress rows; direct clean residual resolved, proxy/noisy frontier exposed |
 | `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | copy/mask/intersection/layer-relation/geometric/object transform grammar | train-pair consistency plus unique grammar-consistent test prediction | fixed-sample certified transform gate plus ARC JSON directory loader and matched `NNProgram` proposer rows for narrow geometry/object evidence |
-| `signal_flight` | Signal ship kinematics, hull, path, clearance observations, and target/control-point geometry | WASD key combinations | deterministic replay of WASD hypotheses in Signal's authoritative simulator | WASD control hypotheses now; richer flight predicates planned | replay-certified progress, hull loss, damage, and death outcomes | counterfactual utility scorer, closed-loop rollout evaluator, and external websocket pilot |
+| `signal_flight` | Signal ship kinematics, hull, path, clearance observations, and target/control-point geometry | WASD key combinations around certified control-target hypotheses | deterministic replay of WASD hypotheses in Signal's authoritative simulator | WASD controls plus direct/nav/bypass/brake control-target hypotheses; richer predicates planned | replay-certified progress, hull loss, damage, death outcomes, and rollout-time control-target clearance/progress certificates | counterfactual utility scorer, certified-hypothesis rollout evaluator, and external websocket pilot |
 
 Verifier-backed case-study discovery schemas:
 

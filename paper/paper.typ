@@ -2,6 +2,7 @@
 #import "@preview/cetz-plot:0.1.1": plot, chart
 #import "data.typ": learning_curves, gate_ablation, arc_epoch_eval, prime_gap_epoch_loss, multitask_shared_vs_single, multitask_rmt1, multitask_rmt2_aggregate, multitask_rmt6_capacity
 #import "generated/claims.typ": paper_claim_limitations, paper_claim_support_ok, paper_claim_support_surfaces, claim_C1_arc_public_evidence_surface_chart_rows, claim_C1_arc_public_evidence_surface_summary, claim_C3_arc_ood_calibration_tradeoff_chart_rows, claim_C3_arc_ood_calibration_tradeoff_summary, claim_C4_delayed_claim_sibling_transfer_chart_rows, claim_C4_delayed_claim_sibling_transfer_summary, claim_C4_multitask_capacity_tradeoff_chart_rows, claim_C4_multitask_capacity_tradeoff_summary, claim_C5_rejected_candidate_reason_learning_chart_rows, claim_C5_rejected_candidate_reason_learning_summary, claim_C5_hypothesis_library_promotion_chart_rows, claim_C5_hypothesis_library_promotion_summary, claim_C9_signal_flight_replay_control_chart_rows, claim_C9_signal_flight_replay_control_summary
+#import "generated/experiment_matrix.typ": experiment_matrix_rows
 
 #set document(
   title: "Certificate-Gated Neural Proposers for Verifier-Grounded Action Scoring",
@@ -101,25 +102,22 @@
     #set par(justify: true)
     #set text(size: 10pt)
     *Abstract.*
-    When an exact verifier is available, the right architecture for action scoring is not an
-    end-to-end neural policy. The useful pattern is a *verifier-grounded ranking loop*:
-    enumerate candidates, certify or replay their outcomes, let a small neural component rank
-    only the residual, and write accepted rules, rejected candidates, replay rows, and
-    reusable hypotheses back into trace artifacts. We instantiate this loop on modular
-    gate search, grid paths, delayed claims, ARC-AGI transforms, program synthesis, and
-    Signal flight replay. The strongest clean gate result is `prime_gap`: with residue-sieve
-    features removed, the raw scorer reaches 9.13% top-1, a fixed hand-wheel gate reaches
-    45.12%, and a certified learned-rule gate reaches 68.87% at 100% top-10. The same
-    contract transfers outside arithmetic: grid's cheap-bound gate lifts 75.80% raw to
-    90.10% and its mixed gate reaches 95.30%, delayed-claim's threshold+margin gate
-    reduces the clean held-out action set from four candidates to one with zero false
-    rejections, and Signal's 2113-parameter WASD
-    ranker improves offline replay top-1 and regret over a no-safety goal-heading baseline.
-    ARC is deliberately scoped as certified coverage, not ARC performance. The fixed-budget
-    modular proposer result is negative for naive neural proposal, which is the point: the
-    system becomes useful when rejected candidates become reason-code training signal,
-    certified hypotheses become library priors, and the claim registry blocks unsupported
-    prose before compilation.
+    This paper studies a narrow architecture for settings with exact verifiers: symbolic or
+    replay-certified mechanisms define which candidates are admissible, and small neural
+    components rank, calibrate, reuse, or learn around those certified hypotheses. The main
+    contribution is not that tiny networks solve hard tasks. It is an artifact-feedback loop:
+    rejected verifier rows become reason-coded training signal for later proposers, and
+    repeated zero-false-rejection hypotheses become reusable library priors. The frozen
+    evidence matrix covers certified modular gates, grid-path and delayed-claim stress
+    surfaces, ARC-AGI transform coverage, a tiny-net capacity audit, and Signal replay
+    control. The strongest gate anchor is `prime_gap`: with residue-sieve features removed,
+    the raw scorer reaches 9.13% top-1, a fixed hand-wheel gate reaches 45.12%, and a
+    certified learned-rule gate reaches 68.87% at 100% top-10. The more important substrate
+    rows are C5: rejected-candidate residuals repair unsafe fixed-budget proposer rankings,
+    and certified hypothesis-library priors improve tight-budget proposal coverage under a
+    held-out split. ARC is an evidence surface for priors and failure taxonomy; Signal is
+    application pressure under replay and shadow logging. The paper explicitly does not claim
+    broad ARC competence, live neural control, or general end-to-end task solving.
   ]
 ]
 
@@ -140,30 +138,39 @@ gated by a soundness-certificate verifier. The scorer ranks the residual; the ga
 the rest; nothing the gate emits can violate correctness because every rule it accepts carries
 a deterministic proof.
 
-We make three protocol claims, each of which must be instantiated across tasks before being
-treated as general:
+The paper's experiment-family set is now frozen. New domains and new benchmark families are
+roadmap items, not body evidence, until the matrix in @tab:frozen-evidence is deliberately
+revised. The frozen families are: certified modular gates, rejected-candidate learning,
+certified hypothesis-library feedback, tiny-net capacity auditing, ARC evidence surfaces, and
+Signal replay pressure. Grid-path and delayed-claim remain supporting stress surfaces because
+they test whether the same candidate/verifier/scorer/trace contract survives outside the
+prime-gap anchor.
 
-#set enum(numbering: "(C1)", spacing: 6pt)
-+ *Certified gates reduce the residual action space.* The complete certified modular gate result,
-  the smaller grid-path legality/distance result, and the clean delayed-claim
-  threshold+margin gate support this. Delayed-claim's shifted/noisy rows are now
-  a robustness boundary, not an implementation gap.
-+ *Rule search must beat fixed-budget symbolic baselines.* The current modular rule-search result is negative
-  for neural proposer learning: grammar order beats the neural proposer on the unconditional
-  candidate grammar, and the conditional gap grammar makes the failure larger. This turns
-  proposer learning into a concrete cross-task benchmark rather than a tautology.
-+ *Verifier RL must preserve calibration across tasks.* Strict policy gradient on sparse exact
-  rewards inflates logit scale on the prime-gap modular gate instance; a standard
-  KL-to-prior + entropy term restores calibration at unchanged top-k. The same run is
-  still needed on grid paths and delayed claims.
+The two main empirical contributions are:
+
+#set enum(numbering: "(M1)", spacing: 6pt)
++ *Rejected-candidate learning.* Failed verifier proposals are not discarded. They are logged
+  with reason codes, false-rejection counters, split keys, seed intervals, and marginal
+  verifier utility, then reused as targets for a safety-first residual ranker. This repairs
+  the fixed-budget modular proposer failure without giving the neural model authority over
+  correctness.
++ *Held-out certified-library feedback.* Repeated zero-false-rejection hypotheses are promoted
+  into a library, converted into slot priors, and evaluated on held-out tasks under the same
+  verifier budget. This is the cumulative-learning direction: certified patterns become
+  reusable proposal structure rather than one-off fixture wins.
 
 #set enum(numbering: "1.", spacing: auto)
 
-Operationally, the certificate-gating loop yields two primary contributions: an
-artifact-feedback loop that recycles verifier outputs into future gates, priors, and ranking
-targets (@tab:artifact-feedback), and a generalized task contract that keeps the same
-candidate/verifier/scorer/trace interface across domains from arithmetic to replay-grounded
-control (@tab:schema).
+The older axis-style claims remain in the paper as support and boundary evidence. Certified
+gates reduce the residual action space; the fixed-budget neural proposer result is negative
+and becomes a limitation; verifier-RL calibration is a prime-gap-only support row; tiny-net
+capacity results constrain architecture claims. Those axes are not new experiment families.
+They are checks on the same loop.
+
+Operationally, the certificate-gating loop yields an artifact-feedback mechanism that recycles
+verifier outputs into future gates, priors, and ranking targets (@tab:artifact-feedback), and a
+generalized task contract that keeps the same candidate/verifier/scorer/trace interface across
+domains from arithmetic to replay-grounded control (@tab:schema).
 
 The evidence is heterogeneous by design, so the paper uses a single protocol matrix rather
 than a single leaderboard. The primary question in every row is not "how smart is the small
@@ -171,35 +178,36 @@ network?", but "what does the environment supply, what does the verifier own, wh
 network allowed to rank, and what reusable artifact is produced?"
 
 #figure(
-  text(size: 7pt)[
+  text(size: 5.9pt)[
     #table(
-      columns: (auto, auto, auto, auto, auto, auto),
+      columns: (0.82fr, 1.25fr, 1.18fr, 1.22fr, 1.12fr, 1.15fr, 1.18fr, 1.05fr, 1.18fr),
       align: left,
-      table.header[*Domain*][*Candidates*][*Verifier / Replay*][*Neural Role*][*Reusable Artifact*][*Supported Claim*],
-      [`prime_gap`], [129 gaps + modular rules], [segmented sieve + rule certificates],
-        [rank residual gaps and candidate rules], [accepted/rejected rule traces],
-        [68.87% learned gate top-1, zero false rejections],
-      [`grid_path`], [four moves + local rules], [shortest-path oracle],
-        [rank legal residual moves], [certified local predicates],
-        [cheap-bound gate lifts raw 75.80% to 90.10%],
-      [`delayed_claim`], [four delayed actions], [hidden-outcome simulator],
-        [rank actions, then replay successor], [parent-hash replay rows],
-        [clean gate reduces four actions to one],
-      [`ARC`], [colors + transform programs], [train-pair consistency + held-out grid],
-        [rank cells / programs / hypotheses], [certified transform evidence],
-        [coverage floor, not ARC-performance claim],
-      [`prog_synth`], [typed DSL abstractions], [example execution + type check],
-        [rank reusable programs], [hypothesis evidence rows],
-        [same hypothesis-to-certificate path beyond ARC],
-      [`Signal`], [nine WASD candidates], [counterfactual simulator replay],
-        [rank bounded control actions], [utility/damage/death replay rows],
-        [offline replay-control vignette],
+      table.header[*Family*][*Candidate Set*][*Verifier*][*Certificate / Gate*][*Scorer Role*][*Trace Artifact*][*Result*][*Claim*][*Limitation*],
+      ..experiment_matrix_rows.map(r => (
+        [#raw(r.domain)],
+        [#r.candidate_set],
+        [#r.verifier],
+        [#r.certificate_gate],
+        [#r.scorer_role],
+        [#r.trace_artifact],
+        [#r.result],
+        [#r.claim],
+        [#r.limitation],
+      )).flatten()
     )
   ],
-  caption: [Protocol evidence matrix. Every experiment instantiates the same contract:
-    environment-supplied candidates, verifier-owned correctness, neural residual ranking,
-    and reusable trace artifacts.],
-) <tab:protocol-matrix>
+  caption: [Frozen evidence matrix. Every result row uses the same structure: candidate
+    set, verifier, certificate/gate, scorer role, trace artifact, result, claim, and
+    limitation. The paper may tighten these rows, but it should not add new experiment
+    families without revising this matrix first.],
+) <tab:frozen-evidence>
+
+*Non-claims.* The paper does not claim general task solving, competitive ARC performance,
+live neural control, or that small networks replace scale. It does not claim that a generic
+reason-code ranker is safe across domains, or that wider MLPs solve the ARC geometry failure.
+It claims a narrower protocol result: when certified candidate mechanisms own admissibility,
+small learned components can usefully rank residual candidates, calibrate decisions, reuse
+certified hypotheses, and learn from verifier rejections under an auditable trace contract.
 
 The artifact now emits `crlp.experiment_schema.v1` rows for every certified task with `make
 experiment-schemas`. The paper should be read against that schema: task-specific verifiers and
@@ -208,7 +216,7 @@ and verifier-RL comparisons are shared.
 
 = Related Work
 
-== Verifiable rewards and learned verifiers
+== Verifier-guided learning and process supervision
 
 DeepSeek-R1 is the closest contemporary confirmation of the verifier-first premise at
 frontier scale: DeepSeek-AI report reinforcement learning from verifiable rewards (RLVR),
@@ -244,7 +252,7 @@ policy-gradient updates inflate confidence on the prime-gap modular gate instanc
 preserves ranking and improves calibration. Calibration itself is reported in the standard
 ECE/temperature-scaling frame of @guo2017calibration.
 
-== Neural-symbolic search with formal checkers
+== Neuro-symbolic search with formal checkers
 
 AlphaGeometry is the closest structural ancestor of this work. It interleaves a neural
 language model that proposes auxiliary geometric constructions with a symbolic deduction
@@ -260,6 +268,8 @@ therefore not scale; it is audit posture. Their systems show that neural proposa
 formal checking is powerful at large scale; this paper asks how much of that pattern can be
 made schema-attested, reproducible, and heterogeneous across small verifier-equipped tasks.
 
+== Program synthesis and library reuse
+
 DreamCoder and Hypothesis Search are the closest relatives of the hypothesis layer rather
 than the modular rule gate. DreamCoder learns reusable DSL abstractions through
 wake-sleep Bayesian program learning @ellis2021dreamcoder; Hypothesis Search samples
@@ -271,7 +281,12 @@ score. This is why the ARC and `program_synthesis` evidence rows matter: they sh
 substrate's "hypothesis -> program -> certificate -> proposer summary" path outside the
 current modular arithmetic grammar.
 
-== ARC and abstraction benchmarks
+The library-feedback claim is narrower than open-ended program induction. A binding enters
+the library only after a verifier accepts it with zero false rejections, and the promoted
+binding is evaluated as a prior under a held-out budget. This makes the connection to
+program-synthesis systems explicit without turning the paper into a new DSL benchmark.
+
+== ARC abstraction benchmarks
 
 ARC is used here as one hard abstraction substrate in the evidence portfolio. Chollet's ARC
 framing emphasizes skill-acquisition efficiency and the need to account for priors
@@ -1225,14 +1240,15 @@ but it also narrows the scorer claim: the audit does not show that the shared sc
 public ARC search, only that the certified gate/proposer measurements are not contaminated
 by scorer choice in the current implementation.
 
-== Audited Evidence Surfaces
+== Main artifact-feedback results
 
-The experiment suite is tied to an explicit claim registry. Each row below is evaluated
+The two central result rows are the C5 artifact-feedback rows: rejected-candidate learning
+and certified hypothesis-library feedback. The rest of the claim table is boundary evidence:
+ARC is a measured evidence surface, the capacity sweep guards architecture interpretation,
+and Signal is application pressure under replay and shadow logging. Each row is evaluated
 against a registered result artifact before the PDF is built, so unsupported or stale
 required claims fail before they become prose. The only non-blocking negative row remains
-the fixed-budget prime proposer claim, which is deliberately carried as a limitation. The
-compact matrix keeps the body readable, and the plotted claims below carry the short
-paper-facing explanations.
+the fixed-budget prime proposer claim, which is deliberately carried as a limitation.
 
 #figure(
   table(
@@ -1267,6 +1283,12 @@ paper-facing explanations.
   ),
   caption: [C5 certified hypothesis-library promotion. #claim_C5_hypothesis_library_promotion_summary],
 ) <fig:claim-hypothesis-library>
+
+The next rows are intentionally not headline performance claims. ARC is kept as an evidence
+surface: it exposes which transform and hypothesis families are certified, where the grammar
+misses, and whether scorer-independent gate measurements stay invariant. Signal is kept as
+application pressure: it exercises replay-certified ranking and shadow logging without
+claiming active neural control.
 
 #figure(
   claim_coverage_chart(
@@ -1311,7 +1333,7 @@ paper-facing explanations.
     single-task ARC scorer at that trunk size. #claim_C4_multitask_capacity_tradeoff_summary],
 ) <fig:claim-capacity-boundary>
 
-= Application Vignette: Signal Flight
+= Application Pressure: Signal Flight
 
 Signal is the practical reach test for the protocol, but the claim is intentionally
 narrow. The current result is not "a tiny net flies the game" and not "the live websocket
@@ -1394,6 +1416,10 @@ features, and the claim compiler decides whether the paper may say the loop help
 = Limitations <sec:limitations>
 
 #set enum(numbering: "L1.")
++ *Experiment-family scope is frozen for this paper.* The current evidence matrix is already
+  broad enough to support the protocol claim. Additional domains would make the draft less
+  falsifiable unless they replace a weaker row or pass the same candidate/verifier/gate/scorer
+  trace standard. New domains belong in roadmap notes, not body evidence.
 + *Proposer learning remains weak (Axis 2).* The fixed-budget baseline shows grammar order and
   a simple structural heuristic beat the current neural proposer on both the unconditional
   candidate grammar and the conditional gap grammar. The load-bearing claim is certificate-gated
@@ -1464,26 +1490,23 @@ features, and the claim compiler decides whether the paper may say the loop help
 
 = Conclusion
 
-The architectural claim is *certificate-gating*: when an exact verifier is available, the
-scorer should consume the survivors of a soundness-proven symbolic filter, and that filter
-itself can be synthesised by a rule proposer gated on per-rule certificates rather than on
-empirical support. The constructive claim is *verifier-grounded rule and hypothesis
-synthesis*: the same `NNHypothesis` + `NNProgram` substrate certifies transforms on ARC
-that the hand-coded grammar cannot synthesise, and the same substrate emits certified
-rows in `program_synthesis` without modification — domain neutrality is exercised, not
-asserted. The training-stability claim is *KL-regularized verifier RL*: strict policy
-gradient on sparse exact rewards inflates logit scale on the prime-gap modular gate
-instance while leaving top-1 fixed; a standard KL-to-prior + entropy term restores
-calibration at unchanged ranking.
-The application claim is *replay-grounded control*: Signal shows the same bounded ranking
-contract on real-time WASD decisions, while keeping simulator replay and safety outcomes
-outside the model. These claims require the protocol to be falsifiable, audit-clean, and
-cross-task. The negative result on Axis 2 (grammar order beats the current neural proposer
-at fixed budget) is the cleanest evidence so far that the protocol is in fact falsifiable.
-The broader implication is pragmatic: when correctness, safety, or auditability matter,
-end-to-end learning should not be asked to own the whole decision. Verifier-grounded ranking
-substrates provide an auditable bridge: symbolic checks own admissibility, neural components
-spend capacity on search and prioritization, and the trace artifacts make both success and
-failure reusable.
+The paper's strongest claim is narrow: certified candidate mechanisms should own
+admissibility, and small learned components should rank, calibrate, reuse, or learn around
+those certified hypotheses. The two main empirical contributions are the feedback loops.
+Rejected candidate rows become reason-coded targets for a later safety-first residual
+ranker; certified hypotheses become reusable library priors and are checked on held-out
+proposal budgets. The gate, tiny-net, ARC, and Signal rows matter because they keep that
+claim honest: modular gates show the protocol can sharply reduce residual search, capacity
+audits block a naive wider-is-better story, ARC exposes priors and misses rather than
+claiming broad competence, and Signal keeps the loop under replay-grounded application
+pressure without claiming live neural control.
+
+The negative fixed-budget proposer result is therefore not an embarrassment. It is evidence
+that the protocol is falsifiable: a flat neural proposer over structural rows is weak, but
+the verifier trace can still become useful training signal. The broader implication is
+pragmatic. When correctness, safety, or auditability matter, end-to-end learning should not
+own the whole decision. Verifier-grounded ranking substrates provide a smaller, auditable
+contract: symbolic or replay checkers own admissibility, neural components spend capacity on
+search and prioritization, and the trace artifacts make both success and failure reusable.
 
 #bibliography("references.bib")
