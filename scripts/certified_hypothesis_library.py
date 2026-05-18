@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import hashlib
 import json
 from datetime import date
 from pathlib import Path
@@ -23,6 +24,11 @@ def parse_json_rows(path: Path) -> list[dict[str, Any]]:
                 continue
             rows.append(json.loads(line))
     return rows
+
+
+def stable_hash(value: Any) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def slot_key(slot: dict[str, Any]) -> tuple[str, str]:
@@ -141,6 +147,7 @@ def promotion_row(
         "certified_hypotheses": len(rows),
         "support_tasks": len(task_instances),
         "task_instances": task_instances,
+        "task_instances_hash": stable_hash(task_instances),
         "event_count": event_count,
         "covered_events": covered_events,
         "support": support,
@@ -352,6 +359,7 @@ def protocol_library_promotion_rows(
         ),
         "proposals_selected": int(heldout.get("proposals_selected", 0) or 0),
     }
+    heldout_result_hash = stable_hash(heldout_result)
     rows: list[dict[str, Any]] = []
     for promotion in promotions:
         rows.append(
@@ -362,12 +370,14 @@ def protocol_library_promotion_rows(
                 "template_id": promotion["template_id"],
                 "promoted_count": 1 if promotion["promoted"] else 0,
                 "support_tasks": promotion["support_tasks"],
+                "promotion_task_hash": promotion.get("task_instances_hash", ""),
                 "covered_events": promotion["covered_events"],
                 "false_rejections": promotion["false_rejections"],
                 "utility": promotion["utility_mean"],
                 "heldout_rows": heldout_result["selection_rows"],
                 "zero_false_rejections": promotion["false_rejections"] == 0,
                 "heldout_result": heldout_result,
+                "heldout_result_hash": heldout_result_hash,
                 "reason_code": promotion["promotion_reason"],
             }
         )

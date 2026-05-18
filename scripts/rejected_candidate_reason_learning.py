@@ -753,10 +753,19 @@ def evaluate_strategy(
     for budget in budgets:
         selected = ordered[:budget]
         counts = collections.Counter(reason_label(row) for row in selected)
+        validation_false_rejections = sum(
+            row_int(row, "validation_false_rejections") for row in selected
+        )
+        train_false_rejections = sum(
+            row_int(row, "train_false_rejections") for row in selected
+        )
+        unsafe_rules = counts.get("unsafe", 0)
+        no_support_rules = counts.get("no_support", 0)
+        safe_rules = counts.get("accepted", 0) + counts.get("safe_duplicate", 0)
         out.append(
             {
                 "schema": "crlp.rejected_candidate_learning.summary.v1",
-                "report_version": 2,
+                "report_version": 3,
                 "date": date.today().isoformat(),
                 "task": task,
                 "experiment": "rejected_candidate_reason_learning",
@@ -765,19 +774,24 @@ def evaluate_strategy(
                 "selected_rules": len(selected),
                 "accepted_rules": counts.get("accepted", 0),
                 "safe_duplicate_rules": counts.get("safe_duplicate", 0),
-                "unsafe_rules": counts.get("unsafe", 0),
-                "no_support_rules": counts.get("no_support", 0),
+                "unsafe_rules": unsafe_rules,
+                "no_support_rules": no_support_rules,
                 "other_rules": counts.get("other", 0),
+                "safe_selected_rules": safe_rules,
+                "unsafe_or_rejected_rules": (
+                    unsafe_rules + no_support_rules + counts.get("other", 0)
+                ),
                 "validation_utility": sum(
                     row_number(row, "validation_marginal_utility") for row in selected
                 ),
-                "validation_false_rejections": sum(
-                    row_int(row, "validation_false_rejections")
-                    for row in selected
+                "validation_false_rejections": validation_false_rejections,
+                "train_false_rejections": train_false_rejections,
+                "false_rejection_guard_passed": validation_false_rejections == 0,
+                "unsafe_guard_passed": unsafe_rules == 0,
+                "safety_first_guard_passed": (
+                    validation_false_rejections == 0 and unsafe_rules == 0
                 ),
-                "train_false_rejections": sum(
-                    row_int(row, "train_false_rejections") for row in selected
-                ),
+                "safety_failure_count": validation_false_rejections + unsafe_rules,
                 "selected_rule_keys": [rule_key(row) for row in selected],
                 "top_rules": [str(row.get("rule_text", "")) for row in selected[:5]],
                 "top_rule_details": top_rule_details(
@@ -789,6 +803,32 @@ def evaluate_strategy(
             }
         )
     return out
+
+
+def safety_report_rows(strategy_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in strategy_rows:
+        rows.append(
+            {
+                "schema": "crlp.rejected_candidate_learning.safety_report.v1",
+                "report_version": 1,
+                "date": date.today().isoformat(),
+                "task": row["task"],
+                "strategy": row["strategy"],
+                "budget": row["budget"],
+                "accepted_rules": row["accepted_rules"],
+                "safe_duplicate_rules": row["safe_duplicate_rules"],
+                "unsafe_rules": row["unsafe_rules"],
+                "no_support_rules": row["no_support_rules"],
+                "validation_false_rejections": row["validation_false_rejections"],
+                "validation_utility": row["validation_utility"],
+                "false_rejection_guard_passed": row["false_rejection_guard_passed"],
+                "unsafe_guard_passed": row["unsafe_guard_passed"],
+                "safety_first_guard_passed": row["safety_first_guard_passed"],
+                "safety_failure_count": row["safety_failure_count"],
+            }
+        )
+    return rows
 
 
 def attach_prior_delta_metrics(rows: list[dict[str, Any]]) -> None:
@@ -1396,7 +1436,7 @@ def write_markdown(
             "",
             "- Candidate rows carry a task, structural descriptors, `model_score`, train/eval support counters, false-rejection counters, and `verifier_result`.",
             "- Rejected rows are labels for the next ranker; held-out verifier results are not ranker inputs.",
-            "- Trace artifact: `crlp.rejected_candidate_learning.summary.v1`, `crlp.rejected_candidate_learning.split_sweep.v1`, `crlp.rejected_candidate_learning.family_transfer.v1`, and normalized `crlp.protocol.*.v1` candidate/outcome rows.",
+            "- Trace artifact: `crlp.rejected_candidate_learning.summary.v1`, `crlp.rejected_candidate_learning.safety_report.v1`, `crlp.rejected_candidate_learning.split_sweep.v1`, `crlp.rejected_candidate_learning.family_transfer.v1`, and normalized `crlp.protocol.*.v1` candidate/outcome rows.",
             "",
         ]
     )
@@ -1720,8 +1760,10 @@ def main() -> int:
     family_transfer_path = args.output_dir / "modular_leave_one_family_out.jsonl"
     paper_table_path = args.output_dir / "paper_table.jsonl"
     reason_family_path = args.output_dir / "reason_family_sweep.jsonl"
+    safety_report_path = args.output_dir / "safety_report.jsonl"
     protocol_rows_path = args.output_dir / "protocol_rows.jsonl"
     write_jsonl(jsonl_path, strategy_rows)
+    write_jsonl(safety_report_path, safety_report_rows(strategy_rows))
     write_jsonl(split_sweep_path, sweep_rows)
     write_jsonl(paper_table_path, paper_table_rows(runs, args.budgets))
     write_jsonl(reason_family_path, reason_family_sweep_rows(runs))
@@ -1735,6 +1777,7 @@ def main() -> int:
         family_transfer_rows,
     )
     print(f"wrote {jsonl_path}")
+    print(f"wrote {safety_report_path}")
     print(f"wrote {split_sweep_path}")
     print(f"wrote {paper_table_path}")
     print(f"wrote {reason_family_path}")

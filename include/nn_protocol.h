@@ -73,6 +73,9 @@ typedef struct {
     size_t false_rejections;
     double utility;
     size_t heldout_rows;
+    int zero_false_rejections;
+    const char *promotion_task_hash;
+    const char *heldout_result_hash;
     const char *reason_code;
 } NNLibraryPromotionRecord;
 
@@ -102,6 +105,12 @@ typedef struct {
 const char *nn_protocol_status_name(NNVerifierOutcomeStatus status);
 int nn_protocol_status_from_name(const char *name, NNVerifierOutcomeStatus *out_status);
 int nn_protocol_status_is_safe(NNVerifierOutcomeStatus status);
+int nn_protocol_candidate_validate(const NNCandidateRow *row);
+int nn_protocol_candidate_batch_validate(const NNCandidateRow *rows,
+                                         size_t count,
+                                         size_t expected_feature_count);
+int nn_protocol_outcome_validate(const NNVerifierOutcome *outcome);
+int nn_protocol_ranker_decision_validate(const NNRankerDecision *decision);
 
 int nn_protocol_candidate_from_action(const char *domain,
                                       const char *candidate_kind,

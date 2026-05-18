@@ -1,5 +1,6 @@
 #include "nn_protocol.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -141,6 +142,100 @@ int nn_protocol_status_is_safe(NNVerifierOutcomeStatus status)
            status == NN_VERIFIER_SAFE_DUPLICATE;
 }
 
+int nn_protocol_candidate_validate(const NNCandidateRow *row)
+{
+    if (row == NULL || row->domain == NULL || row->domain[0] == '\0' ||
+        row->candidate_kind == NULL || row->candidate_kind[0] == '\0' ||
+        row->features == NULL || row->feature_count == 0) {
+        return 0;
+    }
+    for (size_t i = 0; i < row->feature_count; ++i) {
+        if (!isfinite((double)row->features[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int nn_protocol_candidate_batch_validate(const NNCandidateRow *rows,
+                                         size_t count,
+                                         size_t expected_feature_count)
+{
+    if (rows == NULL || count == 0 || expected_feature_count == 0) {
+        return 0;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if (!nn_protocol_candidate_validate(&rows[i]) ||
+            rows[i].feature_count != expected_feature_count) {
+            return 0;
+        }
+        for (size_t j = i + 1; j < count; ++j) {
+            if (rows[i].stable_id == rows[j].stable_id) {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+int nn_protocol_outcome_validate(const NNVerifierOutcome *outcome)
+{
+    if (outcome == NULL || !isfinite(outcome->utility) ||
+        !isfinite(outcome->cost) || outcome->cost < 0.0) {
+        return 0;
+    }
+    switch (outcome->status) {
+    case NN_VERIFIER_ACCEPTED:
+    case NN_VERIFIER_NO_SUPPORT:
+    case NN_VERIFIER_SAFE_DUPLICATE:
+        if (outcome->false_rejections != 0u) {
+            return 0;
+        }
+        break;
+    case NN_VERIFIER_UNSAFE:
+    case NN_VERIFIER_REJECTED:
+        break;
+    default:
+        return 0;
+    }
+    return 1;
+}
+
+int nn_protocol_ranker_decision_validate(const NNRankerDecision *decision)
+{
+    if (decision == NULL || decision->candidate_count == 0 ||
+        decision->candidate_ids == NULL || decision->scores == NULL ||
+        decision->selected_index >= decision->candidate_count ||
+        decision->target_index >= decision->candidate_count ||
+        !isfinite((double)decision->selected_score_margin) ||
+        !isfinite((double)decision->rank_score_epsilon) ||
+        decision->rank_score_epsilon < (nn_real)0) {
+        return 0;
+    }
+    double probability_sum = 0.0;
+    for (size_t i = 0; i < decision->candidate_count; ++i) {
+        if (!isfinite((double)decision->scores[i])) {
+            return 0;
+        }
+        for (size_t j = i + 1; j < decision->candidate_count; ++j) {
+            if (decision->candidate_ids[i] == decision->candidate_ids[j]) {
+                return 0;
+            }
+        }
+        if (decision->probabilities != NULL) {
+            double probability = (double)decision->probabilities[i];
+            if (!isfinite(probability) || probability < 0.0 || probability > 1.0) {
+                return 0;
+            }
+            probability_sum += probability;
+        }
+    }
+    if (decision->probabilities != NULL && fabs(probability_sum - 1.0) > 1.0e-3) {
+        return 0;
+    }
+    return 1;
+}
+
 int nn_protocol_candidate_from_action(const char *domain,
                                       const char *candidate_kind,
                                       const NNActionCandidate *action,
@@ -234,7 +329,8 @@ int nn_protocol_score_candidates(NeuralNet *net,
         return 0;
     }
     const size_t feature_count = rows[0].feature_count;
-    if (feature_count == 0 || rows[0].features == NULL ||
+    if (feature_count == 0 ||
+        !nn_protocol_candidate_batch_validate(rows, count, feature_count) ||
         feature_count != nn_input_size(net)) {
         return 0;
     }
@@ -258,7 +354,7 @@ int nn_protocol_score_candidates(NeuralNet *net,
 
 int nn_candidate_row_write_json(FILE *fp, const NNCandidateRow *row)
 {
-    if (fp == NULL || row == NULL || row->feature_count == 0) {
+    if (fp == NULL || !nn_protocol_candidate_validate(row)) {
         return 0;
     }
     fputs("{\"schema\":", fp);
@@ -307,7 +403,7 @@ int nn_verifier_outcome_write_json(FILE *fp,
                                    uint32_t stable_id,
                                    const NNVerifierOutcome *outcome)
 {
-    if (fp == NULL || outcome == NULL) {
+    if (fp == NULL || !nn_protocol_outcome_validate(outcome)) {
         return 0;
     }
     fputs("{\"schema\":", fp);
@@ -364,10 +460,7 @@ int nn_verifier_outcome_parse_jsonl(const char *line,
 
 int nn_ranker_decision_write_json(FILE *fp, const NNRankerDecision *decision)
 {
-    if (fp == NULL || decision == NULL || decision->candidate_count == 0 ||
-        decision->candidate_ids == NULL || decision->scores == NULL ||
-        decision->selected_index >= decision->candidate_count ||
-        decision->target_index >= decision->candidate_count) {
+    if (fp == NULL || !nn_protocol_ranker_decision_validate(decision)) {
         return 0;
     }
     fputs("{\"schema\":", fp);
@@ -469,6 +562,13 @@ int nn_library_promotion_write_json(FILE *fp, const NNLibraryPromotionRecord *re
             record->false_rejections,
             record->utility,
             record->heldout_rows);
+    fprintf(fp,
+            ",\"zero_false_rejections\":%s",
+            record->zero_false_rejections ? "true" : "false");
+    fputs(",\"promotion_task_hash\":", fp);
+    nn_protocol_json_string(fp, record->promotion_task_hash);
+    fputs(",\"heldout_result_hash\":", fp);
+    nn_protocol_json_string(fp, record->heldout_result_hash);
     fputs(",\"reason_code\":", fp);
     nn_protocol_json_string(fp, record->reason_code);
     fputs("}\n", fp);

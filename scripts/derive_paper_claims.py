@@ -961,8 +961,17 @@ def evaluate_tiny_net_plateau_audit(claim: dict[str, Any], repo: Path) -> dict[s
         0,
         "crlp.multitask.tiny_net_width_help.v1",
     )
+    verdict_source = source.with_name("tiny_net_audit_verdict.jsonl")
+    verdict_rows = [
+        row
+        for row in read_jsonl(verdict_source)
+        if row.get("schema") == "crlp.multitask.tiny_net_audit_verdict.v1"
+    ]
     shared_rows = [
         row for row in plateau_rows if row.get("model_kind") == "shared"
+    ]
+    shared_verdicts = [
+        row for row in verdict_rows if row.get("model_kind") == "shared"
     ]
     core_domains = {"prime_gap", "grid_path", "delayed_claim", "arc_agi"}
     capacities = sorted({str(row.get("hidden")) for row in shared_rows})
@@ -972,6 +981,7 @@ def evaluate_tiny_net_plateau_audit(claim: dict[str, Any], repo: Path) -> dict[s
     result["evidence_rows"] = [
         {"label": "tiny_net_plateau_rows", "present": bool(plateau_rows), "rows": len(plateau_rows)},
         {"label": "tiny_net_width_rows", "present": bool(width_rows), "rows": len(width_rows)},
+        {"label": "tiny_net_audit_verdict_rows", "present": bool(verdict_rows), "rows": len(verdict_rows)},
         metric_row("arc_width_help", arc_width, ["best_hidden", "best_top1_mean", "largest_minus_smallest_top1", "larger_width_helped"]),
         metric_row("delayed_width_help", claim_width, ["best_hidden", "best_top1_mean", "largest_minus_smallest_top1", "larger_width_helped"]),
     ]
@@ -994,11 +1004,15 @@ def evaluate_tiny_net_plateau_audit(claim: dict[str, Any], repo: Path) -> dict[s
         "plateau_rows": len(plateau_rows),
         "shared_rows": shared_count,
         "width_rows": len(width_rows),
+        "audit_verdict_rows": len(verdict_rows),
         "capacities": capacities,
         "domains": sorted(domains),
         "min_capacities_per_core_domain": min_capacities_per_domain,
         "shared_plateau_count": plateau_count,
         "shared_plateau_rate": plateau_count / shared_count if shared_count else 0.0,
+        "shared_audit_ready_count": sum(
+            1 for row in shared_verdicts if row.get("audit_ready") is True
+        ),
         "arc_best_hidden": arc_width.get("best_hidden") if arc_width else None,
         "arc_larger_width_helped": arc_width.get("larger_width_helped") if arc_width else None,
     }

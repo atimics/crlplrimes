@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import itertools
 import json
 import subprocess
@@ -118,6 +119,20 @@ def parse_json_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def stable_hash(value: Any) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def task_split_hash(source_tasks: list[str], heldout_tasks: list[str]) -> str:
+    return stable_hash(
+        {
+            "source_tasks": sorted(source_tasks),
+            "heldout_tasks": sorted(heldout_tasks),
+        }
+    )
+
+
 def run_jsonl(command: list[str], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as fp:
@@ -217,6 +232,10 @@ def summarize_mode(
     evidence = selected_evidence_by_task(rows)
     if not heldout_tasks:
         heldout_tasks = sorted(set(selections) | set(evidence))
+    overlap = sorted(set(source_tasks) & set(heldout_tasks))
+    split_hash = task_split_hash(source_tasks, heldout_tasks)
+    source_task_hash = stable_hash(sorted(source_tasks))
+    heldout_task_hash = stable_hash(sorted(heldout_tasks))
 
     task_summaries: list[dict[str, Any]] = []
     certified_tasks = 0
@@ -240,10 +259,15 @@ def summarize_mode(
             {
                 "schema": "crlp.hypothesis_library.split_sweep.task.v1",
                 "split": split,
+                "split_hash": split_hash,
                 "mode": mode.name,
                 "primary_mode": mode.primary,
                 "source_tasks": source_tasks,
+                "source_task_hash": source_task_hash,
                 "heldout_task": task,
+                "heldout_task_hash": heldout_task_hash,
+                "source_heldout_overlap": overlap,
+                "leakage_guard_passed": not overlap,
                 "selected_templates": selected_templates,
                 "selected_certified": len(certified),
                 "selected_rejected": len(rejected),
@@ -266,7 +290,14 @@ def summarize_mode(
         "mode": mode.name,
         "primary_mode": mode.primary,
         "source_tasks": source_tasks,
+        "source_task_hash": source_task_hash,
         "heldout_tasks": heldout_tasks,
+        "heldout_task_hash": heldout_task_hash,
+        "split_hash": split_hash,
+        "source_task_count": len(source_tasks),
+        "source_heldout_overlap": overlap,
+        "source_heldout_overlap_count": len(overlap),
+        "leakage_guard_passed": not overlap,
         "prior_rows": prior_rows,
         "heldout_task_count": len(heldout_tasks),
         "selected_certified_tasks": certified_tasks,
@@ -317,7 +348,13 @@ def heldout_result_rows(aggregates: list[dict[str, Any]]) -> list[dict[str, Any]
                 "mode": row["mode"],
                 "primary_mode": row["primary_mode"],
                 "source_tasks": row["source_tasks"],
+                "source_task_hash": row["source_task_hash"],
                 "heldout_tasks": row["heldout_tasks"],
+                "heldout_task_hash": row["heldout_task_hash"],
+                "split_hash": row["split_hash"],
+                "source_task_count": row["source_task_count"],
+                "source_heldout_overlap_count": row["source_heldout_overlap_count"],
+                "leakage_guard_passed": row["leakage_guard_passed"],
                 "prior_rows": row["prior_rows"],
                 "heldout_task_count": row["heldout_task_count"],
                 "baseline_mode": "no_prior",
@@ -349,6 +386,11 @@ def heldout_result_rows(aggregates: list[dict[str, Any]]) -> list[dict[str, Any]
                 "proposals_train_rejected": row["proposals_train_rejected"],
                 "tight_budget_improved_or_equal": (
                     int(row["learned_certified_budget1"])
+                    >= int(baseline["learned_certified_budget1"])
+                ),
+                "heldout_feedback_guard_passed": (
+                    bool(row["leakage_guard_passed"])
+                    and int(row["learned_certified_budget1"])
                     >= int(baseline["learned_certified_budget1"])
                 ),
             }
@@ -426,21 +468,23 @@ def write_markdown(
             "the source tasks, then every prior mode is scored against the no-prior "
             "tight-budget baseline on held-out tasks.",
             "",
-            "| Split | Mode | Certified @1 delta | Utility @1 delta | Train rejected | Tight-budget guard |",
-            "| --- | --- | ---: | ---: | ---: | --- |",
+            "| Split | Mode | Certified @1 delta | Utility @1 delta | Train rejected | Leakage | Tight-budget guard |",
+            "| --- | --- | ---: | ---: | ---: | --- | --- |",
         ]
     )
     for row in heldout_results:
         if row["mode"] == "no_prior" or not row["primary_mode"]:
             continue
         guard = "pass" if row["tight_budget_improved_or_equal"] else "fail"
+        leakage = "pass" if row["leakage_guard_passed"] else "fail"
         lines.append(
-            "| {split} | `{mode}` | {cert_delta:+d} | {utility_delta:+.3f} | {rejected} | {guard} |".format(
+            "| {split} | `{mode}` | {cert_delta:+d} | {utility_delta:+.3f} | {rejected} | {leakage} | {guard} |".format(
                 split=row["split"],
                 mode=row["mode"],
                 cert_delta=int(row["delta_learned_certified_budget1"]),
                 utility_delta=float(row["delta_learned_utility_budget1"]),
                 rejected=int(row["proposals_train_rejected"]),
+                leakage=leakage,
                 guard=guard,
             )
         )
@@ -503,6 +547,12 @@ def write_heldout_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "split",
         "mode",
         "source_tasks",
+        "source_task_hash",
+        "heldout_task_hash",
+        "split_hash",
+        "source_task_count",
+        "source_heldout_overlap_count",
+        "leakage_guard_passed",
         "heldout_task_count",
         "prior_rows",
         "learned_certified_budget1",
@@ -512,6 +562,7 @@ def write_heldout_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "selected_rejected_tasks",
         "proposals_train_rejected",
         "tight_budget_improved_or_equal",
+        "heldout_feedback_guard_passed",
     ]
     with path.open("w", newline="", encoding="utf-8") as fp:
         writer = csv.DictWriter(fp, fieldnames=fieldnames)

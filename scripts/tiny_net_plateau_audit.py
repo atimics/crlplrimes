@@ -129,7 +129,11 @@ def learning_curve_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, An
     return out
 
 
-def plateau_rows(curves: list[dict[str, Any]], threshold: float) -> list[dict[str, Any]]:
+def plateau_rows(
+    curves: list[dict[str, Any]],
+    threshold: float,
+    plateau_window: int,
+) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in curves:
         grouped[(row["hidden"], row["domain"], row["model_kind"])].append(row)
@@ -140,12 +144,16 @@ def plateau_rows(curves: list[dict[str, Any]], threshold: float) -> list[dict[st
         best = max(rows, key=lambda row: float(row["top1_mean"]))
         last = rows[-1]
         prev = rows[-2] if len(rows) > 1 else last
+        window = max(1, min(plateau_window, len(rows)))
+        recent = rows[-window:]
         last_gain = float(last["top1_mean"]) - float(prev["top1_mean"])
+        last_window_gain = float(last["top1_mean"]) - float(recent[0]["top1_mean"])
         best_gain = float(best["top1_mean"]) - float(rows[0]["top1_mean"])
+        best_epoch_in_last_window = int(best["epochs"]) >= int(recent[0]["epochs"])
         out.append(
             {
                 "schema": "crlp.multitask.tiny_net_plateau.v1",
-                "report_version": 1,
+                "report_version": 2,
                 "date": date.today().isoformat(),
                 "hidden": hidden,
                 "domain": domain,
@@ -156,9 +164,17 @@ def plateau_rows(curves: list[dict[str, Any]], threshold: float) -> list[dict[st
                 "last_epochs": int(last["epochs"]),
                 "last_top1_mean": float(last["top1_mean"]),
                 "last_gain": last_gain,
+                "last_window_gain": last_window_gain,
                 "best_gain_from_first": best_gain,
                 "plateau_threshold": threshold,
-                "plateau_detected": abs(last_gain) <= threshold,
+                "plateau_window": window,
+                "plateau_method": "last_step_and_window_gain",
+                "best_epoch_in_last_window": best_epoch_in_last_window,
+                "plateau_detected": (
+                    abs(last_gain) <= threshold
+                    and abs(last_window_gain) <= threshold
+                    and best_epoch_in_last_window
+                ),
                 "parameters_mean": float(last["parameters_mean"]),
                 "forward_flops_mean": float(last["forward_flops_mean"]),
             }
@@ -205,6 +221,59 @@ def width_rows(plateaus: list[dict[str, Any]], capacities: list[str]) -> list[di
     return out
 
 
+def audit_verdict_rows(
+    plateaus: list[dict[str, Any]],
+    width: list[dict[str, Any]],
+    capacities: list[str],
+    seeds: list[int],
+    epoch_grid: list[int],
+    threshold: float,
+    plateau_window: int,
+) -> list[dict[str, Any]]:
+    by_key: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in plateaus:
+        by_key[(str(row["domain"]), str(row["model_kind"]))].append(row)
+    width_by_key = {(str(row["domain"]), str(row["model_kind"])): row for row in width}
+    rows: list[dict[str, Any]] = []
+    for domain in DOMAINS:
+        for model_kind in ("shared", "single_task"):
+            group = by_key.get((domain, model_kind), [])
+            hidden_seen = {str(row["hidden"]) for row in group}
+            plateau_count = sum(1 for row in group if bool(row.get("plateau_detected")))
+            width_row = width_by_key.get((domain, model_kind), {})
+            capacity_coverage_complete = all(hidden in hidden_seen for hidden in capacities)
+            plateau_complete = bool(group) and plateau_count == len(group)
+            rows.append(
+                {
+                    "schema": "crlp.multitask.tiny_net_audit_verdict.v1",
+                    "report_version": 1,
+                    "date": date.today().isoformat(),
+                    "domain": domain,
+                    "model_kind": model_kind,
+                    "capacity_ladder": capacities,
+                    "capacity_count": len(group),
+                    "capacity_coverage_complete": capacity_coverage_complete,
+                    "restart_count": len(seeds),
+                    "epoch_checkpoints": epoch_grid,
+                    "epoch_checkpoint_count": len(epoch_grid),
+                    "plateau_threshold": threshold,
+                    "plateau_window": plateau_window,
+                    "plateau_count": plateau_count,
+                    "all_plateau_detected": plateau_complete,
+                    "width_verdict_present": bool(width_row),
+                    "best_hidden": width_row.get("best_hidden"),
+                    "best_top1_mean": width_row.get("best_top1_mean"),
+                    "larger_width_helped": width_row.get("larger_width_helped"),
+                    "audit_ready": (
+                        capacity_coverage_complete
+                        and plateau_complete
+                        and bool(width_row)
+                    ),
+                }
+            )
+    return rows
+
+
 def write_report(
     path: Path,
     seeds: list[int],
@@ -214,6 +283,7 @@ def write_report(
     eval_samples: int,
     plateaus: list[dict[str, Any]],
     width: list[dict[str, Any]],
+    verdicts: list[dict[str, Any]],
 ) -> None:
     by_key = {
         (row["hidden"], row["domain"], row["model_kind"]): row
@@ -251,17 +321,18 @@ def write_report(
             "",
             "## Plateau Flags",
             "",
-            "| Hidden | Domain | Model | Last gain | Plateau |",
-            "| --- | --- | --- | ---: | --- |",
+            "| Hidden | Domain | Model | Last gain | Window gain | Plateau |",
+            "| --- | --- | --- | ---: | ---: | --- |",
         ]
     )
     for row in plateaus:
         lines.append(
-            "| `{hidden}` | `{domain}` | `{model}` | {gain} | {plateau} |".format(
+            "| `{hidden}` | `{domain}` | `{model}` | {gain} | {window_gain} | {plateau} |".format(
                 hidden=row["hidden"],
                 domain=row["domain"],
                 model=row["model_kind"],
                 gain=fmt_delta(float(row["last_gain"])),
+                window_gain=fmt_delta(float(row["last_window_gain"])),
                 plateau="yes" if row["plateau_detected"] else "no",
             )
         )
@@ -289,6 +360,27 @@ def write_report(
                     helped="yes" if row["larger_width_helped"] else "no",
                 )
             )
+    lines.extend(
+        [
+            "",
+            "## Audit Verdict",
+            "",
+            "| Domain | Model | Coverage | Plateau rows | Best hidden | Audit ready |",
+            "| --- | --- | --- | ---: | ---: | --- |",
+        ]
+    )
+    for row in verdicts:
+        lines.append(
+            "| `{domain}` | `{model}` | {coverage} | {plateau}/{count} | `{best}` | {ready} |".format(
+                domain=row["domain"],
+                model=row["model_kind"],
+                coverage="yes" if row["capacity_coverage_complete"] else "no",
+                plateau=row["plateau_count"],
+                count=row["capacity_count"],
+                best=row.get("best_hidden") or "-",
+                ready="yes" if row["audit_ready"] else "no",
+            )
+        )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -302,6 +394,7 @@ def main() -> int:
     parser.add_argument("--steps-per-epoch", type=int, default=12000)
     parser.add_argument("--eval-samples", type=int, default=1000)
     parser.add_argument("--plateau-threshold", type=float, default=0.005)
+    parser.add_argument("--plateau-window", type=int, default=3)
     args = parser.parse_args()
 
     repo = Path(__file__).resolve().parents[1]
@@ -344,14 +437,24 @@ def main() -> int:
     plateau_path = output_dir / "tiny_net_plateau_summary.csv"
     plateau_jsonl_path = output_dir / "tiny_net_plateau_summary.jsonl"
     width_path = output_dir / "tiny_net_width_help.jsonl"
+    verdict_path = output_dir / "tiny_net_audit_verdict.jsonl"
     report_path = output_dir / "tiny_net_plateau_audit.md"
 
     summary_rows = [
         row for row in all_rows if row.get("schema") == "crlp.multitask.summary.v1"
     ]
     curves = learning_curve_rows(summary_rows)
-    plateaus = plateau_rows(curves, args.plateau_threshold)
+    plateaus = plateau_rows(curves, args.plateau_threshold, args.plateau_window)
     width = width_rows(plateaus, args.capacities)
+    verdicts = audit_verdict_rows(
+        plateaus,
+        width,
+        args.capacities,
+        args.seeds,
+        args.epoch_grid,
+        args.plateau_threshold,
+        args.plateau_window,
+    )
 
     write_jsonl(raw_path, all_rows)
     commands_path.write_text("\n".join(commands) + "\n", encoding="utf-8")
@@ -359,6 +462,7 @@ def main() -> int:
     write_csv(plateau_path, plateaus)
     write_jsonl(plateau_jsonl_path, plateaus)
     write_jsonl(width_path, width)
+    write_jsonl(verdict_path, verdicts)
     write_report(
         report_path,
         args.seeds,
@@ -368,8 +472,10 @@ def main() -> int:
         args.eval_samples,
         plateaus,
         width,
+        verdicts,
     )
     print(f"wrote {report_path}")
+    print(f"wrote {verdict_path}")
     return 0
 
 

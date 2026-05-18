@@ -78,6 +78,7 @@ HYPOTHESIS_LIBRARY_DIR ?= build/$(REAL)/hypothesis_library
 TRACE_DETERMINISM_AUDIT ?= $(BUILD_DIR)/traces/trace_determinism_audit.jsonl
 TRACE_DETERMINISM_CANONICAL ?= $(BUILD_DIR)/traces/prime_gap.semantic.jsonl
 TRACE_DETERMINISM_COMPARE ?= $(RESULTS_DIR)/trace_determinism.jsonl
+TRACE_DETERMINISM_CI ?= $(RESULTS_DIR)/trace_determinism_ci.jsonl
 TRACE_DETERMINISM_RESULTS_CANONICAL ?= $(RESULTS_DIR)/prime_gap_trace.semantic.jsonl
 HYPOTHESIS_LIBRARY_PROMOTION_TASK_IDS ?= move_to_anchor,move_to_anchor_x
 HYPOTHESIS_LIBRARY_HELDOUT_TASK_IDS ?= connect_aligned,extend_aligned_sequence,fill_enclosed,move_to_anchor_both_positive,move_to_anchor_y,object_extract,recolor_by_reference,translate
@@ -207,7 +208,7 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments trace-determinism-audit trace-determinism-compare delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-public paper-grade-evidence signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke signal-live-brain signal-live-brain-smoke signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit experiment-matrix results paper-pdf paper-data paper-claims paper-support neurosymbolic-tune benchmark test sanitize check clean
+.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-public paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke signal-live-brain signal-live-brain-smoke signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit experiment-matrix results paper-pdf paper-data paper-claims paper-support neurosymbolic-tune benchmark test sanitize check clean
 
 all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(BENCHMARK)
 
@@ -422,6 +423,13 @@ trace-determinism-compare:
 		--output $(TRACE_DETERMINISM_COMPARE)
 	cp build/float/traces/prime_gap.semantic.jsonl $(TRACE_DETERMINISM_RESULTS_CANONICAL)
 
+trace-determinism-ci: trace-determinism-compare
+	$(PYTHON) scripts/trace_determinism_audit.py \
+		build/float/traces/prime_gap.jsonl \
+		build/double/traces/prime_gap.jsonl \
+		--gate \
+		--output $(TRACE_DETERMINISM_CI)
+
 benchmark: $(BENCHMARK)
 	./$(BENCHMARK)
 
@@ -543,9 +551,10 @@ hypothesis-library-split-sweep: $(ARC_AGI)
 hypothesis-library-public: $(ARC_AGI)
 	$(PYTHON) scripts/hypothesis_library_split_sweep.py --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --output-dir $(HYPOTHESIS_LIBRARY_PUBLIC_DIR) --public-train-max-tasks $(HYPOTHESIS_LIBRARY_PUBLIC_TRAIN_MAX_TASKS) --public-eval-max-tasks $(HYPOTHESIS_LIBRARY_PUBLIC_EVAL_MAX_TASKS)
 
-paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit signal-shadow-replay-audit signal-live-active-summary experiment-matrix
-	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR) $(SIGNAL_FLIGHT_RESULTS_DIR)
+paper-grade-evidence-core: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit experiment-matrix
+	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR)
 	cp $(REJECTED_CANDIDATE_DIR)/reason_learning.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_learning.jsonl
+	cp $(REJECTED_CANDIDATE_DIR)/safety_report.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_safety_report.jsonl
 	cp $(REJECTED_CANDIDATE_DIR)/split_sweep.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_split_sweep.jsonl
 	cp $(REJECTED_CANDIDATE_DIR)/reason_family_sweep.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_family_sweep.jsonl
 	cp $(REJECTED_CANDIDATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_seed_interval_summary.jsonl
@@ -553,6 +562,20 @@ paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit 
 	cp $(HYPOTHESIS_LIBRARY_SPLIT_SWEEP_DIR)/heldout_result.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/hypothesis_library_heldout_result.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_plateau_summary.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_plateau_summary.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_width_help.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_width_help.jsonl
+	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_audit_verdict.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_audit_verdict.jsonl
+
+paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit signal-shadow-replay-audit signal-live-active-summary experiment-matrix
+	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR) $(SIGNAL_FLIGHT_RESULTS_DIR)
+	cp $(REJECTED_CANDIDATE_DIR)/reason_learning.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_learning.jsonl
+	cp $(REJECTED_CANDIDATE_DIR)/safety_report.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_safety_report.jsonl
+	cp $(REJECTED_CANDIDATE_DIR)/split_sweep.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_split_sweep.jsonl
+	cp $(REJECTED_CANDIDATE_DIR)/reason_family_sweep.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_family_sweep.jsonl
+	cp $(REJECTED_CANDIDATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_seed_interval_summary.jsonl
+	cp $(REJECTED_CANDIDATE_SEED_AUDIT_DIR)/reason_family_seed_interval.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_family_seed_interval.jsonl
+	cp $(HYPOTHESIS_LIBRARY_SPLIT_SWEEP_DIR)/heldout_result.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/hypothesis_library_heldout_result.jsonl
+	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_plateau_summary.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_plateau_summary.jsonl
+	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_width_help.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_width_help.jsonl
+	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_audit_verdict.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_audit_verdict.jsonl
 	cp $(SIGNAL_SHADOW_REPLAY_DIR)/summary.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_replay_audit.jsonl
 	cp $(SIGNAL_SHADOW_REPLAY_DIR)/shadow_frames.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_frames.jsonl
 	cp $(SIGNAL_LIVE_ACTIVE_DIR)/summary.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl

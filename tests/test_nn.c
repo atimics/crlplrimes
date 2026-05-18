@@ -418,13 +418,20 @@ static int test_program_coverage_and_proposer_summary_json(void)
 static int test_protocol_candidate_and_outcome_json_contract(void)
 {
     nn_real features[3] = {(nn_real)1, (nn_real)0.25, (nn_real)-0.5};
+    nn_real bad_features[1] = {(nn_real)NAN};
     NNActionCandidate action = {
         .action_id = 42,
         .features = features,
     };
+    NNActionCandidate bad_action = {
+        .action_id = 43,
+        .features = bad_features,
+    };
     NNCandidateRow row;
+    NNCandidateRow bad_row;
     NNCertificate certificate;
     NNVerifierOutcome outcome;
+    NNVerifierOutcome invalid_outcome;
     NNCertificate delayed_certificate;
     NNVerifierOutcome delayed_outcome;
     NNParsedCandidateRow parsed_row;
@@ -443,7 +450,16 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
     ok = ok && row.stable_id == 42 &&
          row.features == features &&
          row.feature_count == 3 &&
-         strcmp(row.domain, "prime_gap") == 0;
+         strcmp(row.domain, "prime_gap") == 0 &&
+         nn_protocol_candidate_validate(&row);
+    ok = ok && nn_protocol_candidate_from_action("prime_gap",
+                                                 "gap_action",
+                                                 &bad_action,
+                                                 1,
+                                                 "unit_test",
+                                                 "bad",
+                                                 &bad_row);
+    ok = ok && !nn_protocol_candidate_validate(&bad_row);
     nn_certificate_accept(&certificate,
                           "unit_proof",
                           "nonzero support",
@@ -455,7 +471,11 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
                                                     &outcome);
     ok = ok && outcome.status == NN_VERIFIER_ACCEPTED &&
          nn_protocol_status_is_safe(outcome.status) &&
-         strcmp(nn_protocol_status_name(outcome.status), "accepted") == 0;
+         strcmp(nn_protocol_status_name(outcome.status), "accepted") == 0 &&
+         nn_protocol_outcome_validate(&outcome);
+    invalid_outcome = outcome;
+    invalid_outcome.false_rejections = 1;
+    ok = ok && !nn_protocol_outcome_validate(&invalid_outcome);
     nn_certificate_reject(&delayed_certificate,
                           "finite_generator",
                           "false_rejection_risk",
@@ -515,8 +535,10 @@ static int test_protocol_rule_library_and_ranker_json_contract(void)
     NNDiscoveredRuleRecord discovered;
     NNLibraryPromotionRecord promotion;
     uint32_t ids[2] = {1001, 1002};
+    uint32_t duplicate_ids[2] = {1001, 1001};
     nn_real scores[2] = {(nn_real)0.9, (nn_real)0.9};
     nn_real probabilities[2] = {(nn_real)0.5, (nn_real)0.5};
+    nn_real bad_probabilities[2] = {(nn_real)0.7, (nn_real)0.7};
     NNRankerDecision decision = {
         .task_name = "signal_flight.shadow_replay",
         .model_hash_hex = "abc",
@@ -564,7 +586,17 @@ static int test_protocol_rule_library_and_ranker_json_contract(void)
     promotion.false_rejections = 0;
     promotion.utility = 3.25;
     promotion.heldout_rows = 10;
+    promotion.zero_false_rejections = 1;
+    promotion.promotion_task_hash = "tasks123";
+    promotion.heldout_result_hash = "heldout123";
     promotion.reason_code = "zero_false_rejection";
+    ok = ok && nn_protocol_ranker_decision_validate(&decision);
+    decision.candidate_ids = duplicate_ids;
+    ok = ok && !nn_protocol_ranker_decision_validate(&decision);
+    decision.candidate_ids = ids;
+    decision.probabilities = bad_probabilities;
+    ok = ok && !nn_protocol_ranker_decision_validate(&decision);
+    decision.probabilities = probabilities;
 
     if (fp != NULL) {
         ok = ok && nn_discovered_rule_write_json(fp, &discovered);
@@ -578,6 +610,8 @@ static int test_protocol_rule_library_and_ranker_json_contract(void)
         ok = ok && strstr(buffer, NN_PROTOCOL_RANKER_SCHEMA) != NULL;
         ok = ok && strstr(buffer, "\"task_name\":\"signal_flight.shadow_replay\"") != NULL;
         ok = ok && strstr(buffer, "\"selected_action_id\":1001") != NULL;
+        ok = ok && strstr(buffer, "\"zero_false_rejections\":true") != NULL;
+        ok = ok && strstr(buffer, "\"promotion_task_hash\":\"tasks123\"") != NULL;
         ok = ok && strstr(buffer, "\"false_rejections\":0") != NULL;
         fclose(fp);
     }
@@ -593,6 +627,7 @@ static int test_protocol_score_adapter_matches_action_rows(void)
     NNActionCandidate a = {.action_id = 11, .features = a_features};
     NNActionCandidate b = {.action_id = 12, .features = b_features};
     NNCandidateRow rows[2];
+    NNCandidateRow duplicate_rows[2];
     nn_real scores[2] = {0};
     nn_real probabilities[2] = {0};
     int ok = net != NULL;
@@ -610,7 +645,17 @@ static int test_protocol_score_adapter_matches_action_rows(void)
                                                  "unit_test",
                                                  "east",
                                                  &rows[1]);
+    ok = ok && nn_protocol_candidate_batch_validate(rows, 2, 2);
+    duplicate_rows[0] = rows[0];
+    duplicate_rows[1] = rows[1];
+    duplicate_rows[1].stable_id = duplicate_rows[0].stable_id;
+    ok = ok && !nn_protocol_candidate_batch_validate(duplicate_rows, 2, 2);
     ok = ok && nn_protocol_score_candidates(net, rows, 2, scores, probabilities);
+    ok = ok && !nn_protocol_score_candidates(net,
+                                             duplicate_rows,
+                                             2,
+                                             scores,
+                                             probabilities);
     ok = ok && isfinite((double)scores[0]) &&
          isfinite((double)scores[1]) &&
          probabilities[0] >= (nn_real)0 &&

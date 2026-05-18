@@ -24,6 +24,7 @@ ACTION_ID_CONTRACT = "stable_unique_action_ids"
 CANONICAL_SCHEMA = "crlp.trace.semantic.v1"
 AUDIT_SCHEMA = "crlp.trace_determinism_audit.v1"
 COMPARE_SCHEMA = "crlp.trace_determinism_compare.v1"
+GATE_SCHEMA = "crlp.trace_determinism_gate.v1"
 RANKING_POLICY = "score_desc_action_id_tiebreak_epsilon"
 LEGACY_RANKING_POLICY = "legacy_score_order"
 DEFAULT_RANK_SCORE_EPSILON = 1e-6
@@ -362,6 +363,65 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             handle.write(json_dumps(row) + "\n")
 
 
+def gate_failures(rows: list[dict[str, Any]], args: argparse.Namespace) -> list[str]:
+    failures: list[str] = []
+    active = (
+        args.gate
+        or args.max_rank_fp_sensitive_rows is not None
+        or args.max_rank_fp_sensitive_rate is not None
+        or args.min_row_count > 0
+        or args.require_semantic_equality
+        or args.require_row_count_equality
+    )
+    if not active:
+        return failures
+    max_sensitive_rows = args.max_rank_fp_sensitive_rows
+    max_sensitive_rate = args.max_rank_fp_sensitive_rate
+    min_row_count = args.min_row_count
+    require_semantic_equality = args.require_semantic_equality
+    require_row_count_equality = args.require_row_count_equality
+    if args.gate:
+        if max_sensitive_rows is None:
+            max_sensitive_rows = 0
+        if max_sensitive_rate is None:
+            max_sensitive_rate = 0.0
+        require_semantic_equality = True
+        require_row_count_equality = True
+        min_row_count = max(1, min_row_count)
+
+    for row in rows:
+        schema = row.get("schema")
+        if schema == AUDIT_SCHEMA:
+            trace_path = row.get("trace_path", "<unknown>")
+            row_count = int(row.get("row_count", 0) or 0)
+            invalid_rows = int(row.get("invalid_rows", 0) or 0)
+            logged_mismatches = int(row.get("rank_fp_sensitive_logged_mismatches", 0) or 0)
+            sensitive_rows = int(row.get("rank_fp_sensitive_rows", 0) or 0)
+            sensitive_rate = float(row.get("rank_fp_sensitive_rate", 0.0) or 0.0)
+            if row_count < min_row_count:
+                failures.append(f"{trace_path}: row_count {row_count} < {min_row_count}")
+            if invalid_rows != 0:
+                failures.append(f"{trace_path}: invalid_rows={invalid_rows}")
+            if logged_mismatches != 0:
+                failures.append(
+                    f"{trace_path}: rank_fp_sensitive_logged_mismatches={logged_mismatches}"
+                )
+            if max_sensitive_rows is not None and sensitive_rows > max_sensitive_rows:
+                failures.append(
+                    f"{trace_path}: rank_fp_sensitive_rows {sensitive_rows} > {max_sensitive_rows}"
+                )
+            if max_sensitive_rate is not None and sensitive_rate > max_sensitive_rate:
+                failures.append(
+                    f"{trace_path}: rank_fp_sensitive_rate {sensitive_rate:.6g} > {max_sensitive_rate:.6g}"
+                )
+        elif schema == COMPARE_SCHEMA:
+            if require_semantic_equality and not bool(row.get("all_semantic_hashes_equal")):
+                failures.append("semantic hashes differ across traces")
+            if require_row_count_equality and not bool(row.get("row_counts_equal")):
+                failures.append("row counts differ across traces")
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("traces", nargs="*", type=Path, help="trace JSONL files to audit")
@@ -371,6 +431,37 @@ def main() -> int:
         "--canonical-output",
         type=Path,
         help="write canonical semantic trace JSONL; valid only for one input trace",
+    )
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="fail if deterministic replay gates are violated",
+    )
+    parser.add_argument(
+        "--max-rank-fp-sensitive-rows",
+        type=int,
+        help="maximum allowed FP-sensitive rank rows in each audited trace",
+    )
+    parser.add_argument(
+        "--max-rank-fp-sensitive-rate",
+        type=float,
+        help="maximum allowed FP-sensitive rank row rate in each audited trace",
+    )
+    parser.add_argument(
+        "--min-row-count",
+        type=int,
+        default=0,
+        help="minimum accepted trace rows per audit when gate checks are enabled",
+    )
+    parser.add_argument(
+        "--require-semantic-equality",
+        action="store_true",
+        help="fail if compare rows report different semantic hashes",
+    )
+    parser.add_argument(
+        "--require-row-count-equality",
+        action="store_true",
+        help="fail if compare rows report different row counts",
     )
     args = parser.parse_args()
 
@@ -392,6 +483,19 @@ def main() -> int:
     if len(paths) > 1:
         rows.append(compare_canonical(paths, canonical_by_path))
 
+    failures = gate_failures(rows, args)
+    if args.gate:
+        rows.append(
+            {
+                "schema": GATE_SCHEMA,
+                "passed": not failures,
+                "failure_count": len(failures),
+                "failures": failures,
+                "audit_count": sum(1 for row in rows if row.get("schema") == AUDIT_SCHEMA),
+                "compare_count": sum(1 for row in rows if row.get("schema") == COMPARE_SCHEMA),
+            }
+        )
+
     if args.output is not None:
         write_jsonl(args.output, rows)
     if args.canonical_output is not None:
@@ -405,7 +509,9 @@ def main() -> int:
         print(json_dumps(row))
     for issue in all_issues:
         print(issue, file=sys.stderr)
-    return 1 if all_issues else 0
+    for failure in failures:
+        print(f"gate failure: {failure}", file=sys.stderr)
+    return 1 if all_issues or failures else 0
 
 
 if __name__ == "__main__":
