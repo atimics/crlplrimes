@@ -79,18 +79,18 @@ For the `prime_rule_propose` domain, each row encodes one candidate rule (not on
 
 These are the same features `prime_closed_loop_encode_features` already emits. They pack into the existing envelope by reusing domain-specific slots; if the envelope is too narrow, widen it once and propagate.
 
-There is one concrete layout hazard in the current code: task tags occupy slots
-`1..4` and `MT_F_ACTION_INDEX` starts at slot `5`. Adding a fifth task tag would
-collide. The implementation must either:
-
-- move the task tag region and bump downstream offsets, or
-- keep four action-domain tags and encode `prime_rule_propose` through a separate role/domain pair.
-
-Do not silently reuse slot `5` for both a fifth task and normalized action index.
+The implementation resolves the original layout hazard by using the shared
+engine envelope in `nn_core`: role/domain tags occupy fixed slots, and
+`prime_rule_propose` has its own domain slot instead of reusing an action tag.
+Slot `5` remains the normalized candidate index for both action candidates and
+rule candidates.
 
 ### Add a `role` tag (action vs rule) alongside the existing domain tag
 
-The current envelope has a domain tag (`prime_gap`, `grid_path`, etc.). Add a role tag (`action`, `rule`) as a second one-hot or bias slot. The scorer learns to specialize on both axes. Two slots, four parameters, no architectural complexity.
+The current envelope has a domain tag (`prime_gap`, `grid_path`, etc.) and a
+role tag (`action`, `rule`). The scorer learns to specialize on both axes. Two
+role slots and separate domain slots keep the row auditable without adding
+architectural complexity.
 
 The row schema must be auditable by role:
 

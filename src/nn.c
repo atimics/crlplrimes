@@ -1533,6 +1533,110 @@ int nn_score_action_rows(NeuralNet *net,
     return 1;
 }
 
+const char *nn_scorer_envelope_feature_set(void)
+{
+    return NN_SCORER_ENVELOPE_FEATURE_SET;
+}
+
+const char *nn_scorer_envelope_slot_name(size_t slot)
+{
+    switch (slot) {
+    case NN_SCORER_ENVELOPE_F_BIAS:
+        return "bias";
+    case NN_SCORER_ENVELOPE_F_ROLE_RULE:
+        return "role_rule";
+    case NN_SCORER_ENVELOPE_F_DOMAIN_PRIME_RULE:
+        return "domain_prime_rule_propose";
+    case NN_SCORER_ENVELOPE_F_ROLE_ACTION:
+        return "role_action";
+    case NN_SCORER_ENVELOPE_F_DOMAIN_PRIME_ACTION:
+        return "domain_prime_gap_action";
+    case NN_SCORER_ENVELOPE_F_CANDIDATE_INDEX:
+        return "normalized_candidate_index";
+    case NN_SCORER_ENVELOPE_F_CANDIDATE_COUNT:
+        return "normalized_candidate_count";
+    case NN_SCORER_ENVELOPE_F_DOMAIN_GRID_ACTION:
+        return "domain_grid_path_action";
+    case NN_SCORER_ENVELOPE_F_DOMAIN_CLAIM_ACTION:
+        return "domain_delayed_claim_action";
+    case NN_SCORER_ENVELOPE_F_DOMAIN_ARC_ACTION:
+        return "domain_arc_agi_action";
+    default:
+        break;
+    }
+    return NULL;
+}
+
+int nn_scorer_envelope_domain_slot(NNScorerDomain domain, size_t *out_slot)
+{
+    if (out_slot == NULL) {
+        return 0;
+    }
+    switch (domain) {
+    case NN_SCORER_DOMAIN_PRIME_GAP_ACTION:
+        *out_slot = (size_t)NN_SCORER_ENVELOPE_F_DOMAIN_PRIME_ACTION;
+        return 1;
+    case NN_SCORER_DOMAIN_GRID_PATH_ACTION:
+        *out_slot = (size_t)NN_SCORER_ENVELOPE_F_DOMAIN_GRID_ACTION;
+        return 1;
+    case NN_SCORER_DOMAIN_DELAYED_CLAIM_ACTION:
+        *out_slot = (size_t)NN_SCORER_ENVELOPE_F_DOMAIN_CLAIM_ACTION;
+        return 1;
+    case NN_SCORER_DOMAIN_ARC_AGI_ACTION:
+        *out_slot = (size_t)NN_SCORER_ENVELOPE_F_DOMAIN_ARC_ACTION;
+        return 1;
+    case NN_SCORER_DOMAIN_PRIME_RULE_PROPOSE:
+        *out_slot = (size_t)NN_SCORER_ENVELOPE_F_DOMAIN_PRIME_RULE;
+        return 1;
+    }
+    return 0;
+}
+
+int nn_scorer_envelope_fill_base(nn_real *row,
+                                 size_t row_capacity,
+                                 const NNScorerEnvelopeRow *spec)
+{
+    if (row == NULL || spec == NULL ||
+        row_capacity < (size_t)NN_SCORER_ENVELOPE_FEATURE_COUNT ||
+        spec->candidate_count == 0 ||
+        spec->candidate_index >= spec->candidate_count) {
+        return 0;
+    }
+
+    memset(row, 0, row_capacity * sizeof(*row));
+    row[NN_SCORER_ENVELOPE_F_BIAS] = (nn_real)1;
+    if (spec->include_role_tag) {
+        switch (spec->role) {
+        case NN_SCORER_ROLE_ACTION:
+            row[NN_SCORER_ENVELOPE_F_ROLE_ACTION] = (nn_real)1;
+            break;
+        case NN_SCORER_ROLE_RULE:
+            row[NN_SCORER_ENVELOPE_F_ROLE_RULE] = (nn_real)1;
+            break;
+        default:
+            return 0;
+        }
+    }
+    if (spec->include_domain_tag) {
+        size_t domain_slot = 0;
+        if (!nn_scorer_envelope_domain_slot(spec->domain, &domain_slot) ||
+            domain_slot >= row_capacity) {
+            return 0;
+        }
+        row[domain_slot] = (nn_real)1;
+    }
+
+    row[NN_SCORER_ENVELOPE_F_CANDIDATE_INDEX] =
+        spec->candidate_count <= 1
+            ? (nn_real)0
+            : (nn_real)((double)spec->candidate_index / (double)(spec->candidate_count - 1u));
+    size_t scale = spec->candidate_count_scale == 0 ? spec->candidate_count
+                                                    : spec->candidate_count_scale;
+    row[NN_SCORER_ENVELOPE_F_CANDIDATE_COUNT] =
+        (nn_real)((double)spec->candidate_count / (double)scale);
+    return 1;
+}
+
 static int rank_score_is_better(const nn_real *scores,
                                 const uint32_t *action_ids,
                                 size_t left,
