@@ -17,10 +17,14 @@ const NET_MSG_SESSION = 0x20;
 const NET_INPUT_THRUST = 1 << 0;
 const NET_INPUT_LEFT = 1 << 1;
 const NET_INPUT_RIGHT = 1 << 2;
+const NET_INPUT_FIRE = 1 << 3;
 const NET_INPUT_BRAKE = 1 << 4;
+const NET_INPUT_TRACTOR = 1 << 5;
 
 const NET_ACTION_NONE = 0;
+const NET_ACTION_DOCK = 1;
 const NET_ACTION_LAUNCH = 2;
+const NET_ACTION_REPAIR = 4;
 
 const PLAYER_RECORD_SIZE = 77;
 const ASTEROID_RECORD_SIZE = 34;
@@ -34,6 +38,11 @@ const NAV_WAYPOINT_REACHED_RADIUS = 280;
 const NAV_WAYPOINT_TTL_MS = 18000;
 const NAV_ASTEROID_CLEARANCE = 300;
 const NAV_ASTEROID_LOOKAHEAD = 1700;
+const TACTICAL_OBJECTIVE_TTL_MS = 45000;
+const TACTICAL_FRAGMENT_RADIUS = 82;
+const TACTICAL_MINE_RANGE = 430;
+const TACTICAL_TRACTOR_RANGE = 260;
+const TACTICAL_OPTION_REPLAN_MS = 2500;
 
 function usage() {
   console.log(`usage: node scripts/signal_live_brain.mjs [options]
@@ -52,6 +61,10 @@ Options:
   --brain-checkpoint PATH
                     load a signal-flight-live-v2 checkpoint for WASD scoring
   --brain-mode MODE  heuristic, shadow_neural, or neural_active (default shadow_neural)
+  --option-checkpoint PATH
+                    load a signal-mining-option-v1 checkpoint for tactical scoring
+  --option-mode MODE
+                    off, fixed, shadow_neural, or neural_active (default off)
   --dry-run          connect and decode, but do not send movement inputs
 `);
 }
@@ -70,6 +83,8 @@ function parseArgs(argv) {
     goal: null,
     checkpointPath: null,
     brainMode: "shadow_neural",
+    optionCheckpointPath: null,
+    optionMode: "off",
     dryRun: false,
   };
 
@@ -122,6 +137,15 @@ function parseArgs(argv) {
         throw new Error("--brain-mode must be heuristic, shadow_neural, or neural_active");
       }
       config.brainMode = value;
+      i += 1;
+    } else if (arg === "--option-checkpoint" && value) {
+      config.optionCheckpointPath = value;
+      i += 1;
+    } else if (arg === "--option-mode" && value) {
+      if (!["off", "fixed", "shadow_neural", "neural_active"].includes(value)) {
+        throw new Error("--option-mode must be off, fixed, shadow_neural, or neural_active");
+      }
+      config.optionMode = value;
       i += 1;
     } else if (arg === "--dry-run") {
       config.dryRun = true;
@@ -468,12 +492,21 @@ const SIGNAL_FLIGHT_ACTIONS = [
   { id: 8, name: "SD", flags: NET_INPUT_BRAKE | NET_INPUT_RIGHT, turn: 1, thrust: -1 },
 ];
 
+const SIGNAL_MINING_OPTIONS = [
+  { id: 0, name: "autopilot_loop" },
+  { id: 1, name: "mine_nearest_clear" },
+  { id: 2, name: "mine_richest" },
+  { id: 3, name: "collect_local_fragments" },
+  { id: 4, name: "deliver_refinery" },
+  { id: 5, name: "dock_repair" },
+];
+
 const NN_ACTIVATION_SIGMOID = 0;
 const NN_ACTIVATION_RELU = 1;
 const NN_ACTIVATION_TANH = 2;
 const NN_ACTIVATION_LINEAR = 3;
 
-async function loadSignalFlightModel(path) {
+async function loadNNCheckpoint(path) {
   if (!path) return null;
   const buffer = await readFile(path);
   const hash = createHash("sha256").update(buffer).digest("hex");
@@ -563,15 +596,6 @@ async function loadSignalFlightModel(path) {
     featureSet: metadataSize === 487 ? readString(32) : "",
   };
 
-  if (sizes.length !== 4 || sizes[0] !== 48 || sizes[1] !== 32 || sizes[2] !== 16 || sizes[3] !== 1) {
-    throw new Error(`unsupported signal flight checkpoint shape: ${sizes.join("x")}`);
-  }
-  if (metadata.featureEncoderVersion !== 2 || metadata.featureSet !== "signal-flight-live-v2") {
-    throw new Error(
-      `refusing non-live checkpoint ${path}: feature_encoder_version=${metadata.featureEncoderVersion} feature_set=${metadata.featureSet}`,
-    );
-  }
-
   return {
     path,
     hash,
@@ -583,6 +607,36 @@ async function loadSignalFlightModel(path) {
     biases,
     metadata,
   };
+}
+
+async function loadSignalFlightModel(path) {
+  const model = await loadNNCheckpoint(path);
+  if (!model) return null;
+  const sizes = model.sizes;
+  if (sizes.length !== 4 || sizes[0] !== 48 || sizes[1] !== 32 || sizes[2] !== 16 || sizes[3] !== 1) {
+    throw new Error(`unsupported signal flight checkpoint shape: ${sizes.join("x")}`);
+  }
+  if (model.metadata.featureEncoderVersion !== 2 || model.metadata.featureSet !== "signal-flight-live-v2") {
+    throw new Error(
+      `refusing non-live checkpoint ${path}: feature_encoder_version=${model.metadata.featureEncoderVersion} feature_set=${model.metadata.featureSet}`,
+    );
+  }
+  return model;
+}
+
+async function loadSignalMiningOptionModel(path) {
+  const model = await loadNNCheckpoint(path);
+  if (!model) return null;
+  const sizes = model.sizes;
+  if (sizes.length !== 4 || sizes[0] !== 40 || sizes[1] !== 32 || sizes[2] !== 16 || sizes[3] !== 1) {
+    throw new Error(`unsupported signal mining option checkpoint shape: ${sizes.join("x")}`);
+  }
+  if (model.metadata.featureEncoderVersion !== 1 || model.metadata.featureSet !== "signal-mining-option-v1") {
+    throw new Error(
+      `refusing non-mining checkpoint ${path}: feature_encoder_version=${model.metadata.featureEncoderVersion} feature_set=${model.metadata.featureSet}`,
+    );
+  }
+  return model;
 }
 
 function activate(value, activation) {
@@ -601,7 +655,7 @@ function activate(value, activation) {
   }
 }
 
-function forwardSignalFlightModel(model, input) {
+function forwardModel(model, input) {
   let activations = input;
   for (let layer = 1; layer < model.sizes.length; layer += 1) {
     const previous = model.sizes[layer - 1];
@@ -625,6 +679,10 @@ function forwardSignalFlightModel(model, input) {
   return activations[0];
 }
 
+function forwardSignalFlightModel(model, input) {
+  return forwardModel(model, input);
+}
+
 function scoreProbabilities(scores) {
   if (!scores.length) return [];
   const maxScore = Math.max(...scores.map((item) => item.score));
@@ -636,11 +694,23 @@ function scoreProbabilities(scores) {
   }));
 }
 
+function optionScoreProbabilities(scores) {
+  if (!scores.length) return [];
+  const maxScore = Math.max(...scores.map((item) => item.score));
+  const weights = scores.map((item) => Math.exp(item.score - maxScore));
+  const denom = weights.reduce((sum, value) => sum + value, 0) || 1;
+  return scores.map((item, index) => ({
+    option: item.option.name,
+    probability: round6(weights[index] / denom),
+  }));
+}
+
 class SignalLiveBrain {
-  constructor(config, sessionToken, model) {
+  constructor(config, sessionToken, model, optionModel) {
     this.config = config;
     this.sessionToken = sessionToken;
     this.model = model;
+    this.optionModel = optionModel;
     this.ws = null;
     this.opened = false;
     this.localId = null;
@@ -658,6 +728,10 @@ class SignalLiveBrain {
     this.stationEscapeTurnSign = this.sessionToken[1] >= 128 ? 1 : -1;
     this.objective = null;
     this.objectiveSerial = 1;
+    this.tacticalObjective = null;
+    this.tacticalSerial = 1;
+    this.lastTacticalDecision = null;
+    this.lastTacticalScoreAt = 0;
     this.navWaypoint = null;
     this.navSerial = 1;
     this.players = new Map();
@@ -710,6 +784,11 @@ class SignalLiveBrain {
     console.log(`[brain] connected ${this.config.server}`);
     if (this.model) {
       console.log(`[brain] model ${this.model.hash} feature_set=${this.model.metadata.featureSet}`);
+    }
+    if (this.optionModel) {
+      console.log(`[brain] option_model ${this.optionModel.hash} feature_set=${this.optionModel.metadata.featureSet} mode=${this.config.optionMode}`);
+    } else if (this.config.optionMode !== "off") {
+      console.log(`[brain] option_mode=${this.config.optionMode} without option checkpoint`);
     }
     this.sendSession();
   }
@@ -771,6 +850,11 @@ class SignalLiveBrain {
         vy: readF32(buffer, offset + 13),
         angle: readF32(buffer, offset + 17),
         flags: buffer[offset + 21],
+        tractorLevel: recordSize >= 67 ? buffer[offset + 22] : 0,
+        towedCount: recordSize >= 67 ? buffer[offset + 23] : 0,
+        towedFragments: recordSize >= 67
+          ? Array.from({ length: 10 }, (_, t) => readU16(buffer, offset + 24 + t * 2)).filter((id) => id !== 0xffff)
+          : [],
         serverTick: recordSize >= 73 ? readU32(buffer, offset + 69) : 0,
         inputTickAck: recordSize >= 77 ? readU32(buffer, offset + 73) : 0,
         seenAt: Date.now(),
@@ -810,6 +894,10 @@ class SignalLiveBrain {
         hp: readF32(buffer, offset + 19),
         ore: readF32(buffer, offset + 23),
         radius: readF32(buffer, offset + 27),
+        smeltProgress: buffer[offset + 31] / 255,
+        grade: buffer[offset + 32],
+        crystalStage: buffer[offset + 33],
+        isFragment: buffer[offset + 31] > 0 || readF32(buffer, offset + 27) <= TACTICAL_FRAGMENT_RADIUS,
         seenAt: Date.now(),
       });
     }
@@ -839,15 +927,19 @@ class SignalLiveBrain {
       return;
     }
 
-    let action = NET_ACTION_NONE;
-    if (this.ship.docked && now - this.lastActionAt > 1000) {
+    const decision = this.decide(player);
+    let action = decision.oneShotAction ?? NET_ACTION_NONE;
+    if (action !== NET_ACTION_NONE && now - this.lastActionAt <= 900) {
+      action = NET_ACTION_NONE;
+    }
+    if (action === NET_ACTION_NONE && this.ship.docked && now - this.lastActionAt > 1000) {
       action = NET_ACTION_LAUNCH;
+    }
+    if (action !== NET_ACTION_NONE) {
       this.lastActionAt = now;
     }
-
-    const decision = this.decide(player);
     if (!this.config.dryRun) {
-      this.sendInput(decision.flags, action, player);
+      this.sendInput(decision.flags, action, player, { miningTarget: decision.miningTarget });
     }
     await this.logDecision(now, player, decision, action);
     this.maybeStatus(now, this.statusText(player, decision, action));
@@ -861,14 +953,14 @@ class SignalLiveBrain {
   decide(player) {
     const heuristic = this.heuristicDecision(player);
     if (!this.model || !heuristic.target || !heuristic.state || this.config.brainMode === "heuristic") {
-      return this.attachDecisionMode(heuristic, heuristic, null, 0);
+      return this.attachDecisionMode(player, heuristic, heuristic, null, 0);
     }
 
     const started = process.hrtime.bigint();
     const neural = this.neuralDecision(player, heuristic.target, heuristic.state);
     const inferenceMs = Number(process.hrtime.bigint() - started) / 1e6;
     const active = this.config.brainMode === "neural_active" ? neural : heuristic;
-    return this.attachDecisionMode(active, heuristic, neural, inferenceMs);
+    return this.attachDecisionMode(player, active, heuristic, neural, inferenceMs);
   }
 
   heuristicDecision(player) {
@@ -906,6 +998,13 @@ class SignalLiveBrain {
     if (state.dist > 180 && Math.abs(state.headingError) < 1.25) {
       flags |= NET_INPUT_THRUST;
     }
+    if (target.tractor) {
+      flags |= NET_INPUT_TRACTOR;
+    }
+    const miningTarget = this.miningTargetFor(player, target);
+    if (miningTarget) {
+      flags |= NET_INPUT_FIRE | NET_INPUT_TRACTOR;
+    }
 
     return {
       flags,
@@ -921,9 +1020,27 @@ class SignalLiveBrain {
       closingSpeed: state.closingSpeed,
       velocityGoalCos: state.velocityGoalCos,
       brakeDistance: state.brakeDistance,
+      oneShotAction: target.oneShotAction ?? NET_ACTION_NONE,
+      miningTarget: miningTarget?.index ?? null,
+      tacticalOption: target.tacticalOption ?? this.lastTacticalDecision,
       policy: "heuristic",
       state,
     };
+  }
+
+  miningTargetFor(player, target) {
+    if (!target?.mine || target.miningTarget === undefined || target.miningTarget === null) {
+      return null;
+    }
+    const asteroid = this.asteroids.get(target.miningTarget);
+    const now = Date.now();
+    if (!asteroid || now - asteroid.seenAt > 3000 || asteroid.isFragment) return null;
+    const dx = asteroid.x - player.x;
+    const dy = asteroid.y - player.y;
+    const distance = len(dx, dy);
+    const headingError = wrapAngle(Math.atan2(dy, dx) - player.angle);
+    const range = (asteroid.radius || 0) + (target.mineRange ?? TACTICAL_MINE_RANGE) + 90;
+    return Math.abs(headingError) < 0.48 && distance <= range ? asteroid : null;
   }
 
   neuralDecision(player, target, state) {
@@ -932,7 +1049,29 @@ class SignalLiveBrain {
     return this.modelDecision(player, target, state);
   }
 
-  attachDecisionMode(active, heuristic, neural, inferenceMs) {
+  withTargetExtras(player, decision) {
+    if (!decision?.target) return decision;
+    let flags = decision.flags;
+    let miningTarget = decision.miningTarget ?? null;
+    if (decision.target.tractor) {
+      flags |= NET_INPUT_TRACTOR;
+    }
+    const mined = this.miningTargetFor(player, decision.target);
+    if (mined) {
+      flags |= NET_INPUT_FIRE | NET_INPUT_TRACTOR;
+      miningTarget = mined.index;
+    }
+    if (flags === decision.flags && miningTarget === (decision.miningTarget ?? null)) return decision;
+    return {
+      ...decision,
+      flags,
+      actionName: flagsToActionName(flags),
+      miningTarget,
+    };
+  }
+
+  attachDecisionMode(player, active, heuristic, neural, inferenceMs) {
+    active = this.withTargetExtras(player, active);
     const activeSource = neural && this.config.brainMode === "neural_active" ? "neural" : "heuristic";
     return {
       ...active,
@@ -1315,6 +1454,9 @@ class SignalLiveBrain {
       return this.plotWaypoint(player, target);
     }
 
+    const tacticalTarget = this.tacticalTargetFor(player);
+    if (tacticalTarget) return tacticalTarget;
+
     const objective = this.currentObjective(player);
     if (!objective) return null;
     const target = {
@@ -1325,8 +1467,286 @@ class SignalLiveBrain {
       objectiveId: objective.id,
       waypoint: objective.waypoint,
       completeRadius: objective.completeRadius,
+      targetAsteroid: objective.targetAsteroid ?? null,
+      mine: objective.mine ?? false,
+      tractor: objective.tractor ?? false,
+      miningTarget: objective.miningTarget ?? null,
+      mineRange: objective.mineRange ?? undefined,
+      oneShotAction: objective.oneShotAction ?? NET_ACTION_NONE,
+      tacticalOption: objective.tacticalOption ?? null,
     };
     return this.plotWaypoint(player, target);
+  }
+
+  tacticalTargetFor(player) {
+    if (this.config.optionMode === "off") return null;
+    const decision = this.scoreTacticalOptions(player);
+    this.lastTacticalDecision = decision;
+    if (this.config.optionMode === "shadow_neural") return null;
+
+    const now = Date.now();
+    if (this.tacticalObjective && this.tacticalObjectiveComplete(player, this.tacticalObjective, now)) {
+      this.logTacticalObjective("completed", this.tacticalObjective);
+      this.tacticalObjective = null;
+    }
+    if (this.tacticalObjective && now >= this.tacticalObjective.expiresAt) {
+      this.logTacticalObjective("expired", this.tacticalObjective);
+      this.tacticalObjective = null;
+    }
+    if (!this.tacticalObjective || this.shouldSwitchTacticalObjective(this.tacticalObjective, decision, player, now)) {
+      const next = this.startTacticalObjective(player, decision, now);
+      if (next) {
+        this.tacticalObjective = next;
+        this.logTacticalObjective("started", next);
+      }
+    }
+
+    const target = this.materializeTacticalTarget(player, this.tacticalObjective, decision, now);
+    if (!target) {
+      this.tacticalObjective = null;
+      return null;
+    }
+    return this.plotWaypoint(player, target);
+  }
+
+  scoreTacticalOptions(player) {
+    const fixed = this.fixedTacticalOption(player);
+    const fixedOption = SIGNAL_MINING_OPTIONS[fixed];
+    const scores = this.optionModel
+      ? SIGNAL_MINING_OPTIONS.map((option) => ({
+          option,
+          score: forwardModel(this.optionModel, this.optionFeatures(player, option)),
+        })).sort((a, b) => b.score - a.score)
+      : [];
+    const neural = scores[0]?.option ?? null;
+    const active =
+      this.config.optionMode === "neural_active" && neural
+        ? neural
+        : this.config.optionMode === "fixed"
+          ? fixedOption
+          : fixedOption;
+    return {
+      optionMode: this.optionModel ? this.config.optionMode : "fixed",
+      activeOption: active.name,
+      activeOptionId: active.id,
+      fixedOption: fixedOption.name,
+      fixedOptionId: fixedOption.id,
+      neuralOption: neural?.name ?? null,
+      neuralOptionId: neural?.id ?? null,
+      optionDisagrees: neural ? neural.id !== fixedOption.id : false,
+      optionCheckpointPath: this.optionModel?.path ?? null,
+      optionCheckpointHash: this.optionModel?.hash ?? null,
+      optionFeatureSet: this.optionModel?.metadata?.featureSet ?? null,
+      optionScores: scores.map((item) => ({
+        option: item.option.name,
+        score: round6(item.score),
+      })),
+      optionProbabilities: optionScoreProbabilities(scores),
+      scoredAt: Date.now(),
+    };
+  }
+
+  fixedTacticalOption(player) {
+    const hullRatio = this.ship.hull > 0 ? clip(this.ship.hull / 100, 0, 1) : 1;
+    if (hullRatio < 0.55) return 5;
+    if ((player.towedCount ?? 0) > 0) return 4;
+    if (this.nearestFragment(player)) return 3;
+    return 1;
+  }
+
+  shouldSwitchTacticalObjective(objective, decision, player, now) {
+    if (!objective) return true;
+    if ((player.towedCount ?? 0) > 0 && objective.optionName !== "deliver_refinery") {
+      return true;
+    }
+    if (decision.activeOption !== objective.optionName && now - objective.startedAt > TACTICAL_OPTION_REPLAN_MS) {
+      if (decision.activeOption === "dock_repair" || decision.activeOption === "deliver_refinery") return true;
+      if (objective.optionName === "autopilot_loop") return true;
+    }
+    return false;
+  }
+
+  startTacticalObjective(player, decision, now) {
+    const optionName = decision.activeOption;
+    if (optionName === "autopilot_loop") {
+      const fallback = (player.towedCount ?? 0) > 0 ? "deliver_refinery" : "mine_nearest_clear";
+      return this.makeTacticalObjective(player, fallback, decision, now);
+    }
+    return this.makeTacticalObjective(player, optionName, decision, now);
+  }
+
+  makeTacticalObjective(player, optionName, decision, now) {
+    if (optionName === "dock_repair") {
+      const station = this.selectedStation(player);
+      if (!station) return null;
+      const approach = this.stationApproachPoint(station, player);
+      return {
+        kind: "tactical_dock_repair",
+        id: this.tacticalSerial++,
+        optionName,
+        stationId: station.id,
+        stationName: station.name,
+        x: approach.x,
+        y: approach.y,
+        completeRadius: Math.max(160, station.dockRadius || 160),
+        oneShotAction: NET_ACTION_DOCK,
+        tacticalOption: decision,
+        startedAt: now,
+        expiresAt: now + TACTICAL_OBJECTIVE_TTL_MS,
+      };
+    }
+
+    if (optionName === "deliver_refinery") {
+      const station = this.selectedStation(player);
+      if (!station) return null;
+      const approach = this.stationApproachPoint(station, player);
+      return {
+        kind: "tactical_deliver_refinery",
+        id: this.tacticalSerial++,
+        optionName,
+        stationId: station.id,
+        stationName: station.name,
+        x: approach.x,
+        y: approach.y,
+        completeRadius: Math.max(180, station.dockRadius || 180),
+        tractor: true,
+        oneShotAction: NET_ACTION_DOCK,
+        tacticalOption: decision,
+        startedAt: now,
+        expiresAt: now + TACTICAL_OBJECTIVE_TTL_MS,
+      };
+    }
+
+    if (optionName === "collect_local_fragments") {
+      const fragment = this.nearestFragment(player);
+      if (!fragment) return this.makeTacticalObjective(player, "mine_nearest_clear", decision, now);
+      return {
+        kind: "tactical_collect_fragment",
+        id: this.tacticalSerial++,
+        optionName,
+        targetAsteroid: fragment.index,
+        x: fragment.x,
+        y: fragment.y,
+        completeRadius: TACTICAL_TRACTOR_RANGE,
+        tractor: true,
+        tacticalOption: decision,
+        startedAt: now,
+        expiresAt: now + TACTICAL_OBJECTIVE_TTL_MS,
+      };
+    }
+
+    if (optionName === "mine_richest" || optionName === "mine_nearest_clear") {
+      const asteroid = optionName === "mine_richest"
+        ? this.richestMineableAsteroid(player)
+        : this.nearestMineableAsteroid(player, true) ?? this.nearestMineableAsteroid(player, false);
+      if (!asteroid) return null;
+      const approach = this.asteroidApproachPoint(player, asteroid);
+      return {
+        kind: optionName === "mine_richest" ? "tactical_mine_richest" : "tactical_mine_nearest_clear",
+        id: this.tacticalSerial++,
+        optionName,
+        targetAsteroid: asteroid.index,
+        miningTarget: asteroid.index,
+        x: approach.x,
+        y: approach.y,
+        completeRadius: 190,
+        mine: true,
+        tractor: true,
+        mineRange: TACTICAL_MINE_RANGE,
+        tacticalOption: decision,
+        startedAt: now,
+        expiresAt: now + TACTICAL_OBJECTIVE_TTL_MS,
+      };
+    }
+
+    return null;
+  }
+
+  materializeTacticalTarget(player, objective, decision, now) {
+    if (!objective) return null;
+    const base = {
+      objectiveKind: objective.kind,
+      objectiveId: objective.id,
+      completeRadius: objective.completeRadius,
+      station: objective.stationId,
+      targetAsteroid: objective.targetAsteroid ?? null,
+      mine: objective.mine ?? false,
+      tractor: objective.tractor ?? false,
+      miningTarget: objective.miningTarget ?? null,
+      mineRange: objective.mineRange ?? undefined,
+      oneShotAction: this.tacticalActionFor(player, objective),
+      allowStationApproach: objective.optionName === "dock_repair" || objective.optionName === "deliver_refinery",
+      tacticalOption: decision,
+    };
+    if (objective.targetAsteroid !== undefined && objective.targetAsteroid !== null) {
+      const asteroid = this.asteroids.get(objective.targetAsteroid);
+      if (!asteroid || now - asteroid.seenAt > 3000) return null;
+      const point = objective.mine
+        ? this.asteroidApproachPoint(player, asteroid)
+        : { x: asteroid.x, y: asteroid.y };
+      return {
+        ...base,
+        x: point.x,
+        y: point.y,
+        finalX: asteroid.x,
+        finalY: asteroid.y,
+      };
+    }
+    if (objective.stationId !== undefined && objective.stationId !== null) {
+      const station = this.stations.get(objective.stationId) ?? this.selectedStation(player);
+      if (!station) return null;
+      const point = this.stationApproachPoint(station, player);
+      return {
+        ...base,
+        x: point.x,
+        y: point.y,
+        station: station.id,
+        finalX: station.x,
+        finalY: station.y,
+      };
+    }
+    return {
+      ...base,
+      x: objective.x,
+      y: objective.y,
+    };
+  }
+
+  tacticalActionFor(player, objective) {
+    if (!objective) return NET_ACTION_NONE;
+    if (objective.optionName === "dock_repair") {
+      if (this.ship.docked) return NET_ACTION_REPAIR;
+      const station = this.stations.get(objective.stationId);
+      if (station && len(player.x - station.x, player.y - station.y) <= (station.dockRadius || 240) + 80) {
+        return NET_ACTION_DOCK;
+      }
+    }
+    if (objective.optionName === "deliver_refinery") {
+      const station = this.stations.get(objective.stationId);
+      if (station && len(player.x - station.x, player.y - station.y) <= (station.dockRadius || 240) + 80) {
+        return NET_ACTION_DOCK;
+      }
+    }
+    return NET_ACTION_NONE;
+  }
+
+  tacticalObjectiveComplete(player, objective, now) {
+    if (!objective) return true;
+    if (objective.optionName === "deliver_refinery" && (player.towedCount ?? 0) <= 0) return true;
+    if (objective.optionName === "dock_repair" && this.ship.hull >= 98) return true;
+    if (objective.targetAsteroid !== undefined && objective.targetAsteroid !== null) {
+      const asteroid = this.asteroids.get(objective.targetAsteroid);
+      if (!asteroid || now - asteroid.seenAt > 3000) return true;
+      if (!objective.mine && len(player.x - asteroid.x, player.y - asteroid.y) <= objective.completeRadius) return true;
+      return false;
+    }
+    return len(objective.x - player.x, objective.y - player.y) <= objective.completeRadius;
+  }
+
+  logTacticalObjective(event, objective) {
+    console.log(
+      `[brain] tactical ${event} #${objective.id} ${objective.optionName}/${objective.kind} target=${objective.targetAsteroid ?? objective.stationId ?? "none"}`,
+    );
   }
 
   plotWaypoint(player, target) {
@@ -1386,6 +1806,7 @@ class SignalLiveBrain {
   }
 
   stationWaypoint(player, target, key, now) {
+    if (target.allowStationApproach) return null;
     const containingStation = this.containingStation(player);
     if (containingStation) {
       return this.makeStationBypassWaypoint(player, target, containingStation, key, now, "station_escape");
@@ -1452,6 +1873,7 @@ class SignalLiveBrain {
   asteroidWaypoint(player, target, key, now) {
     let best = null;
     for (const asteroid of this.asteroids.values()) {
+      if (target.targetAsteroid !== undefined && asteroid.index === target.targetAsteroid) continue;
       if (now - asteroid.seenAt > 3000) continue;
       const hit = segmentProjection(asteroid.x, asteroid.y, player.x, player.y, target.x, target.y);
       if (hit.t <= 0.04 || hit.t >= 0.92) continue;
@@ -1557,6 +1979,200 @@ class SignalLiveBrain {
     return best;
   }
 
+  optionFeatures(player, option) {
+    const view = this.tacticalStateView(player, option);
+    const forwardX = Math.cos(player.angle);
+    const forwardY = Math.sin(player.angle);
+    const speed = len(player.vx, player.vy);
+    const forwardSpeed = player.vx * forwardX + player.vy * forwardY;
+    const towedCount = player.towedCount ?? 0;
+    const towCapacity = Math.max(1, Math.min(10, 2 + (player.tractorLevel ?? 0) * 2));
+    const hullRatio = this.ship.hull > 0 ? clip(this.ship.hull / 100, 0, 1) : 1;
+
+    const row = new Float64Array(40);
+    row[0] = 1;
+    row[1] = scale(option.id, SIGNAL_MINING_OPTIONS.length - 1);
+    for (let i = 0; i < SIGNAL_MINING_OPTIONS.length; i += 1) {
+      row[2 + i] = i === option.id ? 1 : 0;
+    }
+    row[8] = hullRatio;
+    row[9] = scale(speed, 450);
+    row[10] = signedScale(forwardSpeed, 300);
+    row[11] = this.signalStrength(player);
+    row[12] = this.ship.docked ? 1 : 0;
+    row[13] = scale(towedCount, towCapacity);
+    row[14] = scale(towedCount, 10);
+    row[15] = scale(view.nearestMineDist, 6000);
+    row[16] = scale(view.nearestClearMineDist, 6000);
+    row[17] = scale(view.richestMineDist, 6000);
+    row[18] = scale(view.nearestFragmentDist, 4000);
+    row[19] = scale(view.refineryDist, 9000);
+    row[20] = scale(view.dockDist, 9000);
+    row[21] = scale(view.targetDist, 9000);
+    row[22] = clip(view.targetAlignmentCos, -1, 1);
+    row[23] = clip(view.targetAlignmentSin, -1, 1);
+    row[24] = scale(view.targetOre, 80);
+    row[25] = scale(view.targetHp, 260);
+    row[26] = scale(view.targetRadius, 220);
+    row[27] = scale(view.targetGrade, 4);
+    row[28] = view.targetClear ? 1 : 0;
+    row[29] = option.name === "mine_nearest_clear" || option.name === "mine_richest" ? 1 : 0;
+    row[30] = option.name === "deliver_refinery" ? 1 : 0;
+    row[31] = option.name === "dock_repair" ? 1 : 0;
+    row[32] = 0;
+    row[33] = 0;
+    row[34] = scale(view.localFragmentCount, 8);
+    row[35] = scale(view.mineableCount, 40);
+    row[36] = hullRatio < 0.82 ? 1 : 0;
+    row[37] = towedCount > 0 ? 1 : 0;
+    row[38] = 0;
+    row[39] = 0;
+    return row;
+  }
+
+  tacticalStateView(player, option) {
+    const mineable = this.mineableAsteroids(player);
+    const nearestMine = this.nearestByDistance(player, mineable);
+    const nearestClearMine = this.nearestMineableAsteroid(player, true);
+    const richestMine = this.richestMineableAsteroid(player);
+    const nearestFragment = this.nearestFragment(player);
+    const station = this.selectedStation(player);
+    const target = this.targetForOption(player, option, {
+      nearestMine,
+      nearestClearMine,
+      richestMine,
+      nearestFragment,
+      station,
+    });
+    const targetDx = target ? target.x - player.x : 0;
+    const targetDy = target ? target.y - player.y : 0;
+    const targetDist = target ? len(targetDx, targetDy) : 9000;
+    const forwardX = Math.cos(player.angle);
+    const forwardY = Math.sin(player.angle);
+    const targetDir = targetDist > 0 ? { x: targetDx / targetDist, y: targetDy / targetDist } : { x: forwardX, y: forwardY };
+    const activeAsteroids = Array.from(this.asteroids.values()).filter((a) => Date.now() - a.seenAt <= 3000);
+    return {
+      nearestMineDist: nearestMine ? len(nearestMine.x - player.x, nearestMine.y - player.y) : 6000,
+      nearestClearMineDist: nearestClearMine ? len(nearestClearMine.x - player.x, nearestClearMine.y - player.y) : 6000,
+      richestMineDist: richestMine ? len(richestMine.x - player.x, richestMine.y - player.y) : 6000,
+      nearestFragmentDist: nearestFragment ? len(nearestFragment.x - player.x, nearestFragment.y - player.y) : 4000,
+      refineryDist: station ? len(station.x - player.x, station.y - player.y) : 9000,
+      dockDist: station ? len(station.x - player.x, station.y - player.y) : 9000,
+      targetDist,
+      targetAlignmentCos: forwardX * targetDir.x + forwardY * targetDir.y,
+      targetAlignmentSin: forwardX * targetDir.y - forwardY * targetDir.x,
+      targetOre: target?.ore ?? 0,
+      targetHp: target?.hp ?? 0,
+      targetRadius: target?.radius ?? 0,
+      targetGrade: target?.grade ?? 0,
+      targetClear: target && target.index !== undefined ? this.clearApproach(player, target) : Boolean(target),
+      localFragmentCount: activeAsteroids.filter((a) => this.isFragment(a) && len(a.x - player.x, a.y - player.y) < 1800).length,
+      mineableCount: mineable.length,
+    };
+  }
+
+  targetForOption(player, option, refs) {
+    if (option.name === "mine_nearest_clear") return refs.nearestClearMine ?? refs.nearestMine;
+    if (option.name === "mine_richest") return refs.richestMine ?? refs.nearestMine;
+    if (option.name === "collect_local_fragments") return refs.nearestFragment;
+    if (option.name === "deliver_refinery" || option.name === "dock_repair") return refs.station;
+    if ((player.towedCount ?? 0) > 0) return refs.station;
+    return refs.nearestClearMine ?? refs.nearestMine ?? refs.nearestFragment ?? refs.station;
+  }
+
+  mineableAsteroids(player) {
+    const now = Date.now();
+    return Array.from(this.asteroids.values()).filter((asteroid) =>
+      now - asteroid.seenAt <= 3000 &&
+      !this.isFragment(asteroid) &&
+      asteroid.hp > 0 &&
+      this.signalStrengthAt(asteroid.x, asteroid.y) >= 0.25 &&
+      len(asteroid.x - player.x, asteroid.y - player.y) <= 9000,
+    );
+  }
+
+  nearestMineableAsteroid(player, requireClear) {
+    const candidates = this.mineableAsteroids(player).filter((asteroid) => !requireClear || this.clearApproach(player, asteroid));
+    return this.nearestByDistance(player, candidates);
+  }
+
+  richestMineableAsteroid(player) {
+    let best = null;
+    let bestScore = -Infinity;
+    for (const asteroid of this.mineableAsteroids(player)) {
+      const dist = len(asteroid.x - player.x, asteroid.y - player.y);
+      const score = (asteroid.ore || 0) + (asteroid.grade || 0) * 8 - dist * 0.015 + (this.clearApproach(player, asteroid) ? 3 : 0);
+      if (score > bestScore) {
+        best = asteroid;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  nearestFragment(player) {
+    const now = Date.now();
+    return this.nearestByDistance(
+      player,
+      Array.from(this.asteroids.values()).filter((asteroid) =>
+        now - asteroid.seenAt <= 3000 &&
+        this.isFragment(asteroid) &&
+        this.signalStrengthAt(asteroid.x, asteroid.y) >= 0.2,
+      ),
+    );
+  }
+
+  nearestByDistance(player, items) {
+    let best = null;
+    let bestDist = Infinity;
+    for (const item of items) {
+      const d = len(item.x - player.x, item.y - player.y);
+      if (d < bestDist) {
+        best = item;
+        bestDist = d;
+      }
+    }
+    return best;
+  }
+
+  isFragment(asteroid) {
+    return Boolean(asteroid?.isFragment) || (asteroid?.radius ?? Infinity) <= TACTICAL_FRAGMENT_RADIUS;
+  }
+
+  clearApproach(player, target) {
+    const approach = this.asteroidApproachPoint(player, target);
+    for (const asteroid of this.asteroids.values()) {
+      if (asteroid.index === target.index || Date.now() - asteroid.seenAt > 3000) continue;
+      const hit = segmentProjection(asteroid.x, asteroid.y, player.x, player.y, approach.x, approach.y);
+      if (hit.t <= 0.03 || hit.t >= 0.98) continue;
+      const clearance = Math.max(NAV_ASTEROID_CLEARANCE, (asteroid.radius || 0) + 180);
+      if (hit.dist < clearance) return false;
+    }
+    return true;
+  }
+
+  asteroidApproachPoint(player, asteroid) {
+    const dx = player.x - asteroid.x;
+    const dy = player.y - asteroid.y;
+    const d = Math.max(1, len(dx, dy));
+    const standoff = Math.max(asteroid.radius + 118, 210);
+    return {
+      x: asteroid.x + (dx / d) * standoff,
+      y: asteroid.y + (dy / d) * standoff,
+    };
+  }
+
+  stationApproachPoint(station, player) {
+    const dx = player.x - station.x;
+    const dy = player.y - station.y;
+    const d = Math.max(1, len(dx, dy));
+    const radius = Math.max((station.dockRadius || 220) * 0.82, (station.radius || 0) + 160);
+    return {
+      x: station.x + (dx / d) * radius,
+      y: station.y + (dy / d) * radius,
+    };
+  }
+
   findForwardObstacle(player, forwardX, forwardY, rightX, rightY, brakeDistance) {
     let best = null;
     const horizon = Math.max(420, Math.min(1000, brakeDistance + 260));
@@ -1630,11 +2246,15 @@ class SignalLiveBrain {
   }
 
   signalStrength(player) {
+    return this.signalStrengthAt(player.x, player.y);
+  }
+
+  signalStrengthAt(x, y) {
     let best = 0;
     let overlaps = 0;
     for (const station of this.stations.values()) {
       if (!(station.signalRange > 0)) continue;
-      const dist = len(station.x - player.x, station.y - player.y);
+      const dist = len(station.x - x, station.y - y);
       const strength = Math.max(0, 1 - dist / station.signalRange);
       if (strength > 0) overlaps += 1;
       if (strength > best) best = strength;
@@ -1643,22 +2263,23 @@ class SignalLiveBrain {
     return clip(best * Math.min(overlaps, 3), 0, 1);
   }
 
-  sendInput(flags, action, player) {
+  sendInput(flags, action, player, options = {}) {
     this.inputSeq = (this.inputSeq + 1) & 0xffff;
     if (this.inputSeq === 0) this.inputSeq = 1;
     const actionId = action === NET_ACTION_NONE ? 0 : this.nextActionId();
     const inputTick = player.serverTick ? player.serverTick + 1 : 0;
+    const miningTarget = Number.isInteger(options.miningTarget) ? options.miningTarget : 0xffff;
     const buffer = Buffer.alloc(18);
     buffer[0] = NET_MSG_INPUT;
     buffer[1] = flags;
     buffer[2] = action;
-    buffer[3] = 0xff;
-    buffer[4] = 0xff;
+    buffer[3] = miningTarget === 0xffff ? 0xff : miningTarget & 0xff;
+    buffer[4] = 0x05;
     buffer[5] = 0xff;
     buffer[6] = 0xff;
     buffer[7] = 0xff;
     writeU16(buffer, 8, this.inputSeq);
-    writeU16(buffer, 10, 0xffff);
+    writeU16(buffer, 10, miningTarget);
     writeU16(buffer, 12, actionId);
     writeU32(buffer, 14, inputTick);
     this.send(buffer);
@@ -1707,10 +2328,24 @@ class SignalLiveBrain {
       vy: round3(player.vy),
       angle: round6(player.angle),
       player_flags: player.flags,
+      tractor_level: player.tractorLevel ?? 0,
+      towed_count: player.towedCount ?? 0,
+      towed_fragments: player.towedFragments ?? [],
       server_tick: player.serverTick ?? 0,
       input_tick_ack: player.inputTickAck ?? 0,
       hull: round3(this.ship.hull),
       docked: this.ship.docked,
+      mining_target: decision.miningTarget ?? null,
+      option_mode: decision.tacticalOption?.optionMode ?? null,
+      active_option: decision.tacticalOption?.activeOption ?? null,
+      active_option_id: decision.tacticalOption?.activeOptionId ?? null,
+      fixed_option: decision.tacticalOption?.fixedOption ?? null,
+      neural_option: decision.tacticalOption?.neuralOption ?? null,
+      option_disagrees: decision.tacticalOption?.optionDisagrees ?? false,
+      option_checkpoint_hash: decision.tacticalOption?.optionCheckpointHash ?? null,
+      option_feature_set: decision.tacticalOption?.optionFeatureSet ?? null,
+      option_scores: decision.tacticalOption?.optionScores ?? null,
+      option_probabilities: decision.tacticalOption?.optionProbabilities ?? null,
       target: decision.target
         ? {
             x: round3(decision.target.x),
@@ -1722,6 +2357,9 @@ class SignalLiveBrain {
             nav_id: decision.target.navId ?? null,
             objective_id: decision.target.objectiveId ?? null,
             waypoint: decision.target.waypoint ?? null,
+            target_asteroid: decision.target.targetAsteroid ?? null,
+            mine: decision.target.mine ?? false,
+            tractor: decision.target.tractor ?? false,
             final_x: decision.target.finalX !== undefined ? round3(decision.target.finalX) : null,
             final_y: decision.target.finalY !== undefined ? round3(decision.target.finalY) : null,
             escape_radius: decision.target.escapeRadius ? round3(decision.target.escapeRadius) : null,
@@ -1761,7 +2399,14 @@ class SignalLiveBrain {
   statusText(player, decision, action) {
     const stationText = decision.target?.station !== undefined ? ` station=${decision.target.station}` : "";
     const objectiveText = decision.target?.objectiveId ? ` obj=${decision.target.objectiveId}` : "";
-    const actionText = action === NET_ACTION_LAUNCH ? " +LAUNCH" : "";
+    const actionText =
+      action === NET_ACTION_LAUNCH
+        ? " +LAUNCH"
+        : action === NET_ACTION_DOCK
+          ? " +DOCK"
+          : action === NET_ACTION_REPAIR
+            ? " +REPAIR"
+            : "";
     const policyText =
       decision.policy === "model"
         ? " model"
@@ -1775,8 +2420,11 @@ class SignalLiveBrain {
     const scoreText = decision.scoreTop ? ` top=${decision.scoreTop.map((item) => item.action).join("/")}` : "";
     const maskText = decision.maskedAction ? ` masked=${decision.maskedAction}` : "";
     const modeText = decision.brainMode ? ` mode=${decision.brainMode}/${decision.activeSource}` : "";
+    const optionText = decision.tacticalOption?.activeOption
+      ? ` opt=${decision.tacticalOption.activeOption}`
+      : "";
     const shadowText = decision.shadowDisagrees ? ` shadow=${decision.neuralAction}` : "";
-    return `${decision.actionName}${actionText}${policyText}${modeText}${shadowText}${maskText}${scoreText} pos=(${player.x.toFixed(0)},${player.y.toFixed(0)}) dist=${decision.dist.toFixed(0)} heading=${decision.headingError.toFixed(2)}${stationText}${objectiveText}`;
+    return `${decision.actionName}${actionText}${policyText}${modeText}${optionText}${shadowText}${maskText}${scoreText} pos=(${player.x.toFixed(0)},${player.y.toFixed(0)}) dist=${decision.dist.toFixed(0)} heading=${decision.headingError.toFixed(2)}${stationText}${objectiveText}`;
   }
 }
 
@@ -1786,6 +2434,8 @@ function flagsToActionName(flags) {
   if (flags & NET_INPUT_BRAKE) parts.push("S");
   if (flags & NET_INPUT_LEFT) parts.push("A");
   if (flags & NET_INPUT_RIGHT) parts.push("D");
+  if (flags & NET_INPUT_FIRE) parts.push("MINE");
+  if (flags & NET_INPUT_TRACTOR) parts.push("TRACTOR");
   return parts.length === 0 ? "NONE" : parts.join("");
 }
 
@@ -1801,7 +2451,14 @@ async function main() {
   const config = parseArgs(process.argv);
   const sessionToken = await loadSessionToken(config.sessionPath);
   const model = await loadSignalFlightModel(config.checkpointPath);
-  const brain = new SignalLiveBrain(config, sessionToken, model);
+  const optionModel = await loadSignalMiningOptionModel(config.optionCheckpointPath);
+  if (config.optionMode === "neural_active" && !optionModel) {
+    throw new Error("--option-mode neural_active requires --option-checkpoint");
+  }
+  if (config.optionMode === "shadow_neural" && !optionModel) {
+    throw new Error("--option-mode shadow_neural requires --option-checkpoint");
+  }
+  const brain = new SignalLiveBrain(config, sessionToken, model, optionModel);
   await brain.run();
 }
 

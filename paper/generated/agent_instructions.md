@@ -11,17 +11,18 @@ Use each track as a research-agent brief: the experiment should either strengthe
 - Claim families: `C9` Replay-grounded control uses bounded neural rankers without owning safety
 - Roadmap: `R-SIG.1`, `R-SIG.2`, `R-SIG.3`
 - Command: `make signal-flight`
-- Artifacts: `results/2026-05-17-signal-flight/summary.jsonl`, `results/2026-05-17-signal-flight/shadow_replay_audit.jsonl`, `results/2026-05-17-signal-flight/shadow_frames.jsonl`
+- Artifacts: `results/2026-05-17-signal-flight/summary.jsonl`, `results/2026-05-17-signal-flight/shadow_replay_audit.jsonl`, `results/2026-05-17-signal-flight/shadow_frames.jsonl`, `results/2026-05-17-signal-flight/live_active_summary.jsonl`, `results/2026-05-17-signal-flight/live_active_frames.jsonl`
 
 Agent brief:
-- Keep Signal scoped to offline replay-certified ranking until shadow inference and active-control gates pass.
+- Keep Signal split into replay ranking, shadow evidence, and live neural-active execution; do not claim active-control performance until a baseline comparison artifact exists.
 
 Success criteria:
 - The neural ranker beats the no-safety baseline on top-1, utility, and regret.
 - Damage and death rates are not worse than the baseline on the measured held-out trace.
+- The live-active row, when claimed, shows neural_active/neural rows with checkpoint identity, inference latency, safety gates, telemetry, and replay-ready frames.
 
 Failure modes to report:
-- Do not describe the live websocket pilot as neural-controlled until R-SIG.2/R-SIG.3 are supported.
+- Do not claim live neural-active performance versus heuristic until an active episode summary or replayed active logs supply the comparison.
 
 ## axis1-arc-gate-invariance: ARC certified gate independence from scorer context
 

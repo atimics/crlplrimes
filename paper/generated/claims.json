@@ -1890,7 +1890,7 @@
       },
       "derived_claims": [
         "C9.signal_shadow_inference",
-        "C9.signal_active_neural_control",
+        "C9.signal_active_control_comparison",
         "C9.signal_construction_ranker"
       ],
       "evidence_rows": [
@@ -1990,6 +1990,147 @@
       "status": "supported",
       "summary": "Signal offline replay ranker top-1 79.76% vs baseline 67.86% (+11.90pp), utility 0.1432 vs 0.1359, regret 0.0073 vs 0.0146, damage 2.38% vs 2.38%, deaths 0.00% vs 0.00%; live shadow frames=22191.",
       "title": "Signal replay-certified WASD ranker improves held-out control utility"
+    },
+    {
+      "chart": {
+        "kind": "coverage_bar",
+        "rows": [
+          {
+            "label": "active",
+            "p95_ms": 0.123958,
+            "value": 250
+          },
+          {
+            "label": "replay-ready",
+            "p95_ms": 0.123958,
+            "value": 249
+          },
+          {
+            "label": "active frames",
+            "p95_ms": 0.123958,
+            "value": 249
+          }
+        ],
+        "unit": "rows",
+        "y_label": "logged live rows"
+      },
+      "claim_text": "A guarded Signal neural_active live pilot executes checkpoint-ranked WASD actions on a running local server with logged active-source, checkpoint hash, inference latency, safety gates, damage/death telemetry, and replay-ready trace rows.",
+      "claim_type": "application_vignette",
+      "decision_rule": {
+        "max_inference_p95_ms": 5.0,
+        "min_active_rows": 50,
+        "supported_if": [
+          "latest_brain_mode == neural_active",
+          "latest_active_source == neural",
+          "dry_run_rows == 0",
+          "checkpoint_hash is present",
+          "feature_set == signal-flight-live-v2",
+          "window_active_rows >= 50",
+          "candidate_score_rows >= 50 and candidate_score_min_count >= 9",
+          "safety_gate_rows >= 50",
+          "replay_ready_rows >= 50",
+          "inference_ms_p95 <= 5.0",
+          "stale_within_log == false"
+        ]
+      },
+      "derived_claims": [
+        "C9.signal_active_episode_summary",
+        "C9.signal_active_vs_heuristic_baseline",
+        "C9.signal_active_replay_audit"
+      ],
+      "evidence_rows": [
+        {
+          "active_rows": 10078,
+          "candidate_score_min_count": 9,
+          "candidate_score_rows": 249,
+          "checkpoint_hash": "f12b644ed9fa840e5af7ab8721c2cf5e387239660aa97f161ab10bf948660b19",
+          "checkpoint_path": "build/float/signal_flight_wall_probe/signal_flight_epochs60.nnckpt",
+          "damage_events": 0,
+          "death_events": 0,
+          "dry_run_rows": 0,
+          "feature_set": "signal-flight-live-v2",
+          "inference_ms_p95": 0.123958,
+          "label": "signal_live_active",
+          "latest_active_source": "neural",
+          "latest_brain_mode": "neural_active",
+          "latest_row_age_at_capture_ms": 0,
+          "log_path": "build/float/signal_live_brain/live-9093-reset-20260518.jsonl",
+          "present": true,
+          "replay_ready_rows": 249,
+          "rows_seen": 10079,
+          "safety_gate_rows": 250,
+          "stale_within_log": false,
+          "window_active_rows": 250
+        },
+        {
+          "label": "signal_live_active_frames",
+          "present": true,
+          "rows": 249
+        }
+      ],
+      "experiments": [],
+      "id": "C9.signal_live_neural_active",
+      "metrics": {
+        "active_frame_rows": 249,
+        "active_rows": 10078,
+        "candidate_score_min_count": 9,
+        "candidate_score_rows": 249,
+        "checkpoint_hash": "f12b644ed9fa840e5af7ab8721c2cf5e387239660aa97f161ab10bf948660b19",
+        "checkpoint_hash_short": "f12b644ed9fa",
+        "checkpoint_path": "build/float/signal_flight_wall_probe/signal_flight_epochs60.nnckpt",
+        "damage_events": 0,
+        "death_events": 0,
+        "dry_run_rows": 0,
+        "feature_set": "signal-flight-live-v2",
+        "inference_ms_p95": 0.123958,
+        "latest_active_source": "neural",
+        "latest_brain_mode": "neural_active",
+        "replay_ready_rows": 249,
+        "safety_gate_rows": 250,
+        "stale_within_log": false,
+        "window_active_rows": 250
+      },
+      "paper_explanation": "This supports only the existence of guarded live neural-active execution: the running Signal pilot applies checkpoint-ranked WASD actions and logs the fields needed for replay. It does not yet show that active neural control improves utility or safety versus the heuristic baseline.",
+      "paper_surfaces": [
+        "schema_table",
+        "application_vignette",
+        "limitations",
+        "roadmap"
+      ],
+      "provenance": {
+        "filters": {
+          "active_source": "neural",
+          "brain_mode": "neural_active",
+          "feature_set": "signal-flight-live-v2"
+        },
+        "required_rows": [
+          {
+            "latest_active_source": "neural",
+            "latest_brain_mode": "neural_active",
+            "schema": "crlp.signal_live_active_summary.v1"
+          }
+        ],
+        "schemas": [
+          "crlp.signal_live_active_summary.v1",
+          "crlp.signal_live_active_frame.v1"
+        ],
+        "secondary_sources": [
+          "results/2026-05-17-signal-flight/live_active_frames.jsonl"
+        ],
+        "source": "results/2026-05-17-signal-flight/live_active_summary.jsonl",
+        "source_command": "make signal-live-active-summary SIGNAL_LIVE_ACTIVE_LOG=<live-brain-log>",
+        "source_row_count": 1,
+        "source_sha256": "6b8680c343bafb58a92ee68c2fe2d0d045be085df30976df5d00ef560ca235c6"
+      },
+      "required_for_submission": true,
+      "residual": [],
+      "roadmap_items": [
+        "R-SIG.2",
+        "R-SIG.3"
+      ],
+      "status": "supported",
+      "summary": "Signal live neural-active pilot executed 250 recent neural-source rows from checkpoint f12b644ed9fa with p95 inference 0.124 ms, 249 replay-ready rows, safety-gate rows=250, damage events=0, deaths=0; no baseline comparison is claimed.",
+      "title": "Signal guarded neural-active pilot executes live checkpoint-ranked actions"
     }
   ],
   "experiment_map": {
@@ -2043,12 +2184,14 @@
     "experiments": [
       {
         "agent_instructions": [
-          "Keep Signal scoped to offline replay-certified ranking until shadow inference and active-control gates pass."
+          "Keep Signal split into replay ranking, shadow evidence, and live neural-active execution; do not claim active-control performance until a baseline comparison artifact exists."
         ],
         "artifacts": [
           "results/2026-05-17-signal-flight/summary.jsonl",
           "results/2026-05-17-signal-flight/shadow_replay_audit.jsonl",
-          "results/2026-05-17-signal-flight/shadow_frames.jsonl"
+          "results/2026-05-17-signal-flight/shadow_frames.jsonl",
+          "results/2026-05-17-signal-flight/live_active_summary.jsonl",
+          "results/2026-05-17-signal-flight/live_active_frames.jsonl"
         ],
         "claim_families": [
           "C9"
@@ -2082,7 +2225,7 @@
           "make signal-flight"
         ],
         "failure_modes": [
-          "Do not describe the live websocket pilot as neural-controlled until R-SIG.2/R-SIG.3 are supported."
+          "Do not claim live neural-active performance versus heuristic until an active episode summary or replayed active logs supply the comparison."
         ],
         "id": "application-signal-flight-replay-control",
         "roadmap_items": [
@@ -2093,7 +2236,8 @@
         "role": "claim_support",
         "success_criteria": [
           "The neural ranker beats the no-safety baseline on top-1, utility, and regret.",
-          "Damage and death rates are not worse than the baseline on the measured held-out trace."
+          "Damage and death rates are not worse than the baseline on the measured held-out trace.",
+          "The live-active row, when claimed, shows neural_active/neural rows with checkpoint identity, inference latency, safety gates, telemetry, and replay-ready frames."
         ],
         "title": "Signal offline replay control vignette"
       },
@@ -2737,7 +2881,7 @@
     ],
     "schema": "crlp.paper_claim_experiment_map.v1"
   },
-  "generated_at": "2026-05-18T03:30:04.736858+00:00",
+  "generated_at": "2026-05-18T04:19:22.620508+00:00",
   "limitations": [
     {
       "claim_id": "C2.prime_proposer_fixed_budget",
@@ -2870,6 +3014,20 @@
       "sha256": "8bbdd8ddc791c5f06a29aafec7fc7bfeb96d4110f08a94d7bc5d6741943d040d",
       "size_bytes": 2962
     },
+    "results/2026-05-17-signal-flight/live_active_frames.jsonl": {
+      "exists": true,
+      "modified_utc": "2026-05-18T04:15:46.588076+00:00",
+      "row_count": 249,
+      "sha256": "24d7a8dfe6c51ce7a28775c8b893670f377fc4b2ba084b49f6c32ef65325f354",
+      "size_bytes": 462768
+    },
+    "results/2026-05-17-signal-flight/live_active_summary.jsonl": {
+      "exists": true,
+      "modified_utc": "2026-05-18T04:15:46.584954+00:00",
+      "row_count": 1,
+      "sha256": "6b8680c343bafb58a92ee68c2fe2d0d045be085df30976df5d00ef560ca235c6",
+      "size_bytes": 1882
+    },
     "results/2026-05-17-signal-flight/shadow_replay_audit.jsonl": {
       "exists": true,
       "modified_utc": "2026-05-17T22:46:18.288289+00:00",
@@ -2963,7 +3121,7 @@
     },
     "results/latest/trace_determinism.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-18T03:30:04.667345+00:00",
+      "modified_utc": "2026-05-18T04:19:22.546168+00:00",
       "row_count": 3,
       "sha256": "476f76325fea0cec2327485185b09a8c7bb55e16aefa8aca676fb50121318cd9",
       "size_bytes": 2201
@@ -2973,7 +3131,7 @@
     "contradicted": 1,
     "missing": 0,
     "stale": 0,
-    "supported": 11,
+    "supported": 12,
     "underpowered": 1
   },
   "support": {

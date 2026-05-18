@@ -21,6 +21,8 @@ from typing import Any, Callable
 
 
 RESULT_LABELS = ("accepted", "safe_duplicate", "unsafe", "no_support", "other")
+PROTOCOL_CANDIDATE_SCHEMA = "crlp.protocol.candidate_row.v1"
+PROTOCOL_VERIFIER_SCHEMA = "crlp.protocol.verifier_outcome.v1"
 DEFAULT_BUDGETS = (8, 16, 32, 64)
 DEFAULT_PRIME_SPLIT_GRID = (43, 53, 61, 71)
 DEFAULT_MODULAR_SPLIT_GRID = (5, 7, 11, 13)
@@ -32,6 +34,20 @@ RESIDUAL_LEARNING_RATE = 0.03
 RESIDUAL_L2 = 1.0e-4
 RankKey = Callable[[dict[str, Any]], tuple[Any, ...]]
 SAFE_LABELS = ("accepted", "safe_duplicate")
+PROTOCOL_FEATURE_FIELDS = (
+    "state_modulus",
+    "state_residue",
+    "filter_modulus",
+    "filter_residue",
+    "action",
+    "feature",
+    "other_action",
+    "direction",
+    "threshold",
+    "margin",
+    "model_score",
+    "structural_score",
+)
 
 
 @dataclass
@@ -66,6 +82,26 @@ def row_int(row: dict[str, Any], key: str) -> int:
     return int(float(value))
 
 
+def verifier_status_from_result(result: str) -> str:
+    if result == "accepted":
+        return "accepted"
+    if result == "verified_not_selected":
+        return "safe_duplicate"
+    if result == "unsafe":
+        return "unsafe"
+    if result == "no_support":
+        return "no_support"
+    return "rejected"
+
+
+def stable_u32(text: str) -> int:
+    value = 2166136261
+    for byte in text.encode("utf-8"):
+        value ^= byte
+        value = (value * 16777619) & 0xFFFFFFFF
+    return value or 1
+
+
 def normalized_base(row: dict[str, Any], schema: str, task: str) -> dict[str, Any]:
     out = dict(row)
     out["source_schema"] = schema
@@ -92,6 +128,8 @@ def normalized_base(row: dict[str, Any], schema: str, task: str) -> dict[str, An
     out.setdefault("rule_text", "")
     out.setdefault("rule_id", row.get("rule_rank", 0))
     out.setdefault("rule_kind", "unknown")
+    out.setdefault("verifier_result", row.get("result", "other"))
+    out["protocol_status"] = verifier_status_from_result(str(out["verifier_result"]))
     return out
 
 
@@ -271,13 +309,13 @@ def run_delayed_claim_rule_search(
 
 
 def reason_label(row: dict[str, Any]) -> str:
-    result = str(row.get("verifier_result", "other"))
-    if result == "accepted":
+    status = str(row.get("protocol_status", "rejected"))
+    if status == "accepted":
         return "accepted"
-    if result == "verified_not_selected":
+    if status == "safe_duplicate":
         return "safe_duplicate"
-    if result in ("unsafe", "no_support"):
-        return result
+    if status in ("unsafe", "no_support"):
+        return status
     return "other"
 
 
@@ -1358,7 +1396,7 @@ def write_markdown(
             "",
             "- Candidate rows carry a task, structural descriptors, `model_score`, train/eval support counters, false-rejection counters, and `verifier_result`.",
             "- Rejected rows are labels for the next ranker; held-out verifier results are not ranker inputs.",
-            "- Trace artifact: `crlp.rejected_candidate_learning.summary.v1`, `crlp.rejected_candidate_learning.split_sweep.v1`, and `crlp.rejected_candidate_learning.family_transfer.v1` rows.",
+            "- Trace artifact: `crlp.rejected_candidate_learning.summary.v1`, `crlp.rejected_candidate_learning.split_sweep.v1`, `crlp.rejected_candidate_learning.family_transfer.v1`, and normalized `crlp.protocol.*.v1` candidate/outcome rows.",
             "",
         ]
     )
@@ -1481,6 +1519,61 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8") as fp:
         for row in rows:
             fp.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def stable_candidate_id(row: dict[str, Any]) -> int:
+    return stable_u32(
+        "|".join(
+            [
+                str(row.get("task", "")),
+                str(row.get("subtask", "")),
+                str(row.get("rule_kind", "")),
+                str(row.get("rule_id", "")),
+                str(row.get("rule_text", "")),
+            ]
+        )
+    )
+
+
+def protocol_candidate_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": PROTOCOL_CANDIDATE_SCHEMA,
+        "stable_id": stable_candidate_id(row),
+        "domain": row.get("task", "unknown"),
+        "candidate_kind": row.get("rule_kind", "unknown"),
+        "feature_count": len(PROTOCOL_FEATURE_FIELDS),
+        "feature_fields": list(PROTOCOL_FEATURE_FIELDS),
+        "provenance": row.get("source_schema", ""),
+        "example_text": row.get("rule_text", ""),
+    }
+
+
+def protocol_verifier_outcome_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": PROTOCOL_VERIFIER_SCHEMA,
+        "domain": row.get("task", "unknown"),
+        "stable_id": stable_candidate_id(row),
+        "status": row.get("protocol_status", "rejected"),
+        "utility": row_number(row, "validation_marginal_utility"),
+        "support": row_int(row, "validation_marginal_utility"),
+        "false_rejections": row_int(row, "validation_false_rejections"),
+        "cost": 1.0,
+        "reason_code": reason_label(row),
+        "proof_kind": row.get("source_schema", ""),
+    }
+
+
+def protocol_rows(runs: list[LearningRun]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen_candidates: set[int] = set()
+    for run in runs:
+        for row in run.rows:
+            stable_id = stable_candidate_id(row)
+            if stable_id not in seen_candidates:
+                rows.append(protocol_candidate_row(row))
+                seen_candidates.add(stable_id)
+            rows.append(protocol_verifier_outcome_row(row))
+    return rows
 
 
 def main() -> int:
@@ -1627,10 +1720,12 @@ def main() -> int:
     family_transfer_path = args.output_dir / "modular_leave_one_family_out.jsonl"
     paper_table_path = args.output_dir / "paper_table.jsonl"
     reason_family_path = args.output_dir / "reason_family_sweep.jsonl"
+    protocol_rows_path = args.output_dir / "protocol_rows.jsonl"
     write_jsonl(jsonl_path, strategy_rows)
     write_jsonl(split_sweep_path, sweep_rows)
     write_jsonl(paper_table_path, paper_table_rows(runs, args.budgets))
     write_jsonl(reason_family_path, reason_family_sweep_rows(runs))
+    write_jsonl(protocol_rows_path, protocol_rows(runs))
     if family_transfer_rows:
         write_jsonl(family_transfer_path, family_transfer_rows)
     write_markdown(
@@ -1643,6 +1738,7 @@ def main() -> int:
     print(f"wrote {split_sweep_path}")
     print(f"wrote {paper_table_path}")
     print(f"wrote {reason_family_path}")
+    print(f"wrote {protocol_rows_path}")
     if family_transfer_rows:
         print(f"wrote {family_transfer_path}")
     print(f"wrote {args.output_dir / 'summary.md'}")

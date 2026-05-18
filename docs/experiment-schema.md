@@ -23,6 +23,10 @@ compares `goal_heading_no_safety`, `flight_steer_to`, `neural_raw`, and
 websocket pilot remains available with no hand rock-avoidance safety wrapper.
 The summary rows report neural utility/regret/damage/death metrics beside
 primitive and deterministic flight baselines.
+Signal mining now adds the next tactical layer: sampled states enumerate
+mine/tow/smelt hypotheses, replay each hypothesis through the authoritative
+simulator, and train a tiny scorer to rank certified tactical utility rather
+than imitate an autopilot trace.
 
 There is also a separate shared-envelope multitask probe that includes the same
 ARC-AGI-1 sample. That probe is useful for testing whether the core C scorer can
@@ -58,7 +62,26 @@ The task-schema C API lives in `include/nn_experiment.h`; the implementation is
 `src/nn_experiment.c`. The shared symbolic-domain API lives in
 `include/nn_symbolic.h`; its implementation is `src/nn_symbolic.c`. The shared
 typed program/transform API lives in `include/nn_program.h`; its implementation
-is `src/nn_program.c`.
+is `src/nn_program.c`. The shared candidate-verifier protocol row API lives in
+`include/nn_protocol.h`; its implementation is `src/nn_protocol.c`.
+
+The protocol layer intentionally owns row shape rather than grammar semantics.
+Domain code still defines prime modular rules, grid topology predicates,
+delayed-claim thresholds, ARC templates, and Signal control options. Shared
+code normalizes those rows as:
+
+```text
+data -> grammar -> candidate set -> verifier/certificate -> learned ranking
+     -> discovered rules/library feedback -> result -> limitation
+```
+
+The canonical JSONL row schemas are:
+
+- `crlp.protocol.candidate_row.v1`
+- `crlp.protocol.verifier_outcome.v1`
+- `crlp.protocol.ranker_decision.v1`
+- `crlp.protocol.discovered_rule.v1`
+- `crlp.protocol.library_promotion.v1`
 
 Schema fields describe the intended formal contract. The evidence-status section
 below is the controlling source for which production binaries currently execute
@@ -124,6 +147,7 @@ Verifier-backed first-class task schemas:
 | `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold predicates plus direct utility-margin and indirect risk-margin predicates | finite-generator safety check over train+validation support | production threshold+margin gate plus matched proposer baselines and shifted/noisy stress rows; direct clean residual resolved, proxy/noisy frontier exposed |
 | `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | copy/mask/intersection/layer-relation/geometric/object transform grammar | train-pair consistency plus unique grammar-consistent test prediction | fixed-sample certified transform gate plus ARC JSON directory loader and matched `NNProgram` proposer rows for narrow geometry/object evidence |
 | `signal_flight` | Signal ship kinematics, hull, path, clearance observations, and target/control-point geometry | WASD key combinations around certified control-target hypotheses | deterministic replay of WASD hypotheses in Signal's authoritative simulator | WASD controls plus direct/nav/bypass/brake control-target hypotheses; richer predicates planned | replay-certified progress, hull loss, damage, death outcomes, and rollout-time control-target clearance/progress certificates | counterfactual utility scorer, certified-hypothesis rollout evaluator, and external websocket pilot |
+| `signal_mining` | Signal tactical mining state after deterministic scenario prefixes: ship state, tow chain, rocks, fragments, refinery/dock demand | bounded tactical options: autopilot loop, mine nearest clear rock, mine richest rock, collect fragments, deliver refinery, dock/repair | fresh deterministic replay of each tactical option in Signal's authoritative simulator | mine/tow/smelt option hypotheses that compile to normal player input intents | replay-certified utility, smelts, pickups, fractures, tow count, repair-kit deltas, hull loss, damage, and death | tactical option ranker prototype with fixed-priority baseline via `make signal-mining` |
 
 Verifier-backed case-study discovery schemas:
 
@@ -141,6 +165,7 @@ Leakage status today:
 | `program_synthesis` | `priors_allowed` | 18 enabled structural-prior DSL abstraction features |
 | `arc_agi` | `forbidden` | 49 enabled observations over grid cells, output coordinate, candidate color, and action one-hot |
 | `signal_flight` | `forbidden` | 48 enabled observations over WASD candidate controls, kinematics, clearances, path state, hull, and heading |
+| `signal_mining` | `forbidden` | 40 enabled observations over tactical option id, ship state, tow state, rock/fragment distances, refinery/dock demand, and prefix context |
 
 ## Certified Modular Gate Search
 

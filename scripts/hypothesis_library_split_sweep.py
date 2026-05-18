@@ -129,18 +129,22 @@ def run_promotion_script(
     source_raw: Path,
     split_dir: Path,
     min_support_tasks: int,
+    feedback_input: Path | None = None,
 ) -> None:
+    command = [
+        sys.executable,
+        str(script),
+        "--input",
+        str(source_raw),
+        "--output-dir",
+        str(split_dir),
+        "--min-support-tasks",
+        str(min_support_tasks),
+    ]
+    if feedback_input is not None:
+        command.extend(["--feedback-input", str(feedback_input)])
     subprocess.run(
-        [
-            sys.executable,
-            str(script),
-            "--input",
-            str(source_raw),
-            "--output-dir",
-            str(split_dir),
-            "--min-support-tasks",
-            str(min_support_tasks),
-        ],
+        command,
         check=True,
     )
 
@@ -599,6 +603,13 @@ def main() -> int:
             aggregate["heldout_split"] = str(eval_dir)
             aggregates.append(aggregate)
             task_summaries.extend(per_task)
+        run_promotion_script(
+            promotion_script,
+            source_raw,
+            split_dir,
+            args.min_support_tasks,
+            split_dir / "slot_only.jsonl",
+        )
         heldout_results = heldout_result_rows(aggregates)
         aggregate_path = args.output_dir / "split_sweep_summary.jsonl"
         task_path = args.output_dir / "split_sweep_tasks.jsonl"
@@ -684,6 +695,13 @@ def main() -> int:
             )
             aggregates.append(aggregate)
             task_summaries.extend(per_task)
+        run_promotion_script(
+            promotion_script,
+            source_raw,
+            split_dir,
+            args.min_support_tasks,
+            split_dir / "slot_only.jsonl",
+        )
 
     heldout_results = heldout_result_rows(aggregates)
     aggregate_path = args.output_dir / "split_sweep_summary.jsonl"

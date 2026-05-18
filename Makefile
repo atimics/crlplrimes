@@ -13,7 +13,7 @@ LDFLAGS ?=
 LDLIBS ?= -lm
 
 BUILD_DIR := build/$(REAL)
-NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h include/nn_program.h include/nn_hypothesis.h
+NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h include/nn_program.h include/nn_hypothesis.h include/nn_protocol.h
 PRIME_GAP_TASK_HEADERS := include/nn_tasks_prime_gap.h src/prime_gap/internal.h
 PRIME_GAP_MODULE_SOURCES := $(wildcard src/prime_gap/*.c)
 PRIME_GAP_TASK_SOURCES := src/nn_tasks_prime_gap.c $(PRIME_GAP_MODULE_SOURCES)
@@ -23,19 +23,22 @@ NN_EXPERIMENT_OBJ := $(BUILD_DIR)/nn_experiment.o
 NN_SYMBOLIC_OBJ := $(BUILD_DIR)/nn_symbolic.o
 NN_PROGRAM_OBJ := $(BUILD_DIR)/nn_program.o
 NN_HYPOTHESIS_OBJ := $(BUILD_DIR)/nn_hypothesis.o
+NN_PROTOCOL_OBJ := $(BUILD_DIR)/nn_protocol.o
 NN_TEST_OBJ := $(BUILD_DIR)/nn_test.o
 NN_EXPERIMENT_TEST_OBJ := $(BUILD_DIR)/nn_experiment_test.o
 NN_SYMBOLIC_TEST_OBJ := $(BUILD_DIR)/nn_symbolic_test.o
 NN_PROGRAM_TEST_OBJ := $(BUILD_DIR)/nn_program_test.o
 NN_HYPOTHESIS_TEST_OBJ := $(BUILD_DIR)/nn_hypothesis_test.o
+NN_PROTOCOL_TEST_OBJ := $(BUILD_DIR)/nn_protocol_test.o
 NN_SANITIZE_OBJ := $(BUILD_DIR)/nn_sanitize.o
 NN_EXPERIMENT_SANITIZE_OBJ := $(BUILD_DIR)/nn_experiment_sanitize.o
 NN_SYMBOLIC_SANITIZE_OBJ := $(BUILD_DIR)/nn_symbolic_sanitize.o
 NN_PROGRAM_SANITIZE_OBJ := $(BUILD_DIR)/nn_program_sanitize.o
 NN_HYPOTHESIS_SANITIZE_OBJ := $(BUILD_DIR)/nn_hypothesis_sanitize.o
-NN_OBJS := $(NN_OBJ) $(NN_EXPERIMENT_OBJ) $(NN_SYMBOLIC_OBJ) $(NN_PROGRAM_OBJ) $(NN_HYPOTHESIS_OBJ)
-NN_TEST_OBJS := $(NN_TEST_OBJ) $(NN_EXPERIMENT_TEST_OBJ) $(NN_SYMBOLIC_TEST_OBJ) $(NN_PROGRAM_TEST_OBJ) $(NN_HYPOTHESIS_TEST_OBJ)
-NN_SANITIZE_OBJS := $(NN_SANITIZE_OBJ) $(NN_EXPERIMENT_SANITIZE_OBJ) $(NN_SYMBOLIC_SANITIZE_OBJ) $(NN_PROGRAM_SANITIZE_OBJ) $(NN_HYPOTHESIS_SANITIZE_OBJ)
+NN_PROTOCOL_SANITIZE_OBJ := $(BUILD_DIR)/nn_protocol_sanitize.o
+NN_OBJS := $(NN_OBJ) $(NN_EXPERIMENT_OBJ) $(NN_SYMBOLIC_OBJ) $(NN_PROGRAM_OBJ) $(NN_HYPOTHESIS_OBJ) $(NN_PROTOCOL_OBJ)
+NN_TEST_OBJS := $(NN_TEST_OBJ) $(NN_EXPERIMENT_TEST_OBJ) $(NN_SYMBOLIC_TEST_OBJ) $(NN_PROGRAM_TEST_OBJ) $(NN_HYPOTHESIS_TEST_OBJ) $(NN_PROTOCOL_TEST_OBJ)
+NN_SANITIZE_OBJS := $(NN_SANITIZE_OBJ) $(NN_EXPERIMENT_SANITIZE_OBJ) $(NN_SYMBOLIC_SANITIZE_OBJ) $(NN_PROGRAM_SANITIZE_OBJ) $(NN_HYPOTHESIS_SANITIZE_OBJ) $(NN_PROTOCOL_SANITIZE_OBJ)
 XOR_EXAMPLE := $(BUILD_DIR)/xor
 ACTION_SCORE_EXAMPLE := $(BUILD_DIR)/action_score
 PRIME_GAP_EXAMPLE := $(BUILD_DIR)/prime_gap
@@ -51,6 +54,7 @@ MODULAR_GATE_SEARCH := $(BUILD_DIR)/modular_gate_search
 ARC_AGI := $(BUILD_DIR)/arc_agi
 SIGNAL_FLIGHT := $(BUILD_DIR)/signal_flight
 SIGNAL_FLIGHT_ROLLOUT := $(BUILD_DIR)/signal_flight_rollout
+SIGNAL_MINING := $(BUILD_DIR)/signal_mining
 BENCHMARK := $(BUILD_DIR)/benchmark
 TEST_RUNNER := $(BUILD_DIR)/test_nn
 SANITIZE_TEST_RUNNER := $(BUILD_DIR)/test_nn_sanitize
@@ -123,10 +127,17 @@ SIGNAL_LIVE_BRAIN_MAX_MS ?= 0
 SIGNAL_LIVE_BRAIN_CHECKPOINT ?=
 SIGNAL_LIVE_BRAIN_MODE ?= shadow_neural
 SIGNAL_LIVE_BRAIN_CHECKPOINT_ARG = $(if $(SIGNAL_LIVE_BRAIN_CHECKPOINT),--brain-checkpoint "$(SIGNAL_LIVE_BRAIN_CHECKPOINT)",)
+SIGNAL_LIVE_BRAIN_OPTION_CHECKPOINT ?=
+SIGNAL_LIVE_BRAIN_OPTION_MODE ?= off
+SIGNAL_LIVE_BRAIN_OPTION_CHECKPOINT_ARG = $(if $(SIGNAL_LIVE_BRAIN_OPTION_CHECKPOINT),--option-checkpoint "$(SIGNAL_LIVE_BRAIN_OPTION_CHECKPOINT)",)
 SIGNAL_LIVE_BRAIN_EXTRA ?=
 SIGNAL_LIVE_STATUS_LOG ?= $(SIGNAL_LIVE_BRAIN_LOG)
 SIGNAL_LIVE_STATUS_INTERVAL_MS ?= 1000
 SIGNAL_LIVE_STATUS_EXTRA ?=
+SIGNAL_LIVE_ACTIVE_LOG ?= $(SIGNAL_LIVE_STATUS_LOG)
+SIGNAL_LIVE_ACTIVE_DIR ?= $(BUILD_DIR)/signal_live_active_summary
+SIGNAL_LIVE_ACTIVE_WINDOW_ROWS ?= 250
+SIGNAL_LIVE_ACTIVE_STALE_MS ?= 3000
 SIGNAL_SHADOW_REPLAY_DIR ?= $(BUILD_DIR)/signal_shadow_replay_audit
 SIGNAL_SHADOW_REPLAY_HORIZON_MS ?= 500
 SIGNAL_FLIGHT_ROLLOUT_DIR ?= $(BUILD_DIR)/signal_flight_rollout_eval
@@ -135,6 +146,13 @@ SIGNAL_FLIGHT_ROLLOUT_CHECKPOINT ?= $(SIGNAL_FLIGHT_RESULT_DIR)/signal_flight.nn
 SIGNAL_FLIGHT_ROLLOUT_EPISODES ?= 24
 SIGNAL_FLIGHT_ROLLOUT_TICKS ?= 900
 SIGNAL_FLIGHT_ROLLOUT_SEED ?= 4242
+SIGNAL_MINING_RESULT_DIR ?= $(BUILD_DIR)/signal_mining_experiment
+SIGNAL_MINING_TRAIN_GROUPS ?= 24
+SIGNAL_MINING_TEST_GROUPS ?= 8
+SIGNAL_MINING_HORIZON_TICKS ?= 3600
+SIGNAL_MINING_EPOCHS ?= 4
+SIGNAL_MINING_SEED ?= 5252
+SIGNAL_MINING_LEARNING_RATE ?= 0.004
 
 SIGNAL_FLIGHT_INCLUDE_FLAGS := \
 	-I$(SIGNAL_FLIGHT_SIGNAL_DIR)/server \
@@ -189,9 +207,9 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments trace-determinism-audit trace-determinism-compare delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-public paper-grade-evidence signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-live-brain signal-live-brain-smoke signal-live-status signal-shadow-replay-audit experiment-matrix results paper-pdf paper-data paper-claims paper-support neurosymbolic-tune benchmark test sanitize check clean
+.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments trace-determinism-audit trace-determinism-compare delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-public paper-grade-evidence signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke signal-live-brain signal-live-brain-smoke signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit experiment-matrix results paper-pdf paper-data paper-claims paper-support neurosymbolic-tune benchmark test sanitize check clean
 
-all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(BENCHMARK)
+all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(BENCHMARK)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -211,6 +229,9 @@ $(NN_PROGRAM_OBJ): src/nn_program.c include/nn_program.h include/nn_symbolic.h i
 $(NN_HYPOTHESIS_OBJ): src/nn_hypothesis.c include/nn_hypothesis.h include/nn_program.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_hypothesis.c -o $@
 
+$(NN_PROTOCOL_OBJ): src/nn_protocol.c include/nn_protocol.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_protocol.c -o $@
+
 $(NN_TEST_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn.c -o $@
 
@@ -226,6 +247,9 @@ $(NN_PROGRAM_TEST_OBJ): src/nn_program.c include/nn_program.h include/nn_symboli
 $(NN_HYPOTHESIS_TEST_OBJ): src/nn_hypothesis.c include/nn_hypothesis.h include/nn_program.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_hypothesis.c -o $@
 
+$(NN_PROTOCOL_TEST_OBJ): src/nn_protocol.c include/nn_protocol.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_protocol.c -o $@
+
 $(NN_SANITIZE_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn.c -o $@
 
@@ -240,6 +264,9 @@ $(NN_PROGRAM_SANITIZE_OBJ): src/nn_program.c include/nn_program.h include/nn_sym
 
 $(NN_HYPOTHESIS_SANITIZE_OBJ): src/nn_hypothesis.c include/nn_hypothesis.h include/nn_program.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_hypothesis.c -o $@
+
+$(NN_PROTOCOL_SANITIZE_OBJ): src/nn_protocol.c include/nn_protocol.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_protocol.c -o $@
 
 $(BUILD_DIR)/obj/prime_gap/%.o: src/prime_gap/%.c $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
@@ -290,6 +317,9 @@ $(SIGNAL_FLIGHT): examples/signal_flight.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DI
 $(SIGNAL_FLIGHT_ROLLOUT): examples/signal_flight_rollout.c $(NN_OBJS) $(NN_HEADERS) $(SIGNAL_FLIGHT_SIM_SOURCES) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(SIGNAL_FLIGHT_INCLUDE_FLAGS) $(CFLAGS) examples/signal_flight_rollout.c $(NN_OBJS) $(SIGNAL_FLIGHT_SIM_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
 
+$(SIGNAL_MINING): examples/signal_mining.c $(NN_OBJS) $(NN_HEADERS) $(SIGNAL_FLIGHT_SIM_SOURCES) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(SIGNAL_FLIGHT_INCLUDE_FLAGS) $(CFLAGS) examples/signal_mining.c $(NN_OBJS) $(SIGNAL_FLIGHT_SIM_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
+
 $(BENCHMARK): benchmarks/benchmark.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) benchmarks/benchmark.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
@@ -305,13 +335,14 @@ run: $(XOR_EXAMPLE)
 action-score: $(ACTION_SCORE_EXAMPLE)
 	./$(ACTION_SCORE_EXAMPLE)
 
-experiment-schemas: $(PRIME_GAP_EXAMPLE) $(GRID_PATH) $(DELAYED_CLAIM) $(PROGRAM_SYNTHESIS) $(ARC_AGI) $(SIGNAL_FLIGHT)
+experiment-schemas: $(PRIME_GAP_EXAMPLE) $(GRID_PATH) $(DELAYED_CLAIM) $(PROGRAM_SYNTHESIS) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING)
 	./$(PRIME_GAP_EXAMPLE) --schema
 	./$(GRID_PATH) --schema
 	./$(DELAYED_CLAIM) --schema
 	./$(PROGRAM_SYNTHESIS) --schema
 	./$(ARC_AGI) --schema
 	./$(SIGNAL_FLIGHT) --schema
+	./$(SIGNAL_MINING) --schema
 
 prime-gap: $(PRIME_GAP_EXAMPLE)
 	./$(PRIME_GAP_EXAMPLE)
@@ -512,7 +543,7 @@ hypothesis-library-split-sweep: $(ARC_AGI)
 hypothesis-library-public: $(ARC_AGI)
 	$(PYTHON) scripts/hypothesis_library_split_sweep.py --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --output-dir $(HYPOTHESIS_LIBRARY_PUBLIC_DIR) --public-train-max-tasks $(HYPOTHESIS_LIBRARY_PUBLIC_TRAIN_MAX_TASKS) --public-eval-max-tasks $(HYPOTHESIS_LIBRARY_PUBLIC_EVAL_MAX_TASKS)
 
-paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit signal-shadow-replay-audit experiment-matrix
+paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit signal-shadow-replay-audit signal-live-active-summary experiment-matrix
 	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR) $(SIGNAL_FLIGHT_RESULTS_DIR)
 	cp $(REJECTED_CANDIDATE_DIR)/reason_learning.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_learning.jsonl
 	cp $(REJECTED_CANDIDATE_DIR)/split_sweep.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_split_sweep.jsonl
@@ -524,6 +555,9 @@ paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit 
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_width_help.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_width_help.jsonl
 	cp $(SIGNAL_SHADOW_REPLAY_DIR)/summary.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_replay_audit.jsonl
 	cp $(SIGNAL_SHADOW_REPLAY_DIR)/shadow_frames.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_frames.jsonl
+	cp $(SIGNAL_LIVE_ACTIVE_DIR)/summary.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl
+	cp $(SIGNAL_LIVE_ACTIVE_DIR)/active_frames.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_frames.jsonl
+	$(PYTHON) scripts/signal_flight_report.py --offline $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.jsonl --shadow $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_replay_audit.jsonl --live-active $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl --output $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md
 
 signal-flight-data:
 	$(MAKE) -C $(SIGNAL_FLIGHT_SIGNAL_DIR) build-flight-trace
@@ -543,14 +577,31 @@ signal-flight-rollout-eval: $(SIGNAL_FLIGHT_ROLLOUT)
 	mkdir -p $(SIGNAL_FLIGHT_ROLLOUT_DIR)
 	./$(SIGNAL_FLIGHT_ROLLOUT) --checkpoint "$(SIGNAL_FLIGHT_ROLLOUT_CHECKPOINT)" --episodes $(SIGNAL_FLIGHT_ROLLOUT_EPISODES) --ticks $(SIGNAL_FLIGHT_ROLLOUT_TICKS) --seed $(SIGNAL_FLIGHT_ROLLOUT_SEED) --summary "$(SIGNAL_FLIGHT_ROLLOUT_SUMMARY)"
 
+signal-mining: $(SIGNAL_MINING)
+	mkdir -p $(SIGNAL_MINING_RESULT_DIR)
+	./$(SIGNAL_MINING) --train-groups $(SIGNAL_MINING_TRAIN_GROUPS) --test-groups $(SIGNAL_MINING_TEST_GROUPS) --horizon-ticks $(SIGNAL_MINING_HORIZON_TICKS) --epochs $(SIGNAL_MINING_EPOCHS) --learning-rate $(SIGNAL_MINING_LEARNING_RATE) --seed $(SIGNAL_MINING_SEED) --trace "$(SIGNAL_MINING_RESULT_DIR)/trace.jsonl" --summary "$(SIGNAL_MINING_RESULT_DIR)/summary.jsonl" --save "$(SIGNAL_MINING_RESULT_DIR)/signal_mining.nnckpt"
+
+signal-mining-smoke: SIGNAL_MINING_RESULT_DIR=$(BUILD_DIR)/signal_mining_smoke
+signal-mining-smoke: SIGNAL_MINING_TRAIN_GROUPS=6
+signal-mining-smoke: SIGNAL_MINING_TEST_GROUPS=3
+signal-mining-smoke: SIGNAL_MINING_HORIZON_TICKS=420
+signal-mining-smoke: SIGNAL_MINING_EPOCHS=2
+signal-mining-smoke: signal-mining
+
 signal-live-brain:
-	node scripts/signal_live_brain.mjs --server "$(SIGNAL_LIVE_BRAIN_SERVER)" --session "$(SIGNAL_LIVE_BRAIN_SESSION)" --log "$(SIGNAL_LIVE_BRAIN_LOG)" --callsign "$(SIGNAL_LIVE_BRAIN_CALLSIGN)" --max-ms "$(SIGNAL_LIVE_BRAIN_MAX_MS)" --brain-mode "$(SIGNAL_LIVE_BRAIN_MODE)" $(SIGNAL_LIVE_BRAIN_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_EXTRA)
+	node scripts/signal_live_brain.mjs --server "$(SIGNAL_LIVE_BRAIN_SERVER)" --session "$(SIGNAL_LIVE_BRAIN_SESSION)" --log "$(SIGNAL_LIVE_BRAIN_LOG)" --callsign "$(SIGNAL_LIVE_BRAIN_CALLSIGN)" --max-ms "$(SIGNAL_LIVE_BRAIN_MAX_MS)" --brain-mode "$(SIGNAL_LIVE_BRAIN_MODE)" --option-mode "$(SIGNAL_LIVE_BRAIN_OPTION_MODE)" $(SIGNAL_LIVE_BRAIN_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_OPTION_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_EXTRA)
 
 signal-live-brain-smoke:
-	node scripts/signal_live_brain.mjs --server "$(SIGNAL_LIVE_BRAIN_SERVER)" --session "$(SIGNAL_LIVE_BRAIN_SESSION)" --log "$(SIGNAL_LIVE_BRAIN_LOG)" --callsign "$(SIGNAL_LIVE_BRAIN_CALLSIGN)" --max-ms 5000 --brain-mode "$(SIGNAL_LIVE_BRAIN_MODE)" $(SIGNAL_LIVE_BRAIN_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_EXTRA)
+	node scripts/signal_live_brain.mjs --server "$(SIGNAL_LIVE_BRAIN_SERVER)" --session "$(SIGNAL_LIVE_BRAIN_SESSION)" --log "$(SIGNAL_LIVE_BRAIN_LOG)" --callsign "$(SIGNAL_LIVE_BRAIN_CALLSIGN)" --max-ms 5000 --brain-mode "$(SIGNAL_LIVE_BRAIN_MODE)" --option-mode "$(SIGNAL_LIVE_BRAIN_OPTION_MODE)" $(SIGNAL_LIVE_BRAIN_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_OPTION_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_EXTRA)
 
 signal-live-status:
 	node scripts/signal_live_status.mjs --log "$(SIGNAL_LIVE_STATUS_LOG)" --interval-ms "$(SIGNAL_LIVE_STATUS_INTERVAL_MS)" $(SIGNAL_LIVE_STATUS_EXTRA)
+
+signal-live-active-summary:
+	$(PYTHON) scripts/signal_live_active_summary.py --log "$(SIGNAL_LIVE_ACTIVE_LOG)" --output-dir "$(SIGNAL_LIVE_ACTIVE_DIR)" --window-rows "$(SIGNAL_LIVE_ACTIVE_WINDOW_ROWS)" --stale-ms "$(SIGNAL_LIVE_ACTIVE_STALE_MS)"
+
+signal-flight-report:
+	$(PYTHON) scripts/signal_flight_report.py --offline $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.jsonl --shadow $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_replay_audit.jsonl --live-active $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl --output $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md
 
 signal-shadow-replay-audit:
 	$(PYTHON) scripts/signal_shadow_replay_audit.py --log "$(SIGNAL_LIVE_STATUS_LOG)" --output-dir "$(SIGNAL_SHADOW_REPLAY_DIR)" --horizon-ms "$(SIGNAL_SHADOW_REPLAY_HORIZON_MS)"

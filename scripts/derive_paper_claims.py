@@ -1472,6 +1472,149 @@ def evaluate_signal_flight_replay_control(claim: dict[str, Any], repo: Path) -> 
     return result
 
 
+def evaluate_signal_live_neural_active(claim: dict[str, Any], repo: Path) -> dict[str, Any]:
+    result = base_result(claim)
+    source = repo / claim["evidence"]["source"]
+    rows = [
+        row
+        for row in read_jsonl(source)
+        if row.get("schema") == "crlp.signal_live_active_summary.v1"
+    ]
+    frames = secondary_jsonl(claim, repo, 0, "crlp.signal_live_active_frame.v1")
+    row = rows[-1] if rows else None
+    result["evidence_rows"] = [
+        metric_row(
+            "signal_live_active",
+            row,
+            [
+                "log_path",
+                "rows_seen",
+                "active_rows",
+                "window_active_rows",
+                "latest_brain_mode",
+                "latest_active_source",
+                "checkpoint_hash",
+                "checkpoint_path",
+                "feature_set",
+                "dry_run_rows",
+                "inference_ms_p95",
+                "candidate_score_rows",
+                "candidate_score_min_count",
+                "safety_gate_rows",
+                "replay_ready_rows",
+                "damage_events",
+                "death_events",
+                "stale_within_log",
+                "latest_row_age_at_capture_ms",
+            ],
+        ),
+        {
+            "label": "signal_live_active_frames",
+            "present": bool(frames),
+            "rows": len(frames),
+        },
+    ]
+    if row is None:
+        result["status"] = "missing"
+        result["residual"] = claim.get("residual_when_not_supported", [])
+        result["summary"] = "Missing Signal live neural-active summary row."
+        return result
+
+    active_rows = as_int(row, "active_rows")
+    window_active_rows = as_int(row, "window_active_rows")
+    dry_run_rows = as_int(row, "dry_run_rows")
+    candidate_score_rows = as_int(row, "candidate_score_rows")
+    candidate_score_min_count = as_int(row, "candidate_score_min_count")
+    safety_gate_rows = as_int(row, "safety_gate_rows")
+    replay_ready_rows = as_int(row, "replay_ready_rows")
+    damage_events = as_int(row, "damage_events")
+    death_events = as_int(row, "death_events")
+    inference_p95 = as_float(row, "inference_ms_p95")
+    stale_within_log = bool(row.get("stale_within_log"))
+    checkpoint_hash = str(row.get("checkpoint_hash") or "")
+    checkpoint_path = str(row.get("checkpoint_path") or "")
+    feature_set = str(row.get("feature_set") or "")
+    latest_brain_mode = str(row.get("latest_brain_mode") or "")
+    latest_active_source = str(row.get("latest_active_source") or "")
+    min_rows = int(claim.get("decision_rule", {}).get("min_active_rows", 50))
+    max_p95_ms = float(claim.get("decision_rule", {}).get("max_inference_p95_ms", 5.0))
+
+    result["metrics"] = {
+        "active_rows": active_rows,
+        "window_active_rows": window_active_rows,
+        "dry_run_rows": dry_run_rows,
+        "candidate_score_rows": candidate_score_rows,
+        "candidate_score_min_count": candidate_score_min_count,
+        "safety_gate_rows": safety_gate_rows,
+        "replay_ready_rows": replay_ready_rows,
+        "active_frame_rows": len(frames),
+        "damage_events": damage_events,
+        "death_events": death_events,
+        "inference_ms_p95": inference_p95,
+        "checkpoint_hash": checkpoint_hash,
+        "checkpoint_hash_short": checkpoint_hash[:12],
+        "checkpoint_path": checkpoint_path,
+        "feature_set": feature_set,
+        "latest_brain_mode": latest_brain_mode,
+        "latest_active_source": latest_active_source,
+        "stale_within_log": stale_within_log,
+    }
+
+    contradicted = (
+        latest_brain_mode != "neural_active"
+        or latest_active_source != "neural"
+        or dry_run_rows != 0
+        or not checkpoint_hash
+        or feature_set != "signal-flight-live-v2"
+        or stale_within_log
+    )
+    underpowered = (
+        active_rows < min_rows
+        or window_active_rows < min_rows
+        or candidate_score_rows < min_rows
+        or candidate_score_min_count < 9
+        or safety_gate_rows < min_rows
+        or replay_ready_rows < min_rows
+        or len(frames) < min_rows
+        or not math.isfinite(inference_p95)
+        or inference_p95 > max_p95_ms
+    )
+
+    if contradicted:
+        result["status"] = "contradicted"
+    elif underpowered:
+        result["status"] = "underpowered"
+    else:
+        result["status"] = "supported"
+    if result["status"] != "supported":
+        result["residual"] = claim.get("residual_when_not_supported", [])
+
+    result["summary"] = (
+        "Signal live neural-active pilot executed "
+        f"{window_active_rows} recent neural-source rows from checkpoint "
+        f"{checkpoint_hash[:12] or 'missing'} with p95 inference {num(inference_p95, 3)} ms, "
+        f"{replay_ready_rows} replay-ready rows, safety-gate rows={safety_gate_rows}, "
+        f"damage events={damage_events}, deaths={death_events}; no baseline comparison is claimed."
+    )
+    result["paper_explanation"] = (
+        "This supports only the existence of guarded live neural-active execution: "
+        "the running Signal pilot applies checkpoint-ranked WASD actions and logs "
+        "the fields needed for replay. It does not yet show that active neural "
+        "control improves utility or safety versus the heuristic baseline."
+    )
+    result["chart"] = {
+        "kind": "coverage_bar",
+        "unit": "rows",
+        "y_label": "logged live rows",
+        "rows": [
+            {"label": "active", "value": window_active_rows, "p95_ms": inference_p95},
+            {"label": "replay-ready", "value": replay_ready_rows, "p95_ms": inference_p95},
+            {"label": "active frames", "value": len(frames), "p95_ms": inference_p95},
+        ],
+    }
+    return result
+
+
 def evaluate_trace_determinism_audit(claim: dict[str, Any], repo: Path) -> dict[str, Any]:
     result = base_result(claim)
     source = repo / claim["evidence"]["source"]
@@ -1592,6 +1735,7 @@ EVALUATORS = {
     "rejected_candidate_reason_learning": evaluate_rejected_candidate_reason_learning,
     "hypothesis_library_promotion": evaluate_hypothesis_library_promotion,
     "signal_flight_replay_control": evaluate_signal_flight_replay_control,
+    "signal_live_neural_active": evaluate_signal_live_neural_active,
     "trace_determinism_audit": evaluate_trace_determinism_audit,
 }
 

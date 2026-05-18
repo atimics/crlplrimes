@@ -1,7 +1,7 @@
 #import "@preview/cetz:0.3.4"
 #import "@preview/cetz-plot:0.1.1": plot, chart
 #import "data.typ": learning_curves, gate_ablation, arc_epoch_eval, prime_gap_epoch_loss, multitask_shared_vs_single, multitask_rmt1, multitask_rmt2_aggregate, multitask_rmt6_capacity
-#import "generated/claims.typ": paper_claim_limitations, paper_claim_support_ok, paper_claim_support_surfaces, claim_C1_arc_public_evidence_surface_chart_rows, claim_C1_arc_public_evidence_surface_summary, claim_C3_arc_ood_calibration_tradeoff_chart_rows, claim_C3_arc_ood_calibration_tradeoff_summary, claim_C4_delayed_claim_sibling_transfer_chart_rows, claim_C4_delayed_claim_sibling_transfer_summary, claim_C4_multitask_capacity_tradeoff_chart_rows, claim_C4_multitask_capacity_tradeoff_summary, claim_C5_rejected_candidate_reason_learning_chart_rows, claim_C5_rejected_candidate_reason_learning_summary, claim_C5_hypothesis_library_promotion_chart_rows, claim_C5_hypothesis_library_promotion_summary, claim_C9_signal_flight_replay_control_chart_rows, claim_C9_signal_flight_replay_control_summary
+#import "generated/claims.typ": paper_claim_limitations, paper_claim_support_ok, paper_claim_support_surfaces, claim_C1_arc_public_evidence_surface_chart_rows, claim_C1_arc_public_evidence_surface_summary, claim_C3_arc_ood_calibration_tradeoff_chart_rows, claim_C3_arc_ood_calibration_tradeoff_summary, claim_C4_delayed_claim_sibling_transfer_chart_rows, claim_C4_delayed_claim_sibling_transfer_summary, claim_C4_multitask_capacity_tradeoff_chart_rows, claim_C4_multitask_capacity_tradeoff_summary, claim_C5_rejected_candidate_reason_learning_chart_rows, claim_C5_rejected_candidate_reason_learning_summary, claim_C5_hypothesis_library_promotion_chart_rows, claim_C5_hypothesis_library_promotion_summary, claim_C9_signal_flight_replay_control_chart_rows, claim_C9_signal_flight_replay_control_summary, claim_C9_signal_live_neural_active_chart_rows, claim_C9_signal_live_neural_active_summary
 #import "generated/experiment_matrix.typ": experiment_matrix_rows
 
 #set document(
@@ -116,8 +116,9 @@
     rows are C5: rejected-candidate residuals repair unsafe fixed-budget proposer rankings,
     and certified hypothesis-library priors improve tight-budget proposal coverage under a
     held-out split. ARC is an evidence surface for priors and failure taxonomy; Signal is
-    application pressure under replay and shadow logging. The paper explicitly does not claim
-    broad ARC competence, live neural control, or general end-to-end task solving.
+    application pressure under replay, shadow logging, and a guarded live-active pilot. The
+    paper explicitly does not claim broad ARC competence, comparative live neural-control
+    improvement, or general end-to-end task solving.
   ]
 ]
 
@@ -196,23 +197,25 @@ network allowed to rank, and what reusable artifact is produced?"
       )).flatten()
     )
   ],
-  caption: [Frozen evidence matrix. Every result row uses the same structure: candidate
-    set, verifier, certificate/gate, scorer role, trace artifact, result, claim, and
-    limitation. The paper may tighten these rows, but it should not add new experiment
-    families without revising this matrix first.],
+  caption: [Frozen evidence matrix. Every result row uses the same structure: domain/data,
+    grammar, candidate set, verifier/certificate, scorer role, trace artifact, result,
+    takeaway/claim, and limitation. The paper may tighten these rows, but it should not add
+    new experiment families without revising this matrix first.],
 ) <tab:frozen-evidence>
 
 *Non-claims.* The paper does not claim general task solving, competitive ARC performance,
-live neural control, or that small networks replace scale. It does not claim that a generic
+comparative live neural-control improvement, or that small networks replace scale. It does not claim that a generic
 reason-code ranker is safe across domains, or that wider MLPs solve the ARC geometry failure.
 It claims a narrower protocol result: when certified candidate mechanisms own admissibility,
 small learned components can usefully rank residual candidates, calibrate decisions, reuse
 certified hypotheses, and learn from verifier rejections under an auditable trace contract.
 
 The artifact now emits `crlp.experiment_schema.v1` rows for every certified task with `make
-experiment-schemas`. The paper should be read against that schema: task-specific verifiers and
-grammars change, but candidate enumeration, leakage discipline, proposer baselines, trace replay,
-and verifier-RL comparisons are shared.
+experiment-schemas`, plus shared protocol rows for candidate rows, verifier outcomes, ranker
+decisions, discovered rules, and library promotions. The paper should be read against that
+schema: task-specific verifiers and grammars change, but candidate row shape, verifier-outcome
+shape, leakage discipline, proposer baselines, trace replay, and verifier-RL comparisons are
+shared.
 
 = Related Work
 
@@ -293,8 +296,8 @@ framing emphasizes skill-acquisition efficiency and the need to account for prio
 @chollet2019measure. The 2024 ARC Prize report and recent test-time-training work show the
 current leaderboard direction: large-model or program-synthesis systems with per-instance
 adaptation achieve far higher ARC scores than this artifact @chollet2024arcprize
-@akyurek2024surprising. Our public ARC result should therefore be read narrowly: grammar
-v10 certifies a small public-corpus coverage floor and the fixed `0520fde7` transform gate gives a
+@akyurek2024surprising. Our public ARC result should therefore be read narrowly:
+#claim_C1_arc_public_evidence_surface_summary The fixed `0520fde7` transform gate gives a
 clean scorer-vs-certificate contrast on one task. The research claim is not ARC
 performance; it is that feature provenance, certificate-gated transforms, matched
 proposer budgets, and replayable evidence rows make the priors and failure modes visible.
@@ -452,10 +455,10 @@ Task T = {
         [same hypothesis → program → certificate path beyond ARC],
       [`signal_flight`],
         [nine WASD control candidates],
-        [authoritative Signal simulator replay],
-        [counterfactual utility + damage/death replay],
+        [authoritative Signal simulator replay + live active telemetry],
+        [counterfactual utility + damage/death replay + safety-gate log],
         [rank bounded real-time control actions],
-        [`signal.flight_counterfactual.v1`, `crlp.signal_flight.summary.v1`],
+        [`signal.flight_counterfactual.v1`, `crlp.signal_flight.summary.v1`, `crlp.signal_live_active_summary.v1`],
         [application vignette for replay-grounded control],
     )
   ],
@@ -801,7 +804,7 @@ runs.
 
 Different tasks instantiate the certificate-gating loop differently: the prime-gap modular
 gate instance and grid-path have *gate ablations* in the strict sense (same scorer, with vs without the gate);
-delayed-claim has a *checkpoint succession* (supervised parent vs trace-replay successor);
+delayed-claim has a trace-replay successor plus a production threshold+margin gate;
 ARC-AGI has a *scorer-vs-gate* ablation where the two rows are different architectures (a
 neural cell scorer and a symbolic transform gate over the same task). A single common-axis
 bar chart would obscure those distinctions, so @fig:cross-acc reports four small per-task
@@ -812,7 +815,7 @@ panels with row labels that name what is being compared.
     import cetz.draw: *
     // Four small per-task panels. Each carries its own row labels so the
     // comparison is honest: prime/grid are gate ablations on the same scorer;
-    // delayed-claim is checkpoint succession; arc_agi is scorer vs gate.
+    // delayed-claim includes its production threshold+margin gate; arc_agi is scorer vs gate.
     let panels = (
       (
         title: [`prime_gap` — gate ablation (same scorer)],
@@ -836,10 +839,11 @@ panels with row labels that name what is being compared.
         ),
       ),
       (
-        title: [`delayed_claim` — checkpoint succession (no gate yet)],
+        title: [`delayed_claim` — threshold+margin gate],
         rows: (
-          ("supervised parent",     93.50, rgb("#a0a0a0")),
-          ("trace-replay successor",94.80, rgb("#2ca02c")),
+          ("raw supervised parent", 93.50, rgb("#a0a0a0")),
+          ("trace-replay successor",94.80, rgb("#5b8def")),
+          ("production gate",      100.00, rgb("#2ca02c")),
         ),
       ),
       (
@@ -889,14 +893,14 @@ panels with row labels that name what is being compared.
   caption: [Per-task accuracy by ablation row. Each panel labels its own comparison so the
     rows are read against the right baseline: the prime-gap modular gate instance and grid-path are *gate ablations*
     (same scorer, with vs without the gate; grid-path additionally varies whether the
-    Manhattan structural priors are enabled in the scorer features); delayed-claim is a
-    *checkpoint succession* (supervised parent vs trace-replay successor on the same
-    evaluation set, with parent-hash chain attesting identity); ARC-AGI is a *scorer-vs-gate*
+    Manhattan structural priors are enabled in the scorer features); delayed-claim includes
+    the trace-replay successor and the production threshold+margin gate over the same
+    generator, with parent-hash chain attesting model identity; ARC-AGI is a *scorer-vs-gate*
     ablation where the two rows are different architectures over the same `0520fde7` task,
     not the same model with vs without a gate. The ARC `100.00%` is on nine held-out cells of
-    one task; the public 400-task ARC training corpus has a 24/400 ($approx$6.0%) certified-gate
-    floor under grammar v10, with the hypothesis-induction layer in @sec:artifact-feedback adding transform
-    families v10 cannot synthesise (zero baseline-rate, 4/4 induction-rate on the synthetic
+    one task; the public ARC evidence surface is the generated v15 measured row reported in
+    #claim_C1_arc_public_evidence_surface_summary, with the hypothesis-induction layer in
+    @sec:artifact-feedback adding transform families beyond the older v10 floor (zero baseline-rate, 4/4 induction-rate on the synthetic
     suite under `crlp.arc_induction.parity.v1`).],
 ) <fig:cross-acc>
 
@@ -1062,12 +1066,11 @@ output cell while seeing only three training pairs and 9 held-out cells, so the 
 neither enough data nor enough structure to align confidence with accuracy. The certified
 transform gate then sidesteps the calibration question entirely: it produces a *unique*
 grammar-consistent prediction or no prediction, so the held-out top-1 is either 100% or
-the gate abstains. On the public ARC training corpus (400 tasks) the v10 grammar certifies
-24/400 ($approx$6.0%) training and 4/400 ($approx$1.0%) evaluation tasks; the
-hypothesis-induction layer described in @sec:artifact-feedback adds *transform families v10 cannot
-synthesise*. Under the matched-baseline parity protocol `crlp.arc_induction.parity.v1`, on the
+the gate abstains. On the public ARC corpus, #claim_C1_arc_public_evidence_surface_summary The
+hypothesis-induction layer described in @sec:artifact-feedback adds transform families beyond the
+older v10 grammar floor. Under the matched-baseline parity protocol `crlp.arc_induction.parity.v1`, on the
 synthetic move-to-anchor suite the baseline grammar certifies 0/4 tasks and the
-hypothesis-induction loader certifies 4/4 with zero regressions on the v10-supported tasks;
+hypothesis-induction loader certifies 4/4 with zero regressions on the previously supported tasks;
 the same harness applied to the public ARC corpus is reported below as a scoped evidence
 surface rather than as a claim of competitive ARC performance.
 
@@ -1245,7 +1248,7 @@ by scorer choice in the current implementation.
 The two central result rows are the C5 artifact-feedback rows: rejected-candidate learning
 and certified hypothesis-library feedback. The rest of the claim table is boundary evidence:
 ARC is a measured evidence surface, the capacity sweep guards architecture interpretation,
-and Signal is application pressure under replay and shadow logging. Each row is evaluated
+and Signal is application pressure under replay, shadow, and guarded live-active logging. Each row is evaluated
 against a registered result artifact before the PDF is built, so unsupported or stale
 required claims fail before they become prose. The only non-blocking negative row remains
 the fixed-budget prime proposer claim, which is deliberately carried as a limitation.
@@ -1287,8 +1290,8 @@ the fixed-budget prime proposer claim, which is deliberately carried as a limita
 The next rows are intentionally not headline performance claims. ARC is kept as an evidence
 surface: it exposes which transform and hypothesis families are certified, where the grammar
 misses, and whether scorer-independent gate measurements stay invariant. Signal is kept as
-application pressure: it exercises replay-certified ranking and shadow logging without
-claiming active neural control.
+application pressure: it exercises replay-certified ranking, shadow logging, and live
+neural-active execution without claiming that active neural control beats the heuristic.
 
 #figure(
   claim_coverage_chart(
@@ -1336,10 +1339,11 @@ claiming active neural control.
 = Application Pressure: Signal Flight
 
 Signal is the practical reach test for the protocol, but the claim is intentionally
-narrow. The current result is not "a tiny net flies the game" and not "the live websocket
-pilot is neural-controlled." It is an offline counterfactual replay row: each sampled
-state enumerates nine WASD candidates, the Signal simulator replays the candidates, and
-the ranker learns from replay-certified utility, damage, and death outcomes.
+narrow. The current result is not "a tiny net flies the game" and not "neural control beats
+the heuristic." Signal is split into generated evidence rows: an offline counterfactual
+replay row, a live shadow row, and a live neural-active row. In the replay row, each sampled
+state enumerates nine WASD candidates, the Signal simulator replays the candidates, and the
+ranker learns from replay-certified utility, damage, and death outcomes.
 
 #figure(
   claim_coverage_chart(
@@ -1349,17 +1353,28 @@ the ranker learns from replay-certified utility, damage, and death outcomes.
   ),
   caption: [C9 Signal replay-control vignette. #claim_C9_signal_flight_replay_control_summary
     The baseline is the primitive no-safety goal-heading WASD policy. This row supports
-    bounded replay-certified ranking only; shadow inference and active neural control are
-    outside the supported claim.],
+    bounded replay-certified ranking only; live execution is tracked by the separate
+    neural-active claim.],
 ) <fig:claim-signal-flight>
+
+#figure(
+  claim_coverage_chart(
+    claim_C9_signal_live_neural_active_chart_rows,
+    y-max: 300,
+    y-label: [live rows],
+  ),
+  caption: [C9 Signal live neural-active execution. #claim_C9_signal_live_neural_active_summary
+    This row supports live guarded neural-active execution and replay-ready telemetry, not
+    comparative utility or safety versus the heuristic baseline.],
+) <fig:claim-signal-live-active>
 
 This is why Signal belongs in @tab:schema even before it becomes a headline control
 experiment: it changes the environment class without changing the contract. Candidate
-enumeration is still explicit, the verifier is now authoritative simulator replay, the
-certificate is a replayed outcome record rather than a theorem-like proof, and the neural
-component still ranks candidates rather than owning safety. A live-control claim would
-require shadow inference first, then active control only after regret, damage, and death
-gates pass.
+enumeration is still explicit, the verifier is authoritative simulator replay or logged
+live telemetry, the certificate is a replayed or replay-ready outcome record rather than a
+theorem-like proof, and the neural component still ranks candidates rather than owning
+safety. The next unsupported gate is comparative active control: summarize active neural
+episodes against a heuristic baseline with utility, regret, damage, and death.
 
 = Artifact Feedback and Audit Contract <sec:artifact-feedback>
 
@@ -1450,11 +1465,10 @@ features, and the claim compiler decides whether the paper may say the loop help
   structural explanation (10 colors × 3 train pairs is too sparse for the softmax to align
   with accuracy). It is not yet replicated across multiple ARC tasks; the structural
   argument is suggestive, not proof.
-+ *Signal is offline replay, not live neural control.* The Signal row is a bounded
-  counterfactual WASD replay vignette. It supports the claim that replay-certified control
-  candidates can train a tiny ranker against a primitive baseline, but the live websocket
-  pilot remains outside the supported claim until shadow inference and active-control
-  safety gates are measured.
++ *Signal lacks a comparative active-control result.* The Signal rows now support offline
+  replay ranking, live shadow evidence, and guarded live neural-active execution
+  (@fig:claim-signal-live-active). They do not yet support the stronger claim that active
+  neural control improves utility, regret, damage, or death versus the heuristic baseline.
 + *No competitive large-system baseline.* The related-work comparison now positions the
   protocol against learned verifiers, RLVR, AlphaGeometry-style formal search, DreamCoder,
   Hypothesis Search, and ARC systems, but the artifact does not empirically compare against
@@ -1499,7 +1513,7 @@ proposal budgets. The gate, tiny-net, ARC, and Signal rows matter because they k
 claim honest: modular gates show the protocol can sharply reduce residual search, capacity
 audits block a naive wider-is-better story, ARC exposes priors and misses rather than
 claiming broad competence, and Signal keeps the loop under replay-grounded application
-pressure without claiming live neural control.
+pressure without claiming comparative live-control performance.
 
 The negative fixed-budget proposer result is therefore not an embarrassment. It is evidence
 that the protocol is falsifiable: a flat neural proposer over structural rows is weak, but

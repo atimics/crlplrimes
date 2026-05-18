@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 PRIOR_SCHEMA = "crlp.hypothesis_library.prior.v1"
+PROTOCOL_LIBRARY_SCHEMA = "crlp.protocol.library_promotion.v1"
 
 
 def parse_json_rows(path: Path) -> list[dict[str, Any]]:
@@ -330,6 +331,49 @@ def write_prior_tsv(path: Path, rows: list[dict[str, Any]]) -> None:
             fp.write("\t".join(str(row[field]) for field in fields) + "\n")
 
 
+def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    with path.open("w", encoding="utf-8") as fp:
+        for row in rows:
+            fp.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def protocol_library_promotion_rows(
+    promotions: list[dict[str, Any]],
+    heldout_selection: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    heldout = heldout_selection or {}
+    heldout_result = {
+        "selection_rows": int(heldout.get("selection_rows", 0) or 0),
+        "library_prior_seeded_certified": int(
+            heldout.get("library_prior_seeded_certified", 0) or 0
+        ),
+        "proposals_train_consistent": int(
+            heldout.get("proposals_train_consistent", 0) or 0
+        ),
+        "proposals_selected": int(heldout.get("proposals_selected", 0) or 0),
+    }
+    rows: list[dict[str, Any]] = []
+    for promotion in promotions:
+        rows.append(
+            {
+                "schema": PROTOCOL_LIBRARY_SCHEMA,
+                "domain": promotion["template_domain"],
+                "template_name": promotion["template_name"],
+                "template_id": promotion["template_id"],
+                "promoted_count": 1 if promotion["promoted"] else 0,
+                "support_tasks": promotion["support_tasks"],
+                "covered_events": promotion["covered_events"],
+                "false_rejections": promotion["false_rejections"],
+                "utility": promotion["utility_mean"],
+                "heldout_rows": heldout_result["selection_rows"],
+                "zero_false_rejections": promotion["false_rejections"] == 0,
+                "heldout_result": heldout_result,
+                "reason_code": promotion["promotion_reason"],
+            }
+        )
+    return rows
+
+
 def append_selection_lines(lines: list[str], title: str, selection: dict[str, Any]) -> None:
     lines.extend([title, ""])
     for key in sorted(selection):
@@ -489,7 +533,7 @@ def write_markdown(
             "- Verifier: domain certificate checker that produced the source evidence.",
             "- Certificate/gate: zero false rejections plus proof-kind and reason agreement.",
             "- Scorer role: promoted entries seed the ARC hypothesis slot prior before proposal ranking.",
-            "- Trace artifact: `crlp.hypothesis_library.promotion.v1` rows plus `crlp.hypothesis_library.prior.v1` TSV rows.",
+            "- Trace artifact: `crlp.hypothesis_library.promotion.v1`, normalized `crlp.protocol.library_promotion.v1`, and `crlp.hypothesis_library.prior.v1` TSV rows.",
             "- Protocol point: repeated successful slot bindings become explicit library objects.",
             "",
         ]
@@ -530,10 +574,6 @@ def main() -> int:
         )
     )
 
-    jsonl_path = args.output_dir / "promotions.jsonl"
-    with jsonl_path.open("w", encoding="utf-8") as fp:
-        for row in promotions:
-            fp.write(json.dumps(row, sort_keys=True) + "\n")
     priors = prior_rows(groups, promotions_by_key)
     prior_path = args.output_dir / "library_prior.tsv"
     write_prior_tsv(prior_path, priors)
@@ -542,6 +582,10 @@ def main() -> int:
         if args.feedback_input is not None and args.feedback_input.exists()
         else None
     )
+    jsonl_path = args.output_dir / "promotions.jsonl"
+    protocol_path = args.output_dir / "protocol_promotions.jsonl"
+    write_jsonl(jsonl_path, promotions)
+    write_jsonl(protocol_path, protocol_library_promotion_rows(promotions, feedback_selection))
     ablations: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
     for labeled_input in args.ablation_input:
         label, path = parse_labeled_path(labeled_input)
@@ -560,6 +604,7 @@ def main() -> int:
         ablations,
     )
     print(f"wrote {jsonl_path}")
+    print(f"wrote {protocol_path}")
     print(f"wrote {prior_path}")
     print(f"wrote {args.output_dir / 'summary.md'}")
     return 0

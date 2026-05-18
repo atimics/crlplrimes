@@ -14,7 +14,7 @@
     "non_claims": [
       "general task solving",
       "competitive ARC performance",
-      "live neural control",
+      "comparative live neural-control improvement",
       "generic cross-domain reason-code safety",
       "wider MLPs solve the ARC geometry failure"
     ]
@@ -364,15 +364,18 @@
       "artifacts": [
         "results/2026-05-17-signal-flight/summary.jsonl",
         "results/2026-05-17-signal-flight/shadow_replay_audit.jsonl",
-        "results/2026-05-17-signal-flight/shadow_frames.jsonl"
+        "results/2026-05-17-signal-flight/shadow_frames.jsonl",
+        "results/2026-05-17-signal-flight/live_active_summary.jsonl",
+        "results/2026-05-17-signal-flight/live_active_frames.jsonl"
       ],
-      "agent_instruction": "Keep Signal scoped to offline replay-certified ranking until shadow inference and active-control gates pass.",
+      "agent_instruction": "Keep Signal split into replay ranking, shadow evidence, and live neural-active execution; do not claim active-control performance until a baseline comparison artifact exists.",
       "success_criteria": [
         "The neural ranker beats the no-safety baseline on top-1, utility, and regret.",
-        "Damage and death rates are not worse than the baseline on the measured held-out trace."
+        "Damage and death rates are not worse than the baseline on the measured held-out trace.",
+        "The live-active row, when claimed, shows neural_active/neural rows with checkpoint identity, inference latency, safety gates, telemetry, and replay-ready frames."
       ],
       "failure_modes": [
-        "Do not describe the live websocket pilot as neural-controlled until R-SIG.2/R-SIG.3 are supported."
+        "Do not claim live neural-active performance versus heuristic until an active episode summary or replayed active logs supply the comparison."
       ]
     },
     {
@@ -1228,8 +1231,77 @@
       "limitation_when_not_supported": "Signal does not yet provide a supported replay-control vignette, so the paper should remove Signal from the abstract and keep it only in the roadmap.",
       "derived_claims": [
         "C9.signal_shadow_inference",
-        "C9.signal_active_neural_control",
+        "C9.signal_active_control_comparison",
         "C9.signal_construction_ranker"
+      ]
+    },
+    {
+      "id": "C9.signal_live_neural_active",
+      "title": "Signal guarded neural-active pilot executes live checkpoint-ranked actions",
+      "claim_type": "application_vignette",
+      "claim_text": "A guarded Signal neural_active live pilot executes checkpoint-ranked WASD actions on a running local server with logged active-source, checkpoint hash, inference latency, safety gates, damage/death telemetry, and replay-ready trace rows.",
+      "builtin_evaluator": "signal_live_neural_active",
+      "required_for_submission": true,
+      "paper_surfaces": [
+        "schema_table",
+        "application_vignette",
+        "limitations",
+        "roadmap"
+      ],
+      "roadmap_items": [
+        "R-SIG.2",
+        "R-SIG.3"
+      ],
+      "evidence": {
+        "source": "results/2026-05-17-signal-flight/live_active_summary.jsonl",
+        "secondary_sources": [
+          "results/2026-05-17-signal-flight/live_active_frames.jsonl"
+        ],
+        "command": "make signal-live-active-summary SIGNAL_LIVE_ACTIVE_LOG=<live-brain-log>",
+        "schemas": [
+          "crlp.signal_live_active_summary.v1",
+          "crlp.signal_live_active_frame.v1"
+        ],
+        "filters": {
+          "brain_mode": "neural_active",
+          "active_source": "neural",
+          "feature_set": "signal-flight-live-v2"
+        },
+        "required_rows": [
+          {
+            "schema": "crlp.signal_live_active_summary.v1",
+            "latest_brain_mode": "neural_active",
+            "latest_active_source": "neural"
+          }
+        ]
+      },
+      "decision_rule": {
+        "min_active_rows": 50,
+        "max_inference_p95_ms": 5.0,
+        "supported_if": [
+          "latest_brain_mode == neural_active",
+          "latest_active_source == neural",
+          "dry_run_rows == 0",
+          "checkpoint_hash is present",
+          "feature_set == signal-flight-live-v2",
+          "window_active_rows >= 50",
+          "candidate_score_rows >= 50 and candidate_score_min_count >= 9",
+          "safety_gate_rows >= 50",
+          "replay_ready_rows >= 50",
+          "inference_ms_p95 <= 5.0",
+          "stale_within_log == false"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Run signal-live-active-summary against the current live-brain log and inspect the emitted summary row.",
+        "Keep live neural-active wording out of the body if the latest active_source is not neural, the checkpoint is missing, or replay-ready rows are absent.",
+        "Do not upgrade this to a performance claim without active neural versus heuristic utility/regret/damage/death evidence."
+      ],
+      "limitation_when_not_supported": "The live Signal pilot is not supported as neural-active by the current live-brain artifact, so the paper should mention only offline replay and shadow evidence.",
+      "derived_claims": [
+        "C9.signal_active_episode_summary",
+        "C9.signal_active_vs_heuristic_baseline",
+        "C9.signal_active_replay_audit"
       ]
     }
   ]

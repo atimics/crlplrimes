@@ -98,16 +98,83 @@ DOMAIN_ROWS = [
     {
         "domain": "signal_flight",
         "candidate_set": "certified control-target hypotheses plus nine WASD action candidates",
-        "verifier": "offline counterfactual simulator replay and live shadow frame comparison",
-        "certificate_gate": "replay utility, regret, damage/death counters, and shadow disagreement logs",
+        "verifier": "offline counterfactual simulator replay, live shadow frame comparison, and live active telemetry",
+        "certificate_gate": "replay utility, regret, damage/death counters, shadow disagreement logs, and live safety gates",
         "scorer_role": "rank bounded control candidates beside heuristic control",
-        "trace_artifact": "crlp.signal_flight.summary.v1; crlp.signal_live_brain.v1; crlp.signal_shadow_replay_audit.v1",
-        "result": "offline top-1 79.76% vs 67.86% baseline; live shadow frames = 22191",
-        "claim": "application pressure for replay-grounded residual ranking",
-        "claim_ids": ["C9.signal_flight_replay_control"],
-        "limitation": "shadow inference is not active neural control",
+        "trace_artifact": "crlp.signal_flight.summary.v1; crlp.signal_shadow_replay_audit.v1; crlp.signal_live_active_summary.v1",
+        "result": "generated from C9 signal claims",
+        "claim": "application pressure for replay-grounded residual ranking and guarded live neural-active execution",
+        "claim_ids": ["C9.signal_flight_replay_control", "C9.signal_live_neural_active"],
+        "limitation": "active neural versus heuristic performance is not yet claimed",
     },
 ]
+
+
+PROTOCOL_DETAILS = {
+    "prime_gap": {
+        "data_domain": "prime gaps over segmented sieve windows",
+        "grammar": "local modular filters over residues, gap classes, and wheel support",
+        "examples": ["modular reject rule", "wheel support certificate", "residual gap action"],
+        "takeaway": "certified modular structure is the candidate mechanism; the neural scorer ranks residual budget choices.",
+    },
+    "grid_path": {
+        "data_domain": "grid mazes with deterministic shortest-path labels",
+        "grammar": "local moves plus boundary, trap, path-clear, and distance predicates",
+        "examples": ["legal move", "trap reject", "distance-dominance gate"],
+        "takeaway": "the same candidate-verifier contract transfers to topology once the grammar stays domain-local.",
+    },
+    "delayed_claim": {
+        "data_domain": "delayed reward/claim rows with hidden outcomes and margins",
+        "grammar": "threshold, margin, and sibling-claim predicates",
+        "examples": ["safe threshold claim", "margin reject", "unsafe reason-prior transfer"],
+        "takeaway": "utility ranking must be downstream of safety when false rejection risk is domain-specific.",
+    },
+    "rejected_candidate_learning": {
+        "data_domain": "verifier rejection rows grouped by seed, split, and reason family",
+        "grammar": "the original domain grammars that produced rejected candidate rows",
+        "examples": ["unsafe candidate", "no-support row", "trained residual recovery"],
+        "takeaway": "rejected verifier rows are reusable supervision, not discarded failed searches.",
+    },
+    "hypothesis_library_feedback": {
+        "data_domain": "ARC-like hypothesis fixtures split into promotion and held-out task ids",
+        "grammar": "typed templates, slot bindings, and compiled program candidates",
+        "examples": ["slot prior", "promoted template", "held-out certified@1 row"],
+        "takeaway": "certified hypotheses can become library priors and improve tight-budget held-out certification.",
+    },
+    "multitask_tiny_net": {
+        "data_domain": "shared residual rows from prime, grid, claim, and ARC surfaces",
+        "grammar": "domain-local grammars encoded through common residual feature rows",
+        "examples": ["shared trunk row", "ARC OOD row", "capacity plateau row"],
+        "takeaway": "small rankers are useful around certified structure, but one flat head exposes interference.",
+    },
+    "arc_agi_evidence_surface": {
+        "data_domain": "public and fixture ARC tasks with cell, object, transform, and hypothesis candidates",
+        "grammar": "typed transforms, object/slot bindings, and bounded program templates",
+        "examples": ["typed transform", "hypothesis candidate", "loader summary"],
+        "takeaway": "ARC is an evidence surface for grammar coverage and failure taxonomy, not a score chase.",
+    },
+    "signal_flight": {
+        "data_domain": "Signal flight replay frames, live shadow-control comparisons, and live neural-active rows",
+        "grammar": "bounded action/control-option candidates beside the heuristic controller",
+        "examples": ["WASD candidate", "counterfactual utility row", "shadow disagreement row", "live active frame"],
+        "takeaway": "Signal adds application pressure through replay, shadow, and guarded live neural-active artifacts while keeping active-control performance open.",
+    },
+}
+
+
+REQUIRED_PROTOCOL_FIELDS = (
+    "data_domain",
+    "grammar",
+    "candidate_set",
+    "verifier",
+    "certificate_gate",
+    "scorer_role",
+    "trace_artifact",
+    "examples",
+    "result_table",
+    "takeaway",
+    "limitation",
+)
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -116,12 +183,23 @@ def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def claim_statuses(claims_path: Path) -> dict[str, str]:
+def claim_index(claims_path: Path) -> dict[str, dict[str, Any]]:
     claims = read_json(claims_path).get("claims", [])
-    return {str(row.get("id")): str(row.get("status")) for row in claims}
+    return {str(row.get("id")): row for row in claims}
 
 
-def add_status(row: dict[str, Any], statuses: dict[str, str]) -> dict[str, Any]:
+def add_status(row: dict[str, Any], claims: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    protocol = {
+        "data_domain": row["domain"],
+        "grammar": "domain-local candidate grammar",
+        "examples": [],
+        "result_table": row["result"],
+        "takeaway": row["claim"],
+    }
+    protocol.update(PROTOCOL_DETAILS.get(str(row["domain"]), {}))
+    protocol.setdefault("result_table", row["result"])
+    enriched = {**protocol, **row}
+    enriched.setdefault("result_table", enriched["result"])
     claim_source = row.get("claim_ids", row.get("claim", ""))
     if isinstance(claim_source, list):
         claim_parts = [str(part) for part in claim_source]
@@ -132,11 +210,18 @@ def add_status(row: dict[str, Any], statuses: dict[str, str]) -> dict[str, Any]:
         for part in claim_parts
         if part.strip().startswith("C")
     ]
-    present = {claim_id: statuses.get(claim_id, "not_registered") for claim_id in claim_ids}
+    present = {claim_id: claims.get(claim_id, {}).get("status", "not_registered") for claim_id in claim_ids}
+    if row.get("domain") == "signal_flight":
+        replay_summary = claims.get("C9.signal_flight_replay_control", {}).get("summary", "")
+        live_summary = claims.get("C9.signal_live_neural_active", {}).get("summary", "")
+        summaries = [str(item) for item in (replay_summary, live_summary) if item]
+        if summaries:
+            enriched["result"] = " ".join(summaries)
+            enriched["result_table"] = " ".join(summaries)
     return {
         "schema": "crlp.experiment_matrix.row.v1",
         "date": date.today().isoformat(),
-        **row,
+        **enriched,
         "claim_statuses": present,
     }
 
@@ -148,6 +233,26 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             fp.write(json.dumps(row, sort_keys=True) + "\n")
 
 
+def validate_rows(rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        missing = [field for field in REQUIRED_PROTOCOL_FIELDS if not row.get(field)]
+        if missing:
+            raise ValueError(f"{row.get('domain', '<unknown>')} missing protocol fields: {missing}")
+        examples = row.get("examples")
+        if not isinstance(examples, list) or not (2 <= len(examples) <= 4):
+            raise ValueError(f"{row.get('domain', '<unknown>')} must have 2-4 protocol examples")
+
+
+def text_list(value: Any, separator: str = "; ") -> str:
+    if isinstance(value, list):
+        return separator.join(str(item) for item in value)
+    return str(value)
+
+
+def md_cell(value: Any) -> str:
+    return text_list(value).replace("|", "\\|")
+
+
 def write_markdown(path: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
         "# Frozen Experiment Matrix",
@@ -156,20 +261,39 @@ def write_markdown(path: Path, rows: list[dict[str, Any]]) -> None:
         "",
         "The paper evidence families are frozen to these rows. New domains belong in roadmap notes until this matrix is deliberately revised.",
         "",
-        "| Domain | Candidate set | Verifier | Certificate/gate | Scorer role | Trace artifact | Result | Claim | Limitation |",
+        "| Domain/data | Grammar | Candidate set | Verifier/gate | Scorer role | Trace artifact | Result table | Takeaway | Limitation |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
         lines.append(
-            "| `{domain}` | {candidate_set} | {verifier} | {certificate_gate} | {scorer_role} | `{trace_artifact}` | {result} | {claim} | {limitation} |".format(
-                **row
+            "| `{domain}`: {data_domain} | {grammar} | {candidate_set} | {verifier}; {certificate_gate} | {scorer_role} | `{trace_artifact}` | {result_table} | {takeaway} | {limitation} |".format(
+                **{key: md_cell(value) for key, value in row.items()}
             )
         )
+    lines.extend(["", "## Repeated Protocol Rows", ""])
+    for row in rows:
+        lines.extend(
+            [
+                f"### `{row['domain']}`",
+                "",
+                f"1. Domain/data: {text_list(row['data_domain'])}",
+                f"2. Grammar: {text_list(row['grammar'])}",
+                f"3. Candidate set: {text_list(row['candidate_set'])}",
+                f"4. Verifier/gate: {text_list(row['verifier'])}; {text_list(row['certificate_gate'])}",
+                f"5. Examples: {text_list(row['examples'])}",
+                f"6. Result table: {text_list(row['result_table'])}",
+                f"7. Takeaway: {text_list(row['takeaway'])}",
+                f"8. Limitation: {text_list(row['limitation'])}",
+                "",
+            ]
+        )
+    while lines and lines[-1] == "":
+        lines.pop()
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def typst_string(value: Any) -> str:
-    return json.dumps(str(value))
+    return json.dumps(text_list(value))
 
 
 def write_typst(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -179,13 +303,18 @@ def write_typst(path: Path, rows: list[dict[str, Any]]) -> None:
     ]
     keys = (
         "domain",
+        "data_domain",
+        "grammar",
         "candidate_set",
         "verifier",
         "certificate_gate",
         "scorer_role",
         "trace_artifact",
+        "examples",
+        "result_table",
         "result",
         "claim",
+        "takeaway",
         "limitation",
     )
     for row in rows:
@@ -205,8 +334,9 @@ def main() -> int:
     parser.add_argument("--output-typ", type=Path, default=Path("paper/generated/experiment_matrix.typ"))
     args = parser.parse_args()
 
-    statuses = claim_statuses(args.claims_json)
-    rows = [add_status(row, statuses) for row in DOMAIN_ROWS]
+    claims = claim_index(args.claims_json)
+    rows = [add_status(row, claims) for row in DOMAIN_ROWS]
+    validate_rows(rows)
     write_jsonl(args.output_jsonl, rows)
     write_markdown(args.output_md, rows)
     write_typst(args.output_typ, rows)

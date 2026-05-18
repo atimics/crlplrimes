@@ -415,6 +415,214 @@ static int test_program_coverage_and_proposer_summary_json(void)
     return ok;
 }
 
+static int test_protocol_candidate_and_outcome_json_contract(void)
+{
+    nn_real features[3] = {(nn_real)1, (nn_real)0.25, (nn_real)-0.5};
+    NNActionCandidate action = {
+        .action_id = 42,
+        .features = features,
+    };
+    NNCandidateRow row;
+    NNCertificate certificate;
+    NNVerifierOutcome outcome;
+    NNCertificate delayed_certificate;
+    NNVerifierOutcome delayed_outcome;
+    NNParsedCandidateRow parsed_row;
+    NNParsedVerifierOutcome parsed_outcome;
+    char line[2048];
+    FILE *fp = tmpfile();
+
+    int ok = fp != NULL;
+    ok = ok && nn_protocol_candidate_from_action("prime_gap",
+                                                 "gap_action",
+                                                 &action,
+                                                 3,
+                                                 "unit_test",
+                                                 "gap=6",
+                                                 &row);
+    ok = ok && row.stable_id == 42 &&
+         row.features == features &&
+         row.feature_count == 3 &&
+         strcmp(row.domain, "prime_gap") == 0;
+    nn_certificate_accept(&certificate,
+                          "unit_proof",
+                          "nonzero support",
+                          9,
+                          4);
+    ok = ok && nn_protocol_outcome_from_certificate(&certificate,
+                                                    2.5,
+                                                    7.0,
+                                                    &outcome);
+    ok = ok && outcome.status == NN_VERIFIER_ACCEPTED &&
+         nn_protocol_status_is_safe(outcome.status) &&
+         strcmp(nn_protocol_status_name(outcome.status), "accepted") == 0;
+    nn_certificate_reject(&delayed_certificate,
+                          "finite_generator",
+                          "false_rejection_risk",
+                          11,
+                          2);
+    ok = ok && nn_protocol_outcome_from_certificate(&delayed_certificate,
+                                                    -4.0,
+                                                    11.0,
+                                                    &delayed_outcome);
+    ok = ok && delayed_outcome.status == NN_VERIFIER_UNSAFE &&
+         !nn_protocol_status_is_safe(delayed_outcome.status);
+    if (fp != NULL) {
+        ok = ok && nn_candidate_row_write_json(fp, &row);
+        ok = ok && nn_verifier_outcome_write_json(fp,
+                                                  row.domain,
+                                                  row.stable_id,
+                                                  &outcome);
+        ok = ok && nn_verifier_outcome_write_json(fp,
+                                                  "delayed_claim",
+                                                  77,
+                                                  &delayed_outcome);
+        rewind(fp);
+        ok = ok && fgets(line, sizeof(line), fp) != NULL;
+        ok = ok && strstr(line, NN_PROTOCOL_CANDIDATE_SCHEMA) != NULL;
+        ok = ok && nn_candidate_row_parse_jsonl(line, &parsed_row);
+        ok = ok && parsed_row.stable_id == 42 &&
+             parsed_row.feature_count == 3 &&
+             strcmp(parsed_row.candidate_kind, "gap_action") == 0 &&
+             strcmp(parsed_row.example_text, "gap=6") == 0;
+        ok = ok && fgets(line, sizeof(line), fp) != NULL;
+        ok = ok && strstr(line, NN_PROTOCOL_VERIFIER_SCHEMA) != NULL;
+        ok = ok && nn_verifier_outcome_parse_jsonl(line, &parsed_outcome);
+        ok = ok && parsed_outcome.stable_id == 42 &&
+             parsed_outcome.status == NN_VERIFIER_ACCEPTED &&
+             parsed_outcome.support == 4 &&
+             parsed_outcome.false_rejections == 0 &&
+             nearly_equal((nn_real)parsed_outcome.utility,
+                          (nn_real)2.5,
+                          (nn_real)1e-6,
+                          (nn_real)1e-6);
+        ok = ok && fgets(line, sizeof(line), fp) != NULL;
+        ok = ok && nn_verifier_outcome_parse_jsonl(line, &parsed_outcome);
+        ok = ok && parsed_outcome.stable_id == 77 &&
+             parsed_outcome.status == NN_VERIFIER_UNSAFE &&
+             parsed_outcome.false_rejections == 2 &&
+             strcmp(parsed_outcome.domain, "delayed_claim") == 0;
+        fclose(fp);
+    }
+    return ok;
+}
+
+static int test_protocol_rule_library_and_ranker_json_contract(void)
+{
+    NNRule rule;
+    NNCandidateRow row;
+    NNVerifierOutcome outcome;
+    NNDiscoveredRuleRecord discovered;
+    NNLibraryPromotionRecord promotion;
+    uint32_t ids[2] = {1001, 1002};
+    nn_real scores[2] = {(nn_real)0.9, (nn_real)0.9};
+    nn_real probabilities[2] = {(nn_real)0.5, (nn_real)0.5};
+    NNRankerDecision decision = {
+        .task_name = "signal_flight.shadow_replay",
+        .model_hash_hex = "abc",
+        .candidate_count = 2,
+        .candidate_ids = ids,
+        .scores = scores,
+        .probabilities = probabilities,
+        .selected_index = 0,
+        .target_index = 1,
+        .selected_score_margin = (nn_real)0,
+        .rank_score_epsilon = NN_RANK_SCORE_EPSILON,
+        .ranking_policy = NN_RANKING_POLICY,
+    };
+    FILE *fp = tmpfile();
+    char buffer[4096];
+
+    nn_rule_init(&rule,
+                 "arc",
+                 "translate_slot_prior",
+                 NN_RULE_KIND_ARC_TRANSFORM,
+                 9001);
+    int ok = fp != NULL;
+    ok = ok && nn_rule_add_feature(&rule, (nn_real)1);
+    ok = ok && nn_rule_add_feature(&rule, (nn_real)0.5);
+    nn_certificate_accept(&rule.certificate,
+                          "heldout_zero_false_rejection",
+                          "slot prior promoted",
+                          12,
+                          6);
+    ok = ok && nn_protocol_candidate_from_rule(&rule, &row);
+    ok = ok && nn_protocol_outcome_from_certificate(&rule.certificate,
+                                                    3.25,
+                                                    12.0,
+                                                    &outcome);
+    discovered.candidate = &row;
+    discovered.outcome = &outcome;
+    discovered.rule_name = rule.name;
+    discovered.template_id = rule.template_id;
+    promotion.domain = "arc";
+    promotion.template_name = "translate_slot_prior";
+    promotion.template_id = 9001;
+    promotion.promoted_count = 1;
+    promotion.support_tasks = 3;
+    promotion.covered_events = 19;
+    promotion.false_rejections = 0;
+    promotion.utility = 3.25;
+    promotion.heldout_rows = 10;
+    promotion.reason_code = "zero_false_rejection";
+
+    if (fp != NULL) {
+        ok = ok && nn_discovered_rule_write_json(fp, &discovered);
+        ok = ok && nn_library_promotion_write_json(fp, &promotion);
+        ok = ok && nn_ranker_decision_write_json(fp, &decision);
+        rewind(fp);
+        size_t n = fread(buffer, 1, sizeof(buffer) - 1, fp);
+        buffer[n] = '\0';
+        ok = ok && strstr(buffer, NN_PROTOCOL_RULE_SCHEMA) != NULL;
+        ok = ok && strstr(buffer, NN_PROTOCOL_LIBRARY_SCHEMA) != NULL;
+        ok = ok && strstr(buffer, NN_PROTOCOL_RANKER_SCHEMA) != NULL;
+        ok = ok && strstr(buffer, "\"task_name\":\"signal_flight.shadow_replay\"") != NULL;
+        ok = ok && strstr(buffer, "\"selected_action_id\":1001") != NULL;
+        ok = ok && strstr(buffer, "\"false_rejections\":0") != NULL;
+        fclose(fp);
+    }
+    return ok;
+}
+
+static int test_protocol_score_adapter_matches_action_rows(void)
+{
+    const size_t layers[] = {2, 1};
+    NeuralNet *net = nn_create(layers, 2, 123);
+    nn_real a_features[2] = {(nn_real)0.0, (nn_real)1.0};
+    nn_real b_features[2] = {(nn_real)1.0, (nn_real)0.0};
+    NNActionCandidate a = {.action_id = 11, .features = a_features};
+    NNActionCandidate b = {.action_id = 12, .features = b_features};
+    NNCandidateRow rows[2];
+    nn_real scores[2] = {0};
+    nn_real probabilities[2] = {0};
+    int ok = net != NULL;
+    ok = ok && nn_protocol_candidate_from_action("grid_path",
+                                                 "move",
+                                                 &a,
+                                                 2,
+                                                 "unit_test",
+                                                 "north",
+                                                 &rows[0]);
+    ok = ok && nn_protocol_candidate_from_action("grid_path",
+                                                 "move",
+                                                 &b,
+                                                 2,
+                                                 "unit_test",
+                                                 "east",
+                                                 &rows[1]);
+    ok = ok && nn_protocol_score_candidates(net, rows, 2, scores, probabilities);
+    ok = ok && isfinite((double)scores[0]) &&
+         isfinite((double)scores[1]) &&
+         probabilities[0] >= (nn_real)0 &&
+         probabilities[1] >= (nn_real)0 &&
+         nearly_equal(probabilities[0] + probabilities[1],
+                      (nn_real)1,
+                      (nn_real)1e-5,
+                      (nn_real)1e-5);
+    nn_free(net);
+    return ok;
+}
+
 static int build_select_then_translate_template(NNHypothesisTemplate *template_ref)
 {
     nn_hypothesis_template_init(template_ref,
@@ -3001,6 +3209,12 @@ int main(void)
           "program layer encodes domain-neutral structural features");
     check(test_program_coverage_and_proposer_summary_json(),
           "program layer tracks coverage and proposer evidence");
+    check(test_protocol_candidate_and_outcome_json_contract(),
+          "protocol layer serializes candidate rows and verifier outcomes");
+    check(test_protocol_rule_library_and_ranker_json_contract(),
+          "protocol layer emits rule, library, and ranker JSONL rows");
+    check(test_protocol_score_adapter_matches_action_rows(),
+          "protocol layer scores normalized candidate rows");
     check(test_hypothesis_template_validity_and_canonical_id(),
           "hypothesis layer validates templates and canonicalizes bindings");
     check(test_hypothesis_reference_color_presence_disambiguates_id(),

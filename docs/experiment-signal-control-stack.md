@@ -1,11 +1,13 @@
 # Experiment Proposal: Signal Full-Spectrum Control Stack
 
-Status: implemented as an offline replay ranker, closed-loop rollout evaluator,
-and live websocket shadow pilot. `examples/signal_flight.c` trains/saves the
+Status: implemented as an offline flight replay ranker, closed-loop flight
+rollout evaluator, live websocket shadow pilot, and first tactical mining
+option-ranker MVP. `examples/signal_flight.c` trains/saves the flight
 checkpoint; `examples/signal_flight_rollout.c` runs deterministic Signal
-rollouts against baselines; `scripts/signal_live_brain.mjs` loads that
-checkpoint, defaults to `shadow_neural`, and only lets neural choices drive the
-ship under explicit `--brain-mode neural_active`.
+rollouts against baselines; `examples/signal_mining.c` generates
+replay-certified mine/tow/smelt option rows; `scripts/signal_live_brain.mjs`
+loads the flight checkpoint, defaults to `shadow_neural`, and only lets neural
+choices drive the ship under explicit `--brain-mode neural_active`.
 
 ## Purpose
 
@@ -85,6 +87,35 @@ Unsupported wording:
 
 The live brain now logs heuristic and neural decisions on the same frame, but
 active neural flight remains a Tier-2 result that requires replay follow-up.
+
+## Current Tactical Mining MVP
+
+The next layer is now buildable as:
+
+```sh
+make signal-mining
+```
+
+It does not try to emit raw keypresses for the whole economy. It samples a
+deterministic Signal state, enumerates a bounded tactical option set, replays
+each option from the same seed and prefix, and trains the tiny net to rank the
+certified outcomes.
+
+| Field | Current value |
+| --- | --- |
+| Candidate set | `autopilot_loop`, `mine_nearest_clear`, `mine_richest`, `collect_local_fragments`, `deliver_refinery`, `dock_repair` |
+| Feature row | 40 observable state/option features |
+| Trace schema | `signal.mining_counterfactual.v1` |
+| Summary schema | `crlp.signal_mining.summary.v1` |
+| Training mode | `counterfactual_tactical_utility` |
+| Baseline | fixed priority: repair if damaged, deliver if towing, collect visible fragments, otherwise mine nearest clear rock |
+| Output | `build/float/signal_mining_experiment/trace.jsonl`, `summary.jsonl`, and `signal_mining.nnckpt` |
+
+This is the first `R-SIG.4` slice. It is evidence for the architecture and data
+pipeline, not yet evidence that the character can autonomously run the economy.
+The next extensions are larger tactical menus, longer horizons, repair-kit
+supply-chain rewards, trading/delivery candidates, and promotion of repeated
+successful option motifs.
 
 ## Protocol Shape
 
@@ -608,14 +639,18 @@ Pass condition:
 
 ### R-SIG.4: Tactical Option Ranker
 
+Status: first mine/tow/smelt option-ranker MVP implemented via
+`examples/signal_mining.c` and `make signal-mining`.
+
 Owner: Signal experiment agent.
 
 Work:
 
-- define tactical option candidate schema
-- generate replay-certified tactical traces
-- train tiny option ranker
-- compare against priority and nearest-goal heuristics
+- broaden the tactical option candidate schema beyond the initial
+  mine/tow/smelt menu
+- generate replay-certified tactical traces across more seeds and horizons
+- train and evaluate the tiny option ranker
+- compare against priority, nearest-goal, and economy-specific heuristics
 
 Pass condition:
 
