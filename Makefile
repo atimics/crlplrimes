@@ -131,6 +131,9 @@ SIGNAL_LIVE_BRAIN_CHECKPOINT_ARG = $(if $(SIGNAL_LIVE_BRAIN_CHECKPOINT),--brain-
 SIGNAL_LIVE_BRAIN_OPTION_CHECKPOINT ?=
 SIGNAL_LIVE_BRAIN_OPTION_MODE ?= off
 SIGNAL_LIVE_BRAIN_OPTION_CHECKPOINT_ARG = $(if $(SIGNAL_LIVE_BRAIN_OPTION_CHECKPOINT),--option-checkpoint "$(SIGNAL_LIVE_BRAIN_OPTION_CHECKPOINT)",)
+SIGNAL_LIVE_BRAIN_PROTOCOL_ROOT ?= $(SIGNAL_FLIGHT_SIGNAL_DIR)
+SIGNAL_LIVE_BRAIN_PROTOCOL_CHECK ?= 1
+SIGNAL_LIVE_BRAIN_PROTOCOL_ARG = $(if $(filter 0,$(SIGNAL_LIVE_BRAIN_PROTOCOL_CHECK)),--skip-protocol-check,--protocol-root "$(SIGNAL_LIVE_BRAIN_PROTOCOL_ROOT)")
 SIGNAL_LIVE_BRAIN_EXTRA ?=
 SIGNAL_LIVE_STATUS_LOG ?= $(SIGNAL_LIVE_BRAIN_LOG)
 SIGNAL_LIVE_STATUS_INTERVAL_MS ?= 1000
@@ -148,9 +151,9 @@ SIGNAL_FLIGHT_ROLLOUT_EPISODES ?= 24
 SIGNAL_FLIGHT_ROLLOUT_TICKS ?= 900
 SIGNAL_FLIGHT_ROLLOUT_SEED ?= 4242
 SIGNAL_MINING_RESULT_DIR ?= $(BUILD_DIR)/signal_mining_experiment
-SIGNAL_MINING_TRAIN_GROUPS ?= 24
-SIGNAL_MINING_TEST_GROUPS ?= 8
-SIGNAL_MINING_HORIZON_TICKS ?= 3600
+SIGNAL_MINING_TRAIN_GROUPS ?= 18
+SIGNAL_MINING_TEST_GROUPS ?= 6
+SIGNAL_MINING_HORIZON_TICKS ?= 1200
 SIGNAL_MINING_EPOCHS ?= 4
 SIGNAL_MINING_SEED ?= 5252
 SIGNAL_MINING_LEARNING_RATE ?= 0.004
@@ -208,7 +211,7 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-public paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke signal-live-brain signal-live-brain-smoke signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit experiment-matrix results paper-pdf paper-data paper-claims paper-support neurosymbolic-tune benchmark test sanitize check clean
+.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-public paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke signal-live-brain signal-live-brain-smoke signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit experiment-matrix results paper-pdf paper-data paper-claims paper-support editorial-pr-check paper-ci neurosymbolic-tune benchmark test sanitize check clean
 
 all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(BENCHMARK)
 
@@ -551,7 +554,7 @@ hypothesis-library-split-sweep: $(ARC_AGI)
 hypothesis-library-public: $(ARC_AGI)
 	$(PYTHON) scripts/hypothesis_library_split_sweep.py --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --output-dir $(HYPOTHESIS_LIBRARY_PUBLIC_DIR) --public-train-max-tasks $(HYPOTHESIS_LIBRARY_PUBLIC_TRAIN_MAX_TASKS) --public-eval-max-tasks $(HYPOTHESIS_LIBRARY_PUBLIC_EVAL_MAX_TASKS)
 
-paper-grade-evidence-core: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit experiment-matrix
+paper-grade-evidence-core: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit multitask-adapter-heads experiment-matrix
 	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR)
 	cp $(REJECTED_CANDIDATE_DIR)/reason_learning.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_learning.jsonl
 	cp $(REJECTED_CANDIDATE_DIR)/safety_report.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_safety_report.jsonl
@@ -564,7 +567,7 @@ paper-grade-evidence-core: rejected-candidate-learning rejected-candidate-seed-a
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_width_help.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_width_help.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_audit_verdict.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_audit_verdict.jsonl
 
-paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit signal-shadow-replay-audit signal-live-active-summary experiment-matrix
+paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit multitask-adapter-heads signal-flight-rollout-eval signal-shadow-replay-audit signal-live-active-summary experiment-matrix
 	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR) $(SIGNAL_FLIGHT_RESULTS_DIR)
 	cp $(REJECTED_CANDIDATE_DIR)/reason_learning.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_learning.jsonl
 	cp $(REJECTED_CANDIDATE_DIR)/safety_report.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_safety_report.jsonl
@@ -576,11 +579,13 @@ paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit 
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_plateau_summary.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_plateau_summary.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_width_help.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_width_help.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_audit_verdict.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_audit_verdict.jsonl
+	cp $(SIGNAL_FLIGHT_RESULT_DIR)/summary.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.jsonl
+	cp $(SIGNAL_FLIGHT_ROLLOUT_SUMMARY) $(SIGNAL_FLIGHT_RESULTS_DIR)/rollout_summary.jsonl
 	cp $(SIGNAL_SHADOW_REPLAY_DIR)/summary.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_replay_audit.jsonl
 	cp $(SIGNAL_SHADOW_REPLAY_DIR)/shadow_frames.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_frames.jsonl
 	cp $(SIGNAL_LIVE_ACTIVE_DIR)/summary.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl
 	cp $(SIGNAL_LIVE_ACTIVE_DIR)/active_frames.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_frames.jsonl
-	$(PYTHON) scripts/signal_flight_report.py --offline $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.jsonl --shadow $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_replay_audit.jsonl --live-active $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl --output $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md
+	$(PYTHON) scripts/signal_flight_report.py --offline $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.jsonl --rollout $(SIGNAL_FLIGHT_RESULTS_DIR)/rollout_summary.jsonl --shadow $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_replay_audit.jsonl --live-active $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl --output $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md
 
 signal-flight-data:
 	$(MAKE) -C $(SIGNAL_FLIGHT_SIGNAL_DIR) build-flight-trace
@@ -596,7 +601,7 @@ signal-flight-pain: SIGNAL_FLIGHT_PAIN_PROBE=1
 signal-flight-pain: SIGNAL_FLIGHT_WALL_PROBE=1
 signal-flight-pain: signal-flight
 
-signal-flight-rollout-eval: $(SIGNAL_FLIGHT_ROLLOUT)
+signal-flight-rollout-eval: $(SIGNAL_FLIGHT_ROLLOUT) signal-flight
 	mkdir -p $(SIGNAL_FLIGHT_ROLLOUT_DIR)
 	./$(SIGNAL_FLIGHT_ROLLOUT) --checkpoint "$(SIGNAL_FLIGHT_ROLLOUT_CHECKPOINT)" --episodes $(SIGNAL_FLIGHT_ROLLOUT_EPISODES) --ticks $(SIGNAL_FLIGHT_ROLLOUT_TICKS) --seed $(SIGNAL_FLIGHT_ROLLOUT_SEED) --summary "$(SIGNAL_FLIGHT_ROLLOUT_SUMMARY)"
 
@@ -612,10 +617,10 @@ signal-mining-smoke: SIGNAL_MINING_EPOCHS=2
 signal-mining-smoke: signal-mining
 
 signal-live-brain:
-	node scripts/signal_live_brain.mjs --server "$(SIGNAL_LIVE_BRAIN_SERVER)" --session "$(SIGNAL_LIVE_BRAIN_SESSION)" --log "$(SIGNAL_LIVE_BRAIN_LOG)" --callsign "$(SIGNAL_LIVE_BRAIN_CALLSIGN)" --max-ms "$(SIGNAL_LIVE_BRAIN_MAX_MS)" --brain-mode "$(SIGNAL_LIVE_BRAIN_MODE)" --option-mode "$(SIGNAL_LIVE_BRAIN_OPTION_MODE)" $(SIGNAL_LIVE_BRAIN_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_OPTION_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_EXTRA)
+	node scripts/signal_live_brain.mjs --server "$(SIGNAL_LIVE_BRAIN_SERVER)" --session "$(SIGNAL_LIVE_BRAIN_SESSION)" --log "$(SIGNAL_LIVE_BRAIN_LOG)" --callsign "$(SIGNAL_LIVE_BRAIN_CALLSIGN)" --max-ms "$(SIGNAL_LIVE_BRAIN_MAX_MS)" --brain-mode "$(SIGNAL_LIVE_BRAIN_MODE)" --option-mode "$(SIGNAL_LIVE_BRAIN_OPTION_MODE)" $(SIGNAL_LIVE_BRAIN_PROTOCOL_ARG) $(SIGNAL_LIVE_BRAIN_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_OPTION_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_EXTRA)
 
 signal-live-brain-smoke:
-	node scripts/signal_live_brain.mjs --server "$(SIGNAL_LIVE_BRAIN_SERVER)" --session "$(SIGNAL_LIVE_BRAIN_SESSION)" --log "$(SIGNAL_LIVE_BRAIN_LOG)" --callsign "$(SIGNAL_LIVE_BRAIN_CALLSIGN)" --max-ms 5000 --brain-mode "$(SIGNAL_LIVE_BRAIN_MODE)" --option-mode "$(SIGNAL_LIVE_BRAIN_OPTION_MODE)" $(SIGNAL_LIVE_BRAIN_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_OPTION_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_EXTRA)
+	node scripts/signal_live_brain.mjs --server "$(SIGNAL_LIVE_BRAIN_SERVER)" --session "$(SIGNAL_LIVE_BRAIN_SESSION)" --log "$(SIGNAL_LIVE_BRAIN_LOG)" --callsign "$(SIGNAL_LIVE_BRAIN_CALLSIGN)" --max-ms 5000 --brain-mode "$(SIGNAL_LIVE_BRAIN_MODE)" --option-mode "$(SIGNAL_LIVE_BRAIN_OPTION_MODE)" $(SIGNAL_LIVE_BRAIN_PROTOCOL_ARG) $(SIGNAL_LIVE_BRAIN_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_OPTION_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_EXTRA)
 
 signal-live-status:
 	node scripts/signal_live_status.mjs --log "$(SIGNAL_LIVE_STATUS_LOG)" --interval-ms "$(SIGNAL_LIVE_STATUS_INTERVAL_MS)" $(SIGNAL_LIVE_STATUS_EXTRA)
@@ -624,7 +629,7 @@ signal-live-active-summary:
 	$(PYTHON) scripts/signal_live_active_summary.py --log "$(SIGNAL_LIVE_ACTIVE_LOG)" --output-dir "$(SIGNAL_LIVE_ACTIVE_DIR)" --window-rows "$(SIGNAL_LIVE_ACTIVE_WINDOW_ROWS)" --stale-ms "$(SIGNAL_LIVE_ACTIVE_STALE_MS)"
 
 signal-flight-report:
-	$(PYTHON) scripts/signal_flight_report.py --offline $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.jsonl --shadow $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_replay_audit.jsonl --live-active $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl --output $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md
+	$(PYTHON) scripts/signal_flight_report.py --offline $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.jsonl --rollout $(SIGNAL_FLIGHT_RESULTS_DIR)/rollout_summary.jsonl --shadow $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_replay_audit.jsonl --live-active $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl --output $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md
 
 signal-shadow-replay-audit:
 	$(PYTHON) scripts/signal_shadow_replay_audit.py --log "$(SIGNAL_LIVE_STATUS_LOG)" --output-dir "$(SIGNAL_SHADOW_REPLAY_DIR)" --horizon-ms "$(SIGNAL_SHADOW_REPLAY_HORIZON_MS)"
@@ -649,6 +654,11 @@ paper-claims:
 
 paper-support: trace-determinism-compare
 	$(PYTHON) scripts/derive_paper_claims.py --support-check
+
+editorial-pr-check:
+	$(PYTHON) scripts/check_editorial_pr.py
+
+paper-ci: editorial-pr-check paper-pdf
 
 neurosymbolic-tune: all
 	$(PYTHON) scripts/neurosymbolic_tuning.py --output-dir $(TUNING_DIR) --real $(REAL) --skip-build

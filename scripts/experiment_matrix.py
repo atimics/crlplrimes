@@ -98,11 +98,11 @@ DOMAIN_ROWS = [
     {
         "domain": "signal_flight",
         "candidate_set": "certified control-target hypotheses plus nine WASD action candidates",
-        "verifier": "offline counterfactual simulator replay, live shadow frame comparison, and live active telemetry",
-        "certificate_gate": "replay utility, regret, damage/death counters, shadow disagreement logs, and live safety gates",
+        "verifier": "offline counterfactual simulator replay, closed-loop rollout replay, live shadow frame comparison, and live active telemetry",
+        "certificate_gate": "replay utility, regret, damage/death counters, certified control-target rollout rows, shadow disagreement logs, live safety gates, and protocol compatibility rows",
         "scorer_role": "rank bounded control candidates beside heuristic control",
-        "trace_artifact": "crlp.signal_flight.summary.v1; crlp.signal_shadow_replay_audit.v1; crlp.signal_live_active_summary.v1",
-        "result": "generated from C9 signal claims",
+        "trace_artifact": "crlp.signal_flight.summary.v1; crlp.signal_flight_rollout.summary.v1; crlp.signal_shadow_replay_audit.v1; crlp.signal_live_active_summary.v1",
+        "result": "offline replay, rollout bridge, and guarded live neural-active evidence are reported; active baseline comparison remains open",
         "claim": "application pressure for replay-grounded residual ranking and guarded live neural-active execution",
         "claim_ids": ["C9.signal_flight_replay_control", "C9.signal_live_neural_active"],
         "limitation": "active neural versus heuristic performance is not yet claimed",
@@ -154,10 +154,10 @@ PROTOCOL_DETAILS = {
         "takeaway": "ARC is an evidence surface for grammar coverage and failure taxonomy, not a score chase.",
     },
     "signal_flight": {
-        "data_domain": "Signal flight replay frames, live shadow-control comparisons, and live neural-active rows",
+        "data_domain": "Signal flight replay frames, closed-loop rollout rows, live shadow-control comparisons, and live neural-active rows",
         "grammar": "bounded action/control-option candidates beside the heuristic controller",
-        "examples": ["WASD candidate", "counterfactual utility row", "shadow disagreement row", "live active frame"],
-        "takeaway": "Signal adds application pressure through replay, shadow, and guarded live neural-active artifacts while keeping active-control performance open.",
+        "examples": ["WASD candidate", "counterfactual utility row", "rollout controller row", "shadow disagreement row"],
+        "takeaway": "Signal adds application pressure through replay, rollout, shadow, and guarded live artifacts while keeping active-control performance open.",
     },
 }
 
@@ -199,6 +199,7 @@ def add_status(row: dict[str, Any], claims: dict[str, dict[str, Any]]) -> dict[s
     protocol.update(PROTOCOL_DETAILS.get(str(row["domain"]), {}))
     protocol.setdefault("result_table", row["result"])
     enriched = {**protocol, **row}
+    enriched["domain_display"] = str(row["domain"]).replace("_", " ")
     enriched.setdefault("result_table", enriched["result"])
     claim_source = row.get("claim_ids", row.get("claim", ""))
     if isinstance(claim_source, list):
@@ -217,7 +218,17 @@ def add_status(row: dict[str, Any], claims: dict[str, dict[str, Any]]) -> dict[s
         summaries = [str(item) for item in (replay_summary, live_summary) if item]
         if summaries:
             enriched["result"] = " ".join(summaries)
-            enriched["result_table"] = " ".join(summaries)
+            live_status = claims.get("C9.signal_live_neural_active", {}).get("status", "missing")
+            if live_status == "supported":
+                enriched["result_table"] = (
+                    "offline replay, rollout bridge, and live neural-active claims supported; "
+                    "active baseline comparison remains open"
+                )
+            else:
+                enriched["result_table"] = (
+                    "offline replay and rollout bridge supported; live neural-active evidence "
+                    f"{live_status} pending protocol-compatible rows; active baseline comparison remains open"
+                )
     return {
         "schema": "crlp.experiment_matrix.row.v1",
         "date": date.today().isoformat(),
@@ -303,6 +314,7 @@ def write_typst(path: Path, rows: list[dict[str, Any]]) -> None:
     ]
     keys = (
         "domain",
+        "domain_display",
         "data_domain",
         "grammar",
         "candidate_set",

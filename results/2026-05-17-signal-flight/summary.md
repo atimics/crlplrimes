@@ -15,30 +15,42 @@ Source: `build/float/signal_flight_experiment/summary.jsonl`.
 | damage rate | 2.38% | 2.38% |
 | death rate | 0.00% | 0.00% |
 
+## Closed-Loop Rollout Evidence
+
+| controller | episodes | reach | death | damage eps | stuck | progress | utility | selected certified |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `goal_heading_no_safety` | 24 | 8.33% | 8.33% | 79.17% | 0.00% | 1865.130 | -1.464 | 0.00% |
+| `flight_steer_to` | 24 | 0.00% | 0.00% | 20.83% | 0.00% | 699.843 | 0.160 | 0.00% |
+| `neural_raw` | 24 | 12.50% | 0.00% | 62.50% | 0.00% | 694.468 | 0.092 | 40.45% |
+| `neural_guarded` | 24 | 12.50% | 0.00% | 25.00% | 0.00% | 696.216 | 0.356 | 40.88% |
+
 ## Live Shadow Evidence
 
 | metric | value |
 | --- | ---: |
-| shadow frames | 22191 |
-| disagreement rate | 73.51% |
-| inference p95 ms | 0.751 |
+| shadow frames | 74 |
+| disagreement rate | 75.68% |
+| inference p95 ms | 0.089 |
+| protocol-compatible rows | 74 |
+| counterfactual replay | `False` |
 
 ## Live Neural-Active Evidence
 
-Log: `build/float/signal_live_brain/live-9093-reset-20260518.jsonl`.
+Log: `build/float/signal_live_brain/live-protocol-20260518.jsonl`.
 
 | metric | value |
 | --- | ---: |
-| active rows | 10078 |
-| window active rows | 250 |
+| active rows | 74 |
+| window active rows | 74 |
 | brain mode | `neural_active` |
 | active source | `neural` |
 | checkpoint | `f12b644ed9fa` |
-| inference p95 ms | 0.124 |
-| replay-ready rows | 249 |
-| damage events | 0 |
+| inference p95 ms | 0.089 |
+| replay-ready rows | 74 |
+| protocol-compatible rows | 74 |
+| damage events | 2 |
 | death events | 0 |
 
 ## Claim Boundary
 
-Signal now has offline replay evidence, live shadow evidence, and a guarded `neural_active` live pilot artifact when the live-active row is present. These artifacts do not yet support a comparative active-control performance claim versus the heuristic baseline.
+Signal now has offline replay evidence, live shadow evidence, and a guarded `neural_active` live pilot artifact when the live-active row is present. The rollout artifact is the deterministic bridge from one-step ranking into closed-loop episodes. These artifacts still do not support a comparative active-control performance claim versus the heuristic baseline.

@@ -103,12 +103,12 @@ certified outcomes.
 
 | Field | Current value |
 | --- | --- |
-| Candidate set | `autopilot_loop`, `mine_nearest_clear`, `mine_richest`, `collect_local_fragments`, `deliver_refinery`, `dock_repair` |
-| Feature row | 40 observable state/option features |
+| Candidate set | 14 grammar hypotheses over target selector, route constraint, speed/contact profile, and interaction primitive |
+| Feature row | 70 observable state/hypothesis features |
 | Trace schema | `signal.mining_counterfactual.v1` |
 | Summary schema | `crlp.signal_mining.summary.v1` |
-| Training mode | `counterfactual_tactical_utility` |
-| Baseline | fixed priority: repair if damaged, deliver if towing, collect visible fragments, otherwise mine nearest clear rock |
+| Training mode | `counterfactual_grammar_utility` |
+| Baseline | fixed grammar priority: slow repair if damaged, refinery lane if towing, slow fragment collection if visible, otherwise nearest-clear-rock cruise |
 | Output | `build/float/signal_mining_experiment/trace.jsonl`, `summary.jsonl`, and `signal_mining.nnckpt` |
 
 This is the first `R-SIG.4` slice. It is evidence for the architecture and data
@@ -193,6 +193,8 @@ Live fields:
 - `active_action`
 - `safety_gate`
 - `safety_reject_reasons`
+- `protocol_status`
+- `protocol_hash`
 - `inference_ms`
 
 Run:
@@ -204,8 +206,10 @@ make signal-shadow-replay-audit
 ```
 
 `signal_live_status.mjs` reports active source, neural shadow disagreement rate,
-and inference latency percentiles over the rolling window. The shadow replay
-audit emits `crlp.signal_shadow_frame.v1` and
+and inference latency percentiles over the rolling window. The live bridge
+checks `../signal/shared/types.h` and `../signal/shared/protocol.h` before
+connecting; live summaries count protocol-compatible rows as a separate evidence
+gate. The shadow replay audit emits `crlp.signal_shadow_frame.v1` and
 `crlp.signal_shadow_replay_audit.v1` rows. It is intentionally conservative:
 until a deterministic replay pass consumes the frame rows, neural
 counterfactual outcomes are marked unavailable rather than inferred from the
