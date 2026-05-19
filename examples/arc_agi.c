@@ -38,7 +38,7 @@ enum {
     ARC_ACCEPTED_RULES_BYTES = 2048,
     ARC_TRANSFORM_NAME_BYTES = 128,
     ARC_RULE_CANDIDATE_COUNT = 4096,
-    ARC_GRAMMAR_VERSION = 17,
+    ARC_GRAMMAR_VERSION = 18,
     ARC_LEARNED_COMPOSE_TOP = 16,
     ARC_LEARNED_COMPOSE_LIMIT = 256,
     ARC_HYPOTHESIS_PROPOSAL_CAPACITY = 256,
@@ -52,8 +52,8 @@ enum {
     ARC_HYPOTHESIS_NEURAL_WEIGHT = 24,
     ARC_HYPOTHESIS_COLD_START_WEIGHT = 8,
     ARC_HYPOTHESIS_SLOT_PROBE_CAPACITY = 512,
-    ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY = 12,
-    ARC_HYPOTHESIS_TEMPLATE_BUCKETS = 12,
+    ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY = 13,
+    ARC_HYPOTHESIS_TEMPLATE_BUCKETS = 13,
     ARC_HYPOTHESIS_SLOT_TYPE_BUCKETS = 9,
     ARC_HYPOTHESIS_SLOT_VALUE_BUCKETS = 32,
     ARC_HYPOTHESIS_TEMPLATE_PRIOR_MIN_PROPOSALS = 1,
@@ -151,6 +151,18 @@ typedef enum {
     ARC_RULE_COMPRESS_COLOR_LINES = 37,
     ARC_RULE_TILE_MOTIF_PARITY_REPEAT = 38,
 } ARCTransformRule;
+
+typedef enum {
+    ARC_SKETCH_SELECTOR_GRID_PANEL = 0,
+    ARC_SKETCH_SELECTOR_FOREGROUND_BBOX_PANEL = 1,
+    ARC_SKETCH_SELECTOR_COLOR_BBOX = 2,
+    ARC_SKETCH_SELECTOR_LATTICE = 3,
+} ARCSketchSelectorKind;
+
+typedef enum {
+    ARC_SKETCH_OP_CROP = 0,
+    ARC_SKETCH_OP_TILE_REPEAT = 1,
+} ARCSketchOpKind;
 
 /* ARC-AGI-1 training task 0520fde7, reduced to balanced output-cell color scoring. */
 static const uint8_t ARC_0520FDE7_TRAIN_INPUTS[ARC_TRAIN_PAIR_COUNT][ARC_INPUT_CELLS] = {
@@ -718,6 +730,7 @@ static const NNHypothesisTemplate *arc_hypothesis_template_tile_motif_repeat(voi
 static const NNHypothesisTemplate *arc_hypothesis_template_masked_motif_lift(void);
 static const NNHypothesisTemplate *arc_hypothesis_template_panel_selection(void);
 static const NNHypothesisTemplate *arc_hypothesis_template_bbox_panel_selection(void);
+static const NNHypothesisTemplate *arc_hypothesis_template_sketch_program(void);
 static const ARCHypothesisTemplateBinding *arc_hypothesis_template_registry(size_t *count);
 static const ARCHypothesisTemplateBinding *arc_hypothesis_binding_for_template_id(uint32_t template_id);
 static int arc_hypothesis_from_candidate(const ARCTransformCandidate *candidate,
@@ -747,6 +760,8 @@ static int arc_candidate_from_panel_selection_hypothesis(const NNHypothesis *hyp
                                                          ARCTransformCandidate *candidate);
 static int arc_candidate_from_bbox_panel_selection_hypothesis(const NNHypothesis *hypothesis,
                                                               ARCTransformCandidate *candidate);
+static int arc_candidate_from_sketch_program_hypothesis(const NNHypothesis *hypothesis,
+                                                        ARCTransformCandidate *candidate);
 static int arc_apply_color_map_hypothesis(const NNHypothesis *hypothesis,
                                           const ARCGrid *input,
                                           ARCGrid *output);
@@ -783,6 +798,9 @@ static int arc_apply_panel_selection_hypothesis(const NNHypothesis *hypothesis,
 static int arc_apply_bbox_panel_selection_hypothesis(const NNHypothesis *hypothesis,
                                                      const ARCGrid *input,
                                                      ARCGrid *output);
+static int arc_apply_sketch_program_hypothesis(const NNHypothesis *hypothesis,
+                                               const ARCGrid *input,
+                                               ARCGrid *output);
 static size_t arc_induce_color_map_hypotheses(const ARCHypothesisTemplateBinding *binding,
                                               const ARCTask *task,
                                               ARCProgramLearnedState *learned,
@@ -903,6 +921,16 @@ static size_t arc_induce_bbox_panel_selection_hypotheses(const ARCHypothesisTemp
                                                          size_t proposal_count,
                                                          ARCHypothesisSelectionStats *stats,
                                                          size_t template_index);
+static size_t arc_induce_sketch_program_hypotheses(const ARCHypothesisTemplateBinding *binding,
+                                                   const ARCTask *task,
+                                                   ARCProgramLearnedState *learned,
+                                                   const ARCTransformCandidate *existing_candidates,
+                                                   size_t existing_count,
+                                                   ARCHypothesisProposal *proposals,
+                                                   size_t proposal_capacity,
+                                                   size_t proposal_count,
+                                                   ARCHypothesisSelectionStats *stats,
+                                                   size_t template_index);
 
 static double safe_probability(double probability)
 {
@@ -7797,6 +7825,59 @@ static int arc_grid_non_background_bbox(const ARCGrid *grid,
     return 1;
 }
 
+static int arc_grid_color_bbox(const ARCGrid *grid,
+                               uint8_t color,
+                               size_t *min_x_out,
+                               size_t *min_y_out,
+                               size_t *max_x_out,
+                               size_t *max_y_out)
+{
+    if (grid == NULL || grid->width == 0 || grid->height == 0) {
+        return 0;
+    }
+    int found = 0;
+    size_t min_x = grid->width;
+    size_t min_y = grid->height;
+    size_t max_x = 0;
+    size_t max_y = 0;
+    for (size_t y = 0; y < grid->height; ++y) {
+        for (size_t x = 0; x < grid->width; ++x) {
+            if (grid->cells[y * grid->width + x] != color) {
+                continue;
+            }
+            if (!found || x < min_x) {
+                min_x = x;
+            }
+            if (!found || y < min_y) {
+                min_y = y;
+            }
+            if (!found || x > max_x) {
+                max_x = x;
+            }
+            if (!found || y > max_y) {
+                max_y = y;
+            }
+            found = 1;
+        }
+    }
+    if (!found) {
+        return 0;
+    }
+    if (min_x_out != NULL) {
+        *min_x_out = min_x;
+    }
+    if (min_y_out != NULL) {
+        *min_y_out = min_y;
+    }
+    if (max_x_out != NULL) {
+        *max_x_out = max_x;
+    }
+    if (max_y_out != NULL) {
+        *max_y_out = max_y;
+    }
+    return 1;
+}
+
 static int arc_bbox_panel_origin(const ARCGrid *input,
                                  uint8_t background,
                                  size_t panel_width,
@@ -8131,6 +8212,639 @@ static size_t arc_induce_bbox_panel_selection_hypotheses(const ARCHypothesisTemp
             }
         }
     }
+    return proposal_count;
+}
+
+static const NNHypothesisTemplate *arc_hypothesis_template_sketch_program(void)
+{
+    static NNHypothesisTemplate template_ref;
+    static int initialized = 0;
+    if (initialized) {
+        return &template_ref;
+    }
+    nn_hypothesis_template_init(&template_ref,
+                                "arc_agi",
+                                "arc_sketch_program",
+                                1036,
+                                NN_PROGRAM_VALUE_GRID,
+                                NN_PROGRAM_VALUE_GRID);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "select",
+                                     NN_PROGRAM_KIND_SELECTOR,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     360);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "apply",
+                                     NN_PROGRAM_KIND_TRANSFORM,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     361);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "sketch.selector",
+                                    NN_HYPOTHESIS_SLOT_CUSTOM,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "sketch.op",
+                                    NN_HYPOTHESIS_SLOT_CUSTOM,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "sketch.background",
+                                    NN_HYPOTHESIS_SLOT_COLOR,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "sketch.color",
+                                    NN_HYPOTHESIS_SLOT_COLOR,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "sketch.output_color",
+                                    NN_HYPOTHESIS_SLOT_COLOR,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "sketch.x_anchor",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "sketch.y_anchor",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "sketch.x_offset",
+                                    NN_HYPOTHESIS_SLOT_OFFSET,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "sketch.y_offset",
+                                    NN_HYPOTHESIS_SLOT_OFFSET,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "sketch.width",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "sketch.height",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "sketch.period",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    initialized = 1;
+    return &template_ref;
+}
+
+typedef struct {
+    int selector;
+    int op;
+    uint8_t background;
+    uint8_t color;
+    uint8_t output_color;
+    int x_anchor;
+    int y_anchor;
+    int x_offset;
+    int y_offset;
+    size_t width;
+    size_t height;
+    size_t period;
+} ARCSketchProgramSpec;
+
+static int arc_sketch_program_spec_from_hypothesis(const NNHypothesis *hypothesis,
+                                                   ARCSketchProgramSpec *spec)
+{
+    int64_t selector = 0;
+    int64_t op = 0;
+    int64_t background = 0;
+    int64_t color = 0;
+    int64_t output_color = 0;
+    int64_t x_anchor = 0;
+    int64_t y_anchor = 0;
+    int64_t x_offset = 0;
+    int64_t y_offset = 0;
+    int64_t width = 0;
+    int64_t height = 0;
+    int64_t period = 0;
+    if (hypothesis == NULL || spec == NULL ||
+        hypothesis->template_ref != arc_hypothesis_template_sketch_program() ||
+        !nn_hypothesis_is_fully_bound(hypothesis) ||
+        !nn_hypothesis_get(hypothesis, "sketch.selector", NULL, &selector) ||
+        !nn_hypothesis_get(hypothesis, "sketch.op", NULL, &op) ||
+        !nn_hypothesis_get(hypothesis, "sketch.background", NULL, &background) ||
+        !nn_hypothesis_get(hypothesis, "sketch.color", NULL, &color) ||
+        !nn_hypothesis_get(hypothesis, "sketch.output_color", NULL, &output_color) ||
+        !nn_hypothesis_get(hypothesis, "sketch.x_anchor", NULL, &x_anchor) ||
+        !nn_hypothesis_get(hypothesis, "sketch.y_anchor", NULL, &y_anchor) ||
+        !nn_hypothesis_get(hypothesis, "sketch.x_offset", NULL, &x_offset) ||
+        !nn_hypothesis_get(hypothesis, "sketch.y_offset", NULL, &y_offset) ||
+        !nn_hypothesis_get(hypothesis, "sketch.width", NULL, &width) ||
+        !nn_hypothesis_get(hypothesis, "sketch.height", NULL, &height) ||
+        !nn_hypothesis_get(hypothesis, "sketch.period", NULL, &period) ||
+        background < 0 || background >= ARC_COLOR_COUNT ||
+        color < 0 || color >= ARC_COLOR_COUNT ||
+        output_color < 0 || output_color >= ARC_COLOR_COUNT ||
+        width < 0 || height < 0 || period < 0) {
+        return 0;
+    }
+    spec->selector = (int)selector;
+    spec->op = (int)op;
+    spec->background = (uint8_t)background;
+    spec->color = (uint8_t)color;
+    spec->output_color = (uint8_t)output_color;
+    spec->x_anchor = (int)x_anchor;
+    spec->y_anchor = (int)y_anchor;
+    spec->x_offset = (int)x_offset;
+    spec->y_offset = (int)y_offset;
+    spec->width = (size_t)width;
+    spec->height = (size_t)height;
+    spec->period = (size_t)period;
+    return 1;
+}
+
+static int arc_sketch_copy_region(const ARCGrid *input,
+                                  size_t origin_x,
+                                  size_t origin_y,
+                                  size_t width,
+                                  size_t height,
+                                  ARCGrid *output)
+{
+    if (input == NULL || output == NULL ||
+        width == 0 || height == 0 ||
+        origin_x + width > input->width ||
+        origin_y + height > input->height) {
+        return 0;
+    }
+    arc_init_grid(output, width, height);
+    for (size_t y = 0; y < height; ++y) {
+        for (size_t x = 0; x < width; ++x) {
+            output->cells[y * output->width + x] =
+                input->cells[(origin_y + y) * input->width + origin_x + x];
+        }
+    }
+    return 1;
+}
+
+static int arc_apply_sketch_program_hypothesis(const NNHypothesis *hypothesis,
+                                               const ARCGrid *input,
+                                               ARCGrid *output)
+{
+    ARCSketchProgramSpec spec;
+    if (!arc_sketch_program_spec_from_hypothesis(hypothesis, &spec) ||
+        input == NULL || output == NULL) {
+        return 0;
+    }
+    if (spec.op == ARC_SKETCH_OP_TILE_REPEAT &&
+        spec.selector == ARC_SKETCH_SELECTOR_LATTICE) {
+        ARCTransformCandidate candidate;
+        arc_init_candidate(&candidate, ARC_RULE_TILE_MOTIF_PARITY_REPEAT, "sketch_tile_repeat");
+        candidate.background_color = spec.background;
+        candidate.scale = spec.period;
+        return arc_apply_tile_motif_parity_repeat_candidate(&candidate, input, output);
+    }
+    if (spec.op != ARC_SKETCH_OP_CROP) {
+        return 0;
+    }
+
+    size_t origin_x = 0;
+    size_t origin_y = 0;
+    size_t width = spec.width;
+    size_t height = spec.height;
+    if (spec.selector == ARC_SKETCH_SELECTOR_GRID_PANEL) {
+        if (!arc_panel_origin(input->width,
+                              width,
+                              spec.x_anchor,
+                              spec.x_offset,
+                              &origin_x) ||
+            !arc_panel_origin(input->height,
+                              height,
+                              spec.y_anchor,
+                              spec.y_offset,
+                              &origin_y)) {
+            return 0;
+        }
+    } else if (spec.selector == ARC_SKETCH_SELECTOR_FOREGROUND_BBOX_PANEL) {
+        if (!arc_bbox_panel_origin(input,
+                                   spec.background,
+                                   width,
+                                   height,
+                                   spec.x_anchor,
+                                   spec.y_anchor,
+                                   spec.x_offset,
+                                   spec.y_offset,
+                                   &origin_x,
+                                   &origin_y)) {
+            return 0;
+        }
+    } else if (spec.selector == ARC_SKETCH_SELECTOR_COLOR_BBOX) {
+        size_t max_x = 0;
+        size_t max_y = 0;
+        if (!arc_grid_color_bbox(input,
+                                 spec.color,
+                                 &origin_x,
+                                 &origin_y,
+                                 &max_x,
+                                 &max_y)) {
+            return 0;
+        }
+        width = max_x - origin_x + 1u;
+        height = max_y - origin_y + 1u;
+    } else {
+        return 0;
+    }
+    return arc_sketch_copy_region(input, origin_x, origin_y, width, height, output);
+}
+
+static int arc_candidate_from_sketch_program_hypothesis(const NNHypothesis *hypothesis,
+                                                        ARCTransformCandidate *candidate)
+{
+    ARCSketchProgramSpec spec;
+    if (candidate == NULL ||
+        !arc_sketch_program_spec_from_hypothesis(hypothesis, &spec)) {
+        return 0;
+    }
+    arc_init_candidate(candidate, ARC_RULE_HYPOTHESIS_APPLIED, "arc_sketch_program");
+    if (!arc_store_hypothesis_candidate(candidate, hypothesis)) {
+        return 0;
+    }
+    snprintf(candidate->name,
+             sizeof(candidate->name),
+             "hypothesis_%s_s%d_op%d_bg%u_c%u_%zux%zu_%+d_%+d_p%zu",
+             hypothesis->template_ref->name,
+             spec.selector,
+             spec.op,
+             (unsigned)spec.background,
+             (unsigned)spec.color,
+             spec.width,
+             spec.height,
+             spec.x_offset,
+             spec.y_offset,
+             spec.period);
+    return 1;
+}
+
+static int arc_bind_sketch_program(NNHypothesis *hypothesis,
+                                   int selector,
+                                   int op,
+                                   uint8_t background,
+                                   uint8_t color,
+                                   uint8_t output_color,
+                                   int x_anchor,
+                                   int y_anchor,
+                                   int x_offset,
+                                   int y_offset,
+                                   size_t width,
+                                   size_t height,
+                                   size_t period)
+{
+    return nn_hypothesis_bind(hypothesis, "sketch.selector", (double)selector, selector) &&
+           nn_hypothesis_bind(hypothesis, "sketch.op", (double)op, op) &&
+           nn_hypothesis_bind(hypothesis, "sketch.background", (double)background, background) &&
+           nn_hypothesis_bind(hypothesis, "sketch.color", (double)color, color) &&
+           nn_hypothesis_bind(hypothesis, "sketch.output_color", (double)output_color, output_color) &&
+           nn_hypothesis_bind(hypothesis, "sketch.x_anchor", (double)x_anchor, x_anchor) &&
+           nn_hypothesis_bind(hypothesis, "sketch.y_anchor", (double)y_anchor, y_anchor) &&
+           nn_hypothesis_bind(hypothesis, "sketch.x_offset", (double)x_offset, x_offset) &&
+           nn_hypothesis_bind(hypothesis, "sketch.y_offset", (double)y_offset, y_offset) &&
+           nn_hypothesis_bind(hypothesis, "sketch.width", (double)width, (int64_t)width) &&
+           nn_hypothesis_bind(hypothesis, "sketch.height", (double)height, (int64_t)height) &&
+           nn_hypothesis_bind(hypothesis, "sketch.period", (double)period, (int64_t)period);
+}
+
+static size_t arc_try_add_sketch_program(const ARCHypothesisTemplateBinding *binding,
+                                         const ARCTask *task,
+                                         ARCProgramLearnedState *learned,
+                                         const ARCTransformCandidate *existing_candidates,
+                                         size_t existing_count,
+                                         ARCHypothesisProposal *proposals,
+                                         size_t proposal_capacity,
+                                         size_t proposal_count,
+                                         ARCHypothesisSelectionStats *stats,
+                                         size_t template_index,
+                                         const ARCProgramTaskFeatures *task_features,
+                                         int selector,
+                                         int op,
+                                         uint8_t background,
+                                         uint8_t color,
+                                         uint8_t output_color,
+                                         int x_anchor,
+                                         int y_anchor,
+                                         int x_offset,
+                                         int y_offset,
+                                         size_t width,
+                                         size_t height,
+                                         size_t period)
+{
+    NNHypothesis hypothesis;
+    ARCTransformCandidate candidate;
+    if (!nn_hypothesis_init(&hypothesis, binding->template_fn()) ||
+        !arc_bind_sketch_program(&hypothesis,
+                                 selector,
+                                 op,
+                                 background,
+                                 color,
+                                 output_color,
+                                 x_anchor,
+                                 y_anchor,
+                                 x_offset,
+                                 y_offset,
+                                 width,
+                                 height,
+                                 period) ||
+        !binding->to_candidate(&hypothesis, &candidate)) {
+        return proposal_count;
+    }
+    return arc_try_add_hypothesis_proposal(learned,
+                                           task,
+                                           existing_candidates,
+                                           existing_count,
+                                           proposals,
+                                           proposal_capacity,
+                                           proposal_count,
+                                           stats,
+                                           template_index,
+                                           task_features,
+                                           &hypothesis,
+                                           &candidate,
+                                           NULL,
+                                           NULL);
+}
+
+static size_t arc_induce_sketch_panel_crop_hypotheses(
+    const ARCHypothesisTemplateBinding *binding,
+    const ARCTask *task,
+    ARCProgramLearnedState *learned,
+    const ARCTransformCandidate *existing_candidates,
+    size_t existing_count,
+    ARCHypothesisProposal *proposals,
+    size_t proposal_capacity,
+    size_t proposal_count,
+    ARCHypothesisSelectionStats *stats,
+    size_t template_index,
+    const ARCProgramTaskFeatures *task_features)
+{
+    const ARCGrid *first_input = &task->train[0].input;
+    const ARCGrid *first_output = &task->train[0].output;
+    if (!task->train[0].has_output ||
+        first_output->width == 0 || first_output->height == 0 ||
+        first_output->width > first_input->width ||
+        first_output->height > first_input->height) {
+        return proposal_count;
+    }
+    uint8_t background = arc_grid_dominant_color(first_input);
+    for (size_t origin_y = 0;
+         origin_y + first_output->height <= first_input->height;
+         ++origin_y) {
+        for (size_t origin_x = 0;
+             origin_x + first_output->width <= first_input->width;
+             ++origin_x) {
+            if (!arc_grid_crop_matches(first_input,
+                                       first_output,
+                                       origin_x,
+                                       origin_y)) {
+                continue;
+            }
+            for (int selector = ARC_SKETCH_SELECTOR_GRID_PANEL;
+                 selector <= ARC_SKETCH_SELECTOR_FOREGROUND_BBOX_PANEL;
+                 ++selector) {
+                size_t bbox_min_x = 0;
+                size_t bbox_min_y = 0;
+                size_t bbox_max_x = first_input->width - 1u;
+                size_t bbox_max_y = first_input->height - 1u;
+                if (selector == ARC_SKETCH_SELECTOR_FOREGROUND_BBOX_PANEL &&
+                    !arc_grid_non_background_bbox(first_input,
+                                                  background,
+                                                  &bbox_min_x,
+                                                  &bbox_min_y,
+                                                  &bbox_max_x,
+                                                  &bbox_max_y)) {
+                    continue;
+                }
+                size_t base_width = bbox_max_x - bbox_min_x + 1u;
+                size_t base_height = bbox_max_y - bbox_min_y + 1u;
+                if (first_output->width > base_width ||
+                    first_output->height > base_height) {
+                    continue;
+                }
+                for (int x_mode = 0; x_mode <= 2; ++x_mode) {
+                    size_t x_span = base_width - first_output->width;
+                    int64_t x_base = (int64_t)bbox_min_x;
+                    if (x_mode == 1) {
+                        x_base += (int64_t)(x_span / 2u);
+                    } else if (x_mode == 2) {
+                        x_base += (int64_t)x_span;
+                    }
+                    int x_offset = (int)((int64_t)origin_x - x_base);
+                    for (int y_mode = 0; y_mode <= 2; ++y_mode) {
+                        size_t y_span = base_height - first_output->height;
+                        int64_t y_base = (int64_t)bbox_min_y;
+                        if (y_mode == 1) {
+                            y_base += (int64_t)(y_span / 2u);
+                        } else if (y_mode == 2) {
+                            y_base += (int64_t)y_span;
+                        }
+                        int y_offset = (int)((int64_t)origin_y - y_base);
+                        proposal_count = arc_try_add_sketch_program(
+                            binding,
+                            task,
+                            learned,
+                            existing_candidates,
+                            existing_count,
+                            proposals,
+                            proposal_capacity,
+                            proposal_count,
+                            stats,
+                            template_index,
+                            task_features,
+                            selector,
+                            ARC_SKETCH_OP_CROP,
+                            background,
+                            0,
+                            0,
+                            x_mode,
+                            y_mode,
+                            x_offset,
+                            y_offset,
+                            first_output->width,
+                            first_output->height,
+                            0);
+                    }
+                }
+            }
+        }
+    }
+    return proposal_count;
+}
+
+static size_t arc_induce_sketch_color_bbox_hypotheses(
+    const ARCHypothesisTemplateBinding *binding,
+    const ARCTask *task,
+    ARCProgramLearnedState *learned,
+    const ARCTransformCandidate *existing_candidates,
+    size_t existing_count,
+    ARCHypothesisProposal *proposals,
+    size_t proposal_capacity,
+    size_t proposal_count,
+    ARCHypothesisSelectionStats *stats,
+    size_t template_index,
+    const ARCProgramTaskFeatures *task_features)
+{
+    const ARCGrid *first_input = &task->train[0].input;
+    const ARCGrid *first_output = &task->train[0].output;
+    if (!task->train[0].has_output || first_output->width == 0 ||
+        first_output->height == 0) {
+        return proposal_count;
+    }
+    uint8_t background = arc_grid_dominant_color(first_input);
+    uint8_t colors[ARC_COLOR_COUNT];
+    size_t color_count = arc_grid_nonzero_colors(first_input, colors, ARC_COLOR_COUNT);
+    for (size_t color_index = 0; color_index < color_count; ++color_index) {
+        uint8_t color = colors[color_index];
+        size_t min_x = 0;
+        size_t min_y = 0;
+        size_t max_x = 0;
+        size_t max_y = 0;
+        if (!arc_grid_color_bbox(first_input, color, &min_x, &min_y, &max_x, &max_y)) {
+            continue;
+        }
+        size_t width = max_x - min_x + 1u;
+        size_t height = max_y - min_y + 1u;
+        if (width != first_output->width ||
+            height != first_output->height ||
+            !arc_grid_crop_matches(first_input, first_output, min_x, min_y)) {
+            continue;
+        }
+        proposal_count = arc_try_add_sketch_program(binding,
+                                                    task,
+                                                    learned,
+                                                    existing_candidates,
+                                                    existing_count,
+                                                    proposals,
+                                                    proposal_capacity,
+                                                    proposal_count,
+                                                    stats,
+                                                    template_index,
+                                                    task_features,
+                                                    ARC_SKETCH_SELECTOR_COLOR_BBOX,
+                                                    ARC_SKETCH_OP_CROP,
+                                                    background,
+                                                    color,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0);
+    }
+    return proposal_count;
+}
+
+static size_t arc_induce_sketch_tile_hypotheses(
+    const ARCHypothesisTemplateBinding *binding,
+    const ARCTask *task,
+    ARCProgramLearnedState *learned,
+    const ARCTransformCandidate *existing_candidates,
+    size_t existing_count,
+    ARCHypothesisProposal *proposals,
+    size_t proposal_capacity,
+    size_t proposal_count,
+    ARCHypothesisSelectionStats *stats,
+    size_t template_index,
+    const ARCProgramTaskFeatures *task_features)
+{
+    uint8_t backgrounds[2];
+    size_t background_count =
+        arc_task_relation_backgrounds(task,
+                                      backgrounds,
+                                      sizeof(backgrounds) / sizeof(backgrounds[0]));
+    for (size_t background_index = 0;
+         background_index < background_count;
+         ++background_index) {
+        uint8_t background = backgrounds[background_index];
+        for (size_t period = 2; period <= 3; ++period) {
+            proposal_count = arc_try_add_sketch_program(binding,
+                                                        task,
+                                                        learned,
+                                                        existing_candidates,
+                                                        existing_count,
+                                                        proposals,
+                                                        proposal_capacity,
+                                                        proposal_count,
+                                                        stats,
+                                                        template_index,
+                                                        task_features,
+                                                        ARC_SKETCH_SELECTOR_LATTICE,
+                                                        ARC_SKETCH_OP_TILE_REPEAT,
+                                                        background,
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        period);
+        }
+    }
+    return proposal_count;
+}
+
+static size_t arc_induce_sketch_program_hypotheses(const ARCHypothesisTemplateBinding *binding,
+                                                   const ARCTask *task,
+                                                   ARCProgramLearnedState *learned,
+                                                   const ARCTransformCandidate *existing_candidates,
+                                                   size_t existing_count,
+                                                   ARCHypothesisProposal *proposals,
+                                                   size_t proposal_capacity,
+                                                   size_t proposal_count,
+                                                   ARCHypothesisSelectionStats *stats,
+                                                   size_t template_index)
+{
+    if (binding == NULL || binding->template_fn == NULL ||
+        binding->to_candidate == NULL ||
+        task == NULL || task->train_count == 0 ||
+        existing_candidates == NULL || proposals == NULL ||
+        proposal_capacity == 0 ||
+        !task->train[0].has_output) {
+        return proposal_count;
+    }
+    ARCProgramTaskFeatures task_features;
+    arc_program_task_features(task, &task_features);
+    proposal_count =
+        arc_induce_sketch_panel_crop_hypotheses(binding,
+                                                task,
+                                                learned,
+                                                existing_candidates,
+                                                existing_count,
+                                                proposals,
+                                                proposal_capacity,
+                                                proposal_count,
+                                                stats,
+                                                template_index,
+                                                &task_features);
+    proposal_count =
+        arc_induce_sketch_color_bbox_hypotheses(binding,
+                                                task,
+                                                learned,
+                                                existing_candidates,
+                                                existing_count,
+                                                proposals,
+                                                proposal_capacity,
+                                                proposal_count,
+                                                stats,
+                                                template_index,
+                                                &task_features);
+    proposal_count =
+        arc_induce_sketch_tile_hypotheses(binding,
+                                          task,
+                                          learned,
+                                          existing_candidates,
+                                          existing_count,
+                                          proposals,
+                                          proposal_capacity,
+                                          proposal_count,
+                                          stats,
+                                          template_index,
+                                          &task_features);
     return proposal_count;
 }
 
@@ -11366,6 +12080,14 @@ static const ARCHypothesisTemplateBinding *arc_hypothesis_template_registry(size
             arc_induce_bbox_panel_selection_hypotheses,
             arc_candidate_from_bbox_panel_selection_hypothesis,
             arc_apply_bbox_panel_selection_hypothesis,
+        },
+        {
+            "arc_sketch_program",
+            1036,
+            arc_hypothesis_template_sketch_program,
+            arc_induce_sketch_program_hypotheses,
+            arc_candidate_from_sketch_program_hypothesis,
+            arc_apply_sketch_program_hypothesis,
         },
     };
     if (count != NULL) {

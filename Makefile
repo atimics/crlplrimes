@@ -13,7 +13,7 @@ LDFLAGS ?=
 LDLIBS ?= -lm
 
 BUILD_DIR := build/$(REAL)
-NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h include/nn_program.h include/nn_hypothesis.h include/nn_protocol.h include/nn_json.h include/nn_text.h
+NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h include/nn_program.h include/nn_hypothesis.h include/nn_protocol.h include/nn_json.h include/nn_text.h include/nn_grammar_discovery.h
 PRIME_GAP_TASK_HEADERS := include/nn_tasks_prime_gap.h src/prime_gap/internal.h
 PRIME_GAP_MODULE_SOURCES := $(wildcard src/prime_gap/*.c)
 PRIME_GAP_TASK_OBJS := $(patsubst src/prime_gap/%.c,$(BUILD_DIR)/obj/prime_gap/%.o,$(PRIME_GAP_MODULE_SOURCES))
@@ -27,6 +27,7 @@ NN_HYPOTHESIS_OBJ := $(BUILD_DIR)/nn_hypothesis.o
 NN_PROTOCOL_OBJ := $(BUILD_DIR)/nn_protocol.o
 NN_JSON_OBJ := $(BUILD_DIR)/nn_json.o
 NN_TEXT_OBJ := $(BUILD_DIR)/nn_text.o
+NN_GRAMMAR_DISCOVERY_OBJ := $(BUILD_DIR)/nn_grammar_discovery.o
 NN_TEST_OBJ := $(BUILD_DIR)/nn_test.o
 NN_EXPERIMENT_TEST_OBJ := $(BUILD_DIR)/nn_experiment_test.o
 NN_SYMBOLIC_TEST_OBJ := $(BUILD_DIR)/nn_symbolic_test.o
@@ -65,6 +66,7 @@ SIGNAL_MINING := $(BUILD_DIR)/signal_mining
 HAIKU_LM := $(BUILD_DIR)/haiku_lm
 HAIKU_WORD_LM := $(BUILD_DIR)/haiku_word_lm
 HAIKU_UNDERSTANDING := $(BUILD_DIR)/haiku_understanding
+NN_GRAMMAR_DISCOVERY_RUNTIME := $(BUILD_DIR)/neural_grammar_discovery_runtime
 BENCHMARK := $(BUILD_DIR)/benchmark
 TEST_RUNNER := $(BUILD_DIR)/test_nn
 SANITIZE_TEST_RUNNER := $(BUILD_DIR)/test_nn_sanitize
@@ -237,6 +239,7 @@ NEURAL_GRAMMAR_DISCOVERY_HAIKU_UNDERSTANDING_TRACE ?= $(HAIKU_UNDERSTANDING_DIR)
 NEURAL_GRAMMAR_DISCOVERY_PROGRAM_SYNTHESIS_TRACE ?= $(NEURAL_GRAMMAR_DISCOVERY_DIR)/program_synthesis_source.jsonl
 NEURAL_GRAMMAR_DISCOVERY_GRID_TRACE ?= $(BUILD_DIR)/grid_path.jsonl
 NEURAL_GRAMMAR_DISCOVERY_SIGNAL_MINING_TRACE ?= $(BUILD_DIR)/signal_mining_smoke/trace.jsonl
+NEURAL_GRAMMAR_DISCOVERY_ARC_PROBE_COMPARE_LIMIT ?= 64
 
 SIGNAL_FLIGHT_INCLUDE_FLAGS := \
 	-I$(SIGNAL_FLIGHT_SIGNAL_DIR)/server \
@@ -321,6 +324,9 @@ $(NN_JSON_OBJ): src/nn_json.c include/nn_json.h | $(BUILD_DIR)
 
 $(NN_TEXT_OBJ): src/nn_text.c include/nn_text.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_text.c -o $@
+
+$(NN_GRAMMAR_DISCOVERY_OBJ): src/nn_grammar_discovery.c include/nn_grammar_discovery.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_grammar_discovery.c -o $@
 
 $(NN_TEST_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn.c -o $@
@@ -429,6 +435,9 @@ $(MODULAR_GATE_SEARCH): examples/modular_gate_search.c | $(BUILD_DIR)
 
 $(ARC_AGI): examples/arc_agi.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/arc_agi.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(NN_GRAMMAR_DISCOVERY_RUNTIME): examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) include/nn_grammar_discovery.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(SIGNAL_FLIGHT): examples/signal_flight.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/signal_flight.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
@@ -772,8 +781,8 @@ hypothesis-library-neural-failure-proof: $(ARC_AGI) hypothesis-library-neural-di
 	$(PYTHON) scripts/arc_neural_failure_proof.py --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --mutation-verification $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR)/mutation_verification.jsonl --candidate-sketches $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR)/candidate_sketches.jsonl --triage $(HYPOTHESIS_LIBRARY_PUBLIC_TRIAGE_DIR)/coverage_triage.jsonl --output-dir $(HYPOTHESIS_LIBRARY_NEURAL_FAILURE_PROOF_DIR)
 
 .PHONY: neural-grammar-discovery
-neural-grammar-discovery: hypothesis-library-neural-failure-proof haiku-word-lm-smoke haiku-understanding-smoke program-synthesis-sketch-source grid-path-trace signal-mining-smoke
-	$(PYTHON) scripts/neural_grammar_discovery.py --domains $(NEURAL_GRAMMAR_DISCOVERY_DOMAINS) --arc-failure-proof $(NEURAL_GRAMMAR_DISCOVERY_ARC_PROOF) --haiku-word-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_WORD_TRACE) --haiku-understanding-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_UNDERSTANDING_TRACE) --program-synthesis-trace $(NEURAL_GRAMMAR_DISCOVERY_PROGRAM_SYNTHESIS_TRACE) --grid-path-trace $(NEURAL_GRAMMAR_DISCOVERY_GRID_TRACE) --signal-mining-trace $(NEURAL_GRAMMAR_DISCOVERY_SIGNAL_MINING_TRACE) --output-dir $(NEURAL_GRAMMAR_DISCOVERY_DIR)
+neural-grammar-discovery: $(NN_GRAMMAR_DISCOVERY_RUNTIME) hypothesis-library-neural-failure-proof haiku-word-lm-smoke haiku-understanding-smoke program-synthesis-sketch-source grid-path-trace signal-mining-smoke
+	$(PYTHON) scripts/neural_grammar_discovery.py --domains $(NEURAL_GRAMMAR_DISCOVERY_DOMAINS) --arc-failure-proof $(NEURAL_GRAMMAR_DISCOVERY_ARC_PROOF) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --arc-agi ./$(ARC_AGI) --arc-probe-compare-limit $(NEURAL_GRAMMAR_DISCOVERY_ARC_PROBE_COMPARE_LIMIT) --haiku-word-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_WORD_TRACE) --haiku-understanding-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_UNDERSTANDING_TRACE) --program-synthesis-trace $(NEURAL_GRAMMAR_DISCOVERY_PROGRAM_SYNTHESIS_TRACE) --grid-path-trace $(NEURAL_GRAMMAR_DISCOVERY_GRID_TRACE) --signal-mining-trace $(NEURAL_GRAMMAR_DISCOVERY_SIGNAL_MINING_TRACE) --output-dir $(NEURAL_GRAMMAR_DISCOVERY_DIR) --runtime ./$(NN_GRAMMAR_DISCOVERY_RUNTIME)
 
 paper-grade-evidence-core: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit multitask-adapter-heads experiment-matrix
 	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR)

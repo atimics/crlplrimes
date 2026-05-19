@@ -34,11 +34,20 @@ Outputs:
 - `build/float/neural_grammar_discovery/compiled_grammar_deltas.jsonl`
 - `build/float/neural_grammar_discovery/grammar_delta_verification.jsonl`
 - `build/float/neural_grammar_discovery/promoted_grammar_deltas.jsonl`
+- `build/float/neural_grammar_discovery/arc_sketch_program_probe_sources.jsonl`
+- `build/float/neural_grammar_discovery/arc_sketch_program_probe_prior.tsv`
+- `build/float/neural_grammar_discovery/arc_sketch_program_probe_comparison.jsonl`
+- `build/float/neural_grammar_discovery/arc_sketch_program_probe_comparison.md`
 - `build/float/neural_grammar_discovery/grammar_sketches.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketch_examples.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketch_proposals.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketch_verification.jsonl`
 - `build/float/neural_grammar_discovery/promoted_grammar_sketches.jsonl`
+
+The Python driver only assembles source rows and reports. Delta compilation,
+delta replay predicates, and the neural-linear sketch proposer run through the
+C runtime at `build/float/neural_grammar_discovery_runtime`, with normalized
+runtime TSVs kept under `build/float/neural_grammar_discovery/runtime/`.
 - `build/float/neural_grammar_discovery/summary.jsonl`
 - `build/float/neural_grammar_discovery/summary.md`
 
@@ -101,6 +110,16 @@ The first ARC/haiku promotion paths are intentionally narrow:
   certificates. Promotion requires the existing ARC failure-proof replay to show
   no accepted existing rows, missing-family evidence, a completed promotion
   replay, and zero train-consistent current-template proposals.
+- ARC execution uses one generic C hypothesis template, `arc_sketch_program`,
+  rather than one bespoke template per promoted family. Its slots encode a
+  selector, operation, geometry, color, and repeat parameters, then a small
+  interpreter materializes crop and tile-repeat sketch programs for the existing
+  train verifier.
+- Promoted ARC family pressure is also compiled into `arc_sketch_program` TSV
+  probe rows. The TSV is loaded by `arc_agi` through the existing
+  `crlp.arc_neural_discovery.template_probe.v1` and
+  `crlp.arc_neural_discovery.slot_probe.v1` contracts, then compared against a
+  no-prior baseline under the same verifier flags.
 - Haiku generation compiles bottleneck candidates into executable trace
   constraints over strict-adjacency generation rows.
 - Haiku understanding compiles corruption-family candidates into symbolic
