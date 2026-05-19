@@ -1,0 +1,68 @@
+# Grounding Operators
+
+The shared architecture is broader than exact verification. Each experiment
+declares a domain-specific grounding operator: the mechanism that turns a
+candidate into an outcome row the neural scorer may learn from and the claim
+compiler may audit.
+
+```text
+state/data -> candidate grammar -> candidate set
+           -> grounding operator -> outcome/certificate/proxy row
+           -> neural scorer/ranker -> trace -> claim gate
+```
+
+The grounding operator is the authority boundary. It may be a proof checker, a
+simulator, a corpus-derived proxy, or a human review step, but the authority
+level must be declared before a result is promoted into the paper. The current C
+schema still uses the compatibility names `exact_verifier`,
+`verifier_feedback`, `verifier_result`, and `verifier_cost`; this note defines
+how to scope those verifier-named rows when the authority is replay, proxy, or
+review rather than proof.
+
+## Authority Levels
+
+| Level | Name | Grounding operator | Examples | Supported claim shape |
+| --- | --- | --- | --- | --- |
+| G1 | exact proof/check | Deterministic verifier can decide the candidate outcome for the declared support. | `prime_gap`, `grid_path`, certified ARC transform rows, typed program synthesis examples | correctness, zero-false-rejection gates, exact residual ranking metrics |
+| G2 | deterministic simulation/replay | Authoritative simulator or replay can decide candidate consequences. | Signal flight/mining counterfactual replay, delayed-claim hidden-outcome simulator | replay-certified utility/safety metrics under declared simulator state distribution |
+| G3 | corpus proxy | Deterministic corpus-derived grammar or corruption benchmark creates proxy outcomes. | haiku word-adjacency and real-vs-corrupt understanding prototypes, public ARC coverage surfaces | corpus-fit, near-miss discrimination, evidence-surface coverage, not semantic truth |
+| G4 | human review | Human judgment accepts/rejects proposed edits, preferences, or interpretations. | editorial-agent PRs, future preference rows | reviewable assistance or preference-labeled evidence, not autonomous claim authority |
+
+These levels are not a value ranking. They are a scope ranking. A G3 corpus
+proxy can be useful, but it cannot support the same language as a G1 proof or
+G2 simulator replay.
+
+## Required Row Fields
+
+Every grounding-backed experiment should expose these fields directly or through
+the current verifier-named compatibility fields:
+
+- `grounding_operator`: the named checker, simulator, corpus proxy, or review
+  process.
+- `grounding_authority`: one of `exact_check`, `deterministic_replay`,
+  `corpus_proxy`, or `human_review`.
+- `candidate_grammar`: how candidates are enumerated.
+- `outcome_row_schema`: the JSONL schema emitted by the grounding operator.
+- `trace_schema`: the row schema for scorer decisions.
+- `claim_scope`: the strongest wording permitted by the authority level.
+- `known_non_claims`: common overclaims the row must not support.
+
+## Examples
+
+Signal flight is G2. A sampled state enumerates WASD candidates, the Signal
+simulator replays each candidate, and the outcome row records utility, regret,
+damage, deaths, and replay metadata. The neural scorer can learn to rank under
+that replay, but live comparative control claims require a separate active
+episode baseline artifact.
+
+Haiku is currently G3. The word-action model uses a dataset vocabulary and
+train-split adjacency graph; the understanding model ranks real haiku above
+controlled corruptions. The row can support a claim about corpus-grounded
+near-miss discrimination. It cannot support a claim that the model understands
+haiku semantics unless a stronger topic/coherence proxy or human-reviewed row
+is added and scoped accordingly.
+
+Editorial agents are G4. The authority is not the model; it is reviewable human
+acceptance through normal PR flow. The supported claim is that editorial
+assistance was traceable and review-gated, not that the model authored the
+paper.

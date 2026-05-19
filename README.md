@@ -1,15 +1,16 @@
 # CRLPLRIMES: Certificate-Gated Neural Proposers for Verifier-Grounded Action Scoring
 
-This repository is a compact C neural-network library and an exact-verifier research harness for **certified neural-symbolic action scoring**. The code exposes one architecture across first-class verifier-backed task schemas, plus shared-action and shared-symbolic cross-domain tests. The strongest current anchor is **certified modular gate search**: learn and certify modular rejection rules that shrink an exact verifier's candidate set without changing the correct answer. The `prime_gap` task is the first complete instantiation of that family, not the project boundary. The production certified-gate evidence is complete for `prime_gap`, partial for `grid_path`, threshold+margin wired for `delayed_claim`, and fixed-sample only for `arc_agi`:
+This repository is a compact C neural-network library and a grounding-gated research harness for **certified neural-symbolic action scoring**. The code exposes one architecture across first-class task schemas: enumerate candidates, ground them with an explicit operator, train a small scorer to rank the residual, and emit replayable trace rows. The strongest current anchor is **certified modular gate search**: learn and certify modular rejection rules that shrink an exact verifier's candidate set without changing the correct answer. The `prime_gap` task is the first complete instantiation of that family, not the project boundary. Signal uses deterministic simulator replay as the grounding operator; haiku prototypes use corpus-derived proxy grounding and are not promoted paper claims. The production certified-gate evidence is complete for `prime_gap`, partial for `grid_path`, threshold+margin wired for `delayed_claim`, and fixed-sample only for `arc_agi`:
 
-| Task | State | Actions | Exact verifier | Gate grammar | Certificate | Status |
+| Task | State | Actions | Grounding operator | Authority | Gate grammar / certificate | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | modular rejection predicates | algebraic divisibility proof | certified modular gate search instantiation with learned-rule gate plus matched baselines |
-| `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality, local-dead-end, component-trap, clear-path admissible-bound, and distance-dominance predicates | cannot reject an optimal move | budgeted certified gate with family/budget proposer sweep |
-| `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold predicates plus direct utility-margin and indirect risk-margin predicates | finite-generator safety check over train+validation support | production certified direct gate resolves trust/request on clean bands; stress rows expose noise sensitivity and indirect proxy limits |
-| `arc_agi` | ARC-AGI-1 task `0520fde7` input plus output coordinate | colors `0..9` | held-out output-cell color lookup | copy/mask/intersection/geometric/object transform grammar | train-pair consistency plus unique compiled-test prediction | fixed-sample certified transform gate plus ARC loader, typed program rows, and learned program-proposer evidence |
-| `signal_flight` | Signal ship kinematics, hull, path, and clearance observations | WASD key combinations | deterministic replay of WASD hypotheses in Signal's authoritative simulator | WASD control hypotheses now; richer flight predicates planned | replay-certified progress, rollout progress, hull loss, damage, and death outcomes | counterfactual utility scorer, certified rollout bridge, and protocol-checked websocket pilot; teacher imitation remains an ablation |
-| `program_synthesis` | list/int routine examples | candidate library abstractions | run abstraction on examples | list/int DSL abstraction grammar | monomorphic DSL type checker | discovery case study |
+| `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | `exact_check` | modular predicates plus algebraic divisibility proof | certified modular gate search instantiation with learned-rule gate plus matched baselines |
+| `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | `exact_check` | legality/topology/bound rules that cannot reject an optimal move | budgeted certified gate with family/budget proposer sweep |
+| `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | `deterministic_replay` | threshold and margin predicates plus finite-generator safety check | production certified direct gate resolves trust/request on clean bands; stress rows expose noise sensitivity and indirect proxy limits |
+| `arc_agi` | ARC-AGI-1 task `0520fde7` input plus output coordinate | colors `0..9` | held-out output-cell lookup and train-pair transform checks | `exact_check` for fixed-task rows; `corpus_proxy` for public-coverage rows | train-pair consistency plus unique compiled-test prediction | fixed-sample certified transform gate plus ARC loader, typed program rows, and learned program-proposer evidence |
+| `signal_flight` | Signal ship kinematics, hull, path, and clearance observations | WASD key combinations | deterministic replay in Signal's authoritative simulator plus live telemetry | `deterministic_replay` | replay-certified progress, rollout progress, hull loss, damage, and death outcomes | counterfactual utility scorer, certified rollout bridge, and protocol-checked websocket pilot; teacher imitation remains an ablation |
+| `signal_mining` | Signal tactical mining state | bounded mining/trade policy hypotheses | deterministic replay in Signal's authoritative simulator | `deterministic_replay` | replay-certified utility, smelts, pickups, tow, repair-kit, hull, damage, and death outcomes | grammar hypothesis ranker with fixed-priority grammar baseline |
+| `program_synthesis` | list/int routine examples | candidate library abstractions | run abstraction on examples | `exact_check` | monomorphic list/int DSL type checker | discovery case study |
 
 Every first-class task schema publishes the same machine-readable contract with:
 
@@ -17,8 +18,8 @@ Every first-class task schema publishes the same machine-readable contract with:
 make experiment-schemas
 ```
 
-The schema is `crlp.experiment_schema.v1` and defines the state distribution, candidate enumerator, typed feature provenance, leakage policy, scorer, verifier, rule grammar, certificate checker, proposer inputs, proposer mode, baselines, trace protocol, replay protocol, and verifier-RL protocol. The public C contracts live in `include/nn_experiment.h` for task schemas, `include/nn_symbolic.h` for shared symbolic rule domains, and `include/nn_program.h` for typed program/transform candidates with canonical ids and coverage evidence.
-The working design note is [docs/experiment-schema.md](docs/experiment-schema.md). The shared-model multitask matrix is documented separately in [docs/multitask-domain.md](docs/multitask-domain.md). The formal symbolic-domain interface is documented in [docs/symbolic-domain-interface.md](docs/symbolic-domain-interface.md). The code-to-PDF claim-generation plan is tracked in [docs/self-authoring-paper-roadmap.md](docs/self-authoring-paper-roadmap.md). Editorial-agent review policy is tracked in [docs/editorial-agent-prs.md](docs/editorial-agent-prs.md).
+The schema is `crlp.experiment_schema.v1` and defines the state distribution, candidate enumerator, typed feature provenance, leakage policy, scorer, verifier/replay/proxy outcome fields, rule grammar, certificate checker, proposer inputs, proposer mode, baselines, trace protocol, replay protocol, and verifier-RL protocol where applicable. The public C contract still uses the compatibility field names `exact_verifier` and `verifier_feedback`; this README uses "grounding operator" as the broader authority term that covers exact checks, deterministic replay, corpus proxies, and review gates. The public C contracts live in `include/nn_experiment.h` for task schemas, `include/nn_symbolic.h` for shared symbolic rule domains, and `include/nn_program.h` for typed program/transform candidates with canonical ids and coverage evidence.
+The working design note is [docs/experiment-schema.md](docs/experiment-schema.md). Grounding authority levels are defined in [docs/grounding-operators.md](docs/grounding-operators.md). The shared-model multitask matrix is documented separately in [docs/multitask-domain.md](docs/multitask-domain.md). The formal symbolic-domain interface is documented in [docs/symbolic-domain-interface.md](docs/symbolic-domain-interface.md). The code-to-PDF claim-generation plan is tracked in [docs/self-authoring-paper-roadmap.md](docs/self-authoring-paper-roadmap.md). Editorial-agent review policy is tracked in [docs/editorial-agent-prs.md](docs/editorial-agent-prs.md).
 
 The paper-support compiler is the framework boundary between result rows and
 PDF claims:
@@ -40,7 +41,8 @@ Task T = {
   candidate enumerator A_T(s),
   observable state/action features x_T(s, a),
   neural residual scorer f_theta(x_T),
-  exact verifier V_T(s, a),
+  grounding operator O_T(s, a),
+  grounding authority level,
   symbolic rule grammar G_T,
   certificate checker C_T(rule),
   rule proposer q_phi(rule | structural(rule)),
@@ -52,13 +54,13 @@ Task T = {
 The reusable architecture is:
 
 ```text
-state ──▶ rule proposer ─▶ rule candidates ─▶ certificate verifier ─▶ accepted rules
+state ──▶ rule proposer ─▶ rule candidates ─▶ grounding/certificate checker ─▶ accepted rules
                                                                         │
 state ──▶ candidate enumerator ─────────────────────────────────────────┴─▶ gated candidates
                                                                                 │
                                                               learned scorer ──▶ softmax ranking
                                                                                 │
-                                                              exact verifier ──▶ correct action / cost
+                                                         grounding operator ──▶ outcome / cost / proxy
                                                                                 │
                                                                        JSONL trace ─▶ replay
 ```
@@ -66,15 +68,24 @@ state ──▶ candidate enumerator ──────────────�
 Design invariant:
 
 ```text
-The model proposes. The verifier decides. The trace remembers.
+The model proposes. The declared grounding operator decides within its authority. The trace remembers.
 ```
+
+Grounding authority levels are explicit:
+
+| Authority | Operator class | Examples | Claim scope |
+| --- | --- | --- | --- |
+| `exact_check` | proof, lookup, type check, deterministic verifier | `prime_gap`, `grid_path`, certified ARC transform rows | correctness and zero-false-rejection claims inside declared support |
+| `deterministic_replay` | simulator or replay deciding candidate consequences | Signal flight/mining, delayed-claim simulator | replay-certified utility, safety, damage, death, regret, or decision metrics |
+| `corpus_proxy` | corpus-derived grammar or corruption benchmark | haiku prototypes, ARC public coverage surfaces | corpus-fit and near-miss discrimination, not semantic truth |
+| `human_review` | reviewable human acceptance/rejection | editorial-agent PRs, future preference rows | review-gated assistance or preference evidence |
 
 The task-independent rules are:
 
-1. Candidate enumeration is complete before gating; the verifier is not allowed to prune the candidate set silently.
+1. Candidate enumeration is complete before gating; the grounding operator is not allowed to prune the candidate set silently.
 2. Every scorer input feature has typed provenance: `state_observation`, `structural_prior`, `verifier_derived`, or `derived_from_gate`.
 3. The scorer's enabled features must satisfy the task's `forbidden`, `priors_allowed`, or `legacy` leakage policy before the schema writer will emit the task.
-4. The static proposer receives structural rule descriptors only. The closed-loop proposer may also receive gate-derived residual-set features through an audited `gate_allowed` schema; verifier-derived values remain forbidden.
+4. The static proposer receives structural rule descriptors only. The closed-loop proposer may also receive gate-derived residual-set features through an audited `gate_allowed` schema; grounding-derived values remain forbidden unless declared as labels or diagnostics.
 5. A rule can enter the gate only through the task's certificate checker.
 6. Every gate-learning claim must be evaluated against neural, random, grammar-order, structural-heuristic, and oracle proposer orderings at matched budgets before it is treated as evidence.
 7. JSONL traces use stable action ids, declared ranking policy, and score-margin metadata so replay cannot silently change semantics when candidates are reordered or scores are float-sensitive ties.
@@ -88,6 +99,7 @@ Current leakage audit:
 | `delayed_claim` | `forbidden` | 0 |
 | `arc_agi` | `forbidden` | 0 |
 | `signal_flight` | `forbidden` | 0 |
+| `signal_mining` | `forbidden` | 0 |
 | `program_synthesis` | `priors_allowed` | 18 |
 
 ### Certified Modular Gate Search
