@@ -91,6 +91,54 @@ typedef struct {
 } NNGDScoredSketch;
 
 typedef struct {
+    char *split_name;
+    char *family;
+    char *task_id;
+    char *split;
+    char *attempt_id;
+    char *library_id;
+    long attempt_index;
+    char *pipeline_kind;
+    char *op_name;
+    char *visual_program;
+    char *slot_contract;
+    char *slot_tokens;
+    char *rejection_reason;
+    char *contrast_accepted_attempt_id;
+    char *contrast_pair_kind;
+    int accepted;
+    long proposal_count;
+    long support_tasks;
+    double utility_mean;
+    long contrast_slot_distance;
+    long contrast_rejected_sibling_count;
+    long verifier_train_pairs;
+    long verifier_checked_cells;
+    long verifier_mismatches;
+    long verifier_unsupported_pairs;
+    long verifier_apply_failed_pairs;
+    long verifier_shape_mismatch_pairs;
+    long verifier_missing_output_pairs;
+    long verifier_first_failing_pair;
+    double verifier_mismatch_ratio;
+    double verifier_score;
+    size_t contrast_accepted_index;
+    NNGDStringList tokens;
+} NNGDArcPipelineAttempt;
+
+typedef struct {
+    NNGDArcPipelineAttempt *items;
+    size_t count;
+    size_t capacity;
+} NNGDArcPipelineAttemptList;
+
+typedef struct {
+    size_t attempt_index;
+    double score;
+    double model_score;
+} NNGDScoredArcAttempt;
+
+typedef struct {
     int loaded;
     unsigned epochs_seen_before;
     unsigned epochs_seen_after;
@@ -101,6 +149,7 @@ typedef struct {
 } NNGDMemoryState;
 
 static const NNGDSketch *nn_gd_sort_sketches = NULL;
+static const NNGDArcPipelineAttempt *nn_gd_sort_arc_attempts = NULL;
 
 static char *nn_gd_strdup(const char *value) {
     size_t len;
@@ -1622,6 +1671,557 @@ static int nn_gd_write_neural_rows(FILE *fp,
     return ferror(fp) ? -1 : 0;
 }
 
+static int nn_gd_arc_attempt_list_reserve(NNGDArcPipelineAttemptList *list,
+                                          size_t needed) {
+    NNGDArcPipelineAttempt *items;
+    size_t capacity;
+    if (needed <= list->capacity) {
+        return 0;
+    }
+    capacity = list->capacity == 0U ? 64U : list->capacity * 2U;
+    while (capacity < needed) {
+        capacity *= 2U;
+    }
+    items = (NNGDArcPipelineAttempt *)realloc(list->items,
+                                              capacity * sizeof(NNGDArcPipelineAttempt));
+    if (items == NULL) {
+        return -1;
+    }
+    list->items = items;
+    list->capacity = capacity;
+    return 0;
+}
+
+static void nn_gd_arc_attempt_free(NNGDArcPipelineAttempt *attempt) {
+    free(attempt->split_name);
+    free(attempt->family);
+    free(attempt->task_id);
+    free(attempt->split);
+    free(attempt->attempt_id);
+    free(attempt->library_id);
+    free(attempt->pipeline_kind);
+    free(attempt->op_name);
+    free(attempt->visual_program);
+    free(attempt->slot_contract);
+    free(attempt->slot_tokens);
+    free(attempt->rejection_reason);
+    free(attempt->contrast_accepted_attempt_id);
+    free(attempt->contrast_pair_kind);
+    nn_gd_string_list_free(&attempt->tokens);
+}
+
+static void nn_gd_arc_attempt_list_free(NNGDArcPipelineAttemptList *list) {
+    size_t i;
+    for (i = 0; i < list->count; ++i) {
+        nn_gd_arc_attempt_free(&list->items[i]);
+    }
+    free(list->items);
+    list->items = NULL;
+    list->count = 0U;
+    list->capacity = 0U;
+}
+
+static int nn_gd_add_pipe_tokens_with_prefix(NNGDStringList *tokens,
+                                             const char *prefix,
+                                             const char *values) {
+    char *copy;
+    char *start;
+    char *p;
+    if (values == NULL || values[0] == '\0') {
+        return 0;
+    }
+    copy = nn_gd_strdup(values);
+    if (copy == NULL) {
+        return -1;
+    }
+    start = copy;
+    for (p = copy; ; ++p) {
+        if (*p == '|' || *p == '\0') {
+            char saved = *p;
+            *p = '\0';
+            if (start[0] != '\0' && nn_gd_add_token_pair(tokens, prefix, start) != 0) {
+                free(copy);
+                return -1;
+            }
+            if (saved == '\0') {
+                break;
+            }
+            start = p + 1;
+        }
+    }
+    free(copy);
+    return 0;
+}
+
+static int nn_gd_add_named_value_tokens(NNGDStringList *tokens,
+                                        const char *name,
+                                        const char *value) {
+    char token[256];
+    char bucket[256];
+    long parsed;
+    if (name == NULL || name[0] == '\0' || value == NULL || value[0] == '\0') {
+        return 0;
+    }
+    snprintf(token, sizeof(token), "%s=%s", name, value);
+    if (nn_gd_add_token_pair(tokens, "field:", token) != 0) {
+        return -1;
+    }
+    if (!isdigit((unsigned char)value[0]) && value[0] != '-') {
+        return 0;
+    }
+    parsed = nn_gd_parse_long(value);
+    if (parsed == 0L) {
+        snprintf(bucket, sizeof(bucket), "%s:zero", name);
+    } else if (parsed == 1L) {
+        snprintf(bucket, sizeof(bucket), "%s:one", name);
+    } else if (parsed == 2L) {
+        snprintf(bucket, sizeof(bucket), "%s:two", name);
+    } else if (parsed > 0L && parsed <= 4L) {
+        snprintf(bucket, sizeof(bucket), "%s:small", name);
+    } else if (parsed > 0L && parsed <= 8L) {
+        snprintf(bucket, sizeof(bucket), "%s:medium", name);
+    } else if (parsed > 8L) {
+        snprintf(bucket, sizeof(bucket), "%s:large", name);
+    } else {
+        snprintf(bucket, sizeof(bucket), "%s:negative", name);
+    }
+    return nn_gd_add_token_pair(tokens, "field_bucket:", bucket);
+}
+
+static int nn_gd_arc_attempt_add_tokens(NNGDArcPipelineAttempt *attempt,
+                                        char **fields,
+                                        size_t field_count) {
+    static const char *numeric_names[] = {
+        "selector",
+        "background",
+        "color",
+        "output_color",
+        "selector_kind",
+        "include_background",
+        "orientation",
+        "count_mode",
+        "x_align",
+        "y_align",
+        "x_anchor",
+        "y_anchor",
+        "x_offset",
+        "y_offset",
+        "width",
+        "height",
+        "period",
+        "proposal_count",
+        "support_tasks",
+        "input_width",
+        "input_height",
+        "output_width",
+        "output_height",
+        "shape_scale_x",
+        "shape_scale_y",
+        "period_divides_input_width",
+        "period_divides_input_height",
+        "slot_width_matches_output",
+        "slot_height_matches_output",
+        "color_in_input",
+        "color_in_output",
+        "output_color_in_output",
+        "background_in_input",
+        "verifier_train_pairs",
+        "verifier_checked_cells",
+        "verifier_mismatches",
+        "verifier_unsupported_pairs",
+        "verifier_apply_failed_pairs",
+        "verifier_shape_mismatch_pairs",
+        "verifier_missing_output_pairs",
+        "verifier_first_failing_pair",
+    };
+    static const size_t numeric_indices[] = {
+        17U, 18U, 19U, 20U, 21U, 22U, 23U, 24U, 25U, 26U,
+        27U, 28U, 29U, 30U, 31U, 32U, 33U, 14U, 15U,
+        38U, 39U, 40U, 41U, 42U, 43U, 44U, 45U, 46U, 47U,
+        48U, 49U, 50U, 51U,
+        52U, 53U, 54U, 55U, 56U, 57U, 58U, 59U,
+    };
+    size_t i;
+    if (nn_gd_add_token_pair(&attempt->tokens, "family:", attempt->family) != 0 ||
+        nn_gd_add_token_pair(&attempt->tokens, "split:", attempt->split) != 0 ||
+        nn_gd_add_token_pair(&attempt->tokens, "pipeline:", attempt->pipeline_kind) != 0 ||
+        nn_gd_add_token_pair(&attempt->tokens, "op:", attempt->op_name) != 0 ||
+        nn_gd_add_token_pair(&attempt->tokens,
+                             "visual_program:",
+                             attempt->visual_program) != 0 ||
+        nn_gd_add_pipe_tokens_with_prefix(&attempt->tokens,
+                                          "contract:",
+                                          attempt->slot_contract) != 0 ||
+        nn_gd_add_slot_tokens(&attempt->tokens, attempt->slot_tokens) != 0) {
+        return -1;
+    }
+    for (i = 0U; i < sizeof(numeric_names) / sizeof(numeric_names[0]); ++i) {
+        if (nn_gd_add_named_value_tokens(&attempt->tokens,
+                                         numeric_names[i],
+                                         nn_gd_field(fields,
+                                                     field_count,
+                                                     numeric_indices[i])) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int nn_gd_arc_attempt_list_add(NNGDArcPipelineAttemptList *list,
+                                      char **fields,
+                                      size_t field_count) {
+    NNGDArcPipelineAttempt *attempt;
+    if (nn_gd_arc_attempt_list_reserve(list, list->count + 1U) != 0) {
+        return -1;
+    }
+    attempt = &list->items[list->count];
+    memset(attempt, 0, sizeof(*attempt));
+    attempt->split_name = nn_gd_strdup(nn_gd_field(fields, field_count, 0U));
+    attempt->family = nn_gd_strdup(nn_gd_field(fields, field_count, 1U));
+    attempt->task_id = nn_gd_strdup(nn_gd_field(fields, field_count, 2U));
+    attempt->split = nn_gd_strdup(nn_gd_field(fields, field_count, 3U));
+    attempt->attempt_id = nn_gd_strdup(nn_gd_field(fields, field_count, 4U));
+    attempt->library_id = nn_gd_strdup(nn_gd_field(fields, field_count, 5U));
+    attempt->attempt_index = nn_gd_parse_long(nn_gd_field(fields, field_count, 6U));
+    attempt->pipeline_kind = nn_gd_strdup(nn_gd_field(fields, field_count, 7U));
+    attempt->op_name = nn_gd_strdup(nn_gd_field(fields, field_count, 8U));
+    attempt->visual_program = nn_gd_strdup(nn_gd_field(fields, field_count, 9U));
+    attempt->slot_contract = nn_gd_strdup(nn_gd_field(fields, field_count, 10U));
+    attempt->slot_tokens = nn_gd_strdup(nn_gd_field(fields, field_count, 11U));
+    attempt->accepted = nn_gd_parse_bool(nn_gd_field(fields, field_count, 12U));
+    attempt->rejection_reason = nn_gd_strdup(nn_gd_field(fields, field_count, 13U));
+    attempt->proposal_count = nn_gd_parse_long(nn_gd_field(fields, field_count, 14U));
+    attempt->support_tasks = nn_gd_parse_long(nn_gd_field(fields, field_count, 15U));
+    attempt->utility_mean = nn_gd_parse_double(nn_gd_field(fields, field_count, 16U));
+    attempt->contrast_accepted_attempt_id =
+        nn_gd_strdup(nn_gd_field(fields, field_count, 34U));
+    attempt->contrast_slot_distance =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 35U));
+    attempt->contrast_pair_kind = nn_gd_strdup(nn_gd_field(fields, field_count, 36U));
+    attempt->contrast_rejected_sibling_count =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 37U));
+    attempt->verifier_train_pairs =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 52U));
+    attempt->verifier_checked_cells =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 53U));
+    attempt->verifier_mismatches =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 54U));
+    attempt->verifier_unsupported_pairs =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 55U));
+    attempt->verifier_apply_failed_pairs =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 56U));
+    attempt->verifier_shape_mismatch_pairs =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 57U));
+    attempt->verifier_missing_output_pairs =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 58U));
+    attempt->verifier_first_failing_pair =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 59U));
+    attempt->verifier_mismatch_ratio =
+        nn_gd_parse_double(nn_gd_field(fields, field_count, 60U));
+    attempt->verifier_score =
+        nn_gd_parse_double(nn_gd_field(fields, field_count, 61U));
+    attempt->contrast_accepted_index = SIZE_MAX;
+    if (attempt->split_name == NULL || attempt->family == NULL ||
+        attempt->task_id == NULL || attempt->split == NULL ||
+        attempt->attempt_id == NULL || attempt->library_id == NULL ||
+        attempt->pipeline_kind == NULL || attempt->op_name == NULL ||
+        attempt->visual_program == NULL || attempt->slot_contract == NULL ||
+        attempt->slot_tokens == NULL || attempt->rejection_reason == NULL ||
+        attempt->contrast_accepted_attempt_id == NULL ||
+        attempt->contrast_pair_kind == NULL ||
+        nn_gd_arc_attempt_add_tokens(attempt, fields, field_count) != 0) {
+        nn_gd_arc_attempt_free(attempt);
+        memset(attempt, 0, sizeof(*attempt));
+        return -1;
+    }
+    ++list->count;
+    return 0;
+}
+
+static int nn_gd_read_arc_pipeline_attempts(const char *path,
+                                            NNGDArcPipelineAttemptList *attempts) {
+    FILE *fp;
+    char line[NN_GD_LINE_MAX];
+    char *fields[NN_GD_MAX_FIELDS];
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        return -1;
+    }
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        size_t field_count = nn_gd_split_tabs(line, fields, NN_GD_MAX_FIELDS);
+        const char *split_name = nn_gd_field(fields, field_count, 0U);
+        const char *attempt_id = nn_gd_field(fields, field_count, 4U);
+        if (split_name[0] == '\0' || strcmp(split_name, "split_name") == 0 ||
+            attempt_id[0] == '\0') {
+            continue;
+        }
+        if (nn_gd_arc_attempt_list_add(attempts, fields, field_count) != 0) {
+            fclose(fp);
+            return -1;
+        }
+    }
+    fclose(fp);
+    return 0;
+}
+
+static void nn_gd_resolve_arc_contrast_pairs(NNGDArcPipelineAttemptList *attempts,
+                                             size_t *source_pair_count,
+                                             size_t *target_pair_count) {
+    size_t *accepted_indices;
+    size_t accepted_count = 0U;
+    size_t i;
+    size_t j;
+    if (source_pair_count != NULL) {
+        *source_pair_count = 0U;
+    }
+    if (target_pair_count != NULL) {
+        *target_pair_count = 0U;
+    }
+    accepted_indices = (size_t *)calloc(attempts->count == 0U ? 1U : attempts->count,
+                                        sizeof(size_t));
+    if (accepted_indices == NULL) {
+        return;
+    }
+    for (i = 0U; i < attempts->count; ++i) {
+        if (attempts->items[i].accepted) {
+            accepted_indices[accepted_count++] = i;
+        }
+    }
+    for (i = 0U; i < attempts->count; ++i) {
+        NNGDArcPipelineAttempt *attempt = &attempts->items[i];
+        attempt->contrast_accepted_index = SIZE_MAX;
+        if (attempt->accepted || attempt->contrast_accepted_attempt_id == NULL ||
+            attempt->contrast_accepted_attempt_id[0] == '\0') {
+            continue;
+        }
+        for (j = 0U; j < accepted_count; ++j) {
+            const NNGDArcPipelineAttempt *candidate = &attempts->items[accepted_indices[j]];
+            if (strcmp(candidate->attempt_id, attempt->contrast_accepted_attempt_id) == 0) {
+                attempt->contrast_accepted_index = accepted_indices[j];
+                if (strcmp(attempt->split_name, "source") == 0 && source_pair_count != NULL) {
+                    ++*source_pair_count;
+                } else if (strcmp(attempt->split_name, "target") == 0 &&
+                           target_pair_count != NULL) {
+                    ++*target_pair_count;
+                }
+                break;
+            }
+        }
+    }
+    free(accepted_indices);
+}
+
+static int nn_gd_build_arc_vocab(const NNGDArcPipelineAttemptList *attempts,
+                                 NNGDStringList *vocab) {
+    size_t i;
+    size_t j;
+    for (i = 0U; i < attempts->count; ++i) {
+        const NNGDArcPipelineAttempt *attempt = &attempts->items[i];
+        for (j = 0U; j < attempt->tokens.count; ++j) {
+            if (nn_gd_string_list_add_unique(vocab, attempt->tokens.items[j]) != 0) {
+                return -1;
+            }
+        }
+    }
+    nn_gd_string_list_sort(vocab);
+    return 0;
+}
+
+static double nn_gd_arc_attempt_logit(const NNGDArcPipelineAttempt *attempt,
+                                      const NNGDStringList *vocab,
+                                      const double *weights,
+                                      double bias) {
+    size_t i;
+    double z = bias;
+    for (i = 0U; i < attempt->tokens.count; ++i) {
+        long index = nn_gd_token_index(vocab, attempt->tokens.items[i]);
+        if (index >= 0L) {
+            z += weights[index];
+        }
+    }
+    return z;
+}
+
+static int nn_gd_compare_arc_scored_attempts(const void *a, const void *b) {
+    const NNGDScoredArcAttempt *sa = (const NNGDScoredArcAttempt *)a;
+    const NNGDScoredArcAttempt *sb = (const NNGDScoredArcAttempt *)b;
+    const NNGDArcPipelineAttempt *aa =
+        &nn_gd_sort_arc_attempts[sa->attempt_index];
+    const NNGDArcPipelineAttempt *ab =
+        &nn_gd_sort_arc_attempts[sb->attempt_index];
+    int cmp = strcmp(aa->family, ab->family);
+    if (cmp != 0) {
+        return cmp;
+    }
+    cmp = strcmp(aa->task_id, ab->task_id);
+    if (cmp != 0) {
+        return cmp;
+    }
+    cmp = strcmp(aa->split, ab->split);
+    if (cmp != 0) {
+        return cmp;
+    }
+    if (sa->score < sb->score) {
+        return 1;
+    }
+    if (sa->score > sb->score) {
+        return -1;
+    }
+    return strcmp(aa->attempt_id, ab->attempt_id);
+}
+
+static uint64_t nn_gd_arc_pipeline_proposal_hash(const char *attempt_id) {
+    uint64_t hash = UINT64_C(1469598103934665603);
+    hash = nn_gd_fnv1a_update(hash, "arc-visual-pipeline-neural");
+    hash ^= 0U;
+    hash *= UINT64_C(1099511628211);
+    hash = nn_gd_fnv1a_update(hash, attempt_id);
+    return hash;
+}
+
+typedef struct {
+    char *name;
+    long count;
+    long accepted;
+    long evaluated_tasks;
+    long top1_hits;
+    long top3_hits;
+    long retained_hits;
+    double score_sum;
+} NNGDArcNamedMetric;
+
+typedef struct {
+    NNGDArcNamedMetric *items;
+    size_t count;
+    size_t capacity;
+} NNGDArcMetricList;
+
+static int nn_gd_arc_metric_list_reserve(NNGDArcMetricList *list, size_t needed) {
+    NNGDArcNamedMetric *items;
+    size_t capacity;
+    if (needed <= list->capacity) {
+        return 0;
+    }
+    capacity = list->capacity == 0U ? 8U : list->capacity * 2U;
+    while (capacity < needed) {
+        capacity *= 2U;
+    }
+    items = (NNGDArcNamedMetric *)realloc(list->items,
+                                          capacity * sizeof(NNGDArcNamedMetric));
+    if (items == NULL) {
+        return -1;
+    }
+    list->items = items;
+    list->capacity = capacity;
+    return 0;
+}
+
+static NNGDArcNamedMetric *nn_gd_arc_metric_get(NNGDArcMetricList *list,
+                                                const char *name) {
+    size_t i;
+    if (name == NULL || name[0] == '\0') {
+        name = "(none)";
+    }
+    for (i = 0U; i < list->count; ++i) {
+        if (strcmp(list->items[i].name, name) == 0) {
+            return &list->items[i];
+        }
+    }
+    if (nn_gd_arc_metric_list_reserve(list, list->count + 1U) != 0) {
+        return NULL;
+    }
+    memset(&list->items[list->count], 0, sizeof(list->items[list->count]));
+    list->items[list->count].name = nn_gd_strdup(name);
+    if (list->items[list->count].name == NULL) {
+        return NULL;
+    }
+    return &list->items[list->count++];
+}
+
+static void nn_gd_arc_metric_list_free(NNGDArcMetricList *list) {
+    size_t i;
+    for (i = 0U; i < list->count; ++i) {
+        free(list->items[i].name);
+    }
+    free(list->items);
+    list->items = NULL;
+    list->count = 0U;
+    list->capacity = 0U;
+}
+
+static void nn_gd_write_arc_op_recovery(FILE *fp, const NNGDArcMetricList *metrics) {
+    size_t i;
+    fputc('{', fp);
+    for (i = 0U; i < metrics->count; ++i) {
+        const NNGDArcNamedMetric *metric = &metrics->items[i];
+        if (i > 0U) {
+            fputc(',', fp);
+        }
+        nn_gd_json_write_string(fp, metric->name);
+        fprintf(fp,
+                ":{\"evaluated_tasks\":%ld,\"top1_hits\":%ld,"
+                "\"top3_hits\":%ld,\"retained_hits\":%ld,"
+                "\"top1_rate\":%.8f,\"top3_rate\":%.8f,"
+                "\"retained_rate\":%.8f}",
+                metric->evaluated_tasks,
+                metric->top1_hits,
+                metric->top3_hits,
+                metric->retained_hits,
+                metric->evaluated_tasks == 0L
+                    ? 0.0
+                    : (double)metric->top1_hits / (double)metric->evaluated_tasks,
+                metric->evaluated_tasks == 0L
+                    ? 0.0
+                    : (double)metric->top3_hits / (double)metric->evaluated_tasks,
+                metric->evaluated_tasks == 0L
+                    ? 0.0
+                    : (double)metric->retained_hits / (double)metric->evaluated_tasks);
+    }
+    fputc('}', fp);
+}
+
+static void nn_gd_write_arc_reason_calibration(FILE *fp,
+                                               const NNGDArcMetricList *metrics) {
+    size_t i;
+    fputc('{', fp);
+    for (i = 0U; i < metrics->count; ++i) {
+        const NNGDArcNamedMetric *metric = &metrics->items[i];
+        if (i > 0U) {
+            fputc(',', fp);
+        }
+        nn_gd_json_write_string(fp, metric->name);
+        fprintf(fp,
+                ":{\"retained\":%ld,\"accepted\":%ld,\"mean_score\":%.8f,"
+                "\"acceptance_rate\":%.8f}",
+                metric->count,
+                metric->accepted,
+                metric->count == 0L ? 0.0 : metric->score_sum / (double)metric->count,
+                metric->count == 0L ? 0.0 : (double)metric->accepted / (double)metric->count);
+    }
+    fputc('}', fp);
+}
+
+static int nn_gd_arc_group_has_accepted_op(const NNGDScoredArcAttempt *scores,
+                                           size_t start,
+                                           size_t end,
+                                           const NNGDArcPipelineAttemptList *attempts,
+                                           const char *op_name,
+                                           size_t limit) {
+    size_t i;
+    size_t capped = start + limit;
+    if (capped > end) {
+        capped = end;
+    }
+    for (i = start; i < capped; ++i) {
+        const NNGDArcPipelineAttempt *attempt =
+            &attempts->items[scores[i].attempt_index];
+        if (attempt->accepted && strcmp(attempt->op_name, op_name) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int nn_grammar_discovery_write_neural_sketch_proposals(
     const char *sketches_path,
     const char *examples_path,
@@ -1711,5 +2311,432 @@ done:
     nn_gd_string_list_free(&vocab);
     nn_gd_label_list_free(&labels);
     nn_gd_sketch_list_free(&sketches);
+    return status;
+}
+
+int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
+    const char *attempt_rows_path,
+    const char *proposals_output_path,
+    const char *summary_output_path,
+    unsigned epochs,
+    double learning_rate,
+    unsigned max_per_task) {
+    NNGDArcPipelineAttemptList attempts = {0};
+    NNGDStringList vocab = {0};
+    NNGDScoredArcAttempt *target_scores = NULL;
+    double *weights = NULL;
+    double bias = 0.0;
+    FILE *proposals = NULL;
+    FILE *summary = NULL;
+    int status = -1;
+    size_t source_count = 0U;
+    size_t source_accepted = 0U;
+    size_t source_rejected = 0U;
+    size_t target_count = 0U;
+    size_t target_accepted = 0U;
+    size_t source_contrast_pair_count = 0U;
+    size_t target_contrast_pair_count = 0U;
+    size_t pairwise_training_updates = 0U;
+    size_t pairwise_last_epoch_violations = 0U;
+    double positive_weight = 1.0;
+    unsigned epoch;
+    size_t i;
+    size_t scored_count = 0U;
+    long evaluated_tasks = 0L;
+    long top1_hits = 0L;
+    long top3_hits = 0L;
+    long retained_hits = 0L;
+    long proposal_count = 0L;
+    NNGDArcMetricList op_recovery = {0};
+    NNGDArcMetricList reason_calibration = {0};
+
+    if (max_per_task == 0U) {
+        max_per_task = 1U;
+    }
+    if (nn_gd_read_arc_pipeline_attempts(attempt_rows_path, &attempts) != 0 ||
+        nn_gd_build_arc_vocab(&attempts, &vocab) != 0) {
+        goto done;
+    }
+    nn_gd_resolve_arc_contrast_pairs(&attempts,
+                                     &source_contrast_pair_count,
+                                     &target_contrast_pair_count);
+    for (i = 0U; i < attempts.count; ++i) {
+        const NNGDArcPipelineAttempt *attempt = &attempts.items[i];
+        if (strcmp(attempt->split_name, "source") == 0) {
+            ++source_count;
+            if (attempt->accepted) {
+                ++source_accepted;
+            } else {
+                ++source_rejected;
+            }
+        } else if (strcmp(attempt->split_name, "target") == 0) {
+            ++target_count;
+            if (attempt->accepted) {
+                ++target_accepted;
+            }
+        }
+    }
+    if (source_accepted > 0U && source_rejected > source_accepted) {
+        positive_weight = (double)source_rejected / (double)source_accepted;
+        if (positive_weight > 64.0) {
+            positive_weight = 64.0;
+        }
+    }
+    weights = (double *)calloc(vocab.count == 0U ? 1U : vocab.count, sizeof(double));
+    target_scores = (NNGDScoredArcAttempt *)calloc(target_count == 0U ? 1U : target_count,
+                                                   sizeof(NNGDScoredArcAttempt));
+    if (weights == NULL || target_scores == NULL) {
+        goto done;
+    }
+    for (epoch = 0U; epoch < epochs; ++epoch) {
+        for (i = 0U; i < attempts.count; ++i) {
+            const NNGDArcPipelineAttempt *attempt = &attempts.items[i];
+            double label;
+            double z;
+            double pred;
+            double error;
+            double active;
+            double row_weight;
+            double scale;
+            size_t j;
+            if (strcmp(attempt->split_name, "source") != 0) {
+                continue;
+            }
+            label = attempt->accepted ? 1.0 : attempt->verifier_score;
+            if (label < 0.0) {
+                label = 0.0;
+            } else if (label > 1.0) {
+                label = 1.0;
+            }
+            z = nn_gd_arc_attempt_logit(attempt, &vocab, weights, bias);
+            pred = nn_gd_sigmoid(z);
+            row_weight = attempt->accepted ? positive_weight : 1.0 + label;
+            error = (pred - label) * row_weight;
+            active = attempt->tokens.count == 0U ? 1.0 : (double)attempt->tokens.count;
+            scale = learning_rate * error / active;
+            bias -= scale;
+            for (j = 0U; j < attempt->tokens.count; ++j) {
+                long index = nn_gd_token_index(&vocab, attempt->tokens.items[j]);
+                if (index >= 0L) {
+                    weights[index] -= scale;
+                }
+            }
+        }
+        pairwise_last_epoch_violations = 0U;
+        for (i = 0U; i < attempts.count; ++i) {
+            const NNGDArcPipelineAttempt *negative = &attempts.items[i];
+            const NNGDArcPipelineAttempt *positive;
+            double pos_z;
+            double neg_z;
+            double pred;
+            double pair_scale;
+            double pos_active;
+            double neg_active;
+            size_t j;
+            if (strcmp(negative->split_name, "source") != 0 ||
+                negative->accepted ||
+                negative->contrast_accepted_index == SIZE_MAX ||
+                negative->contrast_accepted_index >= attempts.count) {
+                continue;
+            }
+            positive = &attempts.items[negative->contrast_accepted_index];
+            if (!positive->accepted || strcmp(positive->split_name, "source") != 0) {
+                continue;
+            }
+            pos_z = nn_gd_arc_attempt_logit(positive, &vocab, weights, bias);
+            neg_z = nn_gd_arc_attempt_logit(negative, &vocab, weights, bias);
+            if (pos_z <= neg_z) {
+                ++pairwise_last_epoch_violations;
+            }
+            pred = nn_gd_sigmoid(pos_z - neg_z);
+            pair_scale = 0.5 * learning_rate * (pred - 1.0);
+            pos_active =
+                positive->tokens.count == 0U ? 1.0 : (double)positive->tokens.count;
+            neg_active =
+                negative->tokens.count == 0U ? 1.0 : (double)negative->tokens.count;
+            for (j = 0U; j < positive->tokens.count; ++j) {
+                long index = nn_gd_token_index(&vocab, positive->tokens.items[j]);
+                if (index >= 0L) {
+                    weights[index] -= pair_scale / pos_active;
+                }
+            }
+            for (j = 0U; j < negative->tokens.count; ++j) {
+                long index = nn_gd_token_index(&vocab, negative->tokens.items[j]);
+                if (index >= 0L) {
+                    weights[index] += pair_scale / neg_active;
+                }
+            }
+            ++pairwise_training_updates;
+        }
+    }
+    for (i = 0U; i < attempts.count; ++i) {
+        NNGDArcPipelineAttempt *attempt = &attempts.items[i];
+        if (strcmp(attempt->split_name, "target") != 0) {
+            continue;
+        }
+        target_scores[scored_count].attempt_index = i;
+        target_scores[scored_count].model_score =
+            nn_gd_sigmoid(nn_gd_arc_attempt_logit(attempt, &vocab, weights, bias));
+        target_scores[scored_count].score =
+            0.65 * target_scores[scored_count].model_score +
+            0.35 * attempt->verifier_score;
+        ++scored_count;
+    }
+    nn_gd_sort_arc_attempts = attempts.items;
+    qsort(target_scores,
+          scored_count,
+          sizeof(NNGDScoredArcAttempt),
+          nn_gd_compare_arc_scored_attempts);
+    nn_gd_sort_arc_attempts = NULL;
+
+    proposals = fopen(proposals_output_path, "w");
+    summary = fopen(summary_output_path, "w");
+    if (proposals == NULL || summary == NULL) {
+        goto done;
+    }
+    for (i = 0U; i < scored_count;) {
+        size_t start = i;
+        size_t end;
+        size_t rank;
+        int group_has_accepted = 0;
+        int group_top1_hit = 0;
+        int group_top3_hit = 0;
+        int group_retained_hit = 0;
+        NNGDStringList accepted_ops = {0};
+        const NNGDArcPipelineAttempt *first_attempt =
+            &attempts.items[target_scores[start].attempt_index];
+        for (end = start; end < scored_count; ++end) {
+            const NNGDArcPipelineAttempt *attempt =
+                &attempts.items[target_scores[end].attempt_index];
+            if (strcmp(first_attempt->family, attempt->family) != 0 ||
+                strcmp(first_attempt->task_id, attempt->task_id) != 0 ||
+                strcmp(first_attempt->split, attempt->split) != 0) {
+                break;
+            }
+            if (attempt->accepted) {
+                group_has_accepted = 1;
+                if (nn_gd_string_list_add_unique(&accepted_ops, attempt->op_name) != 0) {
+                    nn_gd_string_list_free(&accepted_ops);
+                    goto done;
+                }
+            }
+        }
+        for (rank = 0U; rank < max_per_task && start + rank < end; ++rank) {
+            const NNGDScoredArcAttempt *score = &target_scores[start + rank];
+            const NNGDArcPipelineAttempt *attempt =
+                &attempts.items[score->attempt_index];
+            NNGDArcNamedMetric *reason_metric =
+                nn_gd_arc_metric_get(&reason_calibration, attempt->rejection_reason);
+            uint64_t proposal_hash = nn_gd_arc_pipeline_proposal_hash(attempt->attempt_id);
+            if (reason_metric == NULL) {
+                nn_gd_string_list_free(&accepted_ops);
+                goto done;
+            }
+            ++reason_metric->count;
+            reason_metric->accepted += attempt->accepted ? 1L : 0L;
+            reason_metric->score_sum += score->score;
+            ++proposal_count;
+            if (attempt->accepted) {
+                group_retained_hit = 1;
+                if (rank == 0U) {
+                    group_top1_hit = 1;
+                }
+                if (rank < 3U) {
+                    group_top3_hit = 1;
+                }
+            }
+            fputs("{\"schema\":\"crlp.neural_grammar_discovery.arc_visual_pipeline_proposal.v1\","
+                  "\"report_version\":1,\"proposal_id\":\"avpn:",
+                  proposals);
+            fprintf(proposals, "%016" PRIx64, proposal_hash);
+            fputs("\",\"proposer\":\"neural_visual_pipeline_ranker\",\"family\":", proposals);
+            nn_gd_json_write_string(proposals, attempt->family);
+            fputs(",\"task_id\":", proposals);
+            nn_gd_json_write_string(proposals, attempt->task_id);
+            fputs(",\"split\":", proposals);
+            nn_gd_json_write_string(proposals, attempt->split);
+            fputs(",\"target_attempt_id\":", proposals);
+            nn_gd_json_write_string(proposals, attempt->attempt_id);
+            fputs(",\"library_id\":", proposals);
+            nn_gd_json_write_string(proposals, attempt->library_id);
+            fputs(",\"pipeline_kind\":", proposals);
+            nn_gd_json_write_string(proposals, attempt->pipeline_kind);
+            fputs(",\"op_name\":", proposals);
+            nn_gd_json_write_string(proposals, attempt->op_name);
+            fprintf(proposals,
+                    ",\"score\":%.8f,\"target_accepted\":%s,"
+                    "\"target_rejection_reason\":",
+                    score->score,
+                    attempt->accepted ? "true" : "false");
+            nn_gd_json_write_string(proposals, attempt->rejection_reason);
+            fprintf(proposals,
+                    ",\"rank_features\":{\"epochs\":%u,\"learning_rate\":%.17g,"
+                    "\"vocab_size\":%zu,\"source_attempt_count\":%zu,"
+                    "\"source_accepted_count\":%zu,\"source_rejected_count\":%zu,"
+                    "\"positive_weight\":%.8f,\"rank_within_task\":%zu,"
+                    "\"tokens\":%zu,\"source_contrast_pairs\":%zu,"
+                    "\"target_contrast_pairs\":%zu,"
+                    "\"contrast_slot_distance\":%ld,"
+                    "\"contrast_rejected_sibling_count\":%ld,"
+                    "\"model_score\":%.8f,\"verifier_proxy_score\":%.8f,"
+                    "\"verifier_train_pairs\":%ld,"
+                    "\"verifier_checked_cells\":%ld,"
+                    "\"verifier_mismatches\":%ld,"
+                    "\"verifier_unsupported_pairs\":%ld,"
+                    "\"verifier_apply_failed_pairs\":%ld,"
+                    "\"verifier_shape_mismatch_pairs\":%ld,"
+                    "\"verifier_missing_output_pairs\":%ld,"
+                    "\"verifier_first_failing_pair\":%ld,"
+                    "\"verifier_mismatch_ratio\":%.8f,"
+                    "\"proposal_count\":%ld,\"support_tasks\":%ld,"
+                    "\"utility_mean\":%.8f},\"rank\":%zu}\n",
+                    epochs,
+                    learning_rate,
+                    vocab.count,
+                    source_count,
+                    source_accepted,
+                    source_rejected,
+                    positive_weight,
+                    rank + 1U,
+                    attempt->tokens.count,
+                    source_contrast_pair_count,
+                    target_contrast_pair_count,
+                    attempt->contrast_slot_distance,
+                    attempt->contrast_rejected_sibling_count,
+                    score->model_score,
+                    attempt->verifier_score,
+                    attempt->verifier_train_pairs,
+                    attempt->verifier_checked_cells,
+                    attempt->verifier_mismatches,
+                    attempt->verifier_unsupported_pairs,
+                    attempt->verifier_apply_failed_pairs,
+                    attempt->verifier_shape_mismatch_pairs,
+                    attempt->verifier_missing_output_pairs,
+                    attempt->verifier_first_failing_pair,
+                    attempt->verifier_mismatch_ratio,
+                    attempt->proposal_count,
+                    attempt->support_tasks,
+                    attempt->utility_mean,
+                    rank + 1U);
+        }
+        if (group_has_accepted) {
+            size_t op_index;
+            ++evaluated_tasks;
+            top1_hits += group_top1_hit ? 1L : 0L;
+            top3_hits += group_top3_hit ? 1L : 0L;
+            retained_hits += group_retained_hit ? 1L : 0L;
+            for (op_index = 0U; op_index < accepted_ops.count; ++op_index) {
+                const char *op_name = accepted_ops.items[op_index];
+                NNGDArcNamedMetric *metric = nn_gd_arc_metric_get(&op_recovery, op_name);
+                if (metric == NULL) {
+                    nn_gd_string_list_free(&accepted_ops);
+                    goto done;
+                }
+                ++metric->evaluated_tasks;
+                metric->top1_hits +=
+                    nn_gd_arc_group_has_accepted_op(target_scores,
+                                                    start,
+                                                    end,
+                                                    &attempts,
+                                                    op_name,
+                                                    1U)
+                        ? 1L
+                        : 0L;
+                metric->top3_hits +=
+                    nn_gd_arc_group_has_accepted_op(target_scores,
+                                                    start,
+                                                    end,
+                                                    &attempts,
+                                                    op_name,
+                                                    3U)
+                        ? 1L
+                        : 0L;
+                metric->retained_hits +=
+                    nn_gd_arc_group_has_accepted_op(target_scores,
+                                                    start,
+                                                    end,
+                                                    &attempts,
+                                                    op_name,
+                                                    max_per_task)
+                        ? 1L
+                        : 0L;
+            }
+        }
+        nn_gd_string_list_free(&accepted_ops);
+        i = end;
+    }
+    fputs("{\"schema\":\"crlp.neural_grammar_discovery.arc_visual_pipeline_neural_summary.v1\","
+          "\"report_version\":1,\"proposer\":\"neural_visual_pipeline_ranker\",",
+          summary);
+    fprintf(summary,
+            "\"source_attempt_count\":%zu,\"source_accepted_count\":%zu,"
+            "\"source_rejected_count\":%zu,\"target_attempt_count\":%zu,"
+            "\"target_accepted_count\":%zu,\"proposal_count\":%ld,"
+            "\"accepted_target_task_count\":%ld,\"evaluated_tasks\":%ld,"
+            "\"top1_hits\":%ld,\"top3_hits\":%ld,\"retained_hits\":%ld,"
+            "\"top1_rate\":%.8f,\"top3_rate\":%.8f,\"retained_rate\":%.8f,"
+            "\"epochs\":%u,\"learning_rate\":%.17g,\"vocab_size\":%zu,"
+            "\"positive_weight\":%.8f,\"source_contrast_pair_count\":%zu,"
+            "\"target_contrast_pair_count\":%zu,"
+            "\"pairwise_training_updates\":%zu,"
+            "\"pairwise_last_epoch_violations\":%zu,"
+            "\"rerank_model_weight\":0.65,\"rerank_verifier_proxy_weight\":0.35,"
+            "\"training_mode\":\"source_to_target_visual_pipeline_attempts_with_dense_verifier_targets\",",
+            source_count,
+            source_accepted,
+            source_rejected,
+            target_count,
+            target_accepted,
+            proposal_count,
+            evaluated_tasks,
+            evaluated_tasks,
+            top1_hits,
+            top3_hits,
+            retained_hits,
+            evaluated_tasks == 0L ? 0.0 : (double)top1_hits / (double)evaluated_tasks,
+            evaluated_tasks == 0L ? 0.0 : (double)top3_hits / (double)evaluated_tasks,
+            evaluated_tasks == 0L ? 0.0 : (double)retained_hits / (double)evaluated_tasks,
+            epochs,
+            learning_rate,
+            vocab.count,
+            positive_weight,
+            source_contrast_pair_count,
+            target_contrast_pair_count,
+            pairwise_training_updates,
+            pairwise_last_epoch_violations);
+    fputs("\"by_proposer\":{\"neural_visual_pipeline_ranker\":{", summary);
+    fprintf(summary,
+            "\"evaluated_tasks\":%ld,\"top1_hits\":%ld,\"top3_hits\":%ld,"
+            "\"retained_hits\":%ld,\"top1_rate\":%.8f,\"top3_rate\":%.8f,"
+            "\"retained_rate\":%.8f}},\"by_accepted_op\":",
+            evaluated_tasks,
+            top1_hits,
+            top3_hits,
+            retained_hits,
+            evaluated_tasks == 0L ? 0.0 : (double)top1_hits / (double)evaluated_tasks,
+            evaluated_tasks == 0L ? 0.0 : (double)top3_hits / (double)evaluated_tasks,
+            evaluated_tasks == 0L ? 0.0 : (double)retained_hits / (double)evaluated_tasks);
+    nn_gd_write_arc_op_recovery(summary, &op_recovery);
+    fputs(",\"calibration_by_rejection_reason\":", summary);
+    nn_gd_write_arc_reason_calibration(summary, &reason_calibration);
+    fputs("}\n", summary);
+    if (ferror(proposals) || ferror(summary)) {
+        goto done;
+    }
+    status = 0;
+
+done:
+    if (proposals != NULL) {
+        fclose(proposals);
+    }
+    if (summary != NULL) {
+        fclose(summary);
+    }
+    nn_gd_arc_metric_list_free(&reason_calibration);
+    nn_gd_arc_metric_list_free(&op_recovery);
+    free(target_scores);
+    free(weights);
+    nn_gd_string_list_free(&vocab);
+    nn_gd_arc_attempt_list_free(&attempts);
     return status;
 }

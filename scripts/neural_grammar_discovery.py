@@ -45,6 +45,9 @@ ARC_VISUAL_PIPELINE_PROPOSAL_SCHEMA = (
 ARC_VISUAL_PIPELINE_PROPOSAL_SUMMARY_SCHEMA = (
     "crlp.neural_grammar_discovery.arc_visual_pipeline_proposal_summary.v1"
 )
+ARC_VISUAL_PIPELINE_NEURAL_SUMMARY_SCHEMA = (
+    "crlp.neural_grammar_discovery.arc_visual_pipeline_neural_summary.v1"
+)
 
 ARC_SKETCH_TEMPLATE_NAME = "arc_sketch_program"
 ARC_SKETCH_PROBE_CANDIDATE_FIELDS = [
@@ -54,6 +57,7 @@ ARC_SKETCH_PROBE_CANDIDATE_FIELDS = [
     "support_tasks",
     "proposal_count",
     "utility_mean",
+    "op_hints",
 ]
 ARC_SKETCH_PRIOR_HEADER = (
     "schema_version\ttemplate_id\ttemplate_name\tlibrary_id\tslot_name\t"
@@ -107,6 +111,49 @@ ARC_PRIORITY_TO_DELTA = {
         "description": "Add composed transform templates when no single family covers the cluster.",
         "required_adapter": "arc_template_composition_compiler",
     },
+}
+
+ARC_FAMILY_STRUCTURE_OPS = {
+    "arc.patch_lattice_template_family": (
+        "tile_repeat",
+        "palette_scale",
+        "macrocell_substitute",
+        "lattice_sample",
+        "point_line_project",
+    ),
+    "arc.separator_panel_extraction_family": (
+        "separator_panel_map",
+        "component_color_summary",
+        "crop",
+        "masked_or_normalized_crop",
+    ),
+    "arc.tiling_canvas_growth_family": (
+        "macrocell_substitute",
+        "palette_scale",
+        "tile_repeat",
+        "lattice_sample",
+    ),
+    "arc.crop_object_selection_family": (
+        "object_color_tile",
+        "object_mask_extract",
+        "crop",
+        "masked_or_normalized_crop",
+        "lattice_sample",
+    ),
+    "arc.projection_compression_family": (
+        "marker_count_motif_tile",
+        "component_count_line",
+        "axis_projection_compress",
+        "separator_panel_map",
+        "lattice_sample",
+    ),
+    "arc.compositional_transform_family": (
+        "palette_scale",
+        "object_color_tile",
+        "object_mask_extract",
+        "axis_projection_compress",
+        "separator_panel_map",
+    ),
 }
 
 HAIKU_CORRUPTION_TO_DELTA = {
@@ -748,13 +795,14 @@ def write_arc_probe_candidate_record_rows(
             if not family or not task_id or not split:
                 continue
             fp.write(
-                "{}\t{}\t{}\t{}\t{}\t{:.8f}\n".format(
+                "{}\t{}\t{}\t{}\t{}\t{:.8f}\t{}\n".format(
                     family,
                     task_id,
                     split,
                     max(1, safe_int(record.get("support_tasks"))),
                     max(1, min(64, safe_int(record.get("proposal_count")))),
                     safe_float(record.get("utility_mean")),
+                    str(record.get("op_hints", "")).replace("\t", " ").replace("\n", " "),
                 )
             )
             row_count += 1
@@ -965,21 +1013,289 @@ def arc_heldout_candidate_records(
     return records
 
 
+def arc_public_task_path(public_arc_dir: Path, split: str, task_id: str) -> Path:
+    if "eval" in split:
+        for dirname in ("evaluation", "eval"):
+            path = public_arc_dir / dirname / f"{task_id}.json"
+            if path.is_file():
+                return path
+    for dirname in ("training", "train", "evaluation", "eval"):
+        path = public_arc_dir / dirname / f"{task_id}.json"
+        if path.is_file():
+            return path
+    return public_arc_dir / split / f"{task_id}.json"
+
+
+def arc_grid_dimensions(grid: Any) -> tuple[int, int]:
+    if not isinstance(grid, list) or not grid:
+        return 0, 0
+    height = len(grid)
+    width = len(grid[0]) if isinstance(grid[0], list) else 0
+    return width, height
+
+
+def arc_grid_colors(grid: Any) -> set[int]:
+    colors: set[int] = set()
+    if not isinstance(grid, list):
+        return colors
+    for row in grid:
+        if not isinstance(row, list):
+            continue
+        for value in row:
+            try:
+                colors.add(int(value))
+            except (TypeError, ValueError):
+                pass
+    return colors
+
+
+def arc_grid_has_separator(grid: Any) -> bool:
+    if not isinstance(grid, list) or not grid or not isinstance(grid[0], list):
+        return False
+    width, height = arc_grid_dimensions(grid)
+    if width <= 2 or height <= 2:
+        return False
+    colors = arc_grid_colors(grid)
+    if len(colors) <= 1:
+        return False
+    for row in grid:
+        if isinstance(row, list) and len(row) == width and len(set(row)) == 1:
+            return True
+    for x in range(width):
+        column = [row[x] for row in grid if isinstance(row, list) and len(row) > x]
+        if len(column) == height and len(set(column)) == 1:
+            return True
+    return False
+
+
+def arc_task_shape_features(public_arc_dir: Path, split: str, task_id: str) -> dict[str, Any]:
+    path = arc_public_task_path(public_arc_dir, split, task_id)
+    if not path.is_file():
+        return {"task_path": str(path), "found": False}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"task_path": str(path), "found": False}
+    train = data.get("train", [])
+    if not isinstance(train, list) or not train:
+        return {"task_path": str(path), "found": False}
+    features: Counter[str] = Counter()
+    input_colors: set[int] = set()
+    output_colors: set[int] = set()
+    pair_count = 0
+    first_dims: dict[str, int] = {}
+    for pair in train:
+        if not isinstance(pair, dict):
+            continue
+        input_grid = pair.get("input")
+        output_grid = pair.get("output")
+        input_width, input_height = arc_grid_dimensions(input_grid)
+        output_width, output_height = arc_grid_dimensions(output_grid)
+        if not input_width or not input_height or not output_width or not output_height:
+            continue
+        pair_count += 1
+        if not first_dims:
+            first_dims = {
+                "input_width": input_width,
+                "input_height": input_height,
+                "output_width": output_width,
+                "output_height": output_height,
+            }
+        input_area = input_width * input_height
+        output_area = output_width * output_height
+        features["same_shape"] += int(input_width == output_width and input_height == output_height)
+        features["scale_up"] += int(output_area > input_area)
+        features["scale_down"] += int(output_area < input_area)
+        features["integer_scale_up"] += int(
+            output_area > input_area
+            and output_width % input_width == 0
+            and output_height % input_height == 0
+        )
+        features["output_line"] += int(output_width == 1 or output_height == 1)
+        features["output_small"] += int(output_area <= 9)
+        features["input_has_separator"] += int(arc_grid_has_separator(input_grid))
+        input_colors.update(arc_grid_colors(input_grid))
+        output_colors.update(arc_grid_colors(output_grid))
+    result: dict[str, Any] = {
+        "task_path": str(path),
+        "found": pair_count > 0,
+        "train_pairs": pair_count,
+        "input_color_count": len(input_colors),
+        "output_color_count": len(output_colors),
+    }
+    result.update(first_dims)
+    for key in (
+        "same_shape",
+        "scale_up",
+        "scale_down",
+        "integer_scale_up",
+        "output_line",
+        "output_small",
+        "input_has_separator",
+    ):
+        result[key] = features[key]
+    return result
+
+
+def arc_structure_op_scores(
+    record: dict[str, Any],
+    features: dict[str, Any],
+    accepted_by_family_op: Counter[tuple[str, str]],
+    accepted_by_op: Counter[str],
+) -> list[tuple[str, float]]:
+    family = str(record.get("family", ""))
+    ops = ARC_FAMILY_STRUCTURE_OPS.get(family, ())
+    scores: dict[str, float] = {op: 0.05 for op in ops}
+    for op in ops:
+        scores[op] += 3.0 * accepted_by_family_op[(family, op)]
+        scores[op] += 0.35 * accepted_by_op[op]
+    if safe_int(features.get("integer_scale_up")) > 0:
+        for op, bonus in (
+            ("macrocell_substitute", 5.0),
+            ("palette_scale", 3.0),
+            ("tile_repeat", 1.5),
+        ):
+            if op in scores:
+                scores[op] += bonus
+    if safe_int(features.get("scale_up")) > 0:
+        for op, bonus in (
+            ("object_color_tile", 3.0),
+            ("marker_count_motif_tile", 3.0),
+            ("macrocell_substitute", 2.0),
+            ("palette_scale", 1.5),
+        ):
+            if op in scores:
+                scores[op] += bonus
+    if safe_int(features.get("scale_down")) > 0:
+        for op, bonus in (
+            ("crop", 2.5),
+            ("masked_or_normalized_crop", 2.5),
+            ("object_mask_extract", 2.5),
+            ("lattice_sample", 2.0),
+            ("component_color_summary", 2.0),
+            ("axis_projection_compress", 2.0),
+            ("separator_panel_map", 1.5),
+        ):
+            if op in scores:
+                scores[op] += bonus
+    if safe_int(features.get("same_shape")) > 0:
+        for op, bonus in (
+            ("tile_repeat", 2.5),
+            ("point_line_project", 2.5),
+            ("palette_scale", 1.0),
+            ("separator_panel_map", 0.75),
+        ):
+            if op in scores:
+                scores[op] += bonus
+    if safe_int(features.get("output_line")) > 0:
+        for op, bonus in (
+            ("component_count_line", 5.0),
+            ("axis_projection_compress", 3.5),
+        ):
+            if op in scores:
+                scores[op] += bonus
+    if safe_int(features.get("output_small")) > 0:
+        for op, bonus in (
+            ("component_color_summary", 2.0),
+            ("lattice_sample", 1.5),
+            ("axis_projection_compress", 1.5),
+            ("object_color_tile", 4.0),
+            ("marker_count_motif_tile", 4.0),
+        ):
+            if op in scores:
+                scores[op] += bonus
+    if safe_int(features.get("input_has_separator")) > 0:
+        for op, bonus in (
+            ("separator_panel_map", 5.0),
+            ("component_color_summary", 1.0),
+            ("marker_count_motif_tile", 1.0),
+        ):
+            if op in scores:
+                scores[op] += bonus
+    return sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+
+
+def add_arc_structure_op_hints(
+    records: list[dict[str, Any]],
+    source_attempts: list[dict[str, Any]],
+    public_arc_dir: Path,
+    hints_per_task: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    accepted_by_family_op: Counter[tuple[str, str]] = Counter()
+    accepted_by_op: Counter[str] = Counter()
+    for row in source_attempts:
+        if not safe_bool(row.get("accepted")):
+            continue
+        family = str(row.get("family", ""))
+        op_name = str(row.get("op_name", ""))
+        if not family or not op_name:
+            continue
+        accepted_by_family_op[(family, op_name)] += 1
+        accepted_by_op[op_name] += 1
+
+    proposals: list[dict[str, Any]] = []
+    hinted_records: list[dict[str, Any]] = []
+    for record in records:
+        family = str(record.get("family", ""))
+        task_id = str(record.get("task_id", ""))
+        split = str(record.get("split", ""))
+        features = arc_task_shape_features(public_arc_dir, split, task_id)
+        ranked = arc_structure_op_scores(
+            record,
+            features,
+            accepted_by_family_op,
+            accepted_by_op,
+        )
+        if hints_per_task > 0:
+            selected = [op for op, _score in ranked[:hints_per_task]]
+        else:
+            selected = []
+        if not selected and family in ARC_FAMILY_STRUCTURE_OPS:
+            selected = list(ARC_FAMILY_STRUCTURE_OPS[family])
+        updated = dict(record)
+        updated["op_hints"] = ",".join(selected)
+        hinted_records.append(updated)
+        proposals.append(
+            {
+                "schema": "crlp.neural_grammar_discovery.arc_structure_proposal.v1",
+                "report_version": 1,
+                "family": family,
+                "task_id": task_id,
+                "split": split,
+                "proposer": "shape_conditioned_structure_op_proposer",
+                "proposed_ops": selected,
+                "ranked_ops": [
+                    {"op_name": op, "score": round(score, 8)}
+                    for op, score in ranked
+                ],
+                "task_features": features,
+                "source_family_accepts": {
+                    op: accepted_by_family_op[(family, op)]
+                    for op in ARC_FAMILY_STRUCTURE_OPS.get(family, ())
+                },
+            }
+        )
+    return hinted_records, proposals
+
+
 def run_arc_sketch_heldout_export(
     triage_path: Path,
     excluded_keys: set[tuple[str, str]],
+    source_attempts: list[dict[str, Any]],
     arc_agi: Path,
     public_arc_dir: Path,
     output_dir: Path,
     sketches_per_task: int,
     limit: int,
     per_family: int,
+    hints_per_task: int,
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
     list[dict[str, Any]],
     int,
     int,
+    list[dict[str, Any]],
     list[dict[str, Any]],
 ]:
     candidate_jsonl_path = output_dir / "arc_sketch_program_heldout_candidates.jsonl"
@@ -992,6 +1308,12 @@ def run_arc_sketch_heldout_export(
         excluded_keys,
         limit,
         per_family,
+    )
+    records, structure_proposals = add_arc_structure_op_hints(
+        records,
+        source_attempts,
+        public_arc_dir,
+        hints_per_task,
     )
     write_jsonl(candidate_jsonl_path, records)
     (
@@ -1010,7 +1332,15 @@ def run_arc_sketch_heldout_export(
         attempts_path,
         sketches_per_task,
     )
-    return probe_rows, summary_rows, attempt_rows, prior_count, candidate_count, records
+    return (
+        probe_rows,
+        summary_rows,
+        attempt_rows,
+        prior_count,
+        candidate_count,
+        records,
+        structure_proposals,
+    )
 
 
 def aggregate_arc_probe_rejections(
@@ -1079,33 +1409,52 @@ def build_arc_visual_pipeline_proposals(
     training_accepted = [
         row for row in training_attempts if safe_bool(row.get("accepted"))
     ]
+    family_stats_by_key: dict[tuple[str, str, str], Counter[str]] = defaultdict(Counter)
+    global_stats_by_key: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
+    family_stats_by_task_key: dict[
+        tuple[tuple[str, str, str], tuple[str, str, str]], Counter[str]
+    ] = defaultdict(Counter)
+    global_stats_by_task_key: dict[
+        tuple[tuple[str, str, str], tuple[str, str]], Counter[str]
+    ] = defaultdict(Counter)
+    for source in training_attempts:
+        source_task_key = arc_attempt_task_key(source)
+        source_family, source_pipeline, source_op = arc_attempt_pipeline_key(source)
+        family_key = (source_family, source_pipeline, source_op)
+        global_key = (source_pipeline, source_op)
+        accepted = 1 if safe_bool(source.get("accepted")) else 0
+        family_stats_by_key[family_key]["attempted"] += 1
+        family_stats_by_key[family_key]["accepted"] += accepted
+        global_stats_by_key[global_key]["attempted"] += 1
+        global_stats_by_key[global_key]["accepted"] += accepted
+        family_stats_by_task_key[(source_task_key, family_key)]["attempted"] += 1
+        family_stats_by_task_key[(source_task_key, family_key)]["accepted"] += accepted
+        global_stats_by_task_key[(source_task_key, global_key)]["attempted"] += 1
+        global_stats_by_task_key[(source_task_key, global_key)]["accepted"] += accepted
     proposals: list[dict[str, Any]] = []
     for row in target_attempts:
         family, pipeline_kind, op_name = arc_attempt_pipeline_key(row)
         task_key = arc_attempt_task_key(row)
-        family_stats: Counter[str] = Counter()
-        fallback_stats: Counter[str] = Counter()
-        accepted_neighbors: list[dict[str, Any]] = []
-        for source in training_attempts:
-            if arc_attempt_task_key(source) == task_key:
-                continue
-            source_family, source_pipeline, source_op = arc_attempt_pipeline_key(source)
-            if source_pipeline == pipeline_kind and source_op == op_name:
-                fallback_stats["attempted"] += 1
-                if safe_bool(source.get("accepted")):
-                    fallback_stats["accepted"] += 1
-            if (
-                source_family == family
-                and source_pipeline == pipeline_kind
-                and source_op == op_name
-            ):
-                family_stats["attempted"] += 1
-                if safe_bool(source.get("accepted")):
-                    family_stats["accepted"] += 1
-            if safe_bool(source.get("accepted")):
-                accepted_neighbors.append(source)
-        attempted = family_stats.get("attempted", 0) or fallback_stats.get("attempted", 0)
-        accepted = family_stats.get("accepted", 0) or fallback_stats.get("accepted", 0)
+        family_key = (family, pipeline_kind, op_name)
+        global_key = (pipeline_kind, op_name)
+        family_attempted = (
+            family_stats_by_key[family_key].get("attempted", 0)
+            - family_stats_by_task_key[(task_key, family_key)].get("attempted", 0)
+        )
+        family_accepted = (
+            family_stats_by_key[family_key].get("accepted", 0)
+            - family_stats_by_task_key[(task_key, family_key)].get("accepted", 0)
+        )
+        fallback_attempted = (
+            global_stats_by_key[global_key].get("attempted", 0)
+            - global_stats_by_task_key[(task_key, global_key)].get("attempted", 0)
+        )
+        fallback_accepted = (
+            global_stats_by_key[global_key].get("accepted", 0)
+            - global_stats_by_task_key[(task_key, global_key)].get("accepted", 0)
+        )
+        attempted = family_attempted or fallback_attempted
+        accepted = family_accepted or fallback_accepted
         frequency_score = accepted / attempted if attempted else 0.0
         proposals.append(
             {
@@ -1137,7 +1486,9 @@ def build_arc_visual_pipeline_proposals(
         best_source: dict[str, Any] | None = None
         best_score = -1.0
         best_distance = 0.0
-        for source in accepted_neighbors:
+        for source in training_accepted:
+            if arc_attempt_task_key(source) == task_key:
+                continue
             source_family, source_pipeline, source_op = arc_attempt_pipeline_key(source)
             relation_score = 1.0
             if source_family == family:
@@ -1273,6 +1624,331 @@ def build_arc_visual_pipeline_proposals(
         },
     }
     return retained, summary
+
+
+ARC_VISUAL_PIPELINE_RUNTIME_FIELDS = [
+    "split_name",
+    "family",
+    "task_id",
+    "split",
+    "attempt_id",
+    "library_id",
+    "attempt_index",
+    "pipeline_kind",
+    "op_name",
+    "visual_program",
+    "slot_contract",
+    "slot_tokens",
+    "accepted",
+    "rejection_reason",
+    "proposal_count",
+    "support_tasks",
+    "utility_mean",
+    "selector",
+    "background",
+    "color",
+    "output_color",
+    "selector_kind",
+    "include_background",
+    "orientation",
+    "count_mode",
+    "x_align",
+    "y_align",
+    "x_anchor",
+    "y_anchor",
+    "x_offset",
+    "y_offset",
+    "width",
+    "height",
+    "period",
+    "contrast_accepted_attempt_id",
+    "contrast_slot_distance",
+    "contrast_pair_kind",
+    "contrast_rejected_sibling_count",
+    "input_width",
+    "input_height",
+    "output_width",
+    "output_height",
+    "shape_scale_x",
+    "shape_scale_y",
+    "period_divides_input_width",
+    "period_divides_input_height",
+    "slot_width_matches_output",
+    "slot_height_matches_output",
+    "color_in_input",
+    "color_in_output",
+    "output_color_in_output",
+    "background_in_input",
+    "verifier_train_pairs",
+    "verifier_checked_cells",
+    "verifier_mismatches",
+    "verifier_unsupported_pairs",
+    "verifier_apply_failed_pairs",
+    "verifier_shape_mismatch_pairs",
+    "verifier_missing_output_pairs",
+    "verifier_first_failing_pair",
+    "verifier_mismatch_ratio",
+    "verifier_score",
+]
+
+
+def arc_visual_pipeline_slot_tokens(row: dict[str, Any]) -> str:
+    slots = row.get("slot_values", {})
+    if not isinstance(slots, dict):
+        return ""
+    return pipe_join(
+        ["{}={}".format(str(key), slots[key]) for key in sorted(slots)]
+    )
+
+
+def write_arc_visual_pipeline_runtime_attempts(
+    path: Path,
+    source_attempts: list[dict[str, Any]],
+    target_attempts: list[dict[str, Any]],
+) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    row_count = 0
+    with path.open("w", encoding="utf-8") as fp:
+        fp.write("\t".join(ARC_VISUAL_PIPELINE_RUNTIME_FIELDS) + "\n")
+        for split_name, rows in (
+            ("source", source_attempts),
+            ("target", target_attempts),
+        ):
+            for row in rows:
+                pipeline = row.get("pipeline", {})
+                if not isinstance(pipeline, dict):
+                    pipeline = {}
+                task_slot_features = row.get("task_slot_features", {})
+                if not isinstance(task_slot_features, dict):
+                    task_slot_features = {}
+                verifier_distance = row.get("verifier_distance", {})
+                if not isinstance(verifier_distance, dict):
+                    verifier_distance = {}
+                fields = [
+                    split_name,
+                    row.get("family", ""),
+                    row.get("task_id", ""),
+                    row.get("split", ""),
+                    row.get("attempt_id", ""),
+                    row.get("library_id", ""),
+                    row.get("attempt_index", ""),
+                    row.get("pipeline_kind", ""),
+                    row.get("op_name", ""),
+                    row.get("visual_program", ""),
+                    row.get("slot_contract", ""),
+                    arc_visual_pipeline_slot_tokens(row),
+                    bool(row.get("accepted")),
+                    row.get("rejection_reason", ""),
+                    row.get("proposal_count", ""),
+                    row.get("support_tasks", ""),
+                    row.get("utility_mean", ""),
+                    pipeline.get("selector", ""),
+                    pipeline.get("background", ""),
+                    pipeline.get("color", ""),
+                    pipeline.get("output_color", ""),
+                    pipeline.get("selector_kind", ""),
+                    1 if safe_bool(pipeline.get("include_background")) else 0,
+                    pipeline.get("orientation", ""),
+                    pipeline.get("count_mode", ""),
+                    pipeline.get("x_align", ""),
+                    pipeline.get("y_align", ""),
+                    pipeline.get("x_anchor", ""),
+                    pipeline.get("y_anchor", ""),
+                    pipeline.get("x_offset", ""),
+                    pipeline.get("y_offset", ""),
+                    pipeline.get("width", ""),
+                    pipeline.get("height", ""),
+                    pipeline.get("period", ""),
+                    row.get("contrast_accepted_attempt_id", ""),
+                    row.get("contrast_slot_distance", ""),
+                    row.get("contrast_pair_kind", ""),
+                    row.get("contrast_rejected_sibling_count", ""),
+                    task_slot_features.get("input_width", ""),
+                    task_slot_features.get("input_height", ""),
+                    task_slot_features.get("output_width", ""),
+                    task_slot_features.get("output_height", ""),
+                    task_slot_features.get("shape_scale_x", ""),
+                    task_slot_features.get("shape_scale_y", ""),
+                    1
+                    if safe_bool(task_slot_features.get("period_divides_input_width"))
+                    else 0,
+                    1
+                    if safe_bool(task_slot_features.get("period_divides_input_height"))
+                    else 0,
+                    1
+                    if safe_bool(task_slot_features.get("slot_width_matches_output"))
+                    else 0,
+                    1
+                    if safe_bool(task_slot_features.get("slot_height_matches_output"))
+                    else 0,
+                    1 if safe_bool(task_slot_features.get("color_in_input")) else 0,
+                    1 if safe_bool(task_slot_features.get("color_in_output")) else 0,
+                    1
+                    if safe_bool(task_slot_features.get("output_color_in_output"))
+                    else 0,
+                    1
+                    if safe_bool(task_slot_features.get("background_in_input"))
+                    else 0,
+                    verifier_distance.get("train_pairs", ""),
+                    verifier_distance.get("checked_cells", ""),
+                    verifier_distance.get("mismatches", ""),
+                    verifier_distance.get("unsupported_pairs", ""),
+                    verifier_distance.get("apply_failed_pairs", ""),
+                    verifier_distance.get("shape_mismatch_pairs", ""),
+                    verifier_distance.get("missing_output_pairs", ""),
+                    verifier_distance.get("first_failing_pair", ""),
+                    verifier_distance.get("mismatch_ratio", ""),
+                    verifier_distance.get("verifier_score", ""),
+                ]
+                fp.write("\t".join(tsv_value(field) for field in fields))
+                fp.write("\n")
+                row_count += 1
+    return row_count
+
+
+def empty_arc_visual_pipeline_neural_summary(
+    source_attempts: list[dict[str, Any]],
+    target_attempts: list[dict[str, Any]],
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "schema": ARC_VISUAL_PIPELINE_NEURAL_SUMMARY_SCHEMA,
+        "report_version": 1,
+        "proposer": "neural_visual_pipeline_ranker",
+        "source_attempt_count": len(source_attempts),
+        "source_accepted_count": sum(
+            1 for row in source_attempts if safe_bool(row.get("accepted"))
+        ),
+        "target_attempt_count": len(target_attempts),
+        "target_accepted_count": sum(
+            1 for row in target_attempts if safe_bool(row.get("accepted"))
+        ),
+        "proposal_count": 0,
+        "accepted_target_task_count": len(
+            {
+                arc_attempt_task_key(row)
+                for row in target_attempts
+                if safe_bool(row.get("accepted"))
+            }
+        ),
+        "evaluated_tasks": 0,
+        "top1_hits": 0,
+        "top3_hits": 0,
+        "retained_hits": 0,
+        "top1_rate": 0.0,
+        "top3_rate": 0.0,
+        "retained_rate": 0.0,
+        "training_mode": "source_to_target_visual_pipeline_attempts_with_dense_verifier_targets",
+        "source_contrast_pair_count": 0,
+        "target_contrast_pair_count": 0,
+        "pairwise_training_updates": 0,
+        "pairwise_last_epoch_violations": 0,
+        "by_proposer": {},
+        "by_accepted_op": {},
+        "calibration_by_rejection_reason": {},
+        "blocking_reason": reason,
+    }
+
+
+def hydrate_arc_visual_pipeline_neural_proposals(
+    proposals: list[dict[str, Any]],
+    target_attempts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_attempt_id = {
+        str(row.get("attempt_id", "")): row
+        for row in target_attempts
+        if str(row.get("attempt_id", ""))
+    }
+    hydrated: list[dict[str, Any]] = []
+    for proposal in proposals:
+        row = dict(proposal)
+        source = by_attempt_id.get(str(row.get("target_attempt_id", "")))
+        if source is not None:
+            row["pipeline"] = source.get("pipeline", {})
+            row["slot_values"] = source.get("slot_values", {})
+            row["task_slot_features"] = source.get("task_slot_features", {})
+            row["verifier_distance"] = source.get("verifier_distance", {})
+        hydrated.append(row)
+    return hydrated
+
+
+def run_arc_visual_pipeline_neural_ranker(
+    args: argparse.Namespace,
+    source_attempts: list[dict[str, Any]],
+    target_attempts: list[dict[str, Any]],
+    max_per_task: int = 8,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    runtime = Path(args.runtime)
+    if not runtime.is_file():
+        return [], empty_arc_visual_pipeline_neural_summary(
+            source_attempts,
+            target_attempts,
+            "runtime_missing",
+        )
+    if not source_attempts or not target_attempts:
+        return [], empty_arc_visual_pipeline_neural_summary(
+            source_attempts,
+            target_attempts,
+            "missing_attempt_surface",
+        )
+    runtime_dir = args.output_dir / "runtime"
+    attempt_rows = runtime_dir / "arc_visual_pipeline_attempts.tsv"
+    proposals_output = runtime_dir / "arc_visual_pipeline_neural_proposals.jsonl"
+    summary_output = runtime_dir / "arc_visual_pipeline_neural_summary.jsonl"
+    write_arc_visual_pipeline_runtime_attempts(
+        attempt_rows,
+        source_attempts,
+        target_attempts,
+    )
+    command = [
+        str(runtime),
+        "--arc-pipeline-attempts",
+        str(attempt_rows),
+        "--arc-pipeline-proposals-output",
+        str(proposals_output),
+        "--arc-pipeline-summary-output",
+        str(summary_output),
+        "--arc-pipeline-max-per-task",
+        str(max_per_task),
+    ]
+    subprocess.run(command, check=True)
+    proposals = hydrate_arc_visual_pipeline_neural_proposals(
+        parse_json_rows(proposals_output),
+        target_attempts,
+    )
+    summaries = parse_json_rows(summary_output)
+    summary = summaries[0] if summaries else empty_arc_visual_pipeline_neural_summary(
+        source_attempts,
+        target_attempts,
+        "summary_missing",
+    )
+    return proposals, summary
+
+
+def merge_arc_visual_pipeline_proposal_summaries(
+    baseline_summary: dict[str, Any],
+    neural_summary: dict[str, Any],
+    proposal_count: int,
+) -> dict[str, Any]:
+    merged = dict(baseline_summary)
+    by_proposer = dict(merged.get("by_proposer", {}) or {})
+    neural_by_proposer = neural_summary.get("by_proposer", {})
+    if isinstance(neural_by_proposer, dict):
+        by_proposer.update(neural_by_proposer)
+    elif neural_summary.get("proposer"):
+        by_proposer[str(neural_summary.get("proposer"))] = {
+            "evaluated_tasks": safe_int(neural_summary.get("evaluated_tasks")),
+            "top1_hits": safe_int(neural_summary.get("top1_hits")),
+            "top3_hits": safe_int(neural_summary.get("top3_hits")),
+            "retained_hits": safe_int(neural_summary.get("retained_hits")),
+            "top1_rate": safe_float(neural_summary.get("top1_rate")),
+            "top3_rate": safe_float(neural_summary.get("top3_rate")),
+            "retained_rate": safe_float(neural_summary.get("retained_rate")),
+        }
+    merged["proposal_count"] = proposal_count
+    merged["by_proposer"] = by_proposer
+    merged["neural_ranker_summary"] = neural_summary
+    return merged
 
 
 def run_arc_log(command: list[str], log_path: Path) -> int:
@@ -2242,6 +2918,7 @@ def markdown_summary(
     arc_sketch_heldout_comparison: list[dict[str, Any]],
     arc_visual_pipeline_heldout_attempts: list[dict[str, Any]],
     arc_sketch_heldout_candidate_count: int,
+    arc_structure_proposals: list[dict[str, Any]],
     arc_visual_pipeline_proposals: list[dict[str, Any]],
     arc_visual_pipeline_proposal_summary: dict[str, Any],
     sketch_memory_summary: dict[str, Any],
@@ -2273,6 +2950,7 @@ def markdown_summary(
         f"- ARC visual pipeline source attempts: {len(arc_visual_pipeline_attempts)}",
         f"- ARC sketch program compared tasks: {len(arc_sketch_probe_comparison)}",
         f"- Held-out ARC candidate tasks: {arc_sketch_heldout_candidate_count}",
+        f"- Held-out ARC structure proposals: {len(arc_structure_proposals)}",
         f"- Held-out ARC sketch program sketches: {len(arc_sketch_heldout_sources)}",
         f"- Held-out ARC visual pipeline attempts: {len(arc_visual_pipeline_heldout_attempts)}",
         f"- Held-out ARC compared tasks: {len(arc_sketch_heldout_comparison)}",
@@ -2405,6 +3083,19 @@ def markdown_summary(
     ):
         lines.extend(["", "## Held-Out ARC Sketch Program Probes", ""])
         lines.append(f"- Candidate tasks: {arc_sketch_heldout_candidate_count}")
+        if arc_structure_proposals:
+            hinted_ops = Counter(
+                op
+                for row in arc_structure_proposals
+                for op in row.get("proposed_ops", [])
+            )
+            lines.append(
+                "- Structure op hints: {}".format(
+                    ", ".join(
+                        f"`{op}`={count}" for op, count in hinted_ops.most_common()
+                    )
+                )
+            )
         lines.append("")
         lines.extend(["| Family | Probe sketches |", "| --- | ---: |"])
         heldout_family_counts = Counter(
@@ -2472,7 +3163,7 @@ def markdown_summary(
             lines.extend(
                 [
                     "",
-                    "### ARC Visual Pipeline Baseline",
+                    "### ARC Visual Pipeline Proposers",
                     "",
                     "| Proposer | Evaluated tasks | Top-1 | Top-3 | Retained |",
                     "| --- | ---: | ---: | ---: | ---: |",
@@ -2492,6 +3183,47 @@ def markdown_summary(
                             safe_float(stats.get("retained_rate")),
                         )
                     )
+            neural_summary = arc_visual_pipeline_proposal_summary.get(
+                "neural_ranker_summary", {}
+            )
+            if isinstance(neural_summary, dict):
+                lines.extend(
+                    [
+                        "",
+                        "- Neural contrast pairs: source {} / held-out {}".format(
+                            safe_int(neural_summary.get("source_contrast_pair_count")),
+                            safe_int(neural_summary.get("target_contrast_pair_count")),
+                        ),
+                        "- Pairwise updates: {}; last-epoch pair violations: {}".format(
+                            safe_int(neural_summary.get("pairwise_training_updates")),
+                            safe_int(neural_summary.get("pairwise_last_epoch_violations")),
+                        ),
+                    ]
+                )
+            if isinstance(neural_summary, dict) and neural_summary.get(
+                "by_accepted_op"
+            ):
+                lines.extend(
+                    [
+                        "",
+                        "| Neural accepted op | Evaluated tasks | Top-1 | Top-3 | Retained |",
+                        "| --- | ---: | ---: | ---: | ---: |",
+                    ]
+                )
+                by_op = neural_summary.get("by_accepted_op", {})
+                if isinstance(by_op, dict):
+                    for op_name, stats in sorted(by_op.items()):
+                        if not isinstance(stats, dict):
+                            continue
+                        lines.append(
+                            "| `{}` | {} | {:.1%} | {:.1%} | {:.1%} |".format(
+                                op_name,
+                                safe_int(stats.get("evaluated_tasks")),
+                                safe_float(stats.get("top1_rate")),
+                                safe_float(stats.get("top3_rate")),
+                                safe_float(stats.get("retained_rate")),
+                            )
+                        )
         if arc_sketch_heldout_comparison:
             lines.extend(
                 [
@@ -2654,15 +3386,18 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         arc_sketch_heldout_prior_row_count,
         arc_sketch_heldout_candidate_count,
         arc_sketch_heldout_candidates,
+        arc_structure_proposals,
     ) = run_arc_sketch_heldout_export(
         args.arc_heldout_triage,
         excluded_arc_keys,
+        arc_visual_pipeline_attempts,
         args.arc_agi,
         args.public_arc_dir,
         args.output_dir,
         args.arc_probe_sketches_per_task,
         args.arc_heldout_limit,
         args.arc_heldout_per_family,
+        args.arc_heldout_op_hints_per_task,
     )
     sketch_proposals = build_sketch_proposals(
         sketches,
@@ -2670,11 +3405,30 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         neural_sketch_proposals,
     )
     (
-        arc_visual_pipeline_proposals,
-        arc_visual_pipeline_proposal_summary,
+        arc_visual_pipeline_baseline_proposals,
+        arc_visual_pipeline_baseline_summary,
     ) = build_arc_visual_pipeline_proposals(
         arc_visual_pipeline_attempts,
         arc_visual_pipeline_heldout_attempts,
+    )
+    (
+        arc_visual_pipeline_neural_proposals,
+        arc_visual_pipeline_neural_summary,
+    ) = run_arc_visual_pipeline_neural_ranker(
+        args,
+        arc_visual_pipeline_attempts,
+        arc_visual_pipeline_heldout_attempts,
+    )
+    arc_visual_pipeline_proposals = [
+        *arc_visual_pipeline_baseline_proposals,
+        *arc_visual_pipeline_neural_proposals,
+    ]
+    arc_visual_pipeline_proposal_summary = (
+        merge_arc_visual_pipeline_proposal_summaries(
+            arc_visual_pipeline_baseline_summary,
+            arc_visual_pipeline_neural_summary,
+            len(arc_visual_pipeline_proposals),
+        )
     )
     sketch_verifications, promoted_sketches = build_sketch_verifications(sketches, sketch_examples)
 
@@ -2726,6 +3480,18 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
     write_jsonl(
         args.output_dir / "arc_visual_pipeline_proposals.jsonl",
         arc_visual_pipeline_proposals,
+    )
+    write_jsonl(
+        args.output_dir / "arc_sketch_program_heldout_structure_proposals.jsonl",
+        arc_structure_proposals,
+    )
+    write_jsonl(
+        args.output_dir / "arc_visual_pipeline_neural_proposals.jsonl",
+        arc_visual_pipeline_neural_proposals,
+    )
+    write_jsonl(
+        args.output_dir / "arc_visual_pipeline_neural_summary.jsonl",
+        [arc_visual_pipeline_neural_summary],
     )
     write_jsonl(
         args.output_dir / "arc_visual_pipeline_proposal_summary.jsonl",
@@ -2790,6 +3556,19 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
             arc_sketch_probe_summaries
         ),
         "arc_sketch_program_heldout_candidate_count": arc_sketch_heldout_candidate_count,
+        "arc_sketch_program_heldout_structure_proposal_count": len(
+            arc_structure_proposals
+        ),
+        "arc_sketch_program_heldout_op_hints_per_task": args.arc_heldout_op_hints_per_task,
+        "arc_sketch_program_heldout_op_hints_by_op": dict(
+            sorted(
+                Counter(
+                    op
+                    for row in arc_structure_proposals
+                    for op in row.get("proposed_ops", [])
+                ).items()
+            )
+        ),
         "arc_sketch_program_heldout_source_count": len(arc_sketch_heldout_sources),
         "arc_visual_pipeline_heldout_attempt_count": len(
             arc_visual_pipeline_heldout_attempts
@@ -2843,6 +3622,9 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
             arc_sketch_heldout_summaries
         ),
         "arc_visual_pipeline_proposal_count": len(arc_visual_pipeline_proposals),
+        "arc_visual_pipeline_neural_proposal_count": len(
+            arc_visual_pipeline_neural_proposals
+        ),
         "arc_visual_pipeline_proposal_summary": arc_visual_pipeline_proposal_summary,
         "grammar_sketch_count": len(sketches),
         "grammar_sketch_example_count": len(sketch_examples),
@@ -2896,6 +3678,7 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
             arc_sketch_heldout_comparison,
             arc_visual_pipeline_heldout_attempts,
             arc_sketch_heldout_candidate_count,
+            arc_structure_proposals,
             arc_visual_pipeline_proposals,
             arc_visual_pipeline_proposal_summary,
             sketch_memory_summary,
@@ -2923,6 +3706,7 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         "arc_sketch_heldout_comparison": arc_sketch_heldout_comparison,
         "arc_visual_pipeline_heldout_attempts": arc_visual_pipeline_heldout_attempts,
         "arc_visual_pipeline_proposals": arc_visual_pipeline_proposals,
+        "arc_visual_pipeline_neural_proposals": arc_visual_pipeline_neural_proposals,
         "arc_visual_pipeline_proposal_summary": arc_visual_pipeline_proposal_summary,
         "sketches": sketches,
         "sketch_examples": sketch_examples,
@@ -3006,6 +3790,15 @@ def main() -> None:
         help="Maximum held-out ARC tasks to replay for baseline-vs-probed comparison; use -1 for no cap.",
     )
     parser.add_argument(
+        "--arc-heldout-op-hints-per-task",
+        type=int,
+        default=4,
+        help=(
+            "Number of pre-enumeration ARC sketch ops to propose per held-out "
+            "candidate task; use -1 to allow all family ops."
+        ),
+    )
+    parser.add_argument(
         "--arc-failure-proof",
         type=Path,
         default=Path(
@@ -3041,7 +3834,7 @@ def main() -> None:
 
     outputs = run(args)
     print(
-        "wrote {} delta candidates, {} compiled deltas, {} promoted deltas, {} ARC sketch probes, {} ARC visual pipeline attempts, {} ARC probe comparisons, {} ARC visual pipeline proposals, {} grammar sketches, {} sketch examples, {} sketch proposals, {} promoted sketches, sketch memory {} to {}".format(
+        "wrote {} delta candidates, {} compiled deltas, {} promoted deltas, {} ARC sketch probes, {} ARC visual pipeline attempts, {} ARC probe comparisons, {} ARC visual pipeline proposals ({} neural), {} grammar sketches, {} sketch examples, {} sketch proposals, {} promoted sketches, sketch memory {} to {}".format(
             len(outputs["candidates"]),
             len(outputs["compiled_deltas"]),
             len(outputs["promoted"]),
@@ -3050,6 +3843,7 @@ def main() -> None:
             + len(outputs["arc_visual_pipeline_heldout_attempts"]),
             len(outputs["arc_sketch_probe_comparison"]),
             len(outputs["arc_visual_pipeline_proposals"]),
+            len(outputs["arc_visual_pipeline_neural_proposals"]),
             len(outputs["sketches"]),
             len(outputs["sketch_examples"]),
             len(outputs["sketch_proposals"]),

@@ -40,12 +40,15 @@ Outputs:
 - `build/float/neural_grammar_discovery/arc_sketch_program_probe_comparison.md`
 - `build/float/neural_grammar_discovery/arc_visual_pipeline_attempts.jsonl`
 - `build/float/neural_grammar_discovery/arc_sketch_program_heldout_candidates.jsonl`
+- `build/float/neural_grammar_discovery/arc_sketch_program_heldout_structure_proposals.jsonl`
 - `build/float/neural_grammar_discovery/arc_sketch_program_heldout_sources.jsonl`
 - `build/float/neural_grammar_discovery/arc_sketch_program_heldout_prior.tsv`
 - `build/float/neural_grammar_discovery/arc_sketch_program_heldout_comparison.jsonl`
 - `build/float/neural_grammar_discovery/arc_sketch_program_heldout_comparison.md`
 - `build/float/neural_grammar_discovery/arc_visual_pipeline_heldout_attempts.jsonl`
 - `build/float/neural_grammar_discovery/arc_visual_pipeline_proposals.jsonl`
+- `build/float/neural_grammar_discovery/arc_visual_pipeline_neural_proposals.jsonl`
+- `build/float/neural_grammar_discovery/arc_visual_pipeline_neural_summary.jsonl`
 - `build/float/neural_grammar_discovery/arc_visual_pipeline_proposal_summary.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketches.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketch_examples.jsonl`
@@ -145,9 +148,26 @@ The first ARC/haiku promotion paths are intentionally narrow:
   surface closer to a learnable visual algebra while preserving the existing
   verifier and TSV/JSONL contracts.
 - ARC writes accepted and rejected visual-pipeline attempts as JSONL before
-  promotion. Python trains frequency and nearest-neighbor baselines over those
-  attempt rows using leave-one-task-out scoring, so slot-synthesis quality can
-  be measured before adding a neural ranker.
+  promotion. The attempt surface covers both newer pipeline-native ops and
+  legacy successful sketch ops such as crop, macrocell substitution, lattice
+  sampling, component summary, object-mask extraction, projection/compression,
+  and separator mapping. Python trains frequency and nearest-neighbor baselines
+  over those attempt rows using leave-one-task-out scoring. It also writes a
+  normalized runtime TSV and asks the C runtime to train a neural visual-pipeline
+  ranker on source attempts, then score held-out attempts. The ARC exporter
+  links accepted attempts to same-task/same-op rejected siblings whose active
+  slots differ by one or two values. The runtime uses those verifier-derived
+  contrast pairs for a pairwise accepted-over-rejected training pass. Attempt
+  rows also carry task/slot compatibility features such as input/output shape,
+  scale, period divisibility, output-size matches, and color-presence checks.
+  Rejected rows include verifier-distance telemetry: train pairs checked,
+  unsupported/apply-failed/shape-mismatch counts, checked cells, cell
+  mismatches, mismatch ratio, first failing pair, and a dense verifier score.
+  The C ranker trains on dense verifier targets and then reranks held-out
+  attempts with a learned score plus verifier-proxy distance score.
+  The neural summary reports top-1/top-3/top-retained accepted-attempt recovery,
+  contrast pair counts, pairwise violation counts, per-op recovery, and
+  calibration by verifier rejection reason.
 - Promoted ARC family pressure is exported by `arc_agi` itself. Python writes
   only promoted-family task rows, invokes the C probe exporter, and consumes the
   resulting `arc_sketch_program_probe_sources.jsonl` and
@@ -160,6 +180,13 @@ The first ARC/haiku promotion paths are intentionally narrow:
   source, prior, comparison, and log artifacts so source-slice repair is not
   mistaken for broad ARC learning. The comparison report splits newly certified
   baseline-unsolved tasks from tasks that the baseline already certified.
+- Held-out ARC candidate rows now carry pre-enumeration `op_hints`. Python
+  computes a shape-conditioned structure proposal from source accepted ops,
+  public task shape/color/separator features, and the promoted family, then
+  writes `arc_sketch_program_heldout_structure_proposals.jsonl`. The C exporter
+  uses those hints only to choose which generic visual-algebra miners to run;
+  every emitted prior row still has to be exact on all train pairs before it can
+  enter `arc_sketch_program_heldout_prior.tsv`.
 - ARC probe sources include per-family rejection summaries for unsupported
   shapes, train mismatches, duplicates, and cap hits. These are diagnostic gap
   certificates; they are not executable promoted programs.

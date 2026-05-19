@@ -14,4 +14,12 @@ int nn_grammar_discovery_write_neural_sketch_proposals(
     unsigned epochs,
     double learning_rate);
 
+int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
+    const char *attempt_rows_path,
+    const char *proposals_output_path,
+    const char *summary_output_path,
+    unsigned epochs,
+    double learning_rate,
+    unsigned max_per_task);
+
 #endif
