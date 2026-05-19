@@ -1,6 +1,6 @@
 # Generalized Experiment Schema
 
-The project is one verifier-gated action-scoring architecture with first-class
+The project is one grounding-gated action-scoring architecture with first-class
 task schemas plus case-study discovery schemas. Certified modular gate search,
 currently instantiated as `prime_gap`, grid paths, delayed claims, Signal flight
 control, program synthesis, and the ARC-AGI sample/loader path must all be
@@ -45,7 +45,8 @@ Task T = {
   candidate enumerator A_T(s),
   observable features x_T(s, a),
   neural scorer f_theta(x_T),
-  exact verifier V_T(s, a),
+  grounding operator O_T(s, a),
+  grounding authority level,
   symbolic grammar G_T,
   certificate checker C_T(rule),
   rule proposer q_phi(rule | structural(rule)),
@@ -60,6 +61,11 @@ The machine-readable form is emitted as `crlp.experiment_schema.v1`:
 make experiment-schemas
 ```
 
+The current C schema keeps the historical field names `exact_verifier` and
+`verifier_feedback` for compatibility. In this document, "grounding operator" is
+the broader contract term for exact checkers, deterministic replay, corpus
+proxies, and review gates that populate those verifier-named outcome fields.
+
 The task-schema C API lives in `include/nn_experiment.h`; the implementation is
 `src/nn_experiment.c`. The shared symbolic-domain API lives in
 `include/nn_symbolic.h`; its implementation is `src/nn_symbolic.c`. The shared
@@ -73,7 +79,7 @@ delayed-claim thresholds, ARC templates, and Signal control options. Shared
 code normalizes those rows as:
 
 ```text
-data -> grammar -> candidate set -> verifier/certificate -> learned ranking
+data -> grammar -> candidate set -> grounding outcome -> learned ranking
      -> discovered rules/library feedback -> result -> limitation
 ```
 
@@ -88,6 +94,25 @@ The canonical JSONL row schemas are:
 Schema fields describe the intended formal contract. The evidence-status section
 below is the controlling source for which production binaries currently execute
 which gate and baseline paths.
+
+## Grounding Operators
+
+The architecture uses "grounding operator" as the general term for the component
+that turns a candidate into an auditable outcome row. An exact verifier is the
+strongest instance, but not the only one.
+
+| Authority | Operator class | Examples | Claim scope |
+| --- | --- | --- | --- |
+| `exact_check` | proof, lookup, type check, or deterministic verifier | `prime_gap`, `grid_path`, certified ARC transforms, program-synthesis examples | correctness and zero-false-rejection claims inside the declared support |
+| `deterministic_replay` | simulator or replay that decides candidate consequences | Signal flight/mining, delayed-claim hidden-outcome simulator | replay-certified utility, damage, death, regret, or decision metrics |
+| `corpus_proxy` | deterministic corpus-derived grammar or corruption benchmark | haiku prototypes, public ARC coverage surfaces | corpus-fit, coverage, and near-miss discrimination, not semantic truth |
+| `human_review` | human acceptance/rejection over reviewable artifacts | editorial-agent PRs, future preference rows | review-gated assistance or preference evidence, not autonomous claim authority |
+
+Promoted result rows and docs must declare the authority level because the same
+scorer role has different implications under each operator. Signal simulator
+replay can ground damage and death outcomes; a haiku corruption benchmark can
+only ground a corpus-proxy discrimination claim. Both fit the loop, but they do
+not license the same language.
 
 ## Enforced Schema Fields
 
@@ -126,8 +151,8 @@ cannot silently add verifier-derived inputs. Comparison rows also carry
 
 1. Candidate enumeration is complete before gating.
 2. Scorer features are observable state/action features only.
-3. Verifier outputs may be labels, rewards, certificates, diagnostics, or
-   executed gates, but they are not default scorer inputs.
+3. Grounding outputs may be labels, rewards, certificates, diagnostics, proxy
+   outcomes, or executed gates, but they are not default scorer inputs.
 4. Static proposer inputs are structural rule descriptors only; closed-loop
    proposer inputs may include declared gate-derived residual-set features.
 5. Empirical support, utility, and false-rejection counts are targets or
@@ -140,22 +165,29 @@ cannot silently add verifier-derived inputs. Comparison rows also carry
 
 ## Current Instantiations
 
-Verifier-backed first-class task schemas:
+Grounding-backed first-class task schemas:
 
-| Task | State | Actions | Verifier | Grammar | Certificate | Production gate status |
+| Task | State | Actions | Grounding operator | Authority | Grammar/certificate | Production gate status |
 | --- | --- | --- | --- | --- | --- | --- |
-| `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | modular rejection predicates | algebraic divisibility proof | certified modular gate search instance with learned-rule gate plus matched baselines |
-| `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | legality, local-dead-end, component-trap, clear-path admissible-bound, and distance-dominance predicates | cannot reject an optimal move | budgeted certified gate with family/budget proposer sweep |
-| `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | threshold predicates plus direct utility-margin and indirect risk-margin predicates | finite-generator safety check over train+validation support | production threshold+margin gate plus matched proposer baselines and shifted/noisy stress rows; direct clean residual resolved, proxy/noisy frontier exposed |
-| `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | copy/mask/intersection/layer-relation/geometric/object transform grammar | train-pair consistency plus unique grammar-consistent test prediction | fixed-sample certified transform gate plus ARC JSON directory loader and matched `NNProgram` proposer rows for narrow geometry/object evidence |
-| `signal_flight` | Signal ship kinematics, hull, path, clearance observations, and target/control-point geometry | WASD key combinations around certified control-target hypotheses | deterministic replay of WASD hypotheses in Signal's authoritative simulator | WASD controls plus direct/nav/bypass/brake control-target hypotheses; richer predicates planned | replay-certified progress, hull loss, damage, death outcomes, rollout-time control-target clearance/progress certificates, and live websocket protocol compatibility | counterfactual utility scorer, certified-hypothesis rollout evaluator, and protocol-checked external websocket pilot |
-| `signal_mining` | Signal tactical mining state after deterministic scenario prefixes: ship state, tow chain, rocks, fragments, refinery/dock demand | bounded policy hypotheses from target selector, route constraint, speed/contact profile, and interaction primitive | fresh deterministic replay of each grammar hypothesis in Signal's authoritative simulator | mine/tow/smelt/trade hypotheses that compile to normal player input intents | replay-certified utility, smelts, pickups, fractures, tow count, repair-kit deltas, hull loss, damage, and death | grammar hypothesis ranker with fixed-priority grammar baseline via `make signal-mining` |
+| `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | `exact_check` | modular predicates plus algebraic divisibility proof | certified modular gate search instance with learned-rule gate plus matched baselines |
+| `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | `exact_check` | legality/topology/bound predicates that cannot reject an optimal move | budgeted certified gate with family/budget proposer sweep |
+| `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | `deterministic_replay` | threshold and margin predicates plus finite-generator safety check | production threshold+margin gate plus matched proposer baselines and shifted/noisy stress rows; direct clean residual resolved, proxy/noisy frontier exposed |
+| `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | `exact_check` | train-pair consistency plus unique grammar-consistent test prediction | fixed-sample certified transform gate plus ARC JSON directory loader and matched `NNProgram` proposer rows for narrow geometry/object evidence |
+| `signal_flight` | Signal ship kinematics, hull, path, clearance observations, and target/control-point geometry | WASD key combinations around certified control-target hypotheses | Signal simulator replay and live telemetry | `deterministic_replay` | replay-certified progress, hull loss, damage, death outcomes, rollout-time control-target certificates, and protocol compatibility | counterfactual utility scorer, certified-hypothesis rollout evaluator, and protocol-checked external websocket pilot |
+| `signal_mining` | Signal tactical mining state after deterministic scenario prefixes: ship state, tow chain, rocks, fragments, refinery/dock demand | bounded policy hypotheses from target selector, route constraint, speed/contact profile, and interaction primitive | fresh deterministic replay in Signal's authoritative simulator | `deterministic_replay` | replay-certified utility, smelts, pickups, fractures, tow count, repair-kit deltas, hull loss, damage, and death | grammar hypothesis ranker with fixed-priority grammar baseline via `make signal-mining` |
 
-Verifier-backed case-study discovery schemas:
+Grounding-backed case-study discovery schemas:
 
-| Task | State | Actions | Verifier | Grammar | Certificate | Evidence status |
+| Task | State | Actions | Grounding operator | Authority | Grammar/certificate | Evidence status |
 | --- | --- | --- | --- | --- | --- | --- |
-| `program_synthesis` | list-routine task with input/output examples | candidate library abstraction | run abstraction on every example | monomorphic list/int DSL over map, filter, fold, and selectors | syntactic DSL type check | matched-budget scaffold with random, grammar-order, structural, validation-oracle, static neural, and closed-loop rows |
+| `program_synthesis` | list-routine task with input/output examples | candidate library abstraction | run abstraction on every example | `exact_check` | monomorphic list/int DSL type check | matched-budget scaffold with random, grammar-order, structural, validation-oracle, static neural, and closed-loop rows |
+
+Corpus-proxy prototypes such as `haiku_word_lm` and `haiku_understanding` use
+the same candidate/grounding/scorer/trace loop but are not production paper
+claims. Their grounding operator is a train-split dataset vocabulary,
+adjacency graph, and corruption benchmark; the supported wording is
+corpus-grounded form or near-miss discrimination, not semantic truth or broad
+language understanding.
 
 Leakage status today:
 
