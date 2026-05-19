@@ -2196,10 +2196,16 @@ def markdown_summary(
     if arc_sketch_probe_sources:
         lines.extend(["", "## ARC Sketch Program Probes", ""])
         lines.extend(["| Family | Probe sketches |", "| --- | ---: |"])
-        for family, count in sorted(
-            Counter(str(row.get("family", "")) for row in arc_sketch_probe_sources).items()
-        ):
-            lines.append(f"| `{family}` | {count} |")
+        probe_family_counts = Counter(
+            str(row.get("family", "")) for row in arc_sketch_probe_sources
+        )
+        promoted_arc_families = {
+            str(row.get("family", ""))
+            for row in promoted
+            if row.get("domain") == "arc_agi"
+        }
+        for family in sorted(set(probe_family_counts) | promoted_arc_families):
+            lines.append(f"| `{family}` | {probe_family_counts.get(family, 0)} |")
         if arc_sketch_probe_comparison:
             lines.extend(
                 [
@@ -2399,6 +2405,19 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
             safe_int(row.get("delta", {}).get("certified_tasks"))
             for row in arc_sketch_probe_comparison
         ),
+        "arc_sketch_program_probe_sources_by_family": {
+            family: Counter(
+                str(row.get("family", "")) for row in arc_sketch_probe_sources
+            ).get(family, 0)
+            for family in sorted(
+                {
+                    str(row.get("family", ""))
+                    for row in promoted
+                    if row.get("domain") == "arc_agi"
+                }
+                | {str(row.get("family", "")) for row in arc_sketch_probe_sources}
+            )
+        },
         "grammar_sketch_count": len(sketches),
         "grammar_sketch_example_count": len(sketch_examples),
         "grammar_sketch_proposal_count": len(sketch_proposals),
