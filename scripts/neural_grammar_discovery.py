@@ -36,6 +36,15 @@ ARC_SKETCH_PROBE_SUMMARY_SCHEMA = (
 ARC_SKETCH_PROBE_COMPARISON_SCHEMA = (
     "crlp.neural_grammar_discovery.arc_sketch_program_probe_comparison.v1"
 )
+ARC_VISUAL_PIPELINE_ATTEMPT_SCHEMA = (
+    "crlp.neural_grammar_discovery.arc_visual_pipeline_attempt.v1"
+)
+ARC_VISUAL_PIPELINE_PROPOSAL_SCHEMA = (
+    "crlp.neural_grammar_discovery.arc_visual_pipeline_proposal.v1"
+)
+ARC_VISUAL_PIPELINE_PROPOSAL_SUMMARY_SCHEMA = (
+    "crlp.neural_grammar_discovery.arc_visual_pipeline_proposal_summary.v1"
+)
 
 ARC_SKETCH_TEMPLATE_NAME = "arc_sketch_program"
 ARC_SKETCH_PROBE_CANDIDATE_FIELDS = [
@@ -752,11 +761,18 @@ def write_arc_probe_candidate_record_rows(
     return row_count
 
 
-def write_empty_arc_probe_artifacts(source_path: Path, prior_path: Path) -> None:
+def write_empty_arc_probe_artifacts(
+    source_path: Path,
+    prior_path: Path,
+    attempts_path: Path | None = None,
+) -> None:
     source_path.parent.mkdir(parents=True, exist_ok=True)
     source_path.write_text("", encoding="utf-8")
     prior_path.parent.mkdir(parents=True, exist_ok=True)
     prior_path.write_text(ARC_SKETCH_PRIOR_HEADER, encoding="utf-8")
+    if attempts_path is not None:
+        attempts_path.parent.mkdir(parents=True, exist_ok=True)
+        attempts_path.write_text("", encoding="utf-8")
 
 
 def arc_probe_prior_row_count(path: Path) -> int:
@@ -773,8 +789,9 @@ def run_arc_sketch_candidate_export(
     candidate_path: Path,
     source_path: Path,
     prior_path: Path,
+    attempts_path: Path,
     sketches_per_task: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, int]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], int, int]:
     candidate_count = write_arc_probe_candidate_record_rows(candidate_path, records)
     if (
         candidate_count == 0
@@ -782,8 +799,8 @@ def run_arc_sketch_candidate_export(
         or str(public_arc_dir) in {"", "."}
         or not public_arc_dir.is_dir()
     ):
-        write_empty_arc_probe_artifacts(source_path, prior_path)
-        return [], [], 0, candidate_count
+        write_empty_arc_probe_artifacts(source_path, prior_path, attempts_path)
+        return [], [], [], 0, candidate_count
     command = [
         str(arc_agi),
         "--arc-sketch-probe-candidates",
@@ -794,6 +811,8 @@ def run_arc_sketch_candidate_export(
         str(source_path),
         "--arc-sketch-probe-prior",
         str(prior_path),
+        "--arc-sketch-probe-attempts",
+        str(attempts_path),
         "--arc-sketches-per-task",
         str(sketches_per_task),
     ]
@@ -807,7 +826,18 @@ def run_arc_sketch_candidate_export(
         for row in source_rows
         if row.get("schema") == ARC_SKETCH_PROBE_SUMMARY_SCHEMA
     ]
-    return probe_rows, summary_rows, arc_probe_prior_row_count(prior_path), candidate_count
+    attempt_rows = [
+        row
+        for row in parse_json_rows(attempts_path)
+        if row.get("schema") == ARC_VISUAL_PIPELINE_ATTEMPT_SCHEMA
+    ]
+    return (
+        probe_rows,
+        summary_rows,
+        attempt_rows,
+        arc_probe_prior_row_count(prior_path),
+        candidate_count,
+    )
 
 
 def run_arc_sketch_probe_export(
@@ -817,9 +847,10 @@ def run_arc_sketch_probe_export(
     public_arc_dir: Path,
     output_dir: Path,
     sketches_per_task: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, int]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], int, int]:
     source_path = output_dir / "arc_sketch_program_probe_sources.jsonl"
     prior_path = output_dir / "arc_sketch_program_probe_prior.tsv"
+    attempts_path = output_dir / "arc_visual_pipeline_attempts.jsonl"
     candidate_path = output_dir / "runtime" / "arc_sketch_probe_candidates.tsv"
     promoted_families = {
         str(row.get("family", ""))
@@ -876,6 +907,7 @@ def run_arc_sketch_probe_export(
         candidate_path,
         source_path,
         prior_path,
+        attempts_path,
         sketches_per_task,
     )
 
@@ -942,11 +974,19 @@ def run_arc_sketch_heldout_export(
     sketches_per_task: int,
     limit: int,
     per_family: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, int, list[dict[str, Any]]]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    int,
+    int,
+    list[dict[str, Any]],
+]:
     candidate_jsonl_path = output_dir / "arc_sketch_program_heldout_candidates.jsonl"
     candidate_tsv_path = output_dir / "runtime" / "arc_sketch_heldout_candidates.tsv"
     source_path = output_dir / "arc_sketch_program_heldout_sources.jsonl"
     prior_path = output_dir / "arc_sketch_program_heldout_prior.tsv"
+    attempts_path = output_dir / "arc_visual_pipeline_heldout_attempts.jsonl"
     records = arc_heldout_candidate_records(
         triage_path,
         excluded_keys,
@@ -954,16 +994,23 @@ def run_arc_sketch_heldout_export(
         per_family,
     )
     write_jsonl(candidate_jsonl_path, records)
-    probe_rows, summary_rows, prior_count, candidate_count = run_arc_sketch_candidate_export(
+    (
+        probe_rows,
+        summary_rows,
+        attempt_rows,
+        prior_count,
+        candidate_count,
+    ) = run_arc_sketch_candidate_export(
         records,
         arc_agi,
         public_arc_dir,
         candidate_tsv_path,
         source_path,
         prior_path,
+        attempts_path,
         sketches_per_task,
     )
-    return probe_rows, summary_rows, prior_count, candidate_count, records
+    return probe_rows, summary_rows, attempt_rows, prior_count, candidate_count, records
 
 
 def aggregate_arc_probe_rejections(
@@ -982,6 +1029,250 @@ def aggregate_arc_probe_rejections(
         family: dict(sorted(counter.items()))
         for family, counter in sorted(totals.items())
     }
+
+
+def arc_attempt_pipeline_key(row: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(row.get("family", "")),
+        str(row.get("pipeline_kind", "")),
+        str(row.get("op_name", "")),
+    )
+
+
+def arc_attempt_task_key(row: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(row.get("family", "")),
+        str(row.get("task_id", "")),
+        str(row.get("split", "")),
+    )
+
+
+def arc_attempt_slot_values(row: dict[str, Any]) -> dict[str, Any]:
+    slots = row.get("slot_values", {})
+    return slots if isinstance(slots, dict) else {}
+
+
+def arc_attempt_slot_distance(lhs: dict[str, Any], rhs: dict[str, Any]) -> float:
+    left = arc_attempt_slot_values(lhs)
+    right = arc_attempt_slot_values(rhs)
+    keys = sorted(set(left) | set(right))
+    if not keys:
+        return 0.0
+    distance = 0.0
+    for key in keys:
+        if key not in left or key not in right:
+            distance += 2.0
+            continue
+        try:
+            distance += abs(float(left[key]) - float(right[key]))
+        except (TypeError, ValueError):
+            distance += 0.0 if left[key] == right[key] else 1.0
+    return distance / float(len(keys))
+
+
+def build_arc_visual_pipeline_proposals(
+    source_attempts: list[dict[str, Any]],
+    target_attempts: list[dict[str, Any]],
+    max_per_task: int = 8,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    training_attempts = [*source_attempts, *target_attempts]
+    training_accepted = [
+        row for row in training_attempts if safe_bool(row.get("accepted"))
+    ]
+    proposals: list[dict[str, Any]] = []
+    for row in target_attempts:
+        family, pipeline_kind, op_name = arc_attempt_pipeline_key(row)
+        task_key = arc_attempt_task_key(row)
+        family_stats: Counter[str] = Counter()
+        fallback_stats: Counter[str] = Counter()
+        accepted_neighbors: list[dict[str, Any]] = []
+        for source in training_attempts:
+            if arc_attempt_task_key(source) == task_key:
+                continue
+            source_family, source_pipeline, source_op = arc_attempt_pipeline_key(source)
+            if source_pipeline == pipeline_kind and source_op == op_name:
+                fallback_stats["attempted"] += 1
+                if safe_bool(source.get("accepted")):
+                    fallback_stats["accepted"] += 1
+            if (
+                source_family == family
+                and source_pipeline == pipeline_kind
+                and source_op == op_name
+            ):
+                family_stats["attempted"] += 1
+                if safe_bool(source.get("accepted")):
+                    family_stats["accepted"] += 1
+            if safe_bool(source.get("accepted")):
+                accepted_neighbors.append(source)
+        attempted = family_stats.get("attempted", 0) or fallback_stats.get("attempted", 0)
+        accepted = family_stats.get("accepted", 0) or fallback_stats.get("accepted", 0)
+        frequency_score = accepted / attempted if attempted else 0.0
+        proposals.append(
+            {
+                "schema": ARC_VISUAL_PIPELINE_PROPOSAL_SCHEMA,
+                "report_version": 1,
+                "proposal_id": "avp:{}".format(
+                    stable_id("frequency", row.get("attempt_id", ""), task_key)
+                ),
+                "proposer": "frequency_visual_pipeline_proposer",
+                "family": family,
+                "task_id": task_key[1],
+                "split": task_key[2],
+                "target_attempt_id": row.get("attempt_id", ""),
+                "pipeline_kind": pipeline_kind,
+                "op_name": op_name,
+                "pipeline": row.get("pipeline", {}),
+                "slot_values": row.get("slot_values", {}),
+                "score": frequency_score,
+                "target_accepted": safe_bool(row.get("accepted")),
+                "target_rejection_reason": row.get("rejection_reason", ""),
+                "rank_features": {
+                    "leave_one_task_out_attempted": attempted,
+                    "leave_one_task_out_accepted": accepted,
+                    "leave_one_task_out_acceptance_rate": frequency_score,
+                },
+            }
+        )
+
+        best_source: dict[str, Any] | None = None
+        best_score = -1.0
+        best_distance = 0.0
+        for source in accepted_neighbors:
+            source_family, source_pipeline, source_op = arc_attempt_pipeline_key(source)
+            relation_score = 1.0
+            if source_family == family:
+                relation_score += 4.0
+            if source_pipeline == pipeline_kind:
+                relation_score += 4.0
+            if source_op == op_name:
+                relation_score += 2.0
+            distance = arc_attempt_slot_distance(source, row)
+            score = relation_score / (1.0 + distance)
+            if score > best_score:
+                best_score = score
+                best_distance = distance
+                best_source = source
+        if best_source is not None:
+            proposals.append(
+                {
+                    "schema": ARC_VISUAL_PIPELINE_PROPOSAL_SCHEMA,
+                    "report_version": 1,
+                    "proposal_id": "avp:{}".format(
+                        stable_id(
+                            "nearest",
+                            row.get("attempt_id", ""),
+                            best_source.get("attempt_id", ""),
+                        )
+                    ),
+                    "proposer": "nearest_visual_pipeline_proposer",
+                    "family": family,
+                    "task_id": task_key[1],
+                    "split": task_key[2],
+                    "target_attempt_id": row.get("attempt_id", ""),
+                    "nearest_source_attempt_id": best_source.get("attempt_id", ""),
+                    "pipeline_kind": pipeline_kind,
+                    "op_name": op_name,
+                    "pipeline": row.get("pipeline", {}),
+                    "slot_values": row.get("slot_values", {}),
+                    "score": best_score,
+                    "target_accepted": safe_bool(row.get("accepted")),
+                    "target_rejection_reason": row.get("rejection_reason", ""),
+                    "rank_features": {
+                        "nearest_slot_distance": best_distance,
+                        "nearest_source_family": best_source.get("family", ""),
+                        "nearest_source_pipeline_kind": best_source.get(
+                            "pipeline_kind", ""
+                        ),
+                        "nearest_source_op_name": best_source.get("op_name", ""),
+                    },
+                }
+            )
+
+    retained: list[dict[str, Any]] = []
+    grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in proposals:
+        grouped[
+            (
+                str(row.get("proposer", "")),
+                str(row.get("family", "")),
+                str(row.get("task_id", "")),
+                str(row.get("split", "")),
+            )
+        ].append(row)
+    for key in sorted(grouped):
+        rows = grouped[key]
+        rows.sort(
+            key=lambda item: (
+                -safe_float(item.get("score")),
+                str(item.get("target_attempt_id", "")),
+            )
+        )
+        retained.extend(rows[:max_per_task])
+
+    accepted_target_tasks = {
+        arc_attempt_task_key(row)
+        for row in target_attempts
+        if safe_bool(row.get("accepted"))
+    }
+    by_proposer: dict[str, Counter[str]] = defaultdict(Counter)
+    grouped_retained: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in retained:
+        grouped_retained[
+            (
+                str(row.get("proposer", "")),
+                str(row.get("family", "")),
+                str(row.get("task_id", "")),
+                str(row.get("split", "")),
+            )
+        ].append(row)
+    for key, rows in grouped_retained.items():
+        proposer, family, task_id, split = key
+        if (family, task_id, split) not in accepted_target_tasks:
+            continue
+        rows.sort(
+            key=lambda item: (
+                -safe_float(item.get("score")),
+                str(item.get("target_attempt_id", "")),
+            )
+        )
+        by_proposer[proposer]["evaluated_tasks"] += 1
+        if any(safe_bool(row.get("target_accepted")) for row in rows[:1]):
+            by_proposer[proposer]["top1_hits"] += 1
+        if any(safe_bool(row.get("target_accepted")) for row in rows[:3]):
+            by_proposer[proposer]["top3_hits"] += 1
+        if any(safe_bool(row.get("target_accepted")) for row in rows[:max_per_task]):
+            by_proposer[proposer]["retained_hits"] += 1
+
+    summary = {
+        "schema": ARC_VISUAL_PIPELINE_PROPOSAL_SUMMARY_SCHEMA,
+        "report_version": 1,
+        "source_attempt_count": len(source_attempts),
+        "source_accepted_count": sum(
+            1 for row in source_attempts if safe_bool(row.get("accepted"))
+        ),
+        "training_attempt_count": len(training_attempts),
+        "training_accepted_count": len(training_accepted),
+        "training_mode": "leave_one_task_out_visual_pipeline_attempts",
+        "target_attempt_count": len(target_attempts),
+        "target_accepted_count": sum(
+            1 for row in target_attempts if safe_bool(row.get("accepted"))
+        ),
+        "proposal_count": len(retained),
+        "accepted_target_task_count": len(accepted_target_tasks),
+        "by_proposer": {
+            proposer: {
+                **dict(counter),
+                "top1_rate": pct(counter.get("top1_hits", 0), counter.get("evaluated_tasks", 0)),
+                "top3_rate": pct(counter.get("top3_hits", 0), counter.get("evaluated_tasks", 0)),
+                "retained_rate": pct(
+                    counter.get("retained_hits", 0),
+                    counter.get("evaluated_tasks", 0),
+                ),
+            }
+            for proposer, counter in sorted(by_proposer.items())
+        },
+    }
+    return retained, summary
 
 
 def run_arc_log(command: list[str], log_path: Path) -> int:
@@ -1945,10 +2236,14 @@ def markdown_summary(
     arc_sketch_probe_sources: list[dict[str, Any]],
     arc_sketch_probe_summaries: list[dict[str, Any]],
     arc_sketch_probe_comparison: list[dict[str, Any]],
+    arc_visual_pipeline_attempts: list[dict[str, Any]],
     arc_sketch_heldout_sources: list[dict[str, Any]],
     arc_sketch_heldout_summaries: list[dict[str, Any]],
     arc_sketch_heldout_comparison: list[dict[str, Any]],
+    arc_visual_pipeline_heldout_attempts: list[dict[str, Any]],
     arc_sketch_heldout_candidate_count: int,
+    arc_visual_pipeline_proposals: list[dict[str, Any]],
+    arc_visual_pipeline_proposal_summary: dict[str, Any],
     sketch_memory_summary: dict[str, Any],
     sketches: list[dict[str, Any]],
     sketch_examples: list[dict[str, Any]],
@@ -1975,10 +2270,13 @@ def markdown_summary(
         f"- Compiled deltas: {len(compiled_deltas)}",
         f"- Promoted deltas: {len(promoted)}",
         f"- ARC sketch program probe sketches: {len(arc_sketch_probe_sources)}",
+        f"- ARC visual pipeline source attempts: {len(arc_visual_pipeline_attempts)}",
         f"- ARC sketch program compared tasks: {len(arc_sketch_probe_comparison)}",
         f"- Held-out ARC candidate tasks: {arc_sketch_heldout_candidate_count}",
         f"- Held-out ARC sketch program sketches: {len(arc_sketch_heldout_sources)}",
+        f"- Held-out ARC visual pipeline attempts: {len(arc_visual_pipeline_heldout_attempts)}",
         f"- Held-out ARC compared tasks: {len(arc_sketch_heldout_comparison)}",
+        f"- ARC visual pipeline baseline proposals: {len(arc_visual_pipeline_proposals)}",
         f"- Grammar sketches: {len(sketches)}",
         f"- Grammar sketch examples: {len(sketch_examples)}",
         f"- Grammar sketch proposals: {len(sketch_proposals)}",
@@ -2036,7 +2334,7 @@ def markdown_summary(
                     "| Family | Attempted | Emitted | Unsupported shape | No train match | Duplicate | Cap hit |",
                     "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
                 ]
-            )
+                )
             for family in sorted(set(attempted_by_family) | set(emitted_by_family)):
                 rejects = rejection_totals[family]
                 lines.append(
@@ -2050,6 +2348,17 @@ def markdown_summary(
                         rejects.get("cap_hit", 0),
                     )
                 )
+        if arc_visual_pipeline_attempts:
+            accepted = sum(
+                1 for row in arc_visual_pipeline_attempts if safe_bool(row.get("accepted"))
+            )
+            lines.extend(
+                [
+                    "",
+                    f"- Visual pipeline attempt rows: {len(arc_visual_pipeline_attempts)}",
+                    f"- Visual pipeline accepted rows: {accepted}",
+                ]
+            )
         if arc_sketch_probe_comparison:
             lines.extend(
                 [
@@ -2146,6 +2455,43 @@ def markdown_summary(
                         rejects.get("cap_hit", 0),
                     )
                 )
+        if arc_visual_pipeline_heldout_attempts:
+            heldout_accepted = sum(
+                1
+                for row in arc_visual_pipeline_heldout_attempts
+                if safe_bool(row.get("accepted"))
+            )
+            lines.extend(
+                [
+                    "",
+                    f"- Held-out visual pipeline attempt rows: {len(arc_visual_pipeline_heldout_attempts)}",
+                    f"- Held-out visual pipeline accepted rows: {heldout_accepted}",
+                ]
+            )
+        if arc_visual_pipeline_proposals:
+            lines.extend(
+                [
+                    "",
+                    "### ARC Visual Pipeline Baseline",
+                    "",
+                    "| Proposer | Evaluated tasks | Top-1 | Top-3 | Retained |",
+                    "| --- | ---: | ---: | ---: | ---: |",
+                ]
+            )
+            by_proposer = arc_visual_pipeline_proposal_summary.get("by_proposer", {})
+            if isinstance(by_proposer, dict):
+                for proposer, stats in sorted(by_proposer.items()):
+                    if not isinstance(stats, dict):
+                        continue
+                    lines.append(
+                        "| `{}` | {} | {:.1%} | {:.1%} | {:.1%} |".format(
+                            proposer,
+                            safe_int(stats.get("evaluated_tasks")),
+                            safe_float(stats.get("top1_rate")),
+                            safe_float(stats.get("top3_rate")),
+                            safe_float(stats.get("retained_rate")),
+                        )
+                    )
         if arc_sketch_heldout_comparison:
             lines.extend(
                 [
@@ -2289,6 +2635,7 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
     (
         arc_sketch_probe_sources,
         arc_sketch_probe_summaries,
+        arc_visual_pipeline_attempts,
         arc_sketch_probe_prior_row_count,
         arc_sketch_probe_candidate_count,
     ) = run_arc_sketch_probe_export(
@@ -2303,6 +2650,7 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
     (
         arc_sketch_heldout_sources,
         arc_sketch_heldout_summaries,
+        arc_visual_pipeline_heldout_attempts,
         arc_sketch_heldout_prior_row_count,
         arc_sketch_heldout_candidate_count,
         arc_sketch_heldout_candidates,
@@ -2320,6 +2668,13 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         sketches,
         sketch_examples,
         neural_sketch_proposals,
+    )
+    (
+        arc_visual_pipeline_proposals,
+        arc_visual_pipeline_proposal_summary,
+    ) = build_arc_visual_pipeline_proposals(
+        arc_visual_pipeline_attempts,
+        arc_visual_pipeline_heldout_attempts,
     )
     sketch_verifications, promoted_sketches = build_sketch_verifications(sketches, sketch_examples)
 
@@ -2368,6 +2723,14 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
     write_jsonl(args.output_dir / "grammar_sketches.jsonl", sketches)
     write_jsonl(args.output_dir / "grammar_sketch_examples.jsonl", sketch_examples)
     write_jsonl(args.output_dir / "grammar_sketch_proposals.jsonl", sketch_proposals)
+    write_jsonl(
+        args.output_dir / "arc_visual_pipeline_proposals.jsonl",
+        arc_visual_pipeline_proposals,
+    )
+    write_jsonl(
+        args.output_dir / "arc_visual_pipeline_proposal_summary.jsonl",
+        [arc_visual_pipeline_proposal_summary],
+    )
     write_jsonl(args.output_dir / "grammar_sketch_verification.jsonl", sketch_verifications)
     write_jsonl(args.output_dir / "promoted_grammar_sketches.jsonl", promoted_sketches)
     write_jsonl(args.output_dir / "grammar_sketch_memory_summary.jsonl", [sketch_memory_summary])
@@ -2381,6 +2744,10 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         "promoted_count": len(promoted),
         "arc_sketch_program_probe_candidate_count": arc_sketch_probe_candidate_count,
         "arc_sketch_program_probe_source_count": len(arc_sketch_probe_sources),
+        "arc_visual_pipeline_attempt_count": len(arc_visual_pipeline_attempts),
+        "arc_visual_pipeline_accepted_attempt_count": sum(
+            1 for row in arc_visual_pipeline_attempts if safe_bool(row.get("accepted"))
+        ),
         "arc_sketch_program_probe_prior_row_count": arc_sketch_probe_prior_row_count,
         "arc_sketch_program_probe_comparison_count": len(arc_sketch_probe_comparison),
         "arc_sketch_program_probe_added_train_consistent_tasks": sum(
@@ -2424,6 +2791,14 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         ),
         "arc_sketch_program_heldout_candidate_count": arc_sketch_heldout_candidate_count,
         "arc_sketch_program_heldout_source_count": len(arc_sketch_heldout_sources),
+        "arc_visual_pipeline_heldout_attempt_count": len(
+            arc_visual_pipeline_heldout_attempts
+        ),
+        "arc_visual_pipeline_heldout_accepted_attempt_count": sum(
+            1
+            for row in arc_visual_pipeline_heldout_attempts
+            if safe_bool(row.get("accepted"))
+        ),
         "arc_sketch_program_heldout_prior_row_count": arc_sketch_heldout_prior_row_count,
         "arc_sketch_program_heldout_comparison_count": len(
             arc_sketch_heldout_comparison
@@ -2467,6 +2842,8 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         "arc_sketch_program_heldout_rejections_by_family": aggregate_arc_probe_rejections(
             arc_sketch_heldout_summaries
         ),
+        "arc_visual_pipeline_proposal_count": len(arc_visual_pipeline_proposals),
+        "arc_visual_pipeline_proposal_summary": arc_visual_pipeline_proposal_summary,
         "grammar_sketch_count": len(sketches),
         "grammar_sketch_example_count": len(sketch_examples),
         "grammar_sketch_proposal_count": len(sketch_proposals),
@@ -2513,10 +2890,14 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
             arc_sketch_probe_sources,
             arc_sketch_probe_summaries,
             arc_sketch_probe_comparison,
+            arc_visual_pipeline_attempts,
             arc_sketch_heldout_sources,
             arc_sketch_heldout_summaries,
             arc_sketch_heldout_comparison,
+            arc_visual_pipeline_heldout_attempts,
             arc_sketch_heldout_candidate_count,
+            arc_visual_pipeline_proposals,
+            arc_visual_pipeline_proposal_summary,
             sketch_memory_summary,
             sketches,
             sketch_examples,
@@ -2535,10 +2916,14 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         "arc_sketch_probe_prior_rows": arc_sketch_probe_prior_row_count,
         "arc_sketch_probe_summaries": arc_sketch_probe_summaries,
         "arc_sketch_probe_comparison": arc_sketch_probe_comparison,
+        "arc_visual_pipeline_attempts": arc_visual_pipeline_attempts,
         "arc_sketch_heldout_sources": arc_sketch_heldout_sources,
         "arc_sketch_heldout_prior_rows": arc_sketch_heldout_prior_row_count,
         "arc_sketch_heldout_summaries": arc_sketch_heldout_summaries,
         "arc_sketch_heldout_comparison": arc_sketch_heldout_comparison,
+        "arc_visual_pipeline_heldout_attempts": arc_visual_pipeline_heldout_attempts,
+        "arc_visual_pipeline_proposals": arc_visual_pipeline_proposals,
+        "arc_visual_pipeline_proposal_summary": arc_visual_pipeline_proposal_summary,
         "sketches": sketches,
         "sketch_examples": sketch_examples,
         "sketch_proposals": sketch_proposals,
@@ -2656,12 +3041,15 @@ def main() -> None:
 
     outputs = run(args)
     print(
-        "wrote {} delta candidates, {} compiled deltas, {} promoted deltas, {} ARC sketch probes, {} ARC probe comparisons, {} grammar sketches, {} sketch examples, {} sketch proposals, {} promoted sketches, sketch memory {} to {}".format(
+        "wrote {} delta candidates, {} compiled deltas, {} promoted deltas, {} ARC sketch probes, {} ARC visual pipeline attempts, {} ARC probe comparisons, {} ARC visual pipeline proposals, {} grammar sketches, {} sketch examples, {} sketch proposals, {} promoted sketches, sketch memory {} to {}".format(
             len(outputs["candidates"]),
             len(outputs["compiled_deltas"]),
             len(outputs["promoted"]),
             len(outputs["arc_sketch_probe_sources"]),
+            len(outputs["arc_visual_pipeline_attempts"])
+            + len(outputs["arc_visual_pipeline_heldout_attempts"]),
             len(outputs["arc_sketch_probe_comparison"]),
+            len(outputs["arc_visual_pipeline_proposals"]),
             len(outputs["sketches"]),
             len(outputs["sketch_examples"]),
             len(outputs["sketch_proposals"]),

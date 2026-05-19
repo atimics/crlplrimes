@@ -38,11 +38,15 @@ Outputs:
 - `build/float/neural_grammar_discovery/arc_sketch_program_probe_prior.tsv`
 - `build/float/neural_grammar_discovery/arc_sketch_program_probe_comparison.jsonl`
 - `build/float/neural_grammar_discovery/arc_sketch_program_probe_comparison.md`
+- `build/float/neural_grammar_discovery/arc_visual_pipeline_attempts.jsonl`
 - `build/float/neural_grammar_discovery/arc_sketch_program_heldout_candidates.jsonl`
 - `build/float/neural_grammar_discovery/arc_sketch_program_heldout_sources.jsonl`
 - `build/float/neural_grammar_discovery/arc_sketch_program_heldout_prior.tsv`
 - `build/float/neural_grammar_discovery/arc_sketch_program_heldout_comparison.jsonl`
 - `build/float/neural_grammar_discovery/arc_sketch_program_heldout_comparison.md`
+- `build/float/neural_grammar_discovery/arc_visual_pipeline_heldout_attempts.jsonl`
+- `build/float/neural_grammar_discovery/arc_visual_pipeline_proposals.jsonl`
+- `build/float/neural_grammar_discovery/arc_visual_pipeline_proposal_summary.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketches.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketch_examples.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketch_proposals.jsonl`
@@ -126,8 +130,24 @@ The first ARC/haiku promotion paths are intentionally narrow:
   selector, operation, geometry, color, and repeat parameters, then the C sketch
   VM materializes crop, normalized crop, object-mask extraction, lattice sample,
   diagonal sparse-lattice compaction, macrocell substitute, point-line
-  projection, axis projection/compression, separator-panel mapping, tile-repeat,
-  and component-summary sketches for the existing train verifier.
+  projection, axis projection/compression, separator-panel mapping,
+  palette-scale expansion, object-color tiling, marker-count motif tiling,
+  component/color-count line compression, tile-repeat, and component-summary
+  sketches for the existing train verifier.
+- The newest ARC sketch ops execute through a typed internal visual-program
+  interpreter, so composite behaviors are recorded as pipelines such as
+  `select_object_color -> render_solid_rect` and
+  `count_marker_cells -> select_motif_window -> repeat_window_by_count` rather
+  than remaining opaque task-shaped functions. Probe source rows include
+  `visual_program` and `slot_contract` metadata for auditability.
+- The newer C miners enumerate typed visual pipeline specs first, then compile
+  them into the stable `arc_sketch_program` slot ABI. This keeps the discovery
+  surface closer to a learnable visual algebra while preserving the existing
+  verifier and TSV/JSONL contracts.
+- ARC writes accepted and rejected visual-pipeline attempts as JSONL before
+  promotion. Python trains frequency and nearest-neighbor baselines over those
+  attempt rows using leave-one-task-out scoring, so slot-synthesis quality can
+  be measured before adding a neural ranker.
 - Promoted ARC family pressure is exported by `arc_agi` itself. Python writes
   only promoted-family task rows, invokes the C probe exporter, and consumes the
   resulting `arc_sketch_program_probe_sources.jsonl` and
