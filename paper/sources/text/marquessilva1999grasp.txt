@@ -1,0 +1,832 @@
+506                                                                                    IEEE TRANSACTIONS ON COMPUTERS, VOL. 48, NO. 5,            MAY 1999
+
+
+
+
+                              GRASP: A Search Algorithm
+                              for Propositional Satisfiability
+                  JoaÄo P. Marques-Silva, Member, IEEE, and Karem A. Sakallah, Fellow, IEEE
+
+       AbstractÐThis paper introduces GRASP (Generic seaRch Algorithm for the Satisfiability Problem), a new search algorithm for
+       Propositional Satisfiability (SAT). GRASP incorporates several search-pruning techniques that proved to be quite powerful on a wide
+       variety of SAT problems. Some of these techniques are specific to SAT, whereas others are similar in spirit to approaches in other
+       fields of Artificial Intelligence. GRASP is premised on the inevitability of conflicts during the search and its most distinguishing feature is
+       the augmentation of basic backtracking search with a powerful conflict analysis procedure. Analyzing conflicts to determine their
+       causes enables GRASP to backtrack nonchronologically to earlier levels in the search tree, potentially pruning large portions of the
+       search space. In addition, by ªrecordingº the causes of conflicts, GRASP can recognize and preempt the occurrence of similar conflicts
+       later on in the search. Finally, straightforward bookkeeping of the causality chains leading up to conflicts allows GRASP to identify
+       assignments that are necessary for a solution to be found. Experimental results obtained from a large number of benchmarks indicate
+       that application of the proposed conflict analysis techniques to SAT algorithms can be extremely effective for a large number of
+       representative classes of SAT instances.
+
+       Index TermsÐSatisfiability, search algorithms, conflict diagnosis, conflict-directed nonchronological backtracking, conflict-based
+       equivalence, failure-driven assertions, unique implication points.
+
+                                                                                æ
+
+1     Introduction
+
+T     HE  Boolean satisfiability problem (SAT) appears in
+     many contexts in the field of computer-aided design
+of integrated circuits, including automatic test pattern
+                                                                                    the chronological nature of backtracking. Only in [28] is a
+                                                                                    nonchronological backtracking procedure outlined for sol-
+                                                                                    ving problems in Logic Truth Maintenance Systems
+generation (ATPG), timing analysis, delay fault testing,                            (LTMS), but it is only sketched and no experimental results
+and logic verification, to name just a few. Though well-                            are presented. Nevertheless, nonchronological backtracking
+researched and widely investigated, it remains the focus of                         techniques have been extensively studied and applied to
+continuing interest because efficient techniques for its                            different areas of Artificial Intelligence, particularly Truth
+solution can have great impact. SAT belongs to the class                            Maintenance Systems (TMS) [9], [35], Constraint Satisfac-
+of NP-complete problems whose algorithmic solutions are                             tion Problems (CSP) [8], [14], [15], [31], and Logic Program-
+currently believed to have exponential worst case complex-                          ming [4], in some cases with very promising experimental
+ity [13]. Over the years, many algorithmic solutions have                           results [8], [15]. In recent years, extensive research work has
+been proposed for SAT, the most well-known being the                                been dedicated to the development of local search algo-
+different variations of the Davis-Putnam procedure [7]. The                         rithms for SAT [33]. These algorithms are, in general,
+best known version of this procedure is based on a                                  incomplete, i.e., they may not find a solution and cannot
+backtracking search algorithm that, at each node in the
+                                                                                    prove unsatisfiability. Nevertheless, local search algorithms
+search tree, elects an assignment and prunes subsequent
+                                                                                    have been shown to be extremely effective on specific
+search by iteratively applying the unit clause and the pure
+                                                                                    classes of satisfiable instances of SAT.
+literal rules [39]. Iterated application of the unit clause rule is
+                                                                                       Interest in the direct application of SAT algorithms to
+commonly referred to as Boolean Constraint Propagation
+                                                                                    electronic design automation (EDA) problems has been on
+(BCP) [39] or as derivation of implications in the electronic
+                                                                                    the rise recently [5], [22], [29], [36]. In addition, improve-
+CAD literature [1].
+                                                                                    ments to the traditional structural (path sensitization)
+    Most of the recently proposed improvements to the basic
+                                                                                    algorithms for some EDA problems, such as ATPG, include
+Davis-Putnam procedure [3], [6], [11], [12], [22], [30], [36],
+                                                                                    search-pruning techniques that are also applicable to SAT
+[39] can be distinguished based on their decision making                            algorithms in general [16], [21], [25].
+heuristics or their use of preprocessing or relaxation                                 This paper introduces a new procedure for conflict
+techniques. Common to all these approaches, however, is                             analysis in satisfiability algorithms and describes its use in a
+                                                                                    configurable algorithmic framework for solving SAT pro-
+. J.P. Marques-Silva is with Cadence European Laboratories, IST/INESC, R.
+                                                                                    blems. Titled GRASP1 (Generic seaRch Algorithm for the
+  Alves Redol, 9, 1000 Lisboa, Portugal.                                            Satisfiability Problem), this framework is premised on the
+. K.A. Sakallah is with the Department of Electrical Engineering and                inevitability of conflicts during search. By noting that
+  Computer Science, University of Michigan, Ann Arbor, MI 48109-2122.
+  E-mail: karem@eecs.umich.edu.
+                                                                                    conflicts arise when certain clauses are missing from the
+                                                                                    problem specification, GRASP views conflict occurrence as
+Manuscript received 22 Apr. 1997.
+For information on obtaining reprints of this article, please send e-mail to:       an opportunity to augment the problem description with
+tc@computer.org, and reference IEEECS Log Number 104973.                            such conflict-induced clauses. The addition of these clauses
+                                                                0018-9340/99/$10.00 ß 1999 IEEE
+MARQUES-SILVA AND SAKALLAH: GRASP: A SEARCH ALGORITHM FOR PROPOSITIONAL SATISFIABILITY                                                      507
+
+
+helps to prune the search for a solution in three comple-                     A backtracking search algorithm for SAT is implemen-
+mentary ways. First, annotation of the literals in a conflict-            ted by a search process that implicitly traverses the space
+induced clause by the decision level at which their values                of 2n possible binary assignments to the problem
+were assigned enables GRASP to backtrack nonchronologi-                   variables. During the search, a variable whose binary
+cally to earlier levels in the search tree. Second, by                    value has already been determined is considered to be
+ªrecordingº these clauses, GRASP can recognize and                        assigned; otherwise, it is unassigned with an implicit value
+preempt the occurrence of similar conflicts later on in the               of X  f0; 1g. A truth assignment for a formula ' is a set
+search. And third, straightforward bookkeeping of the                     of assigned variables and their corresponding binary
+causality chains leading up to conflicts allows GRASP to                  values. It will be convenient to represent such assign-
+identify assignments that are necessary for a solution to be              ments as sets of variable/value pairs; for example
+found. Experimental results obtained from a large number                  A  f x1 ; 0; x7 ; 1; x13 ; 0g. Alternatively, assignments
+of benchmarks [18] provide ample evidence that application                can be denoted as A  fx1  0; x7  1; x13  0g. Sometimes
+of the proposed conflict analysis techniques to SAT                       it is convenient to indicate that a variable x is assigned
+algorithms can be extremely effective for a large number                  without specifying its actual value. In such cases, we will
+of representative classes of SAT instances.                               use the notation  x to denote the binary value assigned to
+   The remainder of this paper is organized in four sections.             x. An assignment A is complete if jAj  n; otherwise, it is
+In Section 2, we introduce the basics of backtracking search,             partial. Evaluating a formula ' for a given a truth
+particularly our implementation of BCP, and describe the                  assignment A yields three possible outcomes: 'jA  1 and
+overall architecture of GRASP. This is followed, in Section 3,            we say that ' is satisfied and refer to A as a satisfying
+by a detailed discussion of the procedures for conflict                   assignment; 'jA  0, in which case ' is unsatisfied and A is
+analysis and how they are implemented. (In the Appendix,                  referred to as an unsatisfying assignment; and 'jA  X,
+we prove that the GRASP SAT algorithm is both correct and                 indicating that the value of ' cannot be resolved by the
+complete.) Extensive experimental results on a wide range                 assignment. This last case can only happen when A is a
+of benchmarks are presented and analyzed in Section 4. In                 partial assignment. An assignment partitions the clauses of
+particular, GRASP is shown to outperform several state-of-                ' into three sets: satisfied clauses (evaluating to 1);
+the-art SAT algorithms [2], [6], [10], [11], [30], [33], [36], [19]       unsatisfied clauses (evaluating to 0); and unresolved clauses
+on most, but not all, benchmarks. Furthermore, the                        (evaluating to X). The unassigned literals of a clause are
+experimental results strongly suggest that, for several                   referred to as its free literals. A clause is said to be unit if it is
+practical classes of SAT instances, local search algorithms               unresolved and the number of its free literals is one.
+may be inadequate. This is particularly significant when-                 2.2 Formula Satisfiability
+ever the SAT instances are likely to be unsatisfiable, as is              Formula satisfiability is concerned with determining if a
+typical in Automated Theorem Proving and in several                       given formula ' is satisfiable and with identifying a
+Electronic Design Automation tasks. The paper concludes                   satisfying assignment for it. Starting from an empty truth
+in Section 5 with some suggestions for further research.                  assignment, a backtrack search algorithm traverses the
+                                                                          space of truth assignments implicitly and organizes the
+2    Backtrack Search for CNF Satisfiability                              search for a satisfying assignment by maintaining a decision
+                                                                          tree. Each node in the decision tree specifies an elective
+2.1 Basic Definitions and Notation
+                                                                          assignment to an unassigned variable; such assignments are
+A conjunctive normal form (CNF) formula ' on n binary
+                                                                          referred to as decision assignments. A decision level is
+variables x1 ;    ; xn is the conjunction (AND) of m clauses
+                                                                          associated with each decision assignment to denote its
+!1 ;    ; !m each of which is the disjunction (OR) of one or           depth in the decision tree; the first decision assignment at
+more literals, where a literal is the occurrence of a variable            the root of the tree is at decision level 1. The search process
+or its complement. A formula ' denotes a unique n-variable                iterates through the steps of:
+Boolean function f x1 ;    ; xn  and each of its clauses
+corresponds to an implicate of f [17, p. 288]. Clearly, a                    1.   Extending the current assignment by making a
+function f can be represented by many equivalent CNF                              decision assignment to an unassigned variable. This
+                                                                                  decision process is the basic mechanism for exploring
+formulas. A formula is complete if it consists of the entire
+                                                                                  new regions of the search space. The search
+set of prime implicates [17, p. 288] for the corresponding
+                                                                                  terminates successfully if all clauses become satis-
+function. In general, a complete formula will have an
+                                                                                  fied; it terminates unsuccessfully if some clauses
+exponential number of clauses. We will refer to a CNF
+                                                                                  remain unsatisfied and all possible assignments
+formula as a clause database and use ªformula,º ªCNF
+                                                                                  have been exhausted.
+formula,º and ªclause databaseº interchangeably. The                         2.   Extending the current assignment by following the
+satisfiability problem (SAT) is concerned with finding an                         logical consequences of the assignments made thus
+assignment to the arguments of f x1 ;    ; xn  that makes the                 far. The additional assignments derived by this
+function equal to 1 or proving that the function is equal to                      deduction process are referred to as implication assign-
+the constant 0.                                                                   ments or, more simply, implications. The deduction
+                                                                                  process may also lead to the identification of one or
+   1. The GRASP software is available for downloading from http://
+andante.eecs.umich.edu/grasp-1-0.tar.gz or http://algos.inesc.pt/grasp/           more unsatisfied clauses implying that the current
+grasp.tar.gz.                                                                     assignment is not a satisfying assignment. Such an
+508                                                                      IEEE TRANSACTIONS ON COMPUTERS, VOL. 48, NO. 5,                 MAY 1999
+
+
+        occurrence is referred to as a conflict and the                          can backtrack to the corresponding level in the
+        associated unsatisfying assignment is called a con-                      decision tree since the subtree rooted at that
+        flicting assignment.                                                     level corresponds to assignments that will yield
+   3. Undoing the current assignment, if it is conflicting,                      the same conflict. The ability to identify a
+        so that another assignment can be tried. This                            backtracking level that is much earlier than the
+        backtracking process is the basic mechanism for                          current decision level is a form of nonchronolo-
+        retreating from regions of the search space that do                      gical backtracking that we refer to as conflict-
+        not correspond to satisfying assignments.                                directed backtracking (CDB),3 and has the poten-
+   The decision level at which a given variable x is either                      tial of significantly reducing the amount of
+electively assigned or forcibly implied will be denoted by                       search.
+ x. When relevant to the context, the assignment notation             These conflict diagnosis techniques are discussed further
+introduced earlier may be extended to indicate the decision          in Section 3.
+level at which the assignment occurred. Thus, x  v @ d
+would be read as ªx becomes equal to v at decision level d.º         2.4 Structure of the Search Process
+   The average complexity of the above search process                The basic mechanism for deriving implications from a given
+depends on how decisions, deductions, and backtracking               clause database is Boolean constraint propagation (BCP)
+are made. It also depends on the formula itself. The                 [11], [39]. Consider a formula ' containing the clause ! 
+implications that can be derived from a given partial                  x  :y and assume y  1. For any satisfying assignment to
+assignment depend on the set of available clauses. In                ', ! requires that x be equal to 1, and we say that y  1
+general, a formula consisting of more clauses will enable            implies x  1 due to !. In general, given a unit clause l1 
+more implications to be derived and will reduce the number               lk  of ' with free literal lj , consistency requires lj  1
+of backtracks due to conflicts. The limiting case is the             since this represents the only possibility for the clause to be
+complete formula that contains all prime implicates. For             satisfied. If lj  x, then the assignment x  1 is required; if
+such a formula, no conflicts can arise since all logical             lj  :x, then x  0 is required. Such assignments are
+implications for a partial assignment can be derived.2 This,         referred to as logical implications (implications, for short)
+however, may not lead to shorter execution times since the           and correspond to the application of the unit clause rule
+size of such a formula may be exponential.                           proposed by Davis and Putnam [7]. BCP refers to the
+                                                                     iterated application of this rule to a clause database until the
+2.3 Function Satisfiability                                          set of unit clauses becomes empty or one or more clauses
+Given an initial formula ', a search system can attempt to           become unsatisfied.
+augment it with additional implicates to increase the                      Let the assignment of a variable x be implied due
+deductive power during the search process. We propose a              to a clause !  l1      lk . The antecedent assignment
+search mechanism that identifies additional implicates by            of x, denoted as A! x, is defined as the set of
+diagnosing the causes of conflicts. Our approach considers           assignments to variables other than x with literals in
+the occurrence of a conflict, which is unavoidable for an            !. Intuitively, A! x designates those variable assign-
+unsatisfiable instance unless the formula is complete, as an         ments that are directly responsible for implying the
+opportunity to ªlearn from the mistake that led to the               assignment of x due to !. For example, the ante-
+conflictº and introduces additional implicates to the clause         cedent assignments of x, y, and z due to the clause
+database only when it stumbles. Conflict diagnosis produces          !  x  y  :z are, respectively, A! x  fy  0; z  1g,
+three distinct pieces of information that can help speed up          A! y  fx  0; z  1g, and A! z  fx  0; y  0g. Note
+the search:                                                          that the antecedent assignment of an electively
+      1.   New implicates that did not exist in the clause           assigned variable is empty.
+           database and that can be identified with the                    The sequence of implications generated by BCP is
+           occurrence of the conflict. These clauses may be          captured by a directed implication graph I defined as follows
+           added to the clause database to avert future              (see Fig. 1):
+           occurrence of the same conflict and represent a form         1.    Each vertex in I corresponds to a variable assign-
+           of conflict-based equivalence (CBE).                               ment x   x.
+      2.   An indication of whether the conflict was ultimately         2.    The predecessors of vertex x   x in I are the
+           due to the most recent decision assignment or to an                antecedent assignments A! x corresponding to the
+           earlier decision assignment.                                       unit clause ! that led to the implication of x. The
+           a.   If that assignment was the most recent (i.e., at              directed edges from the vertices in A! x to vertex
+                the current decision level), the opposite assign-             x   x are all labeled with !. Vertices that have no
+                ment (if it has not been tried) is immediately                predecessors correspond to decision assignments.
+                implied as a necessary consequence of the               3.    Special conflict vertices are added to I to indicate the
+                conflict; we refer to this as a failure-driven                occurrence of conflicts. The predecessors of a conflict
+                assertion (FDA).                                              vertex K correspond to variable assignments that
+           b.   If the conflict resulted from an earlier decision             force a clause ! to become unsatisfied and are
+                assignment (at a lower decision level), the search            viewed as the antecedent assignment A! . The
+
+                                                                     3. The designation CDB is used instead of dependency-directed backtracking [35]
+  2. This assertion is proven in Theorem 3 in the Appendix.          because the backtracking procedure is tightly associated with BCP.
+MARQUES-SILVA AND SAKALLAH: GRASP: A SEARCH ALGORITHM FOR PROPOSITIONAL SATISFIABILITY                                                     509
+
+
+       directed edges from the vertices in A! x to K are all       arises due to this assignment, the Diagnose() function is
+       labeled with !.                                              called to analyze this conflict and to determine an
+   The decision level of an implied variable x is related to        appropriate decision level for backtracking the search.
+those of its antecedent variables according to:                     When Search() encounters a conflict, it returns with a
+                                                                    CONFLICT indication and causes the elective assignment
+              x  maxf yj y;  y 2 A! xg:              1    made on entry to the function to be erased. We refer to
+                                                                    Decide(), Deduce(), and Diagnose() as the Decision,
+                                                                    Deduction, and Diagnosis engines, respectively. Different
+2.5 Search Algorithm Template                                       realizations of these engines lead to different SAT algo-
+The general structure of the GRASP search algorithm is              rithms. For example, the Davis-Putnam procedure can be
+shown in Fig. 2. We assume that an initial clause database '        emulated with the above algorithm by defining a decision
+and an initial assignment A, at decision level 0, are given.        engine, requiring the deduction engine to implement BCP
+This initial assignment, which may be empty, may be                 and the pure literal rule, and organizing the diagnosis
+viewed as an additional problem constraint and causes the           engine to implement chronological backtracking.
+search to be restricted to a subcube of the n-dimensional
+Boolean space. As the search proceeds, both ' and A are             3    Conflict Analysis Procedures
+modified. The recursive Search() function consists of four
+major operations:                                                   When a conflict arises during BCP, the structure of the
+                                                                    implication sequence converging on a conflict vertex K is
+   1.   Decide(), which chooses a decision assignment at            analyzed to determine those (unsatisfying) variable assign-
+        each stage of the search process. Decision proce-           ments that are directly responsible for the conflict. The
+        dures are commonly based on heuristic knowledge.            conjunction of these conflicting assignments is an implicant
+        For the results given in Section 4, the following           that represents a sufficient condition for the conflict to arise.
+        greedy heuristic is used:                                   Negation of this implicant, therefore, yields an implicate of
+           At each node in the decision tree evaluate the number    the Boolean function f (whose satisfiability we seek) that
+        of clauses directly satisfied by each assignment to each    does not exist in the clause database '. This new implicate,
+        variable. Choose the variable and the assignment that       referred to as a conflict-induced clause,4 provides the primary
+        directly satisfies the largest number of clauses.           mechanism for implementing failure-driven assertions,
+                                                                    nonchronological conflict-directed backtracking, and con-
+        Other decision making procedures have been im-
+                                                                    flict-based equivalence (see Section 2.3).
+        plemented in the GRASP algorithmic framework,
+                                                                        We denote the conflicting assignment associated with a
+        particularly those described in [11], [26]. For most of
+                                                                    conflict vertex K by A!C  and the associated conflict-
+        these heuristics, preference is given to assignments
+                                                                    induced clause by !C . The conflicting assignment is
+        that simplify the clauses the most and can lead to
+                                                                    determined by a backward traversal of the implication
+        more implications due to BCP. This is in explicit
+                                                                    graph starting at K. Besides the decision assignment at the
+        contrast with our heuristic which always attempts to
+                                                                    current decision level, only those assignments that occurred
+        satisfy the largest number of clauses. We chose to
+                                                                    at previous decision levels are included in A!C . This is
+        employ this heuristic in our experimental evaluation
+                                                                    justified by the fact that the decision assignment at the
+        because of its simplicity and to highlight the
+                                                                    current decision level is directly responsible for all implied
+        effectiveness of conflict analysis.
+                                                                    assignments at that level. Thus, along with assignments
+   2. Deduce(), which implements BCP and (implicitly)
+                                                                    from previous levels, the decision assignment at the current
+        maintains the resulting implication graph. The
+                                                                    decision level is a sufficient condition for the conflict. To
+        pseudocode for this procedure is shown in Fig. 3.
+                                                                    facilitate the computation of A!C , we partition the
+        The algorithm repeatedly applies the unit clause rule
+                                                                    antecedent assignments of K, as well as those for variables
+        [7] while unit clauses exist. It returns with a
+                                                                    assigned at the current decision level into two sets. Let x
+        SUCCESS indication unless one or more clauses
+                                                                    denote either K or a variable that is assigned at the current
+        become unsatisfied. In that case, a conflict vertex is
+                                                                    decision level. The partition of A x is then given by:5
+        added to the implication graph and a CONFLICT
+        indication is returned.                                                    x  f y;  y 2 A xj y <  xg
+   3. Diagnose(), which identifies the causes of conflicts                                                                                  2
+                                                                                   x  f y;  y 2 A xj y   xg:
+        and can augment the clause database with addi-
+        tional implicates. Realization of different conflict        For example, referring to the implication graph of Fig. 1,
+        diagnosis procedures is the subject of Section 3.            x6   fx11  0 @ 3g and  x6   fx4  1 @ 6g. Determi-
+   4. Erase(), which deletes the assignments at the                 nation of the conflicting assignment A!C  can now be
+        current decision level.                                     expressed as:
+   The Search() function starts by calling Decide() to
+choose a variable assignment at decision level d. It then                                  A!C   causes of 
+determines the consequences of this elective assignment by          where causes_of(.) is defined by:
+calling Deduce(). If this assignment does not cause any
+clauses to become unsatisfied, Search() is called recur-              4. Conditions similar to these implicates are referred to as ªnogoodsº in
+sively at decision level d  1. If, on the other hand, a conflict   TMS [9], [35] and in some algorithms for CSP [31]. Nevertheless, the basic
+                                                                    mechanism for creating conflict-induced clauses differs.
+510                                                                              IEEE TRANSACTIONS ON COMPUTERS, VOL. 48, NO. 5,     MAY 1999
+
+
+
+
+Fig. 1. Example of clause database and partial implication graph.
+
+      causes of                                                            the current decision variable to its opposite value and
+      8
+      >  x;  x                                   if A x  ;               determining a backtracking level for the search process.
+      <         "                              #                        3
+                       S                                                      Such immediate implications do not require that !C  be
+      >
+      :  x [                    causes of y      otherwise:                added to the clause database. Augmenting the clause
+                   y; y2 x
+                                                                              database with !C , however, has the potential of
+The conflict-induced clause corresponding to A!C  is now                    identifying future implications that are not derivable
+determined according to:                                                      without !C . In particular, adding !C  to the clause
+                              X                                               database ensures that the search engine will not regenerate
+                 !C               x x ;             4                   the conflicting assignment that led to the current conflict.
+                                   x; x2A!C 
+                                                                              3.1.1 Failure-Driven Assertions
+where, for a binary variable x, x0  x, and x1  :x.                          If !C  involves the current decision variable, erasing the
+Application of (2)-(4) to the conflict depicted in Fig. 1                     implication sequence at the current decision level makes
+yields the following conflicting assignment and conflict-                     !C  a unit clause and causes the immediate implication of
+induced clause at decision level 6:                                           the decision variable to its opposite value. We refer to such
+                                                                              assignments as failure-driven assertions (FDAs) to empha-
+ A!C   fx1  1 @ 6; x9  0 @ 1; x10  0 @ 3; x11  0 @ 3g
+                                                                              size that they are implications of conflicts and not decision
+  !C   :x1  x9  x10  x11 :                                             assignments. We note further that their derivation is
+                                                                        5    automatically handled by our BCP-based deduction engine
+                                                                              and does not require special processing. This is in contrast
+We note that our method for deriving implicates by
+                                                                              with most search-based SAT algorithms that treat a second
+analyzing the causes of conflicts has its foundations in                      branch at the current decision level as another decision
+[26]. It is also similar in spirit to the approaches of Freeman               assignment. Using our running example (see Fig. 1) as an
+[11, chapter 8] and McAllester [28]. However, unlike the                      illustration, we note that after erasing the conflicting
+precise computations of the conflicting assignment A!C                      implication sequence at level 6, the conflict-induced clause
+in (3) and conflict-induced clause !C  in (4), the                          !C  in (5) becomes a unit clause with :x1 as its free literal.
+procedures in these related works were only informally                        This immediately implies the assignment x1  0 and x1 is
+described.                                                                    said to be asserted.
+3.1 Standard Conflict Diagnosis Engine                                        3.1.2 Conflict-Directed Backtracking
+The identification of a conflict-induced clause !C  enables                 If all the literals in !C  correspond to variables that were
+the derivation of further implications that help prune the                    assigned at decision levels that are lower than the current
+search. Immediate implications of !C  include asserting                     decision level, we can immediately conclude that the search
+                                                                              process needs to backtrack. This situation can only take
+   5. To reduce clutter, we omit the superscripts denoting the clauses that
+lead to these antecedent assignments and assume them to be understood         place when the conflict in question is produced as a direct
+from context.                                                                 consequence of diagnosing a previous conflict and is
+MARQUES-SILVA AND SAKALLAH: GRASP: A SEARCH ALGORITHM FOR PROPOSITIONAL SATISFIABILITY                                     511
+
+
+
+
+Fig. 2. Description of GRASP.
+
+illustrated in Fig. 4a for our working example. The            When  d ÿ 1, where d is the current decision level, the
+implication sequence generated after asserting x1  0 due      search process backtracks chronologically to the immediately
+to conflict K leads to another conflict 0 . The conflicting   preceding decision level. When < d ÿ 1, however, the
+assignment and conflict-induced clause associated with this    search process may backtrack nonchronologically by jumping
+new conflict are easily determined to be                       back over several levels in the decision tree. It is worth
+         A!C 0                                              noting that all truth assignments that are made after
+                                                               decision level        will force the just-identified conflict-
+                fx9  0 @ 1; x10  0 @ 3; x11  0 @ 3;
+                                                          6   induced clause !C 0  to be unsatisfied. A search engine
+                 x12  1 @ 2; x13  1 @ 2g                     that backtracks chronologically may, thus, waste a signifi-
+          !C 0   x9  x10  x11  :x12  :x13              cant amount of time exploring a useless region of the search
+and clearly show that the assignments that led to this         space only to discover, after much effort, that the region
+second conflict were all made prior to the current decision    does not contain any satisfying assignments. In contrast, the
+level.                                                         GRASP search engine jumps directly from the current
+   In such cases, it is easy to show that no satisfying        decision level back to decision level . At that point,
+assignments can be found until the search process back-        !C 0  is used to either derive an FDA at decision level or
+tracks to the highest decision level at which assignments in   to calculate a new backtracking decision level.
+A!C 0  were made. Denoting this backtrack level by , it is      For our example, after occurrence of the second conflict,
+simply calculated according to:                                the backtrack decision level is calculated, from (7) applied
+                                                               to (6), to be 3. Backtracking to decision level 3, the deduction
+                 maxf xj x;  x 2 A!C 0 g:         7
+                                                               engine creates a conflict vertex corresponding to !C 0 .
+512                                                                           IEEE TRANSACTIONS ON COMPUTERS, VOL. 48, NO. 5,     MAY 1999
+
+
+
+
+Fig. 3. Description of the deduction engine.
+
+
+
+
+Fig. 4. Implication sequence and backtracking due to asserting x1  0. (a) Conflicting implication sequence. (b) Decision tree.
+
+Diagnosis of this conflict leads to an FDA of the decision                 3.2 Variations on the Standard Diagnosis Engine
+variable at level 3 (see Fig. 4b).                                         This section describes two improvements to the standard
+   The pseudocode for the diagnosis engine in GRASP is                     diagnosis engine described above. The first is concerned
+shown in Fig. 5 and illustrates the main features of standard              with ways of controlling the growth of the clause database.
+                                                                           The second provides techniques that utilize the structure of
+conflict diagnosis described above. The procedure starts
+                                                                           the implication sequences to reduce the size of identified
+with an analysis of what caused the conflict and the creation              implicates. Both of these improvements represent novel
+of a new conflict-induced clause. This clause is added to the              contributions to search-based SAT algorithms.
+clause database and used to calculate the backtracking
+                                                                           3.2.1 Space-Bounded Diagnosis Engines
+decision level . If backtracking is necessary (indicated by
+                                                                           Standard conflict diagnosis, described in the previous
+  6 d), a new conflict vertex K is added to the implication               section, suffers from two drawbacks. First, conflict analysis
+graph and its antecedent assignments A  are recorded.                    introduces significant overhead which, for some instances
+MARQUES-SILVA AND SAKALLAH: GRASP: A SEARCH ALGORITHM FOR PROPOSITIONAL SATISFIABILITY                                            513
+
+
+
+
+Fig. 5. Description of the standard diagnosis engine.
+
+of SAT, can lead to large run times. Second, the size of the    3.2.2 Unique Implication Points
+clause database grows with the number of backtracks; in the     Further enhancements to the conflict diagnosis engine
+worst case, such growth can be exponential in the number        involve generating stronger implicates (containing fewer
+of variables.
+                                                                literals) by more careful analysis of the structure of the
+    The first drawback is inherent to the algorithmic frame-
+                                                                implication graph I. An implication sequence at a given
+work we propose. Fortunately, the experimental results
+presented in Section 4 clearly suggest that, for specific SAT   decision level d corresponds to the subgraph in I whose
+instances, the performance gains far outweigh the proce-        vertices are all annotated by d. Assuming a conflict is
+dure's additional overhead.                                     detected, let U  f u1 ;  u1 ;    ; uk ;  uk g denote the set
+    One solution to the second drawback is a simple             of dominators [37] of K which are defined with respect to the
+modification to the conflict diagnosis engine that guaran-      variable assignment at decision level d. Each ui ;  ui  is
+tees the worst case growth of the clause database to be         referred to as a unique implication point (UIP) and can be
+polynomial in the number of variables. The main idea is to      viewed as triggering an implication sequence at decision
+be selective in the choice of clauses to add to the clause      level d that leads to the same conflict. To illustrate the
+database. Assume that we are given an integer parameter k.      application of UIPs, consider again the implication se-
+Conflict-induced clauses whose size (number of literals) is
+                                                                quence of Fig. 1. The set of dominators of K with respect to
+no greater than k are marked green and handled as
+                                                                x1 is f x1 ; 1; x4 ; 1g. Together with the earlier assign-
+described earlier by the standard diagnosis engine. Con-
+flict-induced clauses of size greater than k are marked red     ments x10  0 and x11  0, the assignment x4  1 is, thus,
+and kept around only while they are satisfied, unsatisfied,     a sufficient condition for triggering an implication
+or are unit clauses. Red clauses are used for defining          sequence leading to the same conflict. Hence, the clause
+failure-driven assertions and are deleted as soon as they        :x4  x10  x11  is an implicate of the function that did
+become unresolved with more than one free literal, since, in    not exist in the clause database. Moreover, since
+such a situation, these clauses no longer define failure-        x1  1 ^ x9  0 ) x4  1, the clause6 :x1  x9  x4 
+driven assertions. Implementation of this scheme requires a     is another implicate of the function. Both of these implicates
+simple modification to procedure Erase(), which must            are stronger than the single conflict-induced clause identi-
+now delete unresolved red clauses with more than one free       fied earlier in (5) and can potentially provide additional
+literal, and to the diagnosis engine, which must attach a
+                                                                implications in the presence of partial assignments. It is also
+color tag to each conflict-induced clause. With this mod-
+                                                                interesting to note that neither implicate can be identified
+ification, the worst case growth becomes polynomial in the
+number of variables as a function of the fixed integer k. The   from the original clause database with just BCP.
+major drawback of the proposed solution is that the ability         This procedure for constructing strong implicates can be
+to apply conflict-based equivalence decreases, since some       generalized for an arbitrary number of UIPs. Given a set of
+large conflict-induced clauses can now be deleted as the        UIPs U  f u1 ;  u1 ;    ; uk ;  uk g and a conflict vertex
+search proceeds.                                                K, replace (3) with:
+514                                                                                IEEE TRANSACTIONS ON COMPUTERS, VOL. 48, NO. 5,              MAY 1999
+
+          causes of x; ui                                                            Electronic Design Automation, thus being of key
+          8
+          >  u ;  ui                                  if x  ui                     significance for experimentally evaluating SAT
+          < i       "                                #                   8
+                           S                                                           algorithms.
+          >
+          :  x [                   causes of y; ui    otherwise;               While GRASP has a large number of configuration
+                      y; y2 x
+                                                                               options, for the experimental results given below, it was
+where ui ;  ui  2 U and causes of x; ui  are now inter-                    configured to use the decision engine described in
+preted as the set of antecedent assignments of x due to ui                     Section 2.5, to allow the generation of clauses based on
+and any other relevant assignments from earlier decision                       UIPs, and to limit the size of clauses added to the clause
+levels. Conflict-induced clauses can now be created for                        database to 20 or fewer literals. All SAT programs were run
+every pair of adjacent UIPs uiÿ1 ; ui  for i  2;    ; k as well           with a CPU time limit of 10,000 seconds.
+as for the last UIP uk and the conflict vertex K:                                 For the tables of results presented below the following
+                     2                                    3                    definitions apply. A benchmark suite is partitioned into
+                                 X                                             classes of related benchmarks, e.g., for the DIMACS
+    !C uiÿ1 ; ui   4                              x x 5  ui 1
+                                                               : u 
+                                                                               benchmarks, class AIM-100 includes all benchmarks with
+                       x; x2causes of uiÿ1 ;ui                    9       name aim-100-*. In each class, #M denotes the total number
+                              X
+       !C uk ;                            x x :                           of class members. Some tables of results contain CPU times
+                          x; x2causes of uk ;                             in seconds, whereas the remaining tables contain the
+                                                                               number of class members for which the program terminates
+Clearly, the size of each of these conflict-induced clauses                    in less than 10,000 CPU seconds, being referred to as the
+will be less than or equal to the size of the single conflict-                 number of successes. Ideally, an algorithm should have a
+induced clause created without identification of UIPs.                         number of successes equal to the number of class members
+Furthermore, the diagnosis engine of Fig. 5 can easily                         for all classes of benchmarks.
+identify UIPs in linear time with one traversal of the
+implication graph.                                                             4.1 DIMACS Benchmark Results
+                                                                               The CPU times of running GRASP and the other algorithms
+4         Experimental Results                                                 on the DIMACS benchmarks are shown in Table 1.9 The
+                                                                               number of successes for each algorithm are shown in
+In this section, we present experimental results for GRASP.                    Table 2. For GSAT, which cannot be used to prove
+Several benchmarks are used and GRASP is compared with                         unsatisfiability, experimental results are only available for
+other state-of-the-art and publicly available SAT programs.                    benchmark classes for which all members are satisfiable;
+In particular, we compare GRASP with POSIT [11], C-SAT                         entries corresponding to benchmark classes that have
+[10], H2R [30], 2CL [38], TABLEAU [6] (whose latest version                    unsatisfiable instances are indicated with n/a. From the
+is named NTAB), SATO [19], TEGUS [36], a recent                                results, it can be concluded that GRASP performs better
+implementation of the Davis-Putnam procedure, DPL [2],                         than any of the other programs for the AIM-100, AIM-200,
+and GSAT [33]. For all these algorithms, either the source                     BF, DUBOIS, PRET, and SSA benchmark classes, whereas
+code or the executable was provided by the respective                          POSIT performs better than GRASP for the II-8, JNH, PAR-
+author.7                                                                       8, PAR-16, and HANOI benchmarks classes. It can also be
+   GRASP is implemented in the C++ programming                                 concluded that, for benchmarks where GRASP performs
+language and was compiled with GCC 2.7.2. The CPU                              better, the other programs either take a very long time to
+times for all programs were scaled to the equivalent CPU                       find a solution or are unable to find a solution in less than
+times on a SUN SPARC 5/85 machine.8 In order to evaluate                       10,000 seconds. We have also observed that most bench-
+the different programs, two different sets of benchmarks                       marks, for which POSIT performs better than GRASP, are
+were tested:                                                                   also handled by GRASP with a similar amount of search;
+      .      The DIMACS challenge benchmarks, available from                   only the overhead inherent to GRASP becomes apparent.
+             [18], that include instances of SAT from several                  Among the other tools, POSIT performs better in four
+             authors and from different application areas.                     classes of benchmarks, whereas SATO performs better on
+      .      The UCSC benchmarks, also available from [18], that               two, TEGUS on one, and GSAT on one. Even though GSAT
+             include instances of SAT commonly encountered in                  has been shown to be extremely effective on random
+             test pattern generation of combinational switching                instances of SAT [33], for specific benchmark classes, it
+             circuits. These benchmarks represent one practical                performs significantly worse than deterministic algorithms
+             application of SAT algorithms to the field of                     (e.g., II8, II16, II32, HANOI). Still, GSAT is the most efficient
+                                                                               tool for the class of benchmarks G. Finally, none of the
+   6. Note that x ) y () :x  y.                                             evaluated algorithms was able to find a solution to any
+   7. These comparisons were conducted in 1995 and 1996 [26], [27] and do
+not reflect enhancements (some adapted from GRASP) that were made to
+                                                                               problem instance of the benchmark classes F and PAR32.
+several of these programs since then. In particular, conflict-directed            It is also interesting to measure how well conflict
+backtracking was only available in GRASP at the time.                          analysis works in practice. For this purpose, statistics
+   8. We deployed all available computing resources in order to complete
+this experiment in a reasonable amount of time and used the test programs      regarding some DIMACS benchmarks are shown in
+explicitly provided in [18] to normalize the results obtained from different
+machine architectures. The other machines that were used included SUN             9. For H2R, entries with x indicate benchmark classes where segmenta-
+Sparc2/40 and SUN Sparc20/50. All machines had 64MB of physical                tion faults occurred for some problem instances; in these cases and for each
+memory.                                                                        such instance, the CPU time assumed is 10,000 seconds.
+MARQUES-SILVA AND SAKALLAH: GRASP: A SEARCH ALGORITHM FOR PROPOSITIONAL SATISFIABILITY                                         515
+
+
+                                                          TABLE 1
+                                           CPU Times for the DIMACS Benchmarks
+
+
+
+
+Table 3 for GRASP and for POSIT, which is the next best          program on these benchmarks. With the exception of 2CL,
+performing SAT algorithm besides GRASP. In this table, #B        all other algorithms abort on a large number of problem
+denotes the number of backtracks, #NCB denotes the               instances, whereas GRASP aborts on none. Moreover, the
+number of nonchronological backtracks, Largest jump is           CPU times of GRASP are extremely small when compared
+the size of the largest nonchronological backtrack, #UIP         with the CPU times of the other programs. The UCSC
+indicates the number of unique implication points found,         benchmarks are characterized by extremely sparse CNF
+%Growth denotes the variation in size of the clause              formulas for which the BCP-based conflict analysis proce-
+database, and Time is the CPU time in seconds. For these         dure of GRASP works particularly well. In addition, it
+examples, several conclusions can be drawn. First, the           should be noted that a direct comparison of the results of
+number of nonchronological backtracks can be a significant       each algorithm with the results of DPL illustrates how
+percentage of the total number of backtracks. Second, the        effective search-pruning techniques can be for these classes
+jumps in the decision tree can save a large amount of search     of instances of SAT. Finally, it should be emphasized the
+work. As can be observed, in some cases, the jumps taken         performance difference between GRASP and TEGUS, a very
+potentially save searching millions of nodes in the decision     efficient test-pattern generation tool [36], that further
+tree. Third, the growth of the clause database is not            illustrates the power of the search-pruning techniques
+necessarily large. Fourth, UIPs do occur in practice and,        included in GRASP.
+for some benchmarks, a reasonable number is found given
+the number of backtracks. Finally, for most of these             4.2.1 Database Growth Versus CPU Time
+examples, conflict analysis causes GRASP to be much more         It is interesting to evaluate how the growth of the clause
+efficient than POSIT. Nevertheless, POSIT can be more            database affects the amount of search and the CPU time. For
+efficient for specific benchmarks, as the examples of the last   this purpose, the UCSC benchmark suites are used. The
+two rows indicate.                                               same decision making procedure is used and GRASP is run
+                                                                 allowing clauses of size at most 0, 5, 10, 15, 20, 30, 40, 60, 80,
+4.2 UCSC Benchmark Results                                       and 100 to be added to the clause database in each
+The results obtained for the UCSC benchmarks are shown           experiment. The CPU time and the number of backtracks
+in Table 4 and in Table 5. The BF and SSA benchmark              for the SSA and BF benchmarks are shown in Fig. 6.
+classes denote, respectively, CNF formulas for bridging and          As the maximum size of added clauses grows, the
+stuck-at faults. These results are divided into benchmark        number of backtracks decreases and the CPU time
+classes according to each benchmark circuit number.              decreases accordingly. Eventually, this tendency is reversed
+GRASP performs significantly better than any other               and, even though the number of backtracks continues to
+516                                                                 IEEE TRANSACTIONS ON COMPUTERS, VOL. 48, NO. 5,    MAY 1999
+
+
+                                                       TABLE 2
+                                     Number of Successes on the DIMACS Benchmarks
+
+
+
+
+decrease, the CPU time begins to increase. We can thus           the second choice SAT algorithm for the hard instances of
+conclude that adding larger clauses leads to additional          SAT whenever other simpler, but with less overhead,
+overhead for conducting the search process and, hence, it        algorithms fail to find a solution in a small amount of
+eventually costs more than what it saves in terms of             CPU time.
+backtracks. These results also suggest that it may possible to       Future research work will emphasize heuristic control of
+experimentally identify optimal growth rates for different       the rate of growth of the clause database. Another area for
+classes of problem instances. For example, for the SSA and       improving GRASP is related with the deduction engine.
+BF benchmarks the optimal bound is near 30.                      Improvements to the BCP-based deduction engine are
+                                                                 described in [26] and consist of different forms of probing
+5     Conclusions and Research Directions                        the CNF formula for creating new clauses. This approach
+                                                                 naturally adapts and extends other deduction procedures,
+This paper introduces a procedure for conflict analysis in
+                                                                 e.g., recursive learning [21] and transitive closure [5], since
+satisfiability algorithms and describes a configurable
+                                                                 it completes the clause database with additional implicates,
+algorithmic framework for solving SAT. Experimental
+                                                                 in addition to being able to identify as many necessary
+results indicate that conflict analysis and its by-products,
+                                                                 assignments.
+nonchronological backtracking and identification of equiva-
+                                                                     The actual practical usefulness of improved deduction
+lent conflicting conditions can contribute decisively for
+efficiently solving a large number of classes of instances of    engines needs to be experimentally validated. Finally, we
+SAT. As a result, the proposed SAT algorithm is shown to         propose to undertake a comprehensive experimental char-
+be more efficient than other state-of-the-art algorithms for a   acterization of the instances of SAT for which conflict
+large number of SAT instances.                                   analysis provides significant performance gains.
+   The natural evolution of this research work is to apply
+GRASP to different EDA applications, in particular, test         APPENDIX
+pattern generation, timing analysis, delay fault testing, and
+logic verification, among others. Despite being a fast SAT
+                                                                 CORRECTNESS AND COMPLETENESS OF GRASP
+algorithm, GRASP introduces noticeable overhead that can         The purpose of this appendix is to prove that the GRASP
+become a liability for some of these applications. Conse-        SAT algorithm finds a solution to a given instance of SAT if
+quently, besides the algorithmic organization of GRASP,          and only if a solution exists. In particular, the standard
+special attention must be paid to the implementation             conflict analysis procedure described in Section 3.1 is
+details. One envisioned compromise is to use GRASP as            assumed. (A more thorough discussion and proof of the
+MARQUES-SILVA AND SAKALLAH: GRASP: A SEARCH ALGORITHM FOR PROPOSITIONAL SATISFIABILITY                                        517
+
+
+                                                         TABLE 3
+                            Statistics of Running GRASP on Representative DIMACS Benchmarks
+
+
+
+
+                                                         TABLE 4
+                                            CPU Times for the UCSC Benchmarks
+
+
+
+
+correctness and completeness of the algorithm and its            Definition 1. Given an instance of SAT, a complete assignment
+variations can be found in [26].) We shall start by                is said to be a solution to that instance if no clauses are
+introducing a few basic definitions and by proving that            unsatisfied.
+GRASP is correct. Afterward, we will establish a few             Definition 2. A SAT algorithm is said to be correct if, for each
+preliminary formal results, which will be used for proving         instance of SAT, any assignment identified as solution is
+that GRASP is complete. Finally, for completeness, we              indeed a solution to that instance.
+prove, in Theorem 3, the assertion that conflicts do not arise   Definition 3. A SAT algorithm is said to be complete if, for
+when the clause database contains all of the function's            each instance of SAT, a solution is found if a solution exists.
+prime implicates.                                                Theorem 1. The GRASP SAT algorithm is correct.
+518                                                                     IEEE TRANSACTIONS ON COMPUTERS, VOL. 48, NO. 5,             MAY 1999
+
+
+                                                          TABLE 5
+                                         Number of Successes on the UCSC Benchmarks
+
+
+
+
+Proof. GRASP, as described in Fig. 2, terminates with a                    First, consider the case of a decision assignment that
+  SUCCESS indication whenever function Decide()                         yields a conflict with conflicting assignment A!C .
+  eventually returns itself a SUCCESS indication, which                 Since conflict analysis of the conflict computes A!C ,
+  signifies that all variables are assigned. Since this                 then BCP applied to a the clause database under any
+  situation can only occur whenever no unsatisfied clause               assignment A  A!C  necessarily yields a conflict.
+  is found with BCP, then the complete assignment thus                  Since f x1 ;    ; xn  assumes value 0 for any assignment
+  defined is indeed a solution to the given instance of SAT.            A  A!C , then !C  is an implicate of f x1 ;    ; xn .
+  Hence, GRASP is correct.                                t
+                                                          u                Suppose now the situation under which j FDAs yield
+                                                                        the conflict K. For each FDA i, 1  i  j, we can associate
+Lemma 1. A deduction engine based on BCP (as described in               a variable xi , a definition of the assertion xi  i @ d and
+  Fig. 3) only identifies assignments necessary for a partial           the antecedent of xi , A xi . In addition, each FDA i is
+  assignment to be contained in a solution of a given instance of       necessarily the result of a given conflict i such that
+  SAT.
+                                                                                     A!C i   A xi  [ f xi ; 1 ÿ i g:
+Proof. BCP, as described in Fig. 3, is solely based on the
+  unit-clause rule, which identifies assignments that are                 Let us now assume a partial assignment A, with
+  necessary to guarantee that unit clauses will not become              A  A!C . Then, we must also necessarily have,
+  unsatisfied. Hence, BCP only identifies those assign-
+                                                                                A  A!C i  ÿ f xi ; 1 ÿ i g i  1;    ; j:
+  ments that are necessary for a partial assignment to be
+  extended to a complete assignment representing a                      Hence, given A and the assignment xi  1 ÿ i , BCP
+  solution of a given instance of SAT.                   t
+                                                         u              necessarily yields a conflict for i  1;    ; j. On the other
+                                                                        hand, the assignment x1  1  ^ x2  2  ^    ^ xj 
+   Before establishing the next few formal results, we need             j  necessarily yields conflict K by hypothesis. There-
+to define failure-driven assertions (FDAs).                             fore, given an assignment A  A!C , for any combina-
+Definition 4. An assignment x  x @ x is said to be a failure-        tion of assignments to variables x1 ; x2 ;    ; xj , BCP yields
+  driven assertion whenever  y < x for all y; y  2 A! x.          a conflict. Thus, A cannot be extended to a solution to the
+Lemma 2. Let the conflict assignment A!C  be computed                 given instance of SAT and !C  is necessarily an
+  according to (3). Then, the following holds:                          implicate of f x1 ;    ; xn .                                u
+                                                                                                                                         t
+      1.   Any partial assignment A, such that A  A!C 
+           cannot be contained in a solution to the given instance   Lemma 3. Let be the backtracking decision level computed with
+           of SAT.                                                     (7). Furthermore, let A denote the partial assignment
+      2.   Each conflict-induced clause !C  (given by (4))           containing all variable assignments with decision levels no
+           identifies an implicate of the Boolean function             greater than . In this situation, a solution cannot be found for
+           f x1 ;    ; xn  associated with the initial CNF         any assignment A such that A  A .
+           formula '.
+                                                                     Proof. From Lemma 2 we know that !C  is an implicate of
+Proof. There are only two situations under which a conflict
+                                                                       the Boolean function being evaluated. Since this conflict-
+  K can be identified. Either a decision assignment yields a
+                                                                       induced clause is now included in the clause database, it
+  conflict or a set of existing failure-driven assertions
+                                                                       will remain unsatisfied for any assignment A  A and,
+  (FDAs) at a given decision level d yields a conflict. We
+  analyze each case separately and, for each case, we prove            so, a solution will not be found.                       u
+                                                                                                                               t
+  that no partial assignment A, such that A  A!C , can            Corollary 1. Let d be the current decision level and be the
+  be extended to a solution of the given instance of SAT.              computed backtracking decision level. In this situation, a
+MARQUES-SILVA AND SAKALLAH: GRASP: A SEARCH ALGORITHM FOR PROPOSITIONAL SATISFIABILITY                                                 519
+
+
+
+
+Fig. 6. UCSC benchmarks with different growths of the clause database.
+
+   solution to the given instance of SAT cannot be found until the         computed backtracking decision level is . Then, by
+   search process backtracks to decision level .                           Lemma 3 and Corollary 1, we can conclude that a
+Theorem 2. The GRASP SAT algorithm is complete.                            solution cannot be found by extending the partial
+                                                                           assignment defined by decision levels no greater than
+Proof. It is well-known that chronological backtracking is a                 , i.e., A . It then follows that if a solution exists, it will
+  complete search procedure [20]. Backtracking search                      eventually be enumerated and, consequently, the algo-
+  extends partial assignments until either a solution is                   rithm is complete.                                            t
+                                                                                                                                         u
+  found or an inconsistent assignment is identified. In the
+  event of an inconsistent assignment being found, the                   Theorem 3. The GRASP SAT algorithm does not generate
+  most recent decision assignment yet untried is consid-                   inconsistent assignments (conflicts) when applied to a
+  ered and the search proceeds. Hence, if a solution exists,               complete formula, i.e., a formula that contains all the prime
+  it will eventually be enumerated. Furthermore, for the                   implicates of the underlying function, unless the formula is
+  case of SAT, and since BCP only identifies necessary                     unsatisfiable.
+  assignments (from Lemma 1), then backtracking search                   Proof. Let ' be an arbitrary CNF formula and let P ' be its
+  with BCP is also a complete search procedure. Given                      complete product. Viewed as a clause database, P ' is,
+  these facts, we just have to prove that nonchronological                 thus, the set of all of ''s prime implicates. Let ! 2 P '.
+  backtracks do not jump over partial assignments that can                 Then, by definition [17, p. 288], ' implies ! but does not
+  be extended to solutions of the given instance of SAT. Let               imply any clause  that in turn implies !. Consider two
+  us suppose that the current decision level is d and the                  cases.
+520                                                                            IEEE TRANSACTIONS ON COMPUTERS, VOL. 48, NO. 5,              MAY 1999
+
+                                                                            [10] O. Dubois, P. Andre, Y. Boufkhad, and J. Carlier, ªSAT versus
+       1.   ' is unsatisfiable. In this case, the set P '                       UNSAT,º Second DIMACS Implementation Challenge, D.S. Johnson
+            consists of a single empty clause (a clause with                     and M.A. Trick, eds., 1993.
+            no literals): The constant 0 function has no prime              [11] J.W. Freeman, ªImprovements to Propositional Satisfiability
+                                                                                 Search Algorithms,º PhD dissertation, Dept. of Computer and
+            implicates. To show this, assume otherwise, i.e.,                    Information Science, Univ. of Pennsylvania, May 1995.
+            let !  l1  l2     ; lk , where each li is a literal,     [12] G. Gallo and G. Urbani, ªAlgorithms for Testing the Satisfiability
+            be a prime implicate of 0, and let   li . Thus,                    of Propositional Formulae,º J. Logic Programming, vol. 7, pp. 45-61,
+            0 ) !, 0 ) , and  ) !, i.e., ! is not prime.                       1989.
+                                                                            [13] M.R. Garey and D.S. Johnson, Computers and Intractability: A Guide
+            When the GRASP SAT algorithm is applied to a                         to the Theory of NP-Completeness. W.H. Freeman and Company,
+            clause database consisting of a single empty                         1979.
+            clause, it returns immediately with a FAILURE                   [14] J. Gaschnig, ªPerformance Measurement and Analysis of Certain
+            indication proving unsatisfiability.                                 Search Algorithms,º PhD dissertation, Dept. of Computer Science,
+                                                                                 Carnegie-Mellon Univ., CMU-CS-79-124, May 1979.
+       2.   ' is satisfiable. Without loss of generality,                   [15] M.L. Ginsberg, ªDynamic Backtracking,º J. Artificial Intelligence
+            suppose that the sequence of decision assign-                        Research, vol. 1, pp. 25-46, Aug. 1993.
+            ments x1  1; x2  1;    ; xk  1 was taken and              [16] J. Giraldi and M.L. Bushnell, ªSearch State Equivalence for
+            that it led to a conflict. GRASP's conflict diagnosis                Redundancy Identification and Test Generation,º Proc. Int'l Test
+                                                                                 Conf., pp. 184-193, 1991.
+            procedure would then yield the conflict-induced                 [17] J.P. Hayes, Introduction to Digital Logic Design. Addison-Wesley,
+            clause   :x1  :x2      :xk  as an implicate                 1993.
+            of ' that is not in the set P ', i.e.,  is a nonprime         [18] D.S. Johnson and M.A. Trick eds. Second DIMACS Implementation
+            implicate of ' (GRASP may actually generate a                        Challenge, 1993. DIMACS benchmarks available at ftp://Dimacs.-
+                                                                                 Rutgers.EDU/pub/challenge/sat/benchmarks/cnf. UCSC bench-
+            clause that is ªstrongerº than , i.e., one that does                marks available at ftp://Dimacs.Rutgers.EDU/pub/challenge/
+            not involve all k literals.) Let  ) !, where                        sat/contributed/UCSC.
+            ! 2 P '. In particular, assume, without loss of                [19] S. Kim and H. Zhang, ªModGen: Theorem Proving by Model
+                                                                                 Generation,º Proc. 12th Nat'l Conf. Am. Assoc. Artificial Intelligence
+            generality, that !  :x1  :x2      :xkÿ1 .                    (AAAI-94), pp. 162-167, 1994.
+            Then, at decision level k ÿ 2, when the partial                 [20] D.E. Knuth, ªEstimating the Efficiency of Backtrack Programs,º
+            assignment is fx1  1; x2  1;    ; xkÿ2  1g, !                  Mathematics of Computation, vol. 29, no. 129, pp. 121-136, Jan. 1975.
+            becomes a unit clause and BCP causes xkÿ1 to                    [21] W. Kunz and D.K. Pradhan, ªRecursive Learning: An Attractive
+                                                                                 Alternative to the Decision Tree for Test Generation in Digital
+            be implied to 0. In other words, the assignment                      Circuits,º Proc. Int'l Test Conf., pp. 816-825, 1992.
+            fx1  1; x2  1;    ; xkÿ1  1; xk  1g would never          [22] T. Larrabee, ªEfficient Generation of Test Patterns Using Boolean
+            be generated and the conflict corresponding to it                    Satisfiability,º PhD dissertation, Dept. of Computer Science,
+            would never arise.                                       t
+                                                                     u           Stanford Univ., STAN-CS-90-1302, Feb. 1990.
+                                                                            [23] S. Mallela and S. Wu, ªA Sequential Circuit Test Generation
+                                                                                 System,º Proc. Int'l Test Conf., pp. 57-61, 1985.
+                                                                            [24] J.P. Marques-Silva and K.A. Sakallah, ªEfficient and Robust Test
+                                                                                 Generation-Based Timing Analysis,º Proc. IEEE Int'l Symp. Circuits
+ACKNOWLEDGMENTS                                                                  and Systems (ISCAS), pp. 303-306, London, June 1994.
+                                                                            [25] J.P. Marques-Silva and K.A. Sakallah, ªDynamic Search-Space
+GRASP was developed with support from the U.S. National                          Pruning Techniques in Path Sensitization,º Proc. IEEE/ACM
+Science Foundation under grants MIP-9014058 and 9404632.                         Design Automation Conf. (DAC), pp. 705-711, San Diego, Calif.,
+Additional support was provided by PRAXIS XXI, reference                         June 1994.
+                                                                            [26] J.P. Marques-Silva, ªSearch Algorithms for Satisfiability Problems
+2/2.1/TIT/1597/95.                                                               in Combinational Switching Circuits,º PhD dissertation, Dept. of
+                                                                                 Electrical Eng. and Computer Science, Univ. of Michigan, May
+                                                                                 1995.
+REFERENCES                                                                  [27] J.P. Marques-Silva and K.A. Sakallah, ªGRASPÐA New Search
+[1]   M. Abramovici, M.A. Breuer, and A.D. Friedman, Digital Systems             Algorithm for Satisfiability,º Digest of IEEE Int'l Conf. Computer-
+      Testing and Testable Design. Computer Science Press, 1990.                 Aided Design (ICCAD), pp. 220-227, San Jose, Calif., Nov. 1996.
+[2]   P. Barth, ªA Davis-Putnam Based Enumeration Algorithm for             [28] D.A. McAllester, ªAn Outlook on Truth Maintenance,º AI Memo
+      Linear Pseudo-Boolean Optimization,º Technical Report MPI-I-95-            551, MIT AI Laboratory, Aug. 1980.
+      2-003, Max-Planck-Institut fuÈr Informatik, 1995.                     [29] P.C. McGeer, A. Saldanha, P.R. Stephan, R.K. Brayton, and A.L.
+[3]   C.E. Blair, R.G. Jeroslow, and J.K. Lowe, ªSome Results and                Sangiovanni-Vincentelli, ªTiming Analysis and Delay-Fault Test
+      Experiments in Programming Techniques for Propositional                    Generation Using Path Recursive Functions,º Proc. Int'l Conf.
+      Logic,º Computers and Operations Research, vol. 13, no. 5, pp. 633-        Computer-Aided Design, pp. 180-183, 1991.
+      645, 1986.                                                            [30] D. Pretolani, ªEfficiency and Stability of Hypergraph SAT
+[4]   M. Bruynooghe, ªAnalysis of Dependencies to Improve the                    Algorithms,º Second DIMACS Implementation Challenge, D.S.
+      Behaviour of Logic Programs,º Proc. Fifth Conf. Automated                  Johnson and M.A. Trick, eds., 1993.
+      Deduction, pp. 293-305, 1980.                                         [31] T. Schiex and G. Verfaillie, ªNogood Recording for Static and
+[5]   S.T. Chakradhar, V.D. Agrawal, and S.G. Rothweiler, ªA                     Dynamic Constraint Satisfaction Problems,º Proc. Int'l Conf. Tools
+      Transitive Closure Algorithm for Test Generation,º IEEE Trans.             with Artificial Intelligence, pp. 48-55, 1993.
+      Computer-Aided Design, vol. 12, no. 7, pp. 1,015-1,028, July 1993.    [32] M.H. Schulz and E. Auth, ªImproved Deterministic Test Pattern
+[6]   J. Crawford and L. Auton, ªExperimental Results on the Cross-              Generation with Applications to Redundancy Identification,º
+      Over Point in Satisfiability Problems,º Proc. 11th Nat'l Conf.             IEEE Trans. Computer-Aided Design, vol. 8, no. 7, pp. 811-816, July
+      Artificial Intelligence (AAAI-93), pp. 22-28, 1993.                        1989.
+[7]   M. Davis and H. Putnam, ªA Computing Procedure for                    [33] B. Selman, H.J. Levesque, and D. Mitchell, ªA New Method for
+      Quantification Theory,º J. ACM, vol. 7, pp. 201-215, 1960.                 Solving Hard Satisfiability Problems,º Proc. 10th Nat'l Conf.
+[8]   R. Dechter, ªEnhancement Schemes for Constraint Processing:                Artificial Intelligence (AAAI-92), 1992.
+      Backjumping, Learning, and Cutset Decomposition,º Artificial          [34] E.M. Sentovich et al., ªSIS: An Environment to Sequential Circuit
+      Intelligence, vol. 41, pp. 273-312, 1989/90.                               Synthesis,º Memorandum no. UCB/ERL M92/41, Dept. of
+[9]   J. de Kleer, ªAn Assumption-Based TMS,º Artificial Intelligence,           Electrical Eng. and Computer Sciences, Univ. of California at
+      vol. 28, pp. 127-162, 1986.                                                Berkeley, May 1992.
+MARQUES-SILVA AND SAKALLAH: GRASP: A SEARCH ALGORITHM FOR PROPOSITIONAL SATISFIABILITY                                                              521
+
+[35] R.M. Stallman and G.J. Sussman, ªForward Reasoning and                                             Karem A. Sakallah (S'76-M'81-SM'92-F'98)
+     Dependency-Directed Backtracking in a System for Computer-                                         received the BE degree (with distinction) in
+     Aided Circuit Analysis,º Artificial Intelligence, vol. 9, pp. 135-196,                             electrical engineering from the American Uni-
+     Oct. 1977.                                                                                         versity of Beirut, Beirut, Lebanon, in 1975, and
+[36] P.R. Stephan, R.K. Brayton, and A.L. Sangiovanni-Vincentelli,                                      the MSEE and PhD degrees in electrical and
+     ªCombinational Test Generation Using Satisfiability,º Memoran-                                     computer engineering from Carnegie Mellon
+     dum no. UCB/ERL M92/112, Dept. of Electrical Eng. and                                              University, Pittsburgh, Pennsylvania, in 1977
+     Computer Sciences, Univ. of California at Berkeley, Oct. 1992.                                     and 1981, respectively. In 1981, he joined the
+[37] R.E. Tarjan, ªFinding Dominators in Directed Graphs,º SIAM J.                                      Department of Electrical Engineering at CMU as
+     Computing, vol. 3, no. 1, pp. 62-89, Mar 1974.                                                     a visiting assistant professor. From 1982 to
+[38] A. Van Gelder and Y.K. Tsuji, ªSatisfiability Testing with More          1988, he was with the Semiconductor Engineering Computer-Aided
+     Reasoning and Less Guessing,º Second DIMACS Implementation               Design Group at Digital Equipment Corporation in Hudson, Massachu-
+     Challenge, D.S. Johnson and M.A. Trick, eds., 1993.                      setts, where he headed the Analysis and Simulation Advanced
+[39] R. Zabih and D.A. McAllester, ªA Rearrangement Search Strategy           Development team. Since September 1988, he has been at the
+     for Determining Propositional Satisfiability,º Proc. Nat'l Conf.         University of Michigan, Ann Arbor, as a professor of electrical
+     Artificial Intelligence, pp. 155-160, 1988.                              engineering and computer science. From September 1994 to March
+                                                                              1995, he was on a six month sabbatical leave at the Cadence Berkeley
+                        JoaÄo P. Marques-Silva (M'95) received the BS         Laboratory in Berkeley, California. He was associate editor of the IEEE
+                        and MS degrees in Computer Engineering from           Transactions on Computer-Aided Design during 1995-1997, and has
+                        Instituto Superior TeÂcnico, Lisbon, Portugal, and    served on the program committees of ICCAD, DAC, ICCD, and
+                        the PhD degree from the University of Michigan,       numerous other workshops. He has published more than 90 papers
+                        Ann Arbor, in 1988, 1991, and 1995, respec-           and has presented seminars and tutorials at many professional
+                        tively. He is currently an assistant professor at     meetings and various industrial sites. His research interests are
+                        the Informatics Department of Instituto Superior      primarily in the area of computer-aided design, with particular emphasis
+                        TeÂcnico, Lisbon, Portugal. His research interests    on simulation, timing verification and optimal clocking, modeling,
+                        include design and analysis of algorithms for         synthesis, knowledge abstraction, and design environments. Dr.
+                        computationally hard problems and their appli-        Sakallah is a fellow of the IEEE and a member of the ACM and Sigma Xi.
+cation to electronic design automation. Dr. Marques-Silva is a member
+of the IEEE and the ACM.
+

@@ -266,6 +266,33 @@
       ]
     },
     {
+      "id": "axis4-adapter-heads-shared-trunk",
+      "title": "Shared trunk plus domain-head architecture gate",
+      "role": "claim_boundary",
+      "claim_ids": [
+        "C4.adapter_heads_shared_trunk"
+      ],
+      "roadmap_items": [
+        "R-MT.4",
+        "R-F.1",
+        "R-F.5"
+      ],
+      "command": "python3 scripts/multitask_adapter_heads.py",
+      "artifacts": [
+        "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_summary.csv",
+        "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_deltas.csv",
+        "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_decision.jsonl"
+      ],
+      "agent_instruction": "Treat shared trunk plus domain heads as an architecture gate: promote it only if fixed ARC improves without losing delayed-claim transfer, grid-path performance, or same-envelope ARC OOD.",
+      "success_criteria": [
+        "The artifact includes fixed ARC, ARC OOD, delayed_claim, grid_path, and prime_gap rows for shared, shared_task_heads, and single_task.",
+        "The generated decision row says promote_shared_trunk_heads only when every gate passes."
+      ],
+      "failure_modes": [
+        "If task heads help fixed ARC but hurt OOD or transfer, keep the architecture as diagnostic evidence."
+      ]
+    },
+    {
       "id": "axis4-tiny-net-plateau-audit",
       "title": "Fully trained tiny-net plateau audit",
       "role": "claim_boundary",
@@ -280,7 +307,8 @@
       "command": "make tiny-net-plateau-audit",
       "artifacts": [
         "results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl",
-        "results/2026-05-17-multitask-roadmap/tiny_net_width_help.jsonl"
+        "results/2026-05-17-multitask-roadmap/tiny_net_width_help.jsonl",
+        "results/2026-05-17-multitask-roadmap/tiny_net_audit_verdict.jsonl"
       ],
       "agent_instruction": "Treat wider-network claims as unsupported unless the tiny-net plateau audit shows width, not training budget, is the limiting factor.",
       "success_criteria": [
@@ -463,6 +491,59 @@
         "C1.prime_gate_delta_ci",
         "C1.learned_gate_calibration_tradeoff"
       ]
+    },
+    {
+      "id": "C1.prime_gate_delta_ci",
+      "title": "Prime learned-gate headline is stable across seeds",
+      "claim_type": "gate_effect_interval",
+      "claim_text": "On prime_gap, the certified learned rule gate improves top-1 over raw and hand-wheel gates across a multi-seed audit while preserving zero false rejections.",
+      "builtin_evaluator": "prime_gate_delta_ci",
+      "required_for_submission": true,
+      "paper_surfaces": [
+        "prime_anchor",
+        "limitations"
+      ],
+      "roadmap_items": [
+        "R-E1.3",
+        "R-E1.4"
+      ],
+      "evidence": {
+        "source": "results/latest/prime_gate_delta_seed_interval.jsonl",
+        "command": "make prime-gate-seed-audit",
+        "schemas": [
+          "crlp.prime_gate_delta.seed_interval.v1"
+        ],
+        "filters": {
+          "task": "prime_gap",
+          "row_type": "seed"
+        },
+        "required_rows": [
+          {
+            "seed": 20240511
+          },
+          {
+            "seed": 20240512
+          },
+          {
+            "seed": 20240513
+          }
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "seed_count >= 3",
+          "min(hand_top1 - raw_top1) > 0",
+          "min(learned_top1 - hand_top1) > 0",
+          "min(learned_top10) >= 0.999",
+          "max(false_rejections) == 0",
+          "min(sample_count) >= 30000"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Run make prime-gate-seed-audit and copy the generated seed interval artifact into results/latest.",
+        "If the interval contradicts the headline, move the prime-gate headline from the abstract into limitations."
+      ],
+      "limitation_when_not_supported": "The prime learned-gate headline lacks a supported multi-seed interval, so the paper should treat the 9.13% -> 45.12% -> 68.87% progression as a single artifact snapshot."
     },
     {
       "id": "C2.prime_proposer_fixed_budget",
@@ -1383,7 +1464,7 @@
           "window_active_rows >= 50",
           "candidate_score_rows >= 50 and candidate_score_min_count >= 9",
           "safety_gate_rows >= 50",
-          "protocol_checked_rows >= 50 and protocol_compatible_rows >= 50",
+          "protocol_checked_rows >= 50 and protocol_compatible_rows >= 50 from runtime PROTOCOL_INFO frames",
           "replay_ready_rows >= 50",
           "inference_ms_p95 <= 5.0",
           "stale_within_log == false"
@@ -1391,7 +1472,7 @@
       },
       "residual_when_not_supported": [
         "Run signal-live-active-summary against the current live-brain log and inspect the emitted summary row.",
-        "Keep live neural-active wording out of the body if the latest active_source is not neural, the checkpoint is missing, protocol-compatible rows are absent, or replay-ready rows are absent.",
+        "Keep live neural-active wording out of the body if the latest active_source is not neural, the checkpoint is missing, runtime protocol-compatible rows are absent, or replay-ready rows are absent.",
         "Do not upgrade this to a performance claim without active neural versus heuristic utility/regret/damage/death evidence."
       ],
       "limitation_when_not_supported": "The live Signal pilot is not supported as neural-active by the current live-brain artifact, so the paper should mention only offline replay and shadow evidence.",

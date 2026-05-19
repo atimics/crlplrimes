@@ -59,6 +59,31 @@ def action_rank(scores: list[dict[str, Any]] | None, action: str | None) -> int 
     return None
 
 
+def protocol_runtime_checked(row: dict[str, Any]) -> bool:
+    return bool(row.get("protocol_runtime_received")) and row.get("protocol_status") not in (
+        None,
+        "",
+        "missing",
+        "pending",
+        "skipped",
+    )
+
+
+def protocol_runtime_status(row: dict[str, Any]) -> str:
+    received = row.get("protocol_runtime_received")
+    if received is True:
+        return str(row.get("protocol_status") or "missing")
+    if received is False:
+        return str(row.get("protocol_status") or "pending")
+    return "legacy_static_only"
+
+
+def protocol_runtime_compatible(row: dict[str, Any]) -> bool:
+    return protocol_runtime_checked(row) and (
+        row.get("protocol_compatible") is True or row.get("protocol_status") == "ok"
+    )
+
+
 def round_or_none(value: float | None, digits: int = 6) -> float | None:
     if value is None:
         return None
@@ -104,8 +129,14 @@ def frame_rows(rows: list[dict[str, Any]], horizon_ms: int) -> list[dict[str, An
                 "protocol_status": row.get("protocol_status"),
                 "protocol_compatible": row.get("protocol_compatible"),
                 "protocol_hash": row.get("protocol_hash"),
+                "protocol_runtime_received": row.get("protocol_runtime_received"),
+                "protocol_runtime_hash": row.get("protocol_runtime_hash"),
+                "protocol_runtime_stream_count": row.get("protocol_runtime_stream_count"),
                 "protocol_mismatch_count": row.get("protocol_mismatch_count"),
                 "protocol_missing_count": row.get("protocol_missing_count"),
+                "station_diag_frames": row.get("station_diag_frames"),
+                "station_diag_stations": row.get("station_diag_stations"),
+                "target_station_diag": row.get("target_station_diag"),
                 "candidate_count": len(scores or []),
                 "neural_top_margin": round_or_none(top_margin(scores)),
                 "heuristic_rank_in_neural_scores": action_rank(scores, row.get("heuristic_action")),
@@ -134,12 +165,10 @@ def summary_row(frames: list[dict[str, Any]], log_path: Path, horizon_ms: int) -
     for row in frames:
         for reason in row.get("safety_reject_reasons", []) or []:
             reasons[str(reason)] += 1
-    protocol_statuses = collections.Counter(
-        str(row.get("protocol_status") or "missing") for row in frames
-    )
-    protocol_compatible_rows = sum(
-        1 for row in frames if row.get("protocol_compatible") is True or row.get("protocol_status") == "ok"
-    )
+    protocol_statuses = collections.Counter(protocol_runtime_status(row) for row in frames)
+    protocol_checked_rows = sum(1 for row in frames if protocol_runtime_checked(row))
+    protocol_compatible_rows = sum(1 for row in frames if protocol_runtime_compatible(row))
+    station_diag_rows = sum(1 for row in frames if isinstance(row.get("target_station_diag"), dict))
     return {
         "schema": "crlp.signal_shadow_replay_audit.v1",
         "report_version": 1,
@@ -158,8 +187,10 @@ def summary_row(frames: list[dict[str, Any]], log_path: Path, horizon_ms: int) -
         "inference_ms_p99": percentile(latencies, 0.99),
         "safety_gates": dict(gates),
         "safety_reject_reasons": dict(reasons),
+        "protocol_checked_rows": protocol_checked_rows,
         "protocol_compatible_rows": protocol_compatible_rows,
         "protocol_statuses": dict(protocol_statuses),
+        "station_diag_rows": station_diag_rows,
     }
 
 
@@ -183,7 +214,9 @@ def write_summary(path: Path, summary: dict[str, Any]) -> None:
         f"| Disagreements | {summary['shadow_disagreements']} |",
         f"| Disagreement rate | {100.0 * summary['shadow_disagreement_rate']:.2f}% |",
         f"| Inference p95 ms | {summary['inference_ms_p95']} |",
+        f"| Protocol runtime-checked rows | {summary['protocol_checked_rows']} |",
         f"| Protocol-compatible rows | {summary['protocol_compatible_rows']} |",
+        f"| Target station diag rows | {summary['station_diag_rows']} |",
         f"| Next observations | {summary['next_observation_rows']} |",
         "",
         "The audit is a same-frame shadow comparison. Neural counterfactual outcomes are "

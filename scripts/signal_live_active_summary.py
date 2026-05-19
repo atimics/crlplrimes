@@ -93,6 +93,46 @@ def top_counts(counter: collections.Counter[str], limit: int = 6) -> list[dict[s
     ]
 
 
+def protocol_runtime_checked(row: dict[str, Any]) -> bool:
+    return bool(row.get("protocol_runtime_received")) and row.get("protocol_status") not in (
+        None,
+        "",
+        "missing",
+        "pending",
+        "skipped",
+    )
+
+
+def protocol_runtime_status(row: dict[str, Any]) -> str:
+    received = row.get("protocol_runtime_received")
+    if received is True:
+        return str(row.get("protocol_status") or "missing")
+    if received is False:
+        return str(row.get("protocol_status") or "pending")
+    return "legacy_static_only"
+
+
+def protocol_runtime_compatible(row: dict[str, Any]) -> bool:
+    return protocol_runtime_checked(row) and (
+        row.get("protocol_compatible") is True or row.get("protocol_status") == "ok"
+    )
+
+
+def protocol_source_checked(row: dict[str, Any]) -> bool:
+    status = row.get("protocol_source_status")
+    if status is None and not row.get("protocol_runtime_received"):
+        status = row.get("protocol_status")
+    return status not in (None, "", "missing", "pending", "skipped")
+
+
+def protocol_source_compatible(row: dict[str, Any]) -> bool:
+    if row.get("protocol_source_compatible") is not None:
+        return row.get("protocol_source_compatible") is True
+    return protocol_source_checked(row) and (
+        row.get("protocol_compatible") is True or row.get("protocol_status") == "ok"
+    )
+
+
 def replay_ready(row: dict[str, Any]) -> bool:
     if any(row.get(field) in (None, "") for field in REQUIRED_REPLAY_FIELDS):
         return False
@@ -186,18 +226,25 @@ def summarize(rows: list[dict[str, Any]], log_path: Path, window_rows: int, stal
     for row in window:
         for reason in row.get("safety_reject_reasons") or []:
             safety_reasons[str(reason)] += 1
-    protocol_statuses = collections.Counter(
-        str(row.get("protocol_status") or "missing") for row in window
-    )
+    protocol_statuses = collections.Counter(protocol_runtime_status(row) for row in window)
     protocol_hashes = collections.Counter(
-        str(row.get("protocol_hash")) for row in window if row.get("protocol_hash")
+        str(row.get("protocol_runtime_hash") or row.get("protocol_hash"))
+        for row in window
+        if protocol_runtime_checked(row) and (row.get("protocol_runtime_hash") or row.get("protocol_hash"))
     )
-    protocol_checked_rows = sum(
-        1 for row in window if row.get("protocol_status") not in (None, "", "missing")
+    protocol_checked_rows = sum(1 for row in window if protocol_runtime_checked(row))
+    protocol_compatible_rows = sum(1 for row in window if protocol_runtime_compatible(row))
+    protocol_source_statuses = collections.Counter(
+        str(row.get("protocol_source_status") or row.get("protocol_status") or "missing")
+        for row in window
     )
-    protocol_compatible_rows = sum(
-        1 for row in window if row.get("protocol_compatible") is True or row.get("protocol_status") == "ok"
+    protocol_source_hashes = collections.Counter(
+        str(row.get("protocol_source_hash") or row.get("protocol_hash"))
+        for row in window
+        if protocol_source_checked(row) and (row.get("protocol_source_hash") or row.get("protocol_hash"))
     )
+    protocol_source_checked_rows = sum(1 for row in window if protocol_source_checked(row))
+    protocol_source_compatible_rows = sum(1 for row in window if protocol_source_compatible(row))
 
     candidate_counts = [
         len(row.get("candidate_scores") or [])
@@ -211,6 +258,7 @@ def summarize(rows: list[dict[str, Any]], log_path: Path, window_rows: int, stal
     active_dry_run_rows = sum(1 for row in window if bool(row.get("dry_run")))
     shadow_compared = sum(1 for row in window if row.get("neural_action") not in (None, ""))
     shadow_disagreements = sum(1 for row in window if bool(row.get("shadow_disagrees")))
+    station_diag_rows = sum(1 for row in window if isinstance(row.get("target_station_diag"), dict))
 
     info = log_path.stat() if log_path.exists() else None
     source_modified_utc = (
@@ -252,7 +300,15 @@ def summarize(rows: list[dict[str, Any]], log_path: Path, window_rows: int, stal
         "protocol_statuses": counter_dict(protocol_statuses),
         "protocol_hash": protocol_hashes.most_common(1)[0][0] if protocol_hashes else None,
         "protocol_hashes": counter_dict(protocol_hashes),
+        "protocol_source_checked_rows": protocol_source_checked_rows,
+        "protocol_source_compatible_rows": protocol_source_compatible_rows,
+        "protocol_source_statuses": counter_dict(protocol_source_statuses),
+        "protocol_source_hash": protocol_source_hashes.most_common(1)[0][0] if protocol_source_hashes else None,
+        "protocol_source_hashes": counter_dict(protocol_source_hashes),
         "replay_ready_rows": len(replay_rows),
+        "station_diag_rows": station_diag_rows,
+        "latest_station_diag_frames": latest.get("station_diag_frames") if latest else None,
+        "latest_station_diag_stations": latest.get("station_diag_stations") if latest else None,
         "top_actions": top_counts(actions),
         "shadow_compared_rows": shadow_compared,
         "shadow_disagreements": shadow_disagreements,

@@ -1,4 +1,5 @@
 build/
+tmp/
 results/**/logs/
 results/**/coverage-cache/
 # paper/data.json is a derived helper produced by `make paper-data`; the paper

@@ -205,11 +205,16 @@ make signal-live-status
 make signal-shadow-replay-audit
 ```
 
-`signal_live_status.mjs` reports active source, neural shadow disagreement rate,
-and inference latency percentiles over the rolling window. The live bridge
+`signal_live_status.mjs` reports active source, runtime protocol status, station
+diagnostic frame counts, neural shadow disagreement rate, and inference latency
+percentiles over the rolling window. The live bridge
 checks `../signal/shared/types.h` and `../signal/shared/protocol.h` before
-connecting; live summaries count protocol-compatible rows as a separate evidence
-gate. The shadow replay audit emits `crlp.signal_shadow_frame.v1` and
+connecting, then validates the runtime websocket `PROTOCOL_INFO` stream map once
+the server advertises it. Live summaries count only runtime protocol-compatible
+rows for the protocol evidence gate, while retaining the source-header hash as a
+separate diagnostic. The bridge also consumes `STATION_DIAG` frames and logs
+target-station module diagnostics for later option-ranking evidence. The shadow
+replay audit emits `crlp.signal_shadow_frame.v1` and
 `crlp.signal_shadow_replay_audit.v1` rows. It is intentionally conservative:
 until a deterministic replay pass consumes the frame rows, neural
 counterfactual outcomes are marked unavailable rather than inferred from the

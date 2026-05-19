@@ -1,12 +1,13 @@
 # Related Work Insights Pass
 
-Date: 2026-05-17
+Date: 2026-05-18
 
-Scope: this pass reads the 20 locally archived papers listed in
+Scope: this pass reads the 29 locally archived papers listed in
 `paper/sources/manifest.tsv`. All PDFs and text extractions were present and
 non-empty at the time of the pass. The goal is not to expand the citation list;
 it is to extract what should change our framing, experiments, and next research
-moves.
+moves. The 2026-05-18 increment adds the formal-methods ancestry and ML
+accountability papers.
 
 ## Bottom Line
 
@@ -22,6 +23,18 @@ verifier-bounded protocol can be instantiated across different task families,
 not that ARC is the destination. The sharper claim is that exact verifiers
 change the learning problem: the model should learn where to search and how to
 rank certified survivors, while correctness remains outside the learned model.
+
+The new ancestry pass sharpens the novelty boundary. The loop is not new in
+the abstract: CEGIS, SyGuS, CDCL/CSP learning, and CEGAR already establish
+"failed candidate -> verifier/counterexample -> refined search" as a core
+formal-methods pattern. The paper's contribution is the narrower executable
+artifact layer around that pattern: heterogeneous verifier traces, learned
+residual rankers, and generated claim gates.
+
+The accountability pass gives the venue-fit story: Model Cards, Datasheets, and
+the NeurIPS reproducibility program ask authors to document intended use,
+performance, provenance, limitations, code, and data. The claim compiler is a
+partial executable answer to that agenda, not a replacement for human judgment.
 
 ## High-Value Insights
 
@@ -177,6 +190,113 @@ et al. put PPO/KL-to-prior in the canonical RLHF pipeline
 Do not present KL/entropy regularization as novel. Present "KL/entropy under an
 exact verifier reward with schema-attested traces" as the contribution.
 
+11. CEGIS is the direct ancestor of the certificate-gating loop.
+
+Solar-Lezama describes Sketching as partial programs with holes, solved by a
+SAT-based inductive synthesizer plus validation; the abstract explicitly says
+CEGIS combines inductive synthesis with validation to automatically generate
+test inputs and check the generated program against the specification
+(`paper/sources/text/solarlezama2008sketching.txt:121`,
+`paper/sources/text/solarlezama2008sketching.txt:132`). The body makes the
+feedback loop even more explicit: validation checks a candidate, returns a
+counterexample if it is wrong, and feeds that counterexample back so the next
+candidate covers the corner case
+(`paper/sources/text/solarlezama2008sketching.txt:893`,
+`paper/sources/text/solarlezama2008sketching.txt:904`).
+
+CRLPLRIMES should not imply it invented counterexample feedback. The right
+claim is: it takes that loop shape and makes the logged verifier outcomes
+usable by small residual rankers and by a paper claim compiler.
+
+12. SyGuS names the grammar-constrained search setting.
+
+Alur et al. frame synthesis as search over a permissible expression class, and
+their CEGIS explanation treats the learner as searching candidate concepts
+consistent with examples before a verification oracle checks correctness and
+returns counterexamples (`paper/sources/text/alur2013sygus.txt:191`,
+`paper/sources/text/alur2013sygus.txt:195`,
+`paper/sources/text/alur2013sygus.txt:210`). This is the closest label for the
+repo's grammar-plus-verifier setup.
+
+The paper should use SyGuS to lower novelty pressure: the candidate language is
+not an ad hoc trick. The new contribution is the cross-domain schema and
+learned residual scoring around grammar-bounded candidates.
+
+13. Conflict-driven learning is a stronger ancestor than our reason-coded rows.
+
+GRASP treats conflicts as inevitable, analyzes their causes, backtracks
+nonchronologically, records conflict causes, and preempts similar conflicts
+later (`paper/sources/text/marquessilva1999grasp.txt:13`,
+`paper/sources/text/marquessilva1999grasp.txt:16`). It also describes conflicts
+as missing clauses in the problem specification and augments the problem with
+conflict-induced clauses (`paper/sources/text/marquessilva1999grasp.txt:73`,
+`paper/sources/text/marquessilva1999grasp.txt:83`). Bayardo and Schrag's
+look-back work calls nogood-encoding clauses "reasons" and describes learning
+schemes that record derived reasons for later search
+(`paper/sources/text/bayardo1997csp.txt:99`,
+`paper/sources/text/bayardo1997csp.txt:158`).
+
+This is the clearest place to be conservative. CRLPLRIMES reason codes are not
+learned clauses and do not have CDCL's sound pruning semantics. They are
+training and audit features for budgeted residual ranking; the deterministic
+verifier still owns admissibility.
+
+14. CEGAR supports the "failed trace becomes refinement" framing.
+
+Clarke et al. present an iterative abstraction-refinement methodology where
+spurious counterexamples are analyzed and used to refine the abstract model
+(`paper/sources/text/clarke2000cegar.txt:11`). They emphasize that when a
+counterexample is an artifact of approximation, the abstraction must be refined
+to eliminate that erroneous behavior
+(`paper/sources/text/clarke2000cegar.txt:38`). Their algorithm identifies the
+shortest invalid prefix, splits an abstract state, and notes that the coarsest
+refinement problem is NP-hard, so a polynomial heuristic is used
+(`paper/sources/text/clarke2000cegar.txt:76`,
+`paper/sources/text/clarke2000cegar.txt:85`).
+
+Use this as background, not as the main ancestor. CEGIS is closer because it is
+candidate synthesis; CEGAR is useful for the broader pattern of using
+counterexamples to refine the representation.
+
+15. The claim compiler is an executable accountability artifact, but not a full
+Model Card or Datasheet replacement.
+
+Model Cards motivate documentation for intended use, performance
+characteristics, evaluation context, and out-of-scope uses
+(`paper/sources/text/mitchell2019modelcards.txt:7`,
+`paper/sources/text/mitchell2019modelcards.txt:259`). Datasheets similarly
+require motivation, composition, collection process, recommended uses, and
+other provenance details, with an explicit transparency/accountability goal
+(`paper/sources/text/gebru2021datasheets.txt:37`,
+`paper/sources/text/gebru2021datasheets.txt:63`). Pineau et al. frame
+reproducibility around code, data, a reproducibility challenge, and a checklist
+(`paper/sources/text/pineau2021reproducibility.txt:41`,
+`paper/sources/text/pineau2021reproducibility.txt:48`).
+
+The executable claim compiler belongs in this lineage because it mechanically
+checks evidence rows before prose can claim them. But Datasheets explicitly
+warns that automated documentation can work against reflective documentation
+goals (`paper/sources/text/gebru2021datasheets.txt:97`). The paper should say
+the compiler enforces artifact support; it does not replace human scope,
+ethics, intended-use, or limitation review.
+
+16. Henderson et al. turns the Signal baseline gate into a literature-backed
+requirement.
+
+Henderson et al. show that RL results can differ drastically across seeds, and
+that even averaging small numbers of trials can be misleading
+(`paper/sources/text/henderson2018deep.txt:327`,
+`paper/sources/text/henderson2018deep.txt:342`). Their recommendations stress
+hyperparameter/baseline matching, codebase matching, fair comparisons, and many
+trials with different random seeds
+(`paper/sources/text/henderson2018deep.txt:482`,
+`paper/sources/text/henderson2018deep.txt:499`).
+
+This directly supports the current Signal boundary. Live neural-active
+execution is claimable from telemetry, but comparative active-control
+improvement needs baseline-matched episode summaries, variance accounting, and
+clear environment/application scope.
+
 ## Per-Paper Use
 
 | Paper | What It Gives Us | How To Use It |
@@ -201,6 +321,15 @@ exact verifier reward with schema-attested traces" as the contribution.
 | Schulman 2017 PPO | Clipped policy updates stabilize policy gradient. | Cite as borrowed optimization method. |
 | Schulman 2015 TRPO | KL trust regions ground conservative policy improvement. | Cite for trust-region intuition. |
 | Zelikman 2022 STaR | Self-training loop over generated rationales that lead to correct answers. | Use as self-improvement lineage; V-STaR is the verifier-augmented successor. |
+| Solar-Lezama 2008 Sketching | CEGIS couples inductive synthesis with validation-generated counterexamples. | Cite as the direct formal ancestor of the certificate-gating/rejection-feedback loop. |
+| Alur 2013 SyGuS | Defines synthesis under a syntactic candidate grammar and semantic specification. | Use to name the grammar-plus-verifier setting; do not imply this part is novel. |
+| Marques-Silva and Sakallah 1999 GRASP | Conflict analysis records conflict causes as learned clauses and enables nonchronological backtracking. | Use as a strong ancestor for "rejected candidates become reusable search information"; distinguish from our weaker reason-code learning. |
+| Bayardo and Schrag 1997 CSP look-back | Nogood/reason learning and relevance-bounded learning improve SAT/CSP search. | Cite alongside GRASP for independent conflict-learning lineage. |
+| Clarke 2000 CEGAR | Spurious counterexamples refine abstractions while keeping abstract state space small. | Use as broader counterexample-feedback background, secondary to CEGIS. |
+| Pineau 2021 reproducibility | NeurIPS reproducibility program combines code policy, reproducibility challenge, and checklist. | Frame `make paper-ci` and the claim compiler as executable support for reproducibility disclosure. |
+| Mitchell 2019 Model Cards | Structured model documentation covers intended use, evaluation, performance, and caveats. | Position trace schemas and generated claim blocks as executable model/reporting cards for this artifact. |
+| Gebru 2021 Datasheets | Dataset documentation records motivation, composition, collection, use, maintenance, and limits. | Use as provenance lineage; keep the caveat that automation does not replace reflective documentation. |
+| Henderson 2018 Deep RL That Matters | RL claims are sensitive to seeds, codebases, hyperparameters, environment details, and baselines. | Justify the Signal limitation and the required active neural vs heuristic baseline gate. |
 
 ## Concrete Paper Edits Suggested
 
@@ -234,6 +363,21 @@ exact verifier reward with schema-attested traces" as the contribution.
    - Per-instance adaptation of small hypothesis priors.
    - Library learning that promotes repeated certified slot bindings.
    - More calibration audits across non-prime domains.
+
+7. Add one paper-construction claim that is explicitly scoped:
+
+   "The claim compiler converts parts of the Model Card / Datasheet /
+   reproducibility-checklist agenda into executable artifact gates: it checks
+   that numeric claims, trace provenance, environment identity, and limitations
+   are generated from repository artifacts before paper compilation. It does
+   not replace human review of intended use, interpretation, or ethical scope."
+
+8. Keep the Signal next gate literature-backed:
+
+   "Live neural-active execution is a current artifact claim. A comparative
+   active-control claim requires baseline-matched episodes, multiple seeds or
+   windows where applicable, utility/regret/damage/death summaries, and replay
+   traces sufficient to diagnose environment and implementation variance."
 
 ## Strongest NeurIPS/ArXiv Framing
 

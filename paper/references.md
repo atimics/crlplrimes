@@ -138,16 +138,67 @@ Last updated: 2026-05-17.
 
 ---
 
+## Group G — Formal-methods ancestry
+
+### G1. Solar-Lezama 2008 — *Program Synthesis By Sketching*
+- Armando Solar Lezama. PhD thesis, UC Berkeley EECS, Technical Report UCB/EECS-2008-177.
+- **What they do.** Establishes sketching and the CEGIS loop: synthesize a candidate from examples, validate it against the specification, and feed counterexamples back into synthesis.
+- **Relation to us.** The closest direct ancestor for the certificate-gated feedback loop. Our M1/C5 contribution is not "inventing counterexample feedback"; it is turning verifier rejections and reason-coded outcomes into schema-attested training rows while keeping certificates authoritative.
+
+### G2. Alur et al. 2013 — *Syntax-Guided Synthesis*
+- Rajeev Alur, Rastislav Bodik, Garvit Juniwal, Milo M. K. Martin, Mukund Raghothaman, Sanjit A. Seshia, Rishabh Singh, Armando Solar-Lezama, Emina Torlak, Abhishek Udupa. FMCAD 2013.
+- **What they do.** Defines SyGuS as synthesis under both semantic specifications and a syntactic grammar of candidate implementations.
+- **Relation to us.** Gives the formal name for the grammar-plus-verifier substrate; our contribution is the learned residual ranking and claim-attestation layer around that substrate.
+
+### G3. Marques-Silva and Sakallah 1999; Bayardo and Schrag 1997 — conflict-driven learning
+- Joao P. Marques-Silva and Karem A. Sakallah. IEEE Transactions on Computers, 1999.
+- Roberto J. Bayardo and Robert Schrag. AAAI 1997.
+- **What they do.** Conflict-driven SAT/CSP solvers turn failed search states into reusable learned constraints.
+- **Relation to us.** Reason-coded rejected-candidate learning is structurally similar but intentionally weaker: it trains rankers and budget policies, not sound clauses.
+
+### G4. Clarke et al. 2000 — *Counterexample-Guided Abstraction Refinement*
+- Edmund M. Clarke, Orna Grumberg, Somesh Jha, Yuan Lu, Helmut Veith. CAV 2000.
+- **What they do.** Uses counterexamples to refine abstractions in model checking.
+- **Relation to us.** Useful background for the "failed trace becomes next artifact" pattern, less direct than CEGIS because our loop does not refine a single formal abstraction.
+
+---
+
+## Group H — ML reproducibility and accountability
+
+### H1. Mitchell et al. 2019 — *Model Cards for Model Reporting*
+- Margaret Mitchell, Simone Wu, Andrew Zaldivar, Parker Barnes, Lucy Vasserman, Ben Hutchinson, Elena Spitzer, Inioluwa Deborah Raji, Timnit Gebru. FAT* 2019.
+- **What they do.** Proposes structured reporting for model intended use, evaluation context, limitations, and performance characteristics.
+- **Relation to us.** The claim compiler is the executable analog: the repository emits structured evidence and CI decides what claims can appear.
+
+### H2. Gebru et al. 2021 — *Datasheets for Datasets*
+- Timnit Gebru, Jamie Morgenstern, Briana Vecchione, Jennifer Wortman Vaughan, Hanna Wallach, Hal Daume III, Kate Crawford. Communications of the ACM.
+- **What they do.** Establishes dataset documentation as provenance and accountability infrastructure.
+- **Relation to us.** `crlp.environment.v1`, trace schemas, parent hashes, and generated claim rows are provenance mechanisms for experiments rather than static datasets.
+
+### H3. Pineau et al. 2021 — *Improving Reproducibility in Machine Learning Research*
+- Joelle Pineau, Philippe Vincent-Lamarre, Koustuv Sinha, Vincent Lariviere, Alina Beygelzimer, Florence d'Alche-Buc, Emily Fox, Hugo Larochelle. JMLR 2021.
+- **What they do.** Reports on the NeurIPS reproducibility program and checklist.
+- **Relation to us.** The claim compiler is one concrete executable answer to checklist drift: support rows are regenerated and stale paper blocks fail CI.
+
+### H4. Henderson et al. 2018 — *Deep Reinforcement Learning That Matters*
+- Peter Henderson, Riashat Islam, Philip Bachman, Joelle Pineau, Doina Precup, David Meger. AAAI 2018.
+- **What they do.** Shows why seeds, variance, environment nondeterminism, and baseline reporting make RL claims fragile.
+- **Relation to us.** Directly motivates the Signal limitation: live neural-active execution is claimable, but comparative active-control improvement needs baseline episode summaries.
+
+---
+
 ## Related Work pass status
 
-The 2026-05-17 pass in `paper.typ` closes the original placeholder by covering:
+The 2026-05-18 pass in `paper.typ` extends the original related-work closure by covering:
 
 1. **DeepSeek-R1 / RLVR (A5)** as the contemporary verifier-reward confirmation at scale.
 2. **Learned verifiers and process supervision (A1-A4)** as the contrast class where the verifier itself is learned.
 3. **RLHF / PPO regularization (A6-A8, E1-E2)** as the borrowed stabilization pattern for Axis 3.
-4. **AlphaGeometry and GPT-f (B1-B2)** as formal-checker neural proposal ancestors.
-5. **DreamCoder and Hypothesis Search (B3-B4)** as the closest cognitive/hypothesis-layer relatives.
-6. **ARC context (C1-C3)** to position ARC as one diagnostic in the verifier-substrate portfolio.
+4. **CEGIS / SyGuS / CDCL / CEGAR (G1-G4)** as formal-methods ancestry for counterexample and conflict feedback.
+5. **AlphaGeometry and GPT-f (B1-B2)** as formal-checker neural proposal ancestors.
+6. **DreamCoder and Hypothesis Search (B3-B4)** as the closest cognitive/hypothesis-layer relatives.
+7. **ARC context (C1-C3)** to position ARC as one diagnostic in the verifier-substrate portfolio.
+8. **Model Cards / Datasheets / reproducibility checklists / RL reproducibility (H1-H4)** as the accountability lineage for the claim compiler.
 
 ## Citation budget for the paper
 

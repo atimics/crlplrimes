@@ -19,6 +19,7 @@ DEFAULT_SEEDS = "20240516,20240517,20240518"
 DEFAULT_CAPACITIES = "8x4,16x8,32x16,64x32"
 DEFAULT_EPOCH_GRID = "1,2,4,8,16,32"
 DOMAINS = ["prime_gap", "grid_path", "delayed_claim", "arc_agi"]
+MODEL_KINDS = ("shared", "shared_task_heads", "single_task")
 
 
 def parse_csv(text: str) -> list[str]:
@@ -182,14 +183,18 @@ def plateau_rows(
     return out
 
 
-def width_rows(plateaus: list[dict[str, Any]], capacities: list[str]) -> list[dict[str, Any]]:
+def width_rows(
+    plateaus: list[dict[str, Any]],
+    capacities: list[str],
+    model_kinds: tuple[str, ...],
+) -> list[dict[str, Any]]:
     by_key = {
         (row["hidden"], row["domain"], row["model_kind"]): row
         for row in plateaus
     }
     out: list[dict[str, Any]] = []
     for domain in DOMAINS:
-        for model_kind in ("shared", "single_task"):
+        for model_kind in model_kinds:
             available = [
                 by_key[(hidden, domain, model_kind)]
                 for hidden in capacities
@@ -229,6 +234,7 @@ def audit_verdict_rows(
     epoch_grid: list[int],
     threshold: float,
     plateau_window: int,
+    model_kinds: tuple[str, ...],
 ) -> list[dict[str, Any]]:
     by_key: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in plateaus:
@@ -236,7 +242,7 @@ def audit_verdict_rows(
     width_by_key = {(str(row["domain"]), str(row["model_kind"])): row for row in width}
     rows: list[dict[str, Any]] = []
     for domain in DOMAINS:
-        for model_kind in ("shared", "single_task"):
+        for model_kind in model_kinds:
             group = by_key.get((domain, model_kind), [])
             hidden_seen = {str(row["hidden"]) for row in group}
             plateau_count = sum(1 for row in group if bool(row.get("plateau_detected")))
@@ -281,6 +287,7 @@ def write_report(
     epoch_grid: list[int],
     steps_per_epoch: int,
     eval_samples: int,
+    model_kinds: tuple[str, ...],
     plateaus: list[dict[str, Any]],
     width: list[dict[str, Any]],
     verdicts: list[dict[str, Any]],
@@ -296,25 +303,27 @@ def write_report(
         f"Date: {date.today().isoformat()}",
         f"Seeds: `{', '.join(str(seed) for seed in seeds)}`",
         f"Capacities: `{', '.join(capacities)}`",
+        f"Model variants: `{', '.join(model_kinds)}`",
         f"Epoch checkpoints: `{', '.join(str(epoch) for epoch in epoch_grid)}`",
         f"Steps per epoch: `{steps_per_epoch}`; eval samples: `{eval_samples}`",
         "",
         "## Best Checkpoints",
         "",
-        "| Hidden | Shared prime | Shared grid | Shared delayed | Shared ARC |",
-        "| --- | ---: | ---: | ---: | ---: |",
+        "| Hidden | Model | Prime | Grid | Delayed | ARC |",
+        "| --- | --- | ---: | ---: | ---: | ---: |",
     ]
     for hidden in capacities:
-        cells = []
-        for domain in DOMAINS:
-            row = by_key.get((hidden, domain, "shared"))
-            if row is None:
-                cells.append("-")
-            else:
-                cells.append(
-                    f"{fmt_pct(float(row['best_top1_mean']))} @ {row['best_epochs']}"
-                )
-        lines.append(f"| `{hidden}` | " + " | ".join(cells) + " |")
+        for model_kind in model_kinds:
+            cells = []
+            for domain in DOMAINS:
+                row = by_key.get((hidden, domain, model_kind))
+                if row is None:
+                    cells.append("-")
+                else:
+                    cells.append(
+                        f"{fmt_pct(float(row['best_top1_mean']))} @ {row['best_epochs']}"
+                    )
+            lines.append(f"| `{hidden}` | `{model_kind}` | " + " | ".join(cells) + " |")
 
     lines.extend(
         [
@@ -347,7 +356,7 @@ def write_report(
         ]
     )
     for domain in DOMAINS:
-        for model_kind in ("shared", "single_task"):
+        for model_kind in model_kinds:
             row = width_by_key.get((domain, model_kind))
             if row is None:
                 continue
@@ -395,6 +404,11 @@ def main() -> int:
     parser.add_argument("--eval-samples", type=int, default=1000)
     parser.add_argument("--plateau-threshold", type=float, default=0.005)
     parser.add_argument("--plateau-window", type=int, default=3)
+    parser.add_argument(
+        "--no-task-heads",
+        action="store_true",
+        help="preserve the older shared/single_task audit without shared_task_heads rows",
+    )
     args = parser.parse_args()
 
     repo = Path(__file__).resolve().parents[1]
@@ -402,6 +416,7 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     log_dir = output_dir / "logs"
     binary = args.binary if args.binary.is_absolute() else repo / args.binary
+    model_kinds = ("shared", "single_task") if args.no_task_heads else MODEL_KINDS
 
     all_rows: list[dict[str, Any]] = []
     commands: list[str] = []
@@ -425,6 +440,8 @@ def main() -> int:
                     "--seed",
                     str(seed),
                 ]
+                if not args.no_task_heads:
+                    command.append("--task-heads")
                 commands.append(" ".join(command))
                 log_name = f"tiny_hidden_{hidden}_seed_{seed}_epochs_{epochs}.log"
                 for row in run_command(command, repo, log_dir / log_name):
@@ -445,7 +462,7 @@ def main() -> int:
     ]
     curves = learning_curve_rows(summary_rows)
     plateaus = plateau_rows(curves, args.plateau_threshold, args.plateau_window)
-    width = width_rows(plateaus, args.capacities)
+    width = width_rows(plateaus, args.capacities, model_kinds)
     verdicts = audit_verdict_rows(
         plateaus,
         width,
@@ -454,6 +471,7 @@ def main() -> int:
         args.epoch_grid,
         args.plateau_threshold,
         args.plateau_window,
+        model_kinds,
     )
 
     write_jsonl(raw_path, all_rows)
@@ -470,6 +488,7 @@ def main() -> int:
         args.epoch_grid,
         args.steps_per_epoch,
         args.eval_samples,
+        model_kinds,
         plateaus,
         width,
         verdicts,

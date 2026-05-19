@@ -18,9 +18,9 @@ DOMAIN_ROWS = [
         "certificate_gate": "zero-false-rejection divisibility certificates over train/validation support",
         "scorer_role": "rank residual gaps and budgeted certified rules",
         "trace_artifact": "crlp.compare.v1; crlp.rule_trace.v1; crlp.rule_search.summary.v1",
-        "result": "learned gate 68.87% top-1 vs 45.12% hand-wheel and 9.13% raw",
+        "result": "learned gate 68.87% top-1 vs 45.12% hand-wheel and 9.13% raw; seed interval audited",
         "claim": "certified modular gates shrink the residual action space",
-        "claim_ids": ["C1.prime_gate_delta", "C2.prime_proposer_fixed_budget"],
+        "claim_ids": ["C1.prime_gate_delta", "C1.prime_gate_delta_ci", "C2.prime_proposer_fixed_budget"],
         "limitation": "static neural proposer is not superior to deterministic baselines at fixed budget",
     },
     {

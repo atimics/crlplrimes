@@ -1,7 +1,7 @@
 # Self-Authoring Paper Roadmap
 
 Date: 2026-05-17
-Status: R-P.1, R-P.2, R-P.3, R-P.5, R-P.6, and R-P.7 implemented; R-P.4 remains open
+Status: R-P.1, R-P.2, R-P.3, R-P.5, R-P.6, R-P.7, and R-P.8 implemented; R-P.4 remains open
 
 ## Purpose
 
@@ -96,6 +96,19 @@ paper/generated/support_report.md
 
 paper/generated/agent_instructions.md
   claim-targeted briefs for future research agents without letting them rewrite the paper by hand
+
+.github/pull_request_template.md
+  review checklist separating editorial-only edits from explicit claim changes
+
+.github/workflows/paper.yml
+  PR and main-branch gate for editorial-boundary checks, paper support checks,
+  and PDF compilation
+
+docs/editorial-agent-prs.md
+  repository policy for reviewable editorial-agent work
+
+scripts/check_editorial_pr.py
+  CI enforcement for editorial-only PRs and claim-change PR audit fields
 ```
 
 `paper/paper.typ` should import `paper/generated/claims.typ` in the same spirit
@@ -169,6 +182,7 @@ R-MT, R-S, or R-W items; they make those items machine-actionable.
 | R-P.5 | Add `make paper-support`, which fails on stale, missing, underpowered, or contradicted required claims. | done | self-authoring |
 | R-P.6 | Link every paper roadmap item to the claim family it supports or unblocks; `roadmap_links.md` now reports zero unlinked rows. | done | self-authoring |
 | R-P.7 | Generate limitation candidates from contradicted and underpowered claims. | done | self-authoring |
+| R-P.8 | Add an editorial-agent PR boundary: prose-only review checklist, claim-change escape hatch, CI enforcement, paper gates, and disclosure language. | done | self-authoring |
 
 ## Submission Tiers
 
@@ -185,9 +199,13 @@ Minimum viable self-authoring:
 Strong self-authoring:
 
 - R-P.4.
+- R-P.8.
 - Main numerical claims in the abstract, headline tables, and major captions
   come from generated claim variables.
 - CI or local `make check` can detect stale or contradicted required claims.
+- Editorial-agent changes move through reviewable PRs whose template prevents
+  prose edits from silently changing claim scope, numbers, citations, generated
+  summaries, or experiment interpretation.
 
 Full self-authoring:
 

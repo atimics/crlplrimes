@@ -13,6 +13,8 @@ const NET_MSG_PLAYER_SHIP = 0x15;
 const NET_MSG_STATION_IDENTITY = 0x17;
 const NET_MSG_WORLD_PLAYERS = 0x18;
 const NET_MSG_SESSION = 0x20;
+const NET_MSG_STATION_DIAG = 0x40;
+const NET_MSG_PROTOCOL_INFO = 0x41;
 
 const NET_INPUT_THRUST = 1 << 0;
 const NET_INPUT_LEFT = 1 << 1;
@@ -46,9 +48,14 @@ const MODULE_SHIPYARD = 9;
 const MAX_MODULES_PER_STATION = 16;
 const MAX_ARMS = 4;
 const STATION_MODULE_RECORD_SIZE = 9;
+const STATION_DIAG_SIZE = 3 + MAX_MODULES_PER_STATION;
 const STATION_NUM_RINGS = 3;
 const STATION_RING_RADIUS = [0, 180, 340, 520];
 const STATION_RING_SLOTS = [0, 3, 6, 9];
+const SIGNAL_PROTOCOL_VERSION = 1;
+const PROTOCOL_INFO_HEADER_SIZE = 8;
+const PROTOCOL_INFO_STREAM_RECORD_SIZE = 12;
+const PROTOCOL_INFO_STREAM_CAPACITY = 32;
 
 const SHIP_BRAKE = 180.0;
 const OBJECTIVE_WAYPOINTS_PER_STATION = 4;
@@ -875,6 +882,8 @@ const PROTOCOL_CONSTANT_EXPECTATIONS = {
   NET_MSG_STATION_IDENTITY,
   NET_MSG_WORLD_PLAYERS,
   NET_MSG_SESSION,
+  NET_MSG_STATION_DIAG,
+  NET_MSG_PROTOCOL_INFO,
   NET_INPUT_THRUST,
   NET_INPUT_LEFT,
   NET_INPUT_RIGHT,
@@ -903,13 +912,149 @@ const PROTOCOL_CONSTANT_EXPECTATIONS = {
   MAX_MODULES_PER_STATION,
   MAX_ARMS,
   STATION_MODULE_RECORD_SIZE,
+  STATION_DIAG_SIZE,
   STATION_NUM_RINGS,
+  SIGNAL_PROTOCOL_VERSION,
+  PROTOCOL_INFO_HEADER_SIZE,
+  PROTOCOL_INFO_STREAM_RECORD_SIZE,
+  PROTOCOL_INFO_STREAM_CAPACITY,
 };
 
 const PROTOCOL_ARRAY_EXPECTATIONS = {
   STATION_RING_RADIUS,
   STATION_RING_SLOTS,
 };
+
+const RUNTIME_PROTOCOL_STREAM_EXPECTATIONS = [
+  {
+    msg: NET_MSG_WORLD_PLAYERS,
+    name: "WORLD_PLAYERS",
+    minHeaderSize: 2,
+    recordSize: PLAYER_RECORD_SIZE,
+  },
+  {
+    msg: NET_MSG_PLAYER_SHIP,
+    name: "PLAYER_SHIP",
+    minHeaderSize: 16,
+    recordSize: 0,
+    maxRecords: 1,
+  },
+  {
+    msg: NET_MSG_STATION_IDENTITY,
+    name: "STATION_IDENTITY",
+    minHeaderSize: STATION_IDENTITY_MIN_SIZE,
+    recordSize: 0,
+    maxRecords: 1,
+  },
+  {
+    msg: NET_MSG_STATION_DIAG,
+    name: "STATION_DIAG",
+    headerSize: 3,
+    recordSize: 1,
+    maxRecords: MAX_MODULES_PER_STATION,
+  },
+];
+
+function pendingRuntimeProtocol() {
+  return {
+    status: "pending",
+    compatible: null,
+    received: false,
+    version: null,
+    capabilities: null,
+    streamCount: 0,
+    hash: null,
+    mismatches: [],
+    missing: [],
+    streams: [],
+  };
+}
+
+function skippedRuntimeProtocol() {
+  return {
+    ...pendingRuntimeProtocol(),
+    status: "skipped",
+    compatible: null,
+  };
+}
+
+function parseRuntimeProtocolInfo(buffer) {
+  if (buffer.length < PROTOCOL_INFO_HEADER_SIZE) {
+    return {
+      ...pendingRuntimeProtocol(),
+      status: "mismatch",
+      compatible: false,
+      received: true,
+      mismatches: [{ name: "PROTOCOL_INFO", expected: `>=${PROTOCOL_INFO_HEADER_SIZE}`, actual: buffer.length }],
+    };
+  }
+
+  const advertisedCount = buffer[7];
+  const maxByLen = Math.floor((buffer.length - PROTOCOL_INFO_HEADER_SIZE) / PROTOCOL_INFO_STREAM_RECORD_SIZE);
+  const count = Math.min(advertisedCount, maxByLen, PROTOCOL_INFO_STREAM_CAPACITY);
+  const streams = [];
+  for (let i = 0; i < count; i += 1) {
+    const offset = PROTOCOL_INFO_HEADER_SIZE + i * PROTOCOL_INFO_STREAM_RECORD_SIZE;
+    streams.push({
+      msg: buffer[offset],
+      stream_class: buffer[offset + 1],
+      flags: readU16(buffer, offset + 2),
+      header_size: readU16(buffer, offset + 4),
+      record_size: readU16(buffer, offset + 6),
+      max_records: readU16(buffer, offset + 8),
+      cadence_ms: readU16(buffer, offset + 10),
+    });
+  }
+
+  const mismatches = [];
+  const missing = [];
+  const version = readU16(buffer, 1);
+  const capabilities = readU32(buffer, 3);
+  if (version !== SIGNAL_PROTOCOL_VERSION) {
+    mismatches.push({ name: "SIGNAL_PROTOCOL_VERSION", expected: SIGNAL_PROTOCOL_VERSION, actual: version });
+  }
+  if (advertisedCount > maxByLen) {
+    mismatches.push({ name: "PROTOCOL_INFO_STREAM_BYTES", expected: advertisedCount, actual: maxByLen });
+  }
+  if (advertisedCount > PROTOCOL_INFO_STREAM_CAPACITY) {
+    mismatches.push({ name: "PROTOCOL_INFO_STREAM_CAPACITY", expected: `<=${PROTOCOL_INFO_STREAM_CAPACITY}`, actual: advertisedCount });
+  }
+
+  const byMsg = new Map(streams.map((stream) => [stream.msg, stream]));
+  for (const expected of RUNTIME_PROTOCOL_STREAM_EXPECTATIONS) {
+    const actual = byMsg.get(expected.msg);
+    if (!actual) {
+      missing.push(expected.name);
+      continue;
+    }
+    if (expected.headerSize !== undefined && actual.header_size !== expected.headerSize) {
+      mismatches.push({ name: `${expected.name}.header_size`, expected: expected.headerSize, actual: actual.header_size });
+    }
+    if (expected.minHeaderSize !== undefined && actual.header_size < expected.minHeaderSize) {
+      mismatches.push({ name: `${expected.name}.header_size`, expected: `>=${expected.minHeaderSize}`, actual: actual.header_size });
+    }
+    if (expected.recordSize !== undefined && actual.record_size !== expected.recordSize) {
+      mismatches.push({ name: `${expected.name}.record_size`, expected: expected.recordSize, actual: actual.record_size });
+    }
+    if (expected.maxRecords !== undefined && actual.max_records !== expected.maxRecords) {
+      mismatches.push({ name: `${expected.name}.max_records`, expected: expected.maxRecords, actual: actual.max_records });
+    }
+  }
+
+  const compatible = missing.length === 0 && mismatches.length === 0;
+  return {
+    status: compatible ? "ok" : "mismatch",
+    compatible,
+    received: true,
+    version,
+    capabilities,
+    streamCount: count,
+    hash: createHash("sha256").update(buffer).digest("hex"),
+    mismatches,
+    missing,
+    streams,
+  };
+}
 
 async function checkSignalProtocolCompatibility(config) {
   if (config.skipProtocolCheck) {
@@ -994,6 +1139,7 @@ class SignalLiveBrain {
     this.model = model;
     this.optionModel = optionModel;
     this.protocolCompatibility = protocolCompatibility;
+    this.protocolRuntime = config.skipProtocolCheck ? skippedRuntimeProtocol() : pendingRuntimeProtocol();
     this.ws = null;
     this.opened = false;
     this.localId = null;
@@ -1020,6 +1166,8 @@ class SignalLiveBrain {
     this.navSerial = 1;
     this.players = new Map();
     this.stations = new Map();
+    this.stationDiagById = new Map();
+    this.stationDiagFrames = 0;
     this.asteroids = new Map();
     this.ship = {
       hull: 0,
@@ -1093,6 +1241,9 @@ class SignalLiveBrain {
   onMessage(buffer) {
     if (buffer.length < 1) return;
     switch (buffer[0]) {
+      case NET_MSG_PROTOCOL_INFO:
+        this.handleProtocolInfo(buffer);
+        break;
       case NET_MSG_JOIN:
         this.handleJoin(buffer);
         break;
@@ -1108,8 +1259,28 @@ class SignalLiveBrain {
       case NET_MSG_STATION_IDENTITY:
         this.handleStationIdentity(buffer);
         break;
+      case NET_MSG_STATION_DIAG:
+        this.handleStationDiag(buffer);
+        break;
       default:
         break;
+    }
+  }
+
+  handleProtocolInfo(buffer) {
+    this.protocolRuntime = parseRuntimeProtocolInfo(buffer);
+    console.log(
+      `[brain] runtime_protocol ${this.protocolRuntime.status}` +
+        ` streams=${this.protocolRuntime.streamCount}` +
+        (this.protocolRuntime.hash ? ` hash=${this.protocolRuntime.hash.slice(0, 12)}` : ""),
+    );
+    if (!this.protocolRuntime.compatible && !this.config.allowProtocolDrift) {
+      const details = [
+        ...this.protocolRuntime.missing.map((name) => `${name}=missing`),
+        ...this.protocolRuntime.mismatches.map((row) => `${row.name}=expected ${row.expected} actual ${row.actual}`),
+      ];
+      console.error(`[brain] runtime protocol compatibility failed: ${details.slice(0, 6).join("; ")}`);
+      this.ws?.close();
     }
   }
 
@@ -1194,6 +1365,7 @@ class SignalLiveBrain {
   handleStationIdentity(buffer) {
     if (buffer.length < STATION_IDENTITY_MIN_SIZE) return;
     const id = buffer[1];
+    const previous = this.stations.get(id);
     const station = {
       id,
       flags: buffer[2],
@@ -1208,6 +1380,8 @@ class SignalLiveBrain {
       modules: [],
       ringOffset: Array(MAX_ARMS).fill(0),
       armRotation: Array(MAX_ARMS).fill(0),
+      moduleDiag: Array(MAX_MODULES_PER_STATION).fill(0),
+      moduleDiagSeenAt: null,
     };
 
     for (let i = 0; i < COMMODITY_COUNT && 59 + i * 4 + 4 <= buffer.length; i += 1) {
@@ -1244,7 +1418,67 @@ class SignalLiveBrain {
       }
     }
 
+    if (previous?.moduleDiag) {
+      for (let i = 0; i < station.modules.length && i < MAX_MODULES_PER_STATION; i += 1) {
+        if (this.sameStationModuleIdentity(previous.modules?.[i], station.modules[i])) {
+          station.moduleDiag[i] = previous.moduleDiag[i] ?? 0;
+        }
+      }
+      station.moduleDiagSeenAt = previous.moduleDiagSeenAt ?? null;
+    }
+    const pendingDiag = this.stationDiagById.get(id);
+    if (pendingDiag) this.applyStationDiag(station, pendingDiag);
+
     this.stations.set(id, station);
+  }
+
+  sameStationModuleIdentity(a, b) {
+    if (!a || !b) return false;
+    return a.type === b.type &&
+      a.scaffold === b.scaffold &&
+      a.ring === b.ring &&
+      a.slot === b.slot &&
+      a.commodity === b.commodity &&
+      Math.abs((a.buildProgress ?? 0) - (b.buildProgress ?? 0)) < 1e-6;
+  }
+
+  handleStationDiag(buffer) {
+    if (buffer.length < STATION_DIAG_SIZE) return;
+    const stationId = buffer[1];
+    const moduleCount = Math.min(buffer[2], MAX_MODULES_PER_STATION);
+    const entry = {
+      moduleCount,
+      diag: Array.from(buffer.subarray(3, 3 + MAX_MODULES_PER_STATION)),
+      seenAt: Date.now(),
+    };
+    this.stationDiagById.set(stationId, entry);
+    this.stationDiagFrames += 1;
+    const station = this.stations.get(stationId);
+    if (station) this.applyStationDiag(station, entry);
+  }
+
+  applyStationDiag(station, entry) {
+    station.moduleDiag = Array(MAX_MODULES_PER_STATION).fill(0);
+    const count = Math.min(entry.moduleCount ?? 0, MAX_MODULES_PER_STATION);
+    for (let i = 0; i < count; i += 1) station.moduleDiag[i] = entry.diag[i] ?? 0;
+    station.moduleDiagSeenAt = entry.seenAt ?? Date.now();
+  }
+
+  stationDiagSummary(station) {
+    const diag = station?.moduleDiag;
+    if (!Array.isArray(diag) || station.moduleDiagSeenAt === null || station.moduleDiagSeenAt === undefined) {
+      return null;
+    }
+    const active = [];
+    for (let i = 0; i < Math.min(station.modules?.length ?? 0, MAX_MODULES_PER_STATION); i += 1) {
+      const value = diag[i] ?? 0;
+      if (value !== 0) active.push({ module: i, diag: value });
+    }
+    return {
+      seen_at_ms: station.moduleDiagSeenAt ?? null,
+      active_count: active.length,
+      active,
+    };
   }
 
   async controlTick() {
@@ -3292,19 +3526,38 @@ class SignalLiveBrain {
   async logDecision(now, player, decision, action) {
     if (!this.config.logPath || now - this.lastLogAt < 200) return;
     this.lastLogAt = now;
+    const runtimeProtocol = this.protocolRuntime ?? pendingRuntimeProtocol();
+    const targetStationId = Number.isInteger(decision.target?.station) ? decision.target.station : null;
+    const targetStation = targetStationId !== null ? this.stations.get(targetStationId) : null;
     const row = {
       schema: "crlp.signal_live_brain.v1",
       t_ms: now,
       player_id: this.localId,
       dry_run: this.config.dryRun,
-      protocol_status: this.protocolCompatibility.status,
-      protocol_compatible: this.protocolCompatibility.compatible,
+      protocol_status: runtimeProtocol.status,
+      protocol_compatible: runtimeProtocol.compatible,
+      protocol_runtime_received: runtimeProtocol.received,
+      protocol_runtime_version: runtimeProtocol.version,
+      protocol_runtime_capabilities: runtimeProtocol.capabilities,
+      protocol_runtime_stream_count: runtimeProtocol.streamCount,
+      protocol_runtime_hash: runtimeProtocol.hash,
+      protocol_runtime_mismatch_count: runtimeProtocol.mismatches?.length ?? 0,
+      protocol_runtime_missing_count: runtimeProtocol.missing?.length ?? 0,
+      protocol_runtime_mismatches: runtimeProtocol.mismatches ?? [],
+      protocol_runtime_missing: runtimeProtocol.missing ?? [],
       protocol_root: this.protocolCompatibility.root ?? null,
-      protocol_hash: this.protocolCompatibility.hash ?? null,
-      protocol_mismatch_count: this.protocolCompatibility.mismatches?.length ?? 0,
-      protocol_missing_count: this.protocolCompatibility.missing?.length ?? 0,
-      protocol_mismatches: this.protocolCompatibility.mismatches ?? [],
-      protocol_missing: this.protocolCompatibility.missing ?? [],
+      protocol_hash: runtimeProtocol.hash ?? this.protocolCompatibility.hash ?? null,
+      protocol_mismatch_count: runtimeProtocol.mismatches?.length ?? 0,
+      protocol_missing_count: runtimeProtocol.missing?.length ?? 0,
+      protocol_mismatches: runtimeProtocol.mismatches ?? [],
+      protocol_missing: runtimeProtocol.missing ?? [],
+      protocol_source_status: this.protocolCompatibility.status,
+      protocol_source_compatible: this.protocolCompatibility.compatible,
+      protocol_source_hash: this.protocolCompatibility.hash ?? null,
+      protocol_source_mismatch_count: this.protocolCompatibility.mismatches?.length ?? 0,
+      protocol_source_missing_count: this.protocolCompatibility.missing?.length ?? 0,
+      protocol_source_mismatches: this.protocolCompatibility.mismatches ?? [],
+      protocol_source_missing: this.protocolCompatibility.missing ?? [],
       policy: decision.policy ?? "unknown",
       brain_mode: decision.brainMode ?? "heuristic",
       active_source: decision.activeSource ?? "heuristic",
@@ -3393,6 +3646,9 @@ class SignalLiveBrain {
       safety_reject_reasons: decision.safetyRejectReasons ?? [],
       inference_ms: round6(decision.inferenceMs ?? 0),
       stations: this.stations.size,
+      station_diag_frames: this.stationDiagFrames,
+      station_diag_stations: this.stationDiagById.size,
+      target_station_diag: this.stationDiagSummary(targetStation),
       asteroids: this.asteroids.size,
     };
     await appendFile(this.config.logPath, `${JSON.stringify(row)}\n`);

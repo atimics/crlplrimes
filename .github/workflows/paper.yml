@@ -1,0 +1,38 @@
+name: Paper Gates
+
+on:
+  pull_request:
+    paths:
+      - ".github/pull_request_template.md"
+      - ".github/workflows/paper.yml"
+      - "Makefile"
+      - "README.md"
+      - "docs/**"
+      - "examples/**"
+      - "include/**"
+      - "paper/**"
+      - "results/**"
+      - "scripts/**"
+      - "src/**"
+      - "tests/**"
+  push:
+    branches:
+      - main
+
+jobs:
+  paper:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Typst
+        uses: typst-community/setup-typst@v4
+        with:
+          typst-version: 0.14.2
+
+      - name: Run paper CI gate
+        run: make paper-ci

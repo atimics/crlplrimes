@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 ALL_TASKS = [
+    "bbox_panel_selection",
     "connect_aligned",
     "extend_aligned_sequence",
     "fill_enclosed",
@@ -23,6 +24,7 @@ ALL_TASKS = [
     "move_to_anchor_x",
     "move_to_anchor_y",
     "object_extract",
+    "panel_selection",
     "recolor_by_reference",
     "translate",
 ]
