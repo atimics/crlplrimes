@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
 from pathlib import Path
+
+from crlp.io import write_jsonl
+from crlp.run import json_rows_from_stdout
 
 
 COMMANDS = (
@@ -44,14 +46,7 @@ def run_make(
         raise RuntimeError(f"{' '.join(command)} failed; see {log_path}")
 
     rows: list[dict[str, object]] = []
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for row in json_rows_from_stdout(result.stdout):
         if row.get("schema") in {
             "crlp.experiment_schema.v1",
             "crlp.compare.v1",
@@ -66,12 +61,6 @@ def run_make(
             row["source_target"] = target
             rows.append(row)
     return rows
-
-
-def write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
-    with path.open("w", encoding="utf-8") as fp:
-        for row in rows:
-            fp.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
 
 
 def dedupe_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -796,7 +785,7 @@ def main(argv: list[str]) -> int:
         )
 
     all_rows = dedupe_rows(all_rows)
-    write_jsonl(output_dir / "comparison.jsonl", all_rows)
+    write_jsonl(output_dir / "comparison.jsonl", all_rows, compact=True)
     write_summary(output_dir / "summary.md", all_rows, args.real)
     (output_dir / "commands.txt").write_text("\n".join(commands) + "\n", encoding="utf-8")
     print(f"wrote {output_dir / 'summary.md'}")

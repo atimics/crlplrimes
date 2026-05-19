@@ -4,15 +4,15 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import json
-import math
-import subprocess
-import sys
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
 from typing import Any
+
+from crlp.cli import parse_csv, parse_int_csv, parse_seeds
+from crlp.io import write_csv, write_jsonl
+from crlp.run import run_json_command
+from crlp.stats import fmt_delta, fmt_pct, mean, sample_stdev
 
 
 DEFAULT_SEEDS = "20240516,20240517,20240518"
@@ -20,73 +20,6 @@ DEFAULT_CAPACITIES = "8x4,16x8,32x16,64x32"
 DEFAULT_EPOCH_GRID = "1,2,4,8,16,32"
 DOMAINS = ["prime_gap", "grid_path", "delayed_claim", "arc_agi"]
 MODEL_KINDS = ("shared", "shared_task_heads", "single_task")
-
-
-def parse_csv(text: str) -> list[str]:
-    values = [part.strip() for part in text.split(",") if part.strip()]
-    if not values:
-        raise argparse.ArgumentTypeError("expected at least one value")
-    return values
-
-
-def parse_int_csv(text: str) -> list[int]:
-    return [int(part, 10) for part in parse_csv(text)]
-
-
-def mean(values: list[float]) -> float:
-    return sum(values) / len(values) if values else float("nan")
-
-
-def sample_stdev(values: list[float]) -> float:
-    if len(values) < 2:
-        return 0.0
-    avg = mean(values)
-    return math.sqrt(sum((value - avg) ** 2 for value in values) / (len(values) - 1))
-
-
-def fmt_pct(value: float) -> str:
-    return "-" if math.isnan(value) else f"{100.0 * value:.2f}%"
-
-
-def fmt_delta(value: float) -> str:
-    return "-" if math.isnan(value) else f"{100.0 * value:+.2f}pp"
-
-
-def run_command(command: list[str], cwd: Path, log_path: Path) -> list[dict[str, Any]]:
-    print(f"running {' '.join(command)}", flush=True)
-    proc = subprocess.run(command, cwd=cwd, text=True, capture_output=True)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(proc.stdout + proc.stderr, encoding="utf-8")
-    if proc.returncode != 0:
-        sys.stdout.write(proc.stdout)
-        sys.stderr.write(proc.stderr)
-        raise subprocess.CalledProcessError(proc.returncode, command)
-    rows: list[dict[str, Any]] = []
-    for line in proc.stdout.splitlines():
-        if line.startswith("{"):
-            rows.append(json.loads(line))
-    return rows
-
-
-def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    with path.open("w", encoding="utf-8") as fp:
-        for row in rows:
-            fp.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
-
-
-def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    if not rows:
-        return
-    fields: list[str] = []
-    for row in rows:
-        for key in row:
-            if key not in fields:
-                fields.append(key)
-    with path.open("w", newline="", encoding="utf-8") as fp:
-        writer = csv.DictWriter(fp, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
 
 
 def learning_curve_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -444,7 +377,7 @@ def main() -> int:
                     command.append("--task-heads")
                 commands.append(" ".join(command))
                 log_name = f"tiny_hidden_{hidden}_seed_{seed}_epochs_{epochs}.log"
-                for row in run_command(command, repo, log_dir / log_name):
+                for row in run_json_command(command, cwd=repo, log_path=log_dir / log_name):
                     row["roadmap_item"] = "E-MT.9"
                     all_rows.append(row)
 
@@ -474,13 +407,13 @@ def main() -> int:
         model_kinds,
     )
 
-    write_jsonl(raw_path, all_rows)
+    write_jsonl(raw_path, all_rows, compact=True)
     commands_path.write_text("\n".join(commands) + "\n", encoding="utf-8")
     write_csv(curve_path, curves)
     write_csv(plateau_path, plateaus)
-    write_jsonl(plateau_jsonl_path, plateaus)
-    write_jsonl(width_path, width)
-    write_jsonl(verdict_path, verdicts)
+    write_jsonl(plateau_jsonl_path, plateaus, compact=True)
+    write_jsonl(width_path, width, compact=True)
+    write_jsonl(verdict_path, verdicts, compact=True)
     write_report(
         report_path,
         args.seeds,

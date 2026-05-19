@@ -16,8 +16,9 @@ The full comparison.jsonl is still uploaded as an artifact for inspection.
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
+
+from crlp.io import read_jsonl, write_jsonl
 
 # Fields that vary by runner / wallclock and must be stripped before diffing.
 TIMING_FIELDS = {
@@ -52,14 +53,11 @@ def main() -> int:
         print(f"missing input: {args.input}", flush=True)
         return 1
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    with args.input.open() as src, args.output.open("w") as dst:
-        for line in src:
-            line = line.strip()
-            if not line.startswith("{"):
-                continue
-            row = json.loads(line)
-            dst.write(json.dumps(canonicalize(row), sort_keys=True, separators=(",", ":")) + "\n")
+    write_jsonl(
+        args.output,
+        (canonicalize(row) for row in read_jsonl(args.input)),
+        compact=True,
+    )
     return 0
 
 

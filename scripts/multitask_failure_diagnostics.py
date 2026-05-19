@@ -4,78 +4,19 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import json
-import math
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any
+
+from crlp.cli import parse_seeds
+from crlp.io import write_csv, write_jsonl
+from crlp.run import run_json_command
+from crlp.stats import fmt_float, fmt_pct, mean, sample_stdev
 
 
 DEFAULT_SEEDS = "20240516,20240517,20240518"
 ORDER_SWEEP = ["uniform_random", "round_robin", "arc_heavy", "prime_light"]
 LR_SWEEP = ["0.0015", "0.003", "0.006", "0.012"]
 EPOCH_SWEEP = [1, 2, 4, 8, 16]
-
-
-def parse_seeds(text: str) -> list[int]:
-    seeds = [int(part.strip(), 10) for part in text.split(",") if part.strip()]
-    if not seeds:
-        raise argparse.ArgumentTypeError("expected at least one seed")
-    return seeds
-
-
-def mean(values: list[float]) -> float:
-    return sum(values) / len(values) if values else float("nan")
-
-
-def sample_stdev(values: list[float]) -> float:
-    if len(values) < 2:
-        return 0.0
-    avg = mean(values)
-    return math.sqrt(sum((value - avg) ** 2 for value in values) / (len(values) - 1))
-
-
-def fmt_pct(value: float) -> str:
-    return "-" if math.isnan(value) else f"{100.0 * value:.2f}%"
-
-
-def fmt_float(value: float) -> str:
-    return "-" if math.isnan(value) else f"{value:.4f}"
-
-
-def run_command(command: list[str], cwd: Path, log_path: Path) -> list[dict[str, Any]]:
-    print(f"running {' '.join(command)}", flush=True)
-    proc = subprocess.run(command, cwd=cwd, text=True, capture_output=True)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(proc.stdout + proc.stderr, encoding="utf-8")
-    if proc.returncode != 0:
-        sys.stdout.write(proc.stdout)
-        sys.stderr.write(proc.stderr)
-        raise subprocess.CalledProcessError(proc.returncode, command)
-    rows: list[dict[str, Any]] = []
-    for line in proc.stdout.splitlines():
-        if not line.startswith("{"):
-            continue
-        rows.append(json.loads(line))
-    return rows
-
-
-def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    if not rows:
-        path.write_text("", encoding="utf-8")
-        return
-    fields: list[str] = []
-    for row in rows:
-        for key in row:
-            if key not in fields:
-                fields.append(key)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
 
 
 def color_count(row: dict[str, Any], key: str, color: int) -> float:
@@ -358,24 +299,26 @@ def main(argv: list[str] | None = None) -> int:
                 f"failure_diag_{scenario['diagnostic_group']}_"
                 f"{scenario['diagnostic_name']}_seed_{seed}.log"
             )
-            for row in run_command(command, repo, log_dir / log_name):
+            for row in run_json_command(command, cwd=repo, log_path=log_dir / log_name):
                 row["roadmap_item"] = "R-MT.diagnostic"
                 row["diagnostic_group"] = scenario["diagnostic_group"]
                 row["diagnostic_name"] = scenario["diagnostic_name"]
                 rows.append(row)
 
     raw_path = output_dir / "rmt_arc_failure_diagnostics.raw.jsonl"
-    with raw_path.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
+    write_jsonl(raw_path, rows, compact=True)
     (output_dir / "rmt_arc_failure_diagnostics.commands.txt").write_text(
         "\n".join(commands) + "\n",
         encoding="utf-8",
     )
     summary = summarize_summary_rows(rows)
     epoch_summary = summarize_epoch_rows(rows)
-    write_csv(output_dir / "rmt_arc_failure_diagnostics_summary.csv", summary)
-    write_csv(output_dir / "rmt_arc_failure_diagnostics_epoch_summary.csv", epoch_summary)
+    write_csv(output_dir / "rmt_arc_failure_diagnostics_summary.csv", summary, empty_text=True)
+    write_csv(
+        output_dir / "rmt_arc_failure_diagnostics_epoch_summary.csv",
+        epoch_summary,
+        empty_text=True,
+    )
     write_report(output_dir / "rmt_arc_failure_diagnostics.md", summary, epoch_summary)
     print(f"wrote {output_dir / 'rmt_arc_failure_diagnostics.md'}")
     return 0
