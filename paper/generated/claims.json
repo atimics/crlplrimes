@@ -166,6 +166,126 @@
     },
     {
       "chart": {},
+      "claim_text": "On prime_gap, the certified learned rule gate improves top-1 over raw and hand-wheel gates across a multi-seed audit while preserving zero false rejections.",
+      "claim_type": "gate_effect_interval",
+      "decision_rule": {
+        "supported_if": [
+          "seed_count >= 3",
+          "min(hand_top1 - raw_top1) > 0",
+          "min(learned_top1 - hand_top1) > 0",
+          "min(learned_top10) >= 0.999",
+          "max(false_rejections) == 0",
+          "min(sample_count) >= 30000"
+        ]
+      },
+      "derived_claims": [],
+      "evidence_rows": [
+        {
+          "false_rejections": 0,
+          "hand_top1": 0.45123333,
+          "label": "20240511",
+          "learned_top1": 0.68866667,
+          "learned_top10": 1.0,
+          "learned_vs_hand_delta_pp": 23.743334000000004,
+          "present": true,
+          "raw_top1": 0.0913,
+          "sample_count": 30000,
+          "seed": 20240511
+        },
+        {
+          "false_rejections": 0,
+          "hand_top1": 0.45123333,
+          "label": "20240512",
+          "learned_top1": 0.68866667,
+          "learned_top10": 1.0,
+          "learned_vs_hand_delta_pp": 23.743334000000004,
+          "present": true,
+          "raw_top1": 0.0913,
+          "sample_count": 30000,
+          "seed": 20240512
+        },
+        {
+          "false_rejections": 0,
+          "hand_top1": 0.45123333,
+          "label": "20240513",
+          "learned_top1": 0.68866667,
+          "learned_top10": 1.0,
+          "learned_vs_hand_delta_pp": 23.743334000000004,
+          "present": true,
+          "raw_top1": 0.0913,
+          "sample_count": 30000,
+          "seed": 20240513
+        }
+      ],
+      "experiments": [],
+      "id": "C1.prime_gate_delta_ci",
+      "metrics": {
+        "false_rejections_max": 0,
+        "hand_top1_max": 0.45123333,
+        "hand_top1_mean": 0.45123333,
+        "hand_top1_min": 0.45123333,
+        "hand_top1_std_pp": 0.0,
+        "hand_vs_raw_delta_pp_min": 35.993333,
+        "learned_top10_min": 1.0,
+        "learned_top1_max": 0.68866667,
+        "learned_top1_mean": 0.68866667,
+        "learned_top1_min": 0.68866667,
+        "learned_top1_std_pp": 0.0,
+        "learned_vs_hand_delta_pp_max": 23.743334000000004,
+        "learned_vs_hand_delta_pp_mean": 23.743334000000004,
+        "learned_vs_hand_delta_pp_min": 23.743334000000004,
+        "learned_vs_hand_delta_pp_std": 0.0,
+        "raw_top1_max": 0.0913,
+        "raw_top1_mean": 0.0913,
+        "raw_top1_min": 0.0913,
+        "raw_top1_std_pp": 0.0,
+        "sample_count_min": 30000,
+        "seed_count": 3,
+        "seed_end": 20240513,
+        "seed_start": 20240511
+      },
+      "paper_explanation": "",
+      "paper_surfaces": [
+        "prime_anchor",
+        "limitations"
+      ],
+      "provenance": {
+        "filters": {
+          "row_type": "seed",
+          "task": "prime_gap"
+        },
+        "required_rows": [
+          {
+            "seed": 20240511
+          },
+          {
+            "seed": 20240512
+          },
+          {
+            "seed": 20240513
+          }
+        ],
+        "schemas": [
+          "crlp.prime_gate_delta.seed_interval.v1"
+        ],
+        "secondary_sources": [],
+        "source": "results/latest/prime_gate_delta_seed_interval.jsonl",
+        "source_command": "make prime-gate-seed-audit",
+        "source_row_count": 4,
+        "source_sha256": "989d5f1ff671ed24f3ad1d9dff1bb1f4324707dadb26345b2a81f5a8bc2a7057"
+      },
+      "required_for_submission": true,
+      "residual": [],
+      "roadmap_items": [
+        "R-E1.3",
+        "R-E1.4"
+      ],
+      "status": "supported",
+      "summary": "3 seeds: learned 68.87% +/- 0.00pp vs hand 45.12% +/- 0.00pp and raw 9.13% +/- 0.00pp; min learned-vs-hand delta +23.74pp, learned top-10 min 100.00%, false rejections max=0.",
+      "title": "Prime learned-gate headline is stable across seeds"
+    },
+    {
+      "chart": {},
       "claim_text": "On prime_gap, the neural rule proposer is useful at fixed verifier budget relative to grammar-order and structural baselines.",
       "claim_type": "proposer_usefulness",
       "decision_rule": {
@@ -1382,7 +1502,7 @@
         "source": "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_deltas.csv",
         "source_command": "python3 scripts/multitask_adapter_heads.py",
         "source_row_count": 5,
-        "source_sha256": "fd3d765f3374dbd6129e12640842d8e2a6b53c681f1d0cce5fb64c7ec146a044"
+        "source_sha256": "a1f2e7b22713fd3ee8c8c90356845b9ff27b25960dea04cebfca8e44e9c0538a"
       },
       "required_for_submission": false,
       "residual": [
@@ -3343,7 +3463,7 @@
     ],
     "schema": "crlp.paper_claim_experiment_map.v1"
   },
-  "generated_at": "2026-05-19T03:17:28.286265+00:00",
+  "generated_at": "2026-05-19T05:46:20.611529+00:00",
   "limitations": [
     {
       "claim_id": "C2.prime_proposer_fixed_budget",
@@ -3454,17 +3574,17 @@
     },
     "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_deltas.csv": {
       "exists": true,
-      "modified_utc": "2026-05-18T09:07:07.079960+00:00",
+      "modified_utc": "2026-05-19T03:18:19.361600+00:00",
       "row_count": 5,
-      "sha256": "fd3d765f3374dbd6129e12640842d8e2a6b53c681f1d0cce5fb64c7ec146a044",
-      "size_bytes": 2498
+      "sha256": "a1f2e7b22713fd3ee8c8c90356845b9ff27b25960dea04cebfca8e44e9c0538a",
+      "size_bytes": 2492
     },
     "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_summary.csv": {
       "exists": true,
-      "modified_utc": "2026-05-18T09:07:07.079806+00:00",
+      "modified_utc": "2026-05-19T03:18:19.361918+00:00",
       "row_count": 15,
-      "sha256": "9ea7d9a6e7bfbb09f2741fe1871f0581f0817961dad788d2853cc6ad2b9884f2",
-      "size_bytes": 2984
+      "sha256": "4aadf7e504d2c0a53afe357a754e94ccfd61be9d3d17a51de9cbc636acf01059",
+      "size_bytes": 2968
     },
     "results/2026-05-17-multitask-roadmap/rmt5_calibration_summary.csv": {
       "exists": true,
@@ -3634,9 +3754,16 @@
       "sha256": "2f8238c6688ff9d9fa186d7169907a46b28f651aa4a73e5fcce8dc6b6af19ff0",
       "size_bytes": 618220
     },
+    "results/latest/prime_gate_delta_seed_interval.jsonl": {
+      "exists": true,
+      "modified_utc": "2026-05-19T05:09:18.608537+00:00",
+      "row_count": 4,
+      "sha256": "989d5f1ff671ed24f3ad1d9dff1bb1f4324707dadb26345b2a81f5a8bc2a7057",
+      "size_bytes": 3863
+    },
     "results/latest/trace_determinism.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-19T03:17:28.215892+00:00",
+      "modified_utc": "2026-05-19T05:46:20.529778+00:00",
       "row_count": 3,
       "sha256": "476f76325fea0cec2327485185b09a8c7bb55e16aefa8aca676fb50121318cd9",
       "size_bytes": 2201
@@ -3646,7 +3773,7 @@
     "contradicted": 2,
     "missing": 0,
     "stale": 0,
-    "supported": 12,
+    "supported": 13,
     "underpowered": 1
   },
   "support": {

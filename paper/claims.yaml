@@ -493,6 +493,59 @@
       ]
     },
     {
+      "id": "C1.prime_gate_delta_ci",
+      "title": "Prime learned-gate headline is stable across seeds",
+      "claim_type": "gate_effect_interval",
+      "claim_text": "On prime_gap, the certified learned rule gate improves top-1 over raw and hand-wheel gates across a multi-seed audit while preserving zero false rejections.",
+      "builtin_evaluator": "prime_gate_delta_ci",
+      "required_for_submission": true,
+      "paper_surfaces": [
+        "prime_anchor",
+        "limitations"
+      ],
+      "roadmap_items": [
+        "R-E1.3",
+        "R-E1.4"
+      ],
+      "evidence": {
+        "source": "results/latest/prime_gate_delta_seed_interval.jsonl",
+        "command": "make prime-gate-seed-audit",
+        "schemas": [
+          "crlp.prime_gate_delta.seed_interval.v1"
+        ],
+        "filters": {
+          "task": "prime_gap",
+          "row_type": "seed"
+        },
+        "required_rows": [
+          {
+            "seed": 20240511
+          },
+          {
+            "seed": 20240512
+          },
+          {
+            "seed": 20240513
+          }
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "seed_count >= 3",
+          "min(hand_top1 - raw_top1) > 0",
+          "min(learned_top1 - hand_top1) > 0",
+          "min(learned_top10) >= 0.999",
+          "max(false_rejections) == 0",
+          "min(sample_count) >= 30000"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Run make prime-gate-seed-audit and copy the generated seed interval artifact into results/latest.",
+        "If the interval contradicts the headline, move the prime-gate headline from the abstract into limitations."
+      ],
+      "limitation_when_not_supported": "The prime learned-gate headline lacks a supported multi-seed interval, so the paper should treat the 9.13% -> 45.12% -> 68.87% progression as a single artifact snapshot."
+    },
+    {
       "id": "C2.prime_proposer_fixed_budget",
       "title": "Prime neural proposer beats fixed-budget symbolic baselines",
       "claim_type": "proposer_usefulness",

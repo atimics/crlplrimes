@@ -332,6 +332,114 @@ def evaluate_prime_gate_delta(claim: dict[str, Any], repo: Path) -> dict[str, An
     return result
 
 
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else float("nan")
+
+
+def _sample_stdev(values: list[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    avg = _mean(values)
+    return math.sqrt(sum((value - avg) ** 2 for value in values) / (len(values) - 1))
+
+
+def evaluate_prime_gate_delta_ci(claim: dict[str, Any], repo: Path) -> dict[str, Any]:
+    result = base_result(claim)
+    source = repo / claim["evidence"]["source"]
+    rows = read_jsonl(source)
+    seed_rows = [
+        row
+        for row in rows
+        if row.get("schema") == "crlp.prime_gate_delta.seed_interval.v1"
+        and row.get("row_type") == "seed"
+        and row.get("task") == "prime_gap"
+    ]
+    result["evidence_rows"] = [
+        metric_row(
+            str(row.get("seed")),
+            row,
+            [
+                "seed",
+                "raw_top1",
+                "hand_top1",
+                "learned_top1",
+                "learned_top10",
+                "learned_vs_hand_delta_pp",
+                "false_rejections",
+                "sample_count",
+            ],
+        )
+        for row in seed_rows
+    ]
+    if not seed_rows:
+        result["status"] = "missing"
+        result["residual"] = claim.get("residual_when_not_supported", [])
+        result["summary"] = "Missing prime-gate seed-interval rows."
+        return result
+
+    def values(key: str) -> list[float]:
+        return [float(row[key]) for row in seed_rows]
+
+    raw = values("raw_top1")
+    hand = values("hand_top1")
+    learned = values("learned_top1")
+    top10 = values("learned_top10")
+    hand_delta = values("hand_vs_raw_delta_pp")
+    learned_delta = values("learned_vs_hand_delta_pp")
+    false_rejections = [as_int(row, "false_rejections", -1) for row in seed_rows]
+    sample_counts = [as_int(row, "sample_count", 0) for row in seed_rows]
+    seed_values = [as_int(row, "seed", 0) for row in seed_rows]
+
+    result["metrics"] = {
+        "seed_count": len(seed_rows),
+        "seed_start": min(seed_values),
+        "seed_end": max(seed_values),
+        "raw_top1_mean": _mean(raw),
+        "raw_top1_std_pp": 100.0 * _sample_stdev(raw),
+        "raw_top1_min": min(raw),
+        "raw_top1_max": max(raw),
+        "hand_top1_mean": _mean(hand),
+        "hand_top1_std_pp": 100.0 * _sample_stdev(hand),
+        "hand_top1_min": min(hand),
+        "hand_top1_max": max(hand),
+        "learned_top1_mean": _mean(learned),
+        "learned_top1_std_pp": 100.0 * _sample_stdev(learned),
+        "learned_top1_min": min(learned),
+        "learned_top1_max": max(learned),
+        "hand_vs_raw_delta_pp_min": min(hand_delta),
+        "learned_vs_hand_delta_pp_mean": _mean(learned_delta),
+        "learned_vs_hand_delta_pp_std": _sample_stdev(learned_delta),
+        "learned_vs_hand_delta_pp_min": min(learned_delta),
+        "learned_vs_hand_delta_pp_max": max(learned_delta),
+        "learned_top10_min": min(top10),
+        "false_rejections_max": max(false_rejections),
+        "sample_count_min": min(sample_counts),
+    }
+
+    if len(seed_rows) < 3 or min(sample_counts) < 30000:
+        result["status"] = "underpowered"
+    elif (
+        min(hand_delta) > 0.0
+        and min(learned_delta) > 0.0
+        and min(top10) >= 0.999
+        and max(false_rejections) == 0
+    ):
+        result["status"] = "supported"
+    else:
+        result["status"] = "contradicted"
+    if result["status"] != "supported":
+        result["residual"] = claim.get("residual_when_not_supported", [])
+    result["summary"] = (
+        f"{len(seed_rows)} seeds: learned {pct(_mean(learned))} +/- "
+        f"{100.0 * _sample_stdev(learned):.2f}pp vs hand {pct(_mean(hand))} +/- "
+        f"{100.0 * _sample_stdev(hand):.2f}pp and raw {pct(_mean(raw))} +/- "
+        f"{100.0 * _sample_stdev(raw):.2f}pp; min learned-vs-hand delta "
+        f"{min(learned_delta):+.2f}pp, learned top-10 min {pct(min(top10))}, "
+        f"false rejections max={max(false_rejections)}."
+    )
+    return result
+
+
 def evaluate_prime_proposer_fixed_budget(claim: dict[str, Any], repo: Path) -> dict[str, Any]:
     result = base_result(claim)
     source = repo / claim["evidence"]["source"]
@@ -1969,6 +2077,7 @@ def evaluate_trace_determinism_audit(claim: dict[str, Any], repo: Path) -> dict[
 
 EVALUATORS = {
     "prime_gate_delta": evaluate_prime_gate_delta,
+    "prime_gate_delta_ci": evaluate_prime_gate_delta_ci,
     "prime_proposer_fixed_budget": evaluate_prime_proposer_fixed_budget,
     "arc_ood_shared_vs_single": evaluate_arc_ood_shared_vs_single,
     "arc_gate_invariance": evaluate_arc_gate_invariance,

@@ -69,6 +69,8 @@ PRIME_GAP_EXPERIMENT_EPOCHS ?= 1,2,4,8
 PRIME_GAP_EXPERIMENT_GRID ?= 0.00:0.00,0.40:0.04,0.80:0.08,1.20:0.12
 PRIME_GAP_EXPERIMENT_MAX_TRAIN ?= 15000
 PRIME_GAP_EXPERIMENT_MAX_TEST ?= 15000
+PRIME_GATE_SEED_AUDIT_DIR ?= $(BUILD_DIR)/prime_gate_seed_audit
+PRIME_GATE_SEED_AUDIT_SEEDS ?= 20240511:20240513
 RESULTS_DIR ?= results/latest
 SUBSTRATE_EXTENSION_RESULTS_DIR ?= results/2026-05-17-substrate-extensions
 MULTITASK_ROADMAP_RESULTS_DIR ?= results/2026-05-17-multitask-roadmap
@@ -254,7 +256,7 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-public paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit experiment-matrix results paper-pdf paper-data paper-claims paper-support editorial-pr-check paper-ci neurosymbolic-tune benchmark test sanitize check clean
+.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-public paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit experiment-matrix results paper-pdf paper-data paper-claims paper-support editorial-pr-check paper-ci neurosymbolic-tune benchmark test sanitize check clean
 
 all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(BENCHMARK)
 
@@ -532,6 +534,15 @@ prime-gap-experiments: $(PRIME_GAP_EXAMPLE)
 		--max-train-states $(PRIME_GAP_EXPERIMENT_MAX_TRAIN) \
 		--max-test-states $(PRIME_GAP_EXPERIMENT_MAX_TEST)
 
+prime-gate-seed-audit: $(PRIME_GAP_EXAMPLE) $(PRIME_RULE_SEARCH) $(PRIME_REPLAY) $(PRIME_COMPARE)
+	$(PYTHON) scripts/prime_gate_seed_audit.py \
+		--prime-gap ./$(PRIME_GAP_EXAMPLE) \
+		--prime-rule-search ./$(PRIME_RULE_SEARCH) \
+		--prime-replay ./$(PRIME_REPLAY) \
+		--prime-compare ./$(PRIME_COMPARE) \
+		--output-dir $(PRIME_GATE_SEED_AUDIT_DIR) \
+		--seeds $(PRIME_GATE_SEED_AUDIT_SEEDS)
+
 trace-determinism-audit: prime-gap-trace
 	$(PYTHON) scripts/trace_determinism_audit.py \
 		--input $(BUILD_DIR)/traces/prime_gap.jsonl \
@@ -764,6 +775,8 @@ results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PR
 	$(PYTHON) scripts/capture_results.py --output-dir $(RESULTS_DIR) --real $(REAL) --arc-agi-task-dir "$(ARC_AGI_TASK_DIR)" --arc-agi-max-tasks $(ARC_AGI_MAX_TASKS)
 	$(PYTHON) scripts/canonicalize_results.py --input $(RESULTS_DIR)/comparison.jsonl --output $(RESULTS_DIR)/comparison.canonical.jsonl
 	$(MAKE) trace-determinism-compare RESULTS_DIR=$(RESULTS_DIR)
+	$(MAKE) prime-gate-seed-audit
+	cp $(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl $(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl
 
 paper-pdf: experiment-matrix paper/paper.typ
 	cd paper && typst compile paper.typ paper.pdf

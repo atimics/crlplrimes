@@ -1,11 +1,10 @@
 #import "@preview/cetz:0.3.4"
-#import "@preview/cetz-plot:0.1.1": plot, chart
-#import "data.typ": learning_curves, gate_ablation, arc_epoch_eval, prime_gap_epoch_loss, multitask_shared_vs_single, multitask_rmt1, multitask_rmt2_aggregate, multitask_rmt6_capacity
-#import "generated/claims.typ": paper_claim_limitations, paper_claim_support_ok, paper_claim_support_surfaces, paper_claim_status_counts, claim_C1_prime_gate_delta_summary, claim_C1_prime_gate_delta_raw_top1, claim_C1_prime_gate_delta_hand_top1, claim_C1_prime_gate_delta_learned_top1, claim_C1_prime_gate_delta_learned_top10, claim_C1_prime_gate_delta_learned_vs_hand_delta_pp, claim_C1_prime_gate_delta_false_rejections, claim_C1_prime_gate_delta_sample_count, claim_C2_prime_proposer_fixed_budget_summary, claim_C1_arc_public_evidence_surface_chart_rows, claim_C1_arc_public_evidence_surface_summary, claim_C3_arc_ood_calibration_tradeoff_chart_rows, claim_C3_arc_ood_calibration_tradeoff_summary, claim_C4_delayed_claim_sibling_transfer_chart_rows, claim_C4_delayed_claim_sibling_transfer_summary, claim_C4_multitask_capacity_tradeoff_chart_rows, claim_C4_multitask_capacity_tradeoff_summary, claim_C4_adapter_heads_shared_trunk_summary, claim_C5_rejected_candidate_reason_learning_chart_rows, claim_C5_rejected_candidate_reason_learning_summary, claim_C5_hypothesis_library_promotion_chart_rows, claim_C5_hypothesis_library_promotion_summary, claim_C7_tiny_net_plateau_stop_rule_summary, claim_C8_trace_determinism_audit_summary, claim_C9_signal_flight_replay_control_chart_rows, claim_C9_signal_flight_replay_control_summary, claim_C9_signal_live_neural_active_chart_rows, claim_C9_signal_live_neural_active_summary
+#import "@preview/cetz-plot:0.1.1": plot
+#import "generated/claims.typ": paper_claim_limitations, paper_claim_support_ok, paper_claim_support_surfaces, paper_claim_status_counts, claim_C1_prime_gate_delta_summary, claim_C1_prime_gate_delta_ci_summary, claim_C1_prime_gate_delta_raw_top1, claim_C1_prime_gate_delta_hand_top1, claim_C1_prime_gate_delta_learned_top1, claim_C1_prime_gate_delta_learned_top10, claim_C1_prime_gate_delta_learned_vs_hand_delta_pp, claim_C1_prime_gate_delta_false_rejections, claim_C1_prime_gate_delta_sample_count, claim_C2_prime_proposer_fixed_budget_summary, claim_C1_arc_public_evidence_surface_chart_rows, claim_C1_arc_public_evidence_surface_summary, claim_C3_arc_ood_calibration_tradeoff_chart_rows, claim_C3_arc_ood_calibration_tradeoff_summary, claim_C4_delayed_claim_sibling_transfer_summary, claim_C4_multitask_capacity_tradeoff_chart_rows, claim_C4_multitask_capacity_tradeoff_summary, claim_C4_adapter_heads_shared_trunk_summary, claim_C5_rejected_candidate_reason_learning_chart_rows, claim_C5_rejected_candidate_reason_learning_summary, claim_C5_hypothesis_library_promotion_chart_rows, claim_C5_hypothesis_library_promotion_summary, claim_C7_tiny_net_plateau_stop_rule_summary, claim_C8_trace_determinism_audit_summary, claim_C9_signal_flight_replay_control_chart_rows, claim_C9_signal_flight_replay_control_summary, claim_C9_signal_live_neural_active_chart_rows, claim_C9_signal_live_neural_active_summary
 #import "generated/experiment_matrix.typ": experiment_matrix_rows
 
 #set document(
-  title: "Certificate-Gated Neural Proposers for Verifier-Grounded Action Scoring",
+  title: "Executable Accountability for Verifier-Grounded Residual Ranking",
   author: "Anonymous authors",
 )
 
@@ -23,7 +22,7 @@
 #show raw: set text(font: "DejaVu Sans Mono", size: 9pt)
 
 #let pp(v) = {
-  let sign = if v >= 0 { "+" } else { "−" }
+  let sign = if v >= 0 { "+" } else { "-" }
   let mag = calc.round(calc.abs(v) * 100) / 100
   [#sign#mag pp]
 }
@@ -60,7 +59,7 @@
   )
 })
 
-#let claim_coverage_chart(rows, y-max: 240, y-label: [Coverage]) = cetz.canvas({
+#let claim_coverage_chart(rows, y-max: 260, y-label: [Coverage]) = cetz.canvas({
   import cetz.draw: *
   plot.plot(
     size: (10, 4.2),
@@ -87,8 +86,13 @@
 
 #align(center)[
   #text(size: 17pt, weight: "bold")[
-    Certificate-Gated Neural Proposers for \
-    Verifier-Grounded Action Scoring
+    Executable Accountability for \
+    Verifier-Grounded Residual Ranking
+  ]
+
+  #v(4pt)
+  #text(size: 11pt)[
+    Certificate-gated neural proposers under claim governance
   ]
 
   #v(8pt)
@@ -104,20 +108,18 @@
     #set par(justify: true)
     #set text(size: 10pt)
     *Abstract.*
-    This paper studies a verifier-feedback and claim-governance protocol for settings with
-    exact or replayable checks. Symbolic and replay-certified mechanisms define which
-    candidates are admissible; small learned components rank, calibrate, reuse, or learn
-    around the residual. The contribution is not that tiny networks solve hard tasks. It is
-    a traceable loop in which verifier outcomes become later proposal structure, and an
-    executable paper-construction discipline in which empirical claims are generated and
-    checked from repository artifacts before compilation. The strongest gate anchor is
-    `prime_gap`: #claim_C1_prime_gate_delta_summary The C5 feedback rows show two
-    substrate-level loops: rejected verifier rows repair unsafe fixed-budget proposer
-    rankings, and certified library priors improve tight-budget proposal coverage under a
-    held-out split. ARC is an evidence surface for priors and failure taxonomy; Signal is
-    application pressure under replay, shadow logging, and a guarded live-active pilot. The
-    paper explicitly does not claim broad ARC competence, CDCL-equivalent learned clauses,
-    comparative live neural-control improvement, or general end-to-end task solving.
+    This paper studies executable accountability for verifier-grounded residual ranking.
+    Exact or replayable checks own admissibility and consequences; small learned models rank,
+    calibrate, reuse, or learn around the residual. The contribution is not that tiny
+    networks solve hard tasks, but that verifier and replay artifacts become proposal
+    structure while the manuscript is constrained by generated evidence. The clean
+    anchor is `prime_gap`, where the generated claim row reports
+    #claim_C1_prime_gate_delta_summary The main feedback results are
+    rejected-candidate reason learning and certified hypothesis-library promotion. Boundary
+    rows for ARC, Signal, tiny-net capacity, and language-adjacent haiku probes test scope
+    without expanding the central claim. The paper explicitly does not claim broad ARC
+    competence, CDCL-equivalent learned clauses, comparative live neural-control
+    improvement, semantic language understanding, or general end-to-end task solving.
   ]
 ]
 
@@ -125,1518 +127,394 @@
 
 = Introduction
 
-Exact verifiers are common in domains where action correctness can be checked algorithmically
-even when discovery cannot: theorem proving, program synthesis, combinatorial search, formal
-shortest-path problems, and replay-grounded control. A recurring failure mode in empirical ML
-papers is that learned components, verifier traces, provenance, and prose drift apart: a model
-improves one measured surface, a table survives in the paper after the artifact changes, and a
-claim quietly grows beyond the evidence that generated it. This paper treats that as part of the
-technical problem.
+Machine-learning systems increasingly operate in settings where bad actions can be checked
+after the fact, but correctness should not be delegated to end-to-end model authority.
+Verifier-grounded systems should separate authority from ranking. Exact checkers,
+deterministic replay, and certificate tests should decide which candidates are admissible or
+what consequences a candidate produced. Learned components should spend their limited
+capacity on the residual: search order, calibration, reuse, and prioritization. The same
+discipline should govern the paper. Empirical prose should be downstream of trace rows,
+environment identity, checkpoint hashes, result summaries, and generated limitation
+candidates rather than manually maintained claims.
 
-Our thesis has two parts. First, in verifier-equipped domains, learned components should rank
-or propose within a verifier-bounded residual rather than own admissibility. A symbolic or
-replay-certified mechanism eliminates impossible candidates, and the model spends capacity on
-search order, calibration, reuse, and prioritization. Second, the paper's empirical prose should
-be downstream of the same artifact discipline: generated claim rows, environment identity,
-trace hashes, checkpoint hashes, and limitation candidates decide what the manuscript may say.
+This paper is therefore a protocol paper, not an experiment catalog. The one-sentence thesis
+is:
 
-The paper's experiment-family set is now frozen. New domains and new benchmark families are
-roadmap items, not body evidence, until the matrix in @tab:frozen-evidence is deliberately
-revised. The frozen families are: certified modular gates, rejected-candidate learning,
-certified hypothesis-library feedback, tiny-net capacity auditing, ARC evidence surfaces, and
-Signal replay pressure. Grid-path and delayed-claim remain supporting stress surfaces because
-they test whether the same candidate/verifier/scorer/trace contract survives outside the
-prime-gap anchor.
+#quote[
+  Verifier-grounded systems should let exact or replayable checks own admissibility, use
+  small learned models only to rank the residual, and bind empirical claims to executable
+  artifact evidence.
+]
 
-The two main empirical contributions are:
+The operational summary is simple: the model proposes, the verifier decides, and the trace
+remembers enough to train the next proposal pass and govern the next manuscript claim.
 
-#set enum(numbering: "(M1)", spacing: 6pt)
-+ *Rejected-candidate learning.* Failed verifier proposals are not discarded. They are logged
-  with reason codes, false-rejection counters, split keys, seed intervals, and marginal
-  verifier utility, then reused as targets for a safety-first residual ranker. This repairs
-  the fixed-budget modular proposer failure without giving the neural model authority over
-  correctness.
-+ *Held-out certified-library feedback.* Repeated zero-false-rejection hypotheses are promoted
-  into a library, converted into slot priors, and evaluated on held-out tasks under the same
-  verifier budget. This is the cumulative-learning direction: certified patterns become
-  reusable proposal structure rather than one-off fixture wins.
+Two empirical loops carry the result. First, rejected verifier rows are logged with reason
+codes and reused as supervision for a later safety-first residual ranker. Second, repeatedly
+certified hypotheses are promoted into a library and reused as proposal priors under held-out
+budgets. The prime-gap gate result supplies the clean anchor; the fixed-budget proposer
+failure supplies the falsifying negative row that motivates the feedback loop.
 
-#set enum(numbering: "1.", spacing: auto)
+The remaining domains are boundary evidence. ARC tests grammar provenance and failure
+taxonomy, not benchmark competence. Signal tests replay and guarded live execution pressure,
+not comparative live-control performance. Tiny-net and adapter rows bound architecture
+claims. Haiku is language-adjacent corpus-proxy grounding, not semantic understanding. New
+domains stay outside the paper body until promoted through the evidence matrix.
 
-The older axis-style claims remain in the paper as support and boundary evidence. Certified
-gates reduce the residual action space; the fixed-budget neural proposer result is negative
-and becomes a limitation; verifier-RL calibration is a prime-gap-only support row; tiny-net
-capacity results constrain architecture claims. Those axes are not new experiment families.
-They are checks on the same loop.
+The environment names are deliberately small. `prime_gap` tests exact arithmetic
+verification; `grid_path` tests topological path constraints; delayed-claim tests hidden
+outcome and safety-margin gates; ARC tests visual-spatial abstraction provenance; Signal
+tests bounded WASD control under replay and live telemetry; haiku tests corpus-derived proxy
+grounding.
 
-At the current evidence snapshot, the claim compiler reports
-#paper_claim_status_counts.supported supported claims, #paper_claim_status_counts.contradicted
-contradicted claims, #paper_claim_status_counts.underpowered underpowered claim, and zero
-missing or stale claims. The contradicted and underpowered rows are not editorial caveats;
-they are part of the result. The fixed-budget proposer claim is contradicted
-(#claim_C2_prime_proposer_fixed_budget_summary), and the tiny-net architecture claim remains
-underpowered (#claim_C7_tiny_net_plateau_stop_rule_summary). This is the standard applied to
-the body: supported claims may be interpreted; contradicted and underpowered claims must stay
-limitations or roadmap items.
+At this artifact snapshot, the generated claim compiler reports
+#paper_claim_status_counts.supported supported claims,
+#paper_claim_status_counts.contradicted contradicted claims,
+#paper_claim_status_counts.underpowered underpowered claim,
+#paper_claim_status_counts.missing missing claims, and
+#paper_claim_status_counts.stale stale claims. Contradicted and underpowered rows remain
+visible because falsifiability is part of the protocol. The fixed-budget proposer row is
+contradicted (#claim_C2_prime_proposer_fixed_budget_summary), and the tiny-net plateau row is
+underpowered (#claim_C7_tiny_net_plateau_stop_rule_summary).
 
-Operationally, the certificate-gating loop yields an artifact-feedback mechanism that recycles
-verifier outputs into future gates, priors, and ranking targets (@tab:artifact-feedback), and a
-generalized task contract that keeps the same candidate/verifier/scorer/trace interface across
-domains from arithmetic to replay-grounded control (@tab:schema).
+= Positioning
 
-= Ancestry and Positioning
+The formal-methods ancestry is counterexample-guided search. Sketching combines inductive
+synthesis with validation-generated counterexamples @solarlezama2008sketching, and SyGuS
+names the grammar-plus-specification setting @alur2013sygus. CEGAR and CDCL add the adjacent
+lesson that failed traces can refine later search rather than disappear as waste
+@clarke2000cegar @marquessilva1999grasp @bayardo1997csp. This paper inherits that shape but
+uses failures as supervised ranking data, not as sound learned clauses.
 
-== Formal-methods ancestors of the loop
+Modern verifier-bounded learning asks models to solve or help verify reasoning traces
+@cobbe2021training @lightman2023verify @uesato2022solving @hosseini2024vstar
+@deepseek2025r1. AlphaGeometry-style systems combine learned proposal with formal checking
+@trinh2024alphageometry @chervonyi2025alphageometry2, and theorem-proving work similarly
+uses neural proposal around formal environments @polu2020generative. The artifact here is
+smaller and narrower: the learned model never owns correctness.
 
-The direct ancestry is counterexample-guided synthesis, not modern verifier RL. Sketching
-combines an inductive synthesizer with validation that generates counterexamples against
-the current candidate @solarlezama2008sketching, and Syntax-Guided Synthesis names the
-grammar-plus-specification setting in which search is restricted to a declared candidate
-language @alur2013sygus. This paper inherits that shape but moves the unit of
-learning: rather than synthesizing one program against a single specification, it logs many
-verifier outcomes across heterogeneous task grammars and trains small scorers on the
-residual candidate rows that survive or fail those gates.
-
-Rejected-candidate learning also has a direct SAT/CSP analogy. Conflict-driven SAT procedures
-turn failed partial assignments into learned constraints, with GRASP and CSP look-back
-learning as canonical origins @marquessilva1999grasp @bayardo1997csp. CEGAR similarly
-uses counterexamples to refine an abstraction rather than treating failed traces as
-disposable search debris @clarke2000cegar. The C5 rows are deliberately weaker than those
-systems' sound learned clauses or abstractions: reason codes and false-rejection counters
-become training signal for a residual ranker, while deterministic certificate checks still
-own admissibility. That distinction is load-bearing. The neural component learns where
-verifier effort is useful; it does not learn a replacement proof rule.
-
-== Modern verifier-bounded learning
-
-DeepSeek-R1 is the closest contemporary confirmation of the verifier-first premise at
-frontier scale: DeepSeek-AI report reinforcement learning from verifiable rewards (RLVR),
-where math, code, and format checks provide correctness signals without a learned reward
-model @deepseek2025r1. That supports the architectural direction of this paper, but it is
-not the same artifact. DeepSeek-R1 couples verifiable rewards to massive language-model
-sampling and opaque training infrastructure; this work keeps the verifier line auditable by
-putting candidate enumeration, certificate checks, accepted rules, rejected proposals, and
-scorer metrics into schema-attested C11 traces. The contrast with the standard learned-reward
-line @christiano2017deep @stiennon2020learning @ouyang2022training is therefore not "RL is
-unnecessary"; it is narrower: when an exact verifier exists, learned components should rank
-or propose within a verifier-bounded search, not replace the correctness oracle.
-
-The learned-verifier line starts from a different point. GSM8K-style verifier-guided
-decoding trains a model to rank sampled solutions after generation @cobbe2021training;
-process-supervision work trains reward models on intermediate reasoning steps rather than
-only final outcomes @lightman2023verify @uesato2022solving; V-STaR adds a self-training
-loop in which both correct and incorrect sampled solutions improve the verifier
-@hosseini2024vstar. Those systems are natural relatives because they all use a learned
-component to reduce search over candidate reasoning traces. The boundary in this paper is
-that the verifier is not learned: verifier outputs may provide labels, rewards,
-certificates, and diagnostics, but accepted gates require deterministic certificates and
-scorer inputs are checked against a typed leakage policy. In short, learned verifiers ask
-"which sampled answer should we trust?"; this work asks "which candidates remain after a
-sound filter, and how should we rank that residual?"
-
-The regularization later used for exact verifier rewards is borrowed, not claimed as novel.
-RLHF systems made KL-to-prior and entropy-style stabilization standard for preference
-rewards @stiennon2020learning @ouyang2022training, with PPO and trust-region policy
-optimization as the broader policy-gradient background @schulman2017proximal
-@schulman2015trust. Our contribution is to show the same stabilization pattern under exact
-verifier rewards: strict policy-gradient updates inflate confidence on the prime-gap modular
-gate instance, while the KL/entropy branch preserves ranking and improves calibration.
-Calibration itself is reported in the standard ECE/temperature-scaling frame of
-@guo2017calibration.
-
-== Neuro-symbolic search with formal checkers
-
-AlphaGeometry is the closest structural ancestor of this work. It interleaves a neural
-language model that proposes auxiliary geometric constructions with a symbolic deduction
-engine that verifies whether the construction completes the proof @trinh2024alphageometry;
-AlphaGeometry2 extends that line to stronger olympiad-geometry performance
-@chervonyi2025alphageometry2. GPT-f is the earlier theorem-proving version of the same
-pattern: a language model proposes proof steps and a formal system checks them
-@polu2020generative. Our architecture is deliberately smaller and more explicit. The
-grammar is task-local, the proposer sees structural rule descriptors rather than a full
-natural-language proof context, and every accepted rule is emitted into a trace with
-support, marginal utility, certificate status, and false-rejection counts. The comparison is
-therefore not scale; it is audit posture. Their systems show that neural proposal plus
-formal checking is powerful at large scale; this paper asks how much of that pattern can be
-made schema-attested, reproducible, and heterogeneous across small verifier-equipped tasks.
-
-== Program synthesis and library reuse
-
-DreamCoder and Hypothesis Search are the closest relatives of the hypothesis layer rather
-than the modular rule gate. DreamCoder learns reusable DSL abstractions through
-wake-sleep Bayesian program learning @ellis2021dreamcoder; Hypothesis Search samples
-natural-language hypotheses, compiles them into executable programs, and keeps the
-train-consistent ones @wang2024hypothesis. `NNHypothesis` sits between those two poles:
-templates and slot types are deterministic, but bindings are induced from task evidence and
-compiled into canonical `NNProgram` rows that the same certificate/proposer machinery can
-score. This is why the ARC and `program_synthesis` evidence rows matter: they show the
-substrate's "hypothesis -> program -> certificate -> proposer summary" path outside the
-current modular arithmetic grammar.
-
-The library-feedback claim is narrower than open-ended program induction. A binding enters
-the library only after a verifier accepts it with zero false rejections, and the promoted
-binding is evaluated as a prior under a held-out budget. This makes the connection to
-program-synthesis systems explicit without turning the paper into a new DSL benchmark.
-
-== ARC abstraction benchmarks
-
-ARC is used here as one hard abstraction substrate in the evidence portfolio. Chollet's ARC
-framing emphasizes skill-acquisition efficiency and the need to account for priors
-@chollet2019measure. The 2024 ARC Prize report and recent test-time-training work show the
-current leaderboard direction: large-model or program-synthesis systems with per-instance
-adaptation achieve far higher ARC scores than this artifact @chollet2024arcprize
-@akyurek2024surprising. Our public ARC result should therefore be read narrowly:
-#claim_C1_arc_public_evidence_surface_summary The fixed `0520fde7` transform gate gives a
-clean scorer-vs-certificate contrast on one task. The research claim is not ARC
-performance; it is that current measured `v15` public-corpus rows, feature provenance,
-certificate-gated transforms, matched proposer budgets, and replayable evidence rows make
-the priors and failure modes visible.
-
-== Executable accountability and reproducibility
-
-A second lineage is the ML-accountability documentation program. Model Cards and Datasheets
-argue that trained models and datasets should carry structured context about intended use,
-evaluation, provenance, and limitations @mitchell2019modelcards @gebru2021datasheets. The
-claim compiler is an executable variant of that idea: `crlp.compare.v1`,
-`crlp.environment.v1`, checkpoint hashes, parent hashes, trace schemas, and generated claim
-blocks are not prose checklists but repository artifacts that decide what the paper may
-say. The mechanism is also a response to the reproducibility-checklist line represented by
-the NeurIPS reproducibility program @pineau2021reproducibility. Instead of asking authors to
-remember whether seeds, environments, claims, and limitations were disclosed, CI regenerates
-claim rows, rejects stale generated blocks, and compiles only after the artifact support
-gate passes.
-
-This accountability layer matters most for control claims. Deep reinforcement-learning
-results are notoriously sensitive to seeds, environment nondeterminism, baseline choice, and
-reporting discipline @henderson2018deep. That is why the Signal section now separates live
-neural-active execution from comparative active-control improvement, and why the limitations
-keep single-runner and multi-seed gaps visible. The paper's claim is not that attestation
-solves reproducibility. It is narrower: for this artifact, empirical prose is downstream of
-replayable rows and explicit support gates rather than hand-maintained narrative state.
+The accountability lineage is equally important. Model Cards, Datasheets, reproducibility
+checklists, and reinforcement-learning reproducibility critiques made documentation and
+artifact discipline central research objects @mitchell2019modelcards @gebru2021datasheets
+@pineau2021reproducibility @henderson2018deep. The claim compiler is an executable version
+of that idea: claims, numbers, limitations, and support status are generated from repository
+artifacts before the paper compiles.
 
 = Protocol
 
-== Verifier-Feedback Protocol
-
-The reusable architecture is:
-
-#figure(
-  cetz.canvas(length: 1cm, {
-    import cetz.draw: *
-    let col_w = 2.5
-    let gap = 0.55
-    let step = col_w + gap
-    let xs = (0, step, 2 * step, 3 * step)
-    let y_top = 1.6
-    let y_bot = -1.6
-    let box(x, y, w, h, label, ..opts) = {
-      rect((x - w/2, y - h/2), (x + w/2, y + h/2), ..opts)
-      content((x, y), text(size: 8.5pt, label))
-    }
-    let h = 1.1
-    box(xs.at(0), y_top, col_w, h, [state], stroke: 0.7pt)
-    box(xs.at(1), y_top, col_w, h, align(center)[rule\ proposer], fill: rgb("#e8f0ff"), stroke: 0.7pt)
-    box(xs.at(2), y_top, col_w, h, align(center)[certificate\ verifier], fill: rgb("#dfe9d6"), stroke: 0.7pt)
-    box(xs.at(3), y_top, col_w, h, align(center)[accepted\ rules], stroke: 0.7pt)
-
-    box(xs.at(0), y_bot, col_w, h, [state], stroke: 0.7pt)
-    box(xs.at(1), y_bot, col_w, h, align(center)[enumerate\ candidates], stroke: 0.7pt)
-    box(xs.at(2), y_bot, col_w, h, align(center)[gated\ candidates], stroke: 0.7pt)
-    box(xs.at(3), y_bot, col_w, h, align(center)[learned\ scorer], fill: rgb("#e8f0ff"), stroke: 0.7pt)
-    let x_softmax = 4 * step
-    box(x_softmax, y_bot, col_w, h, align(center)[softmax\ + rank], stroke: 0.7pt)
-
-    let half = col_w / 2
-    let pad = 0.18
-    for i in range(3) {
-      line((xs.at(i) + half + pad, y_top), (xs.at(i + 1) - half - pad, y_top), mark: (end: ">"))
-      line((xs.at(i) + half + pad, y_bot), (xs.at(i + 1) - half - pad, y_bot), mark: (end: ">"))
-    }
-    line((xs.at(3) + half + pad, y_bot), (x_softmax - half - pad, y_bot), mark: (end: ">"))
-
-    line((xs.at(3), y_top - 0.45), (xs.at(2), y_bot + 0.45),
-      stroke: (paint: rgb("#7a5b00"), thickness: 0.8pt, dash: "dashed"),
-      mark: (end: ">"))
-    content((xs.at(3) + 0.7, 0),
-      anchor: "west",
-      text(size: 7.5pt, fill: rgb("#7a5b00"), [rules gate the\ candidate set]))
-
-    line((x_softmax, y_bot - 0.45), (x_softmax, y_bot - 1.05), mark: (end: ">"))
-    content((x_softmax / 2, y_bot - 1.45),
-      text(size: 8.5pt, [exact verifier $arrow.r$ correct action / cost / JSONL trace]))
-  }),
-  caption: [The certificate-gating loop. A rule proposer (top) produces candidate rules
-    that a soundness-certificate verifier accepts or rejects. Accepted rules deterministically
-    prune the candidate set; a shared neural scorer ranks the survivors; the exact verifier
-    supplies the correctness signal.],
-) <fig:loop>
-
-The design invariant is *the model proposes, the verifier decides, the trace remembers.* A rule
-$r$ is accepted only if a deterministic algebraic check certifies that $r$ cannot reject the
-true action on any state in the support set, so soundness does not depend on the proposer being
-well-trained.
-
-The invariant has six operational parts: a domain-local candidate grammar, a deterministic or
-replayable verifier, a certificate or replay record that owns admissibility, a learned residual
-scorer that only ranks permitted candidates, a trace schema that records accepted and rejected
-outcomes, and a claim compiler that checks whether the paper's prose is still supported by
-those artifacts. The experiments below vary the domain and verifier, but they do not vary that
-contract.
-
-#figure(
-  text(size: 8.2pt)[
-    #table(
-      columns: (1.05fr, 1.15fr, 1.15fr, 1.25fr),
-      align: left,
-      table.header[*Verifier Output*][*Trace Artifact*][*Reusable Form*][*Next Ranking Use*],
-      [accepted rule],
-        [rule trace with support, certificate status, and false rejections],
-        [gate program],
-        [prune impossible candidates before scoring],
-      [rejected candidate],
-        [reason-coded verifier rejection row],
-        [unsafe / no-support / duplicate prior],
-        [avoid low-utility proposals at fixed budget],
-      [certified hypothesis],
-        [typed program evidence row],
-        [library prior over template slots],
-        [promote reusable transforms under a verifier budget],
-      [replay outcome],
-        [counterfactual utility, damage, and death row],
-        [bounded action utility target],
-        [rank control candidates without owning safety],
-    )
-  ],
-  caption: [Artifact feedback loop. The paper's central mechanism is not raw neural
-    accuracy. The environment produces certified or replayed artifacts; those artifacts
-    become gates, priors, and ranking targets for the next proposal pass.],
-) <tab:artifact-feedback>
-
-== Generalized Task Schema
-
-Every verifier-backed experiment in the artifact emits the same schema row:
+Every promoted row has the same contract:
 
 ```text
 Task T = {
   state distribution S_T,
   candidate enumerator A_T(s),
   observable features x_T(s, a),
-  neural residual scorer f_theta(x_T),
-  exact verifier V_T(s, a),
-  symbolic grammar G_T,
-  certificate checker C_T(rule),
-  rule proposer q_phi(rule | structural(rule)),
-  gate executor R_T(rule, s, a),
-  trace/replay/RL protocol
+  residual scorer f_theta(x_T),
+  grounding operator O_T(s, a),
+  grounding authority level,
+  grammar G_T,
+  certificate or replay checker C_T,
+  trace / replay / claim protocol
 }
 ```
 
+The invariant is:
+
+```text
+The model proposes. The grounding operator decides. The trace remembers.
+```
+
 #figure(
-  text(size: 6.8pt)[
-    #table(
-      columns: (0.9fr, 2.45fr, 2.25fr, 1.95fr),
-      align: left,
-      inset: 4pt,
-      table.header[*Task*][*Verifier Contract*][*Learned Role and Trace*][*Protocol Point*],
-      [prime gap],
-        [
-          #strong[Candidates:] candidate gaps plus modular rule candidates
-          #linebreak()
-          #strong[Checker/gate:] segmented-sieve next-prime verifier; divisibility certificate;
-          zero false rejection
-        ],
-        [
-          #strong[Ranker:] rank residual gaps and budgeted rules
-          #linebreak()
-          #strong[Trace:] compare summary; modular rule trace
-        ],
-        [certified modular gate search anchor],
-      [grid path],
-        [
-          #strong[Candidates:] four moves plus legality/distance rules
-          #linebreak()
-          #strong[Checker/gate:] BFS shortest-path successor; move rule cannot reject
-          optimal successor
-        ],
-        [
-          #strong[Ranker:] rank legal residual moves
-          #linebreak()
-          #strong[Trace:] compare summary
-        ],
-        [same gate contract outside prime residues],
-      [delayed claim],
-        [
-          #strong[Candidates:] trust / ignore / request / cautious
-          #linebreak()
-          #strong[Checker/gate:] deterministic hidden-outcome simulator; finite-generator
-          safety check
-        ],
-        [
-          #strong[Ranker:] rank actions under delayed labels
-          #linebreak()
-          #strong[Trace:] action trace; replay rows
-        ],
-        [trace replay plus production threshold+margin gate],
-      [ARC-AGI],
-        [
-          #strong[Candidates:] cell colors plus transform/program candidates
-          #linebreak()
-          #strong[Checker/gate:] train-pair consistency; unique compiled prediction
-        ],
-        [
-          #strong[Ranker:] rank cells, programs, and hypothesis-derived transforms
-          #linebreak()
-          #strong[Trace:] ARC transform summary; hypothesis evidence
-        ],
-        [abstraction task exposes priors and grammar coverage],
-      [program synthesis],
-        [
-          #strong[Candidates:] list/int DSL abstractions
-          #linebreak()
-          #strong[Checker/gate:] run candidate abstraction on examples; monomorphic DSL
-          type check
-        ],
-        [
-          #strong[Ranker:] rank reusable typed programs
-          #linebreak()
-          #strong[Trace:] hypothesis evidence
-        ],
-        [same hypothesis -> program -> certificate path beyond ARC],
-      [signal flight],
-        [
-          #strong[Candidates:] nine WASD control candidates
-          #linebreak()
-          #strong[Checker/gate:] Signal simulator replay plus live active telemetry;
-          safety-gate log
-        ],
-        [
-          #strong[Ranker:] rank bounded real-time control actions
-          #linebreak()
-          #strong[Trace:] counterfactual replay; flight summary; live-active summary
-        ],
-        [application vignette for replay-grounded control],
-    )
-  ],
-  caption: [The task instantiations share the same verifier-gated
-    action-scoring contract. Each row repeats the same question: what is the
-    candidate set, which checker owns correctness, what becomes a certificate,
-    what the learned model is allowed to rank, which trace records the decision,
-    and what the task proves about the protocol.],
-) <tab:schema>
+  table(
+    columns: (1.0fr, 2.1fr, 2.2fr),
+    align: left,
+    inset: 4pt,
+    table.header[*Stage*][*Concrete prime-gap object*][*Artifact that survives*],
+    [Candidate],
+      [The proposer emits a modular gate candidate such as "reject candidate `n` when
+        `n > 3` and `n % 3 == 0`" for next-prime search states.],
+      [Grammar id, candidate id, split, seed, and support window.],
+    [Gate check],
+      [The segmented-sieve verifier checks whether the rule removes any true next-prime
+        outcome under the declared support.],
+      [A false-rejection certificate; accepted only when false rejections are zero.],
+    [Residual rank],
+      [Certified composite candidates are removed, and the scorer ranks the remaining
+        action ids by residual score.],
+      [Top-k metrics, stable action ids, ranking policy, and score margins.],
+    [Trace emit],
+      [The run writes comparison, rule-search, and certificate-trace rows.],
+      [`crlp.compare.v1`, `crlp.rule_search.summary.v1`, environment and model hashes.],
+    [Claim consume],
+      [The claim compiler derives the paper macro from the artifact summary.],
+      [`claim_C1_prime_gate_delta_summary` and generated support/limitation status.],
+  ),
+  caption: [Concrete prime-gap trace. The paper number is downstream of candidate
+    generation, verifier certification, residual ranking, trace emission, and generated
+    claim consumption.],
+) <tab:prime-trace-walkthrough>
 
-The leakage rule is shared: verifier outputs may be labels, rewards, certificates, diagnostics,
-or executed gates, but they are not default scorer inputs. Proposer inputs are structural rule
-descriptors; support-derived marginal utility labels and false-rejection diagnostics are targets,
-not features. In the
-artifact this is a typed contract, not just prose: every scorer feature declares provenance
-(`state_observation`, `structural_prior`, `verifier_derived`, or `derived_from_gate`), every
-task declares a leakage policy (`forbidden`, `priors_allowed`, or `legacy`), and schema emission
-fails if enabled scorer features violate that policy.
+An exact verifier is the strongest grounding operator, but the protocol also admits
+deterministic replay and explicitly weaker corpus proxies. Authority level determines claim
+scope.
 
-== Trace and Checkpoint Contract
+#figure(
+  table(
+    columns: (1.15fr, 1.55fr, 2.05fr, 2.1fr),
+    align: left,
+    inset: 4pt,
+    table.header[*Authority*][*Operator*][*Examples*][*Allowed claim*],
+    [exact check],
+      [proof, lookup, type check, deterministic verifier],
+      [`prime_gap`, `grid_path`, certified ARC transform rows],
+      [correctness and zero-false-rejection claims inside declared support],
+    [deterministic replay],
+      [simulator or replay deciding candidate consequences],
+      [Signal flight, delayed-claim simulator],
+      [replay-certified utility, regret, damage, death, or decision metrics],
+    [corpus proxy],
+      [train-split grammar, adjacency, corruption benchmark],
+      [haiku prototypes, public corpus coverage surfaces],
+      [corpus fit and near-miss discrimination, not semantic truth],
+    [human review],
+      [reviewable acceptance/rejection],
+      [editorial-agent pull requests],
+      [review-gated assistance, not autonomous empirical authority],
+  ),
+  caption: [Grounding authority levels. The same residual scorer has different evidentiary
+    force depending on which operator produced the outcome row.],
+) <tab:grounding-authority>
 
-Every step writes a JSONL row with schema `crlp.trace.v1`, including a stable per-action
-identifier, the candidate scores and probabilities, the selected and target indices, the
-verifier result, and verifier cost. Replay resolves `target_index` $arrow.r$ stable `action_id`
-$arrow.r$ regenerated candidate row, so reordering action ids cannot silently change replay
-semantics. Checkpoints carry SHA-256 model identity, a `parent_model_hash`, a
-`feature_encoder_version`, and a `feature_set`; comparison reports (`crlp.compare.v1`) carry
-both hashes, the evaluated `feature_set`, and machine-readable reliability bins.
-The generated determinism audit currently reports:
-#claim_C8_trace_determinism_audit_summary
+The task-independent rules are concise. Candidate enumeration is complete before gating.
+Features declare provenance, and grounding-derived quantities are labels, rewards,
+diagnostics, or gates unless the schema explicitly permits them as inputs. Rules enter the
+gate only through the task grammar and certificate or replay checker. JSONL traces use stable
+candidate ids, ranking policy, score-margin metadata, environment identity, and replay
+semantic hashes so reordered candidates or float ties cannot silently change the paper's
+meaning.
 
 = Evidence Matrix
 
-The evidence is heterogeneous by design, so the paper uses a single protocol matrix rather
-than a single leaderboard. The primary question in every row is not "how smart is the small
-network?", but "what does the environment supply, what does the verifier own, what is the
-network allowed to rank, and what reusable artifact is produced?"
+The matrix is the scope boundary. A row may be interpreted in the prose only if its data,
+candidate grammar, grounding operator, scorer role, trace artifact, result, claim, and
+limitation are registered. The paper may tighten wording without adding experiment families;
+new families require revising this matrix first.
 
 #figure(
-  text(size: 6.6pt)[
+  text(size: 7pt)[
     #table(
-      columns: (0.9fr, 2.45fr, 2.35fr, 2.15fr),
+      columns: (0.9fr, 2.25fr, 1.65fr, 2.45fr),
       align: left,
       inset: 4pt,
-      table.header[*Family*][*Contract*][*Evidence*][*Boundary*],
+      table.header[*Family*][*Grounding*][*Learned Role*][*Claim / Boundary*],
       ..experiment_matrix_rows.map(r => (
         [#strong[#r.domain_display]],
         [
-          #strong[Candidates:] #r.candidate_set
-          #linebreak()
-          #strong[Verifier/gate:] #r.verifier; #r.certificate_gate
+          #strong[Grounding:] #r.verifier; #r.certificate_gate
         ],
+        [#r.scorer_role],
         [
-          #strong[Scorer:] #r.scorer_role
-          #linebreak()
-          #strong[Trace:] #r.trace_artifact
-          #linebreak()
-          #strong[Result:] #r.result_table
-        ],
-        [
-          #strong[Claim:] #r.claim
+          #strong[Claim:] #r.claim.
           #linebreak()
           #strong[Limit:] #r.limitation
         ],
       )).flatten()
     )
   ],
-  caption: [Frozen evidence matrix. Every result row uses the same structure: domain/data,
-    grammar, candidate set, verifier/certificate, scorer role, trace artifact, result,
-    takeaway/claim, and limitation. The paper may tighten these rows, but it should not add
-    new experiment families without revising this matrix first.],
+  caption: [Frozen evidence matrix. Rows use a four-column protocol view to avoid treating
+    the paper as a leaderboard or a catalog.],
 ) <tab:frozen-evidence>
 
-*Non-claims.* The paper does not claim general task solving, competitive ARC performance,
-comparative live neural-control improvement, CDCL-equivalent learned clauses, or that small
-networks replace scale. It does not claim that a generic reason-code ranker is safe across
-domains, or that wider MLPs solve the ARC geometry failure. It claims a narrower protocol
-result: when certified candidate mechanisms own admissibility, small learned components can
-usefully rank residual candidates, calibrate decisions, reuse certified hypotheses, and learn
-from verifier rejections under an auditable trace contract.
+= Prime-Gap Anchor
 
-The artifact now emits `crlp.experiment_schema.v1` rows for every certified task with `make
-experiment-schemas`, plus shared protocol rows for candidate rows, verifier outcomes, ranker
-decisions, discovered rules, and library promotions. The paper should be read against that
-schema: task-specific verifiers and grammars change, but candidate row shape, verifier-outcome
-shape, leakage discipline, proposer baselines, trace replay, and verifier-RL comparisons are
-shared.
-
-The results are organized by claim type rather than by experiment chronology. Gate ablations
-show that certificates can reduce residual search; fixed-budget proposer baselines expose the
-negative neural-proposer row; calibration tests show why exact rewards still need regularized
-updates; cross-task and C5 rows show which artifacts become reusable; Signal tests whether the
-same contract survives live replay-grounded pressure.
-
-= Results: Gate Reduces Residual Search
-
-The prime-gap task is the current production instantiation of certified modular gate search.
-The family is defined by the proof shape, not by primes: enumerate arithmetic candidates,
-propose residue/period/divisibility rules from structural descriptors, accept only rules with
-deterministic certificates, gate impossible candidates, and rank the residual with the learned
-scorer. Prime constellations, k-free or polynomial-value filters, and Fibonacci/Lucas
-recurrence gates are natural next members because they preserve that modular certificate
-contract while changing the arithmetic substrate.
-
-The artifact now includes a smoke implementation of those next members in
-`examples/modular_gate_search.c`. It emits `crlp.modular_gate.summary.v1` rows for
-`prime_constellation`, `kfree_squarefree`, and `fibonacci_lucas` under matched rule budgets.
-Each task reports `grammar_order`, `random`, `structural_heuristic`, `learned_structural`,
-`train_marginal_oracle`, and `validation_marginal_oracle` rows. The learned proposer is a
-structural-only linear model trained on train-set rule coverage labels, and the smoke requires
-zero held-out false rejections. These rows defend the family boundary; they do not yet replace
-the production `prime_gap` learned-gate table.
-
-== Prime-Gap Setup
-
-The state is a prime $p$; the candidate space is gaps $g in {2, 4, ..., 256}$ plus an overflow
-action; the verifier returns the true next-prime gap. The default candidate encoding is the
-minimal feature set $[log p, "norm_gap", "overflow_flag"]$. A full-sieve feature set that adds
-precomputed divisibility flags for $p + g$ modulo small primes is retained only as a leakage
-ablation. The scorer is a shared MLP returning one scalar per candidate; softmax over
-candidates produces the proposal distribution.
-
-The default split is $p < 800,000$ train, $800,000 lt.eq p < 1,000,000$ validation,
-$1,000,000 lt.eq p lt.eq 3,000,000$ test; all reported numbers use 30,000 held-out test
-states unless stated otherwise.
-
-== Why prime gaps anchor the gate result
-
-- A fast deterministic verifier at all scales (segmented sieves, wheel filters, block proofs).
-- A compact totally-ordered candidate space.
-- An exhausted classical literature \u{2014} we cannot beat a sieve, which sharpens the question
-  to "what does the learned component contribute under perfect feedback?"
-- Rich algebraic structure for the rule grammar (residue classes, divisibility certificates).
-
-== Certified modular gate ablation
-
-The same trained prime-gap scorer inside the certified modular gate instance is evaluated under
-three gate conditions on the canonical #claim_C1_prime_gate_delta_sample_count sample held-out
-benchmark. Top-1 results:
-
-#figure(
-  cetz.canvas({
-    import cetz.draw: *
-    let bars = (
-      (label: "no gate", value: claim_C1_prime_gate_delta_raw_top1 * 100, color: rgb("#a0a0a0")),
-      (label: "hand-wheel", value: claim_C1_prime_gate_delta_hand_top1 * 100, color: rgb("#5b8def")),
-      (label: "learned wheel", value: claim_C1_prime_gate_delta_learned_top1 * 100, color: rgb("#2ca02c")),
-    )
-    plot.plot(
-      size: (9, 4.2),
-      x-label: none,
-      y-label: [Top-1 accuracy (%)],
-      y-min: 0, y-max: 80,
-      y-tick-step: 10,
-      x-min: -0.5, x-max: 2.5,
-      x-tick-step: none,
-      x-ticks: ((0, [no gate]), (1, [hand-wheel]), (2, [learned wheel])),
-      legend: none,
-      {
-        for (i, b) in bars.enumerate() {
-          plot.add-bar(
-            ((i, b.value),),
-            bar-width: 0.6,
-            style: (fill: b.color, stroke: black + 0.5pt),
-          )
-        }
-      },
-    )
-  }),
-  caption: [Top-1 accuracy by gate on the canonical #claim_C1_prime_gate_delta_sample_count sample
-    held-out benchmark. The clean raw-to-learned progression is
-    *#pct(claim_C1_prime_gate_delta_raw_top1) $arrow.r$
-    #pct(claim_C1_prime_gate_delta_learned_top1)*. The fixed-hand-wheel-to-learned
-    progression is *#pct(claim_C1_prime_gate_delta_hand_top1) $arrow.r$
-    #pct(claim_C1_prime_gate_delta_learned_top1)* (#pp(claim_C1_prime_gate_delta_learned_vs_hand_delta_pp)).
-    The former #pct(claim_C1_prime_gate_delta_hand_top1) raw-scorer result is now a
-    full-sieve-feature leakage ablation, not the headline.],
-) <fig:f1>
-
-Full metrics:
+The prime-gap row is the cleanest evidence because the verifier is exact and the gate has a
+clear safety property. Candidate actions are possible prime gaps after a segmented-sieve
+window. Candidate gates are modular rejection predicates. A gate is accepted only if its
+certificate has zero false rejections over the declared support; the scorer then ranks the
+residual candidates. The `hand wheel` baseline is a deterministic hand-coded
+wheel-factorization filter over small modular divisibility rules.
 
 #figure(
   table(
-    columns: (auto, auto, auto, auto, auto),
-    align: (left, right, right, right, right),
-    table.header[*Gate*][*Top-1*][*Top-10*][*NLL*][*ECE*],
-    [no gate], [#pct(claim_C1_prime_gate_delta_raw_top1)], [78.01%], [2.9994], [0.1076],
-    [hand-wheel], [#pct(claim_C1_prime_gate_delta_hand_top1)], [99.77%], [1.5902], [0.0834],
-    [*learned wheel*], [#strong[#pct(claim_C1_prime_gate_delta_learned_top1)]], [#strong[#pct(claim_C1_prime_gate_delta_learned_top10)]], [*1.0056*], [0.1402],
+    columns: (1.5fr, 1.05fr, 1.05fr, 1.05fr),
+    align: left,
+    inset: 5pt,
+    table.header[*Condition*][*Top-1*][*Top-10*][*False rejections*],
+    [no gate], [#pct(claim_C1_prime_gate_delta_raw_top1)], [78.01%], [0],
+    [hand wheel], [#pct(claim_C1_prime_gate_delta_hand_top1)], [99.77%], [0],
+    [learned wheel], [#strong[#pct(claim_C1_prime_gate_delta_learned_top1)]],
+      [#strong[#pct(claim_C1_prime_gate_delta_learned_top10)]],
+      [#strong[#claim_C1_prime_gate_delta_false_rejections]],
   ),
-  caption: [Gate ablation, minimal-feature scorer, identical weights across rows. Top-1 and
-    learned top-10 values are imported from the generated claim row; remaining diagnostic
-    metrics are read from the same canonical comparison artifact. Timing fields are excluded
-    because they vary by runner.],
-) <tab:f1>
+  caption: [Prime-gap certified modular gate on the canonical sample of
+    #claim_C1_prime_gate_delta_sample_count rows. #claim_C1_prime_gate_delta_summary
+    Learned-vs-hand top-1 delta: #pp(claim_C1_prime_gate_delta_learned_vs_hand_delta_pp).],
+) <tab:prime-anchor>
 
-= Results: Fixed-Budget Proposer Failure
+The seed audit closes the headline-stability gap for this anchor:
+#claim_C1_prime_gate_delta_ci_summary
+The zero spread is a seed-stability audit over this deterministic benchmark: seeds vary
+checkpoints and proposer runs, not the declared prime-range evaluation distribution.
 
-The canonical rule grammar is `reject candidate n when n > m and n % m == r`; the certificate
-verifier accepts a rule iff $gcd(m, r) > 1$ (so $n$ is necessarily composite). The matched-budget
-baseline table also reports conditional gap filters (`if p % m == a then reject gap % m == b`)
-because that grammar is less saturated and exposes proposer failure more clearly. Zero false
-rejections is a structural property of the certificate. The proposer input is
-structural-only: condition kind, moduli, reciprocal scales, residues, zero-residue indicators,
-gcd ratios, and derived candidate residue. Empirical support and false-rejection counts are
-diagnostics, and budgeted marginal utility is the neural target, not a proposer feature.
+This result is intentionally narrow. It supports the protocol claim that certified structure
+can shrink residual search sharply while preserving correctness under the declared support.
+It does not imply that a static neural proposer is better than deterministic symbolic
+ordering. The generated negative row says the opposite:
+#claim_C2_prime_proposer_fixed_budget_summary That failure is useful because it prevents the
+paper from becoming a generic "neural proposal wins" story.
 
-#figure(
-  cetz.canvas(length: 1cm, {
-    import cetz.draw: *
-    let stages = (
-      (label: "proposed",         value: 32637, color: rgb("#a0a0a0")),
-      (label: "verified",         value: 4692,  color: rgb("#88b0e8")),
-      (label: "accepted",         value: 53,    color: rgb("#2ca02c")),
-      (label: "false\nrejections", value: 0,    color: rgb("#d62728")),
-    )
-    let plot_w = 12.0
-    let plot_h = 5.0
-    let x_origin = 0.0
-    let y_origin = 0.0
-    let col_w = plot_w / stages.len()
-    let max_log = calc.log(32637, base: 10)
-    let scale(v) = if v <= 0 { 0.0 } else {
-      calc.max(0.0, calc.log(v, base: 10)) / max_log * plot_h
-    }
-    line((x_origin, y_origin), (x_origin + plot_w, y_origin), stroke: 0.7pt)
-    line((x_origin, y_origin), (x_origin, y_origin + plot_h + 0.4), stroke: 0.7pt)
-    content((x_origin - 0.9, y_origin + plot_h / 2),
-      angle: 90deg, text(size: 9pt, [Rule count (log scale)]))
-    for (i, s) in stages.enumerate() {
-      let cx = x_origin + (i + 0.5) * col_w
-      let bw = col_w * 0.55
-      let h = scale(s.value)
-      if h > 0.05 {
-        rect((cx - bw / 2, y_origin), (cx + bw / 2, y_origin + h),
-          fill: s.color, stroke: black + 0.5pt)
-      } else {
-        line((cx - bw / 2, y_origin), (cx + bw / 2, y_origin),
-          stroke: s.color + 2.5pt)
-      }
-      content((cx, y_origin + h + 0.35),
-        text(size: 9pt, weight: "bold", str(s.value)))
-      content((cx, y_origin - 0.45), text(size: 9pt, s.label))
-    }
-  }),
-  caption: [Rule-search acceptance funnel. Of 32,637 proposed rules, 4,692 pass the soundness
-    certificate, 53 survive support and false-rejection screens, and *zero* falsely reject the
-    true next-prime gap. The accepted set recovers 79.79% of wheel-equivalent verifier work.],
-) <fig:f2>
+The naive learned proposer fails. That is the point. Unsupported neural proposal is not
+trusted; verifier feedback is recycled until proposal economics improve. In this protocol,
+negative rows are not cleanup work after the fact. They are the training substrate that
+separates residual ranking from admissibility.
 
-#figure(
-  table(
-    columns: (auto, auto, auto, auto, auto),
-    align: (left, left, right, right, right),
-    table.header[*Grammar*][*Rule ordering*][*Budget*][*Exact probes*][*Saved*],
-    [candidate], [neural structural], [16], [1.98], [72.49%],
-    [candidate], [random, seed 20240511], [16], [3.86], [46.30%],
-    [candidate], [grammar order], [16], [1.93], [73.22%],
-    [candidate], [structural heuristic], [16], [1.93], [73.22%],
-    [candidate], [validation-marginal oracle], [16], [1.93], [73.22%],
-    [conditional gap], [neural structural], [16], [7.04], [2.15%],
-    [conditional gap], [random, seed 20240511], [16], [6.94], [3.49%],
-    [conditional gap], [grammar order], [16], [3.20], [55.57%],
-    [conditional gap], [structural heuristic], [16], [3.20], [55.57%],
-    [conditional gap], [validation-marginal oracle], [16], [3.11], [56.83%],
-  ),
-  caption: [Matched 16-rule-budget proposer baselines over the same split and certificate
-    verifier. Lower exact probes is better.],
-) <tab:f2-baselines>
+= Feedback Loops
 
-*What this evidence supports.* "Certificate-gated structural rule discovery over this grammar
-produces a sound, useful rule set without support-count feature leakage." The soundness comes
-from the certificate; the coverage comes from the grammar plus accepted certified filters.
+The main contribution is what happens after verifier feedback exists.
 
-*What this evidence does not support.* "The neural proposer, specifically, is essential."
-@tab:f2-baselines is a negative result for that stronger claim: simple deterministic orderings
-beat the neural structural proposer at the fixed 16-rule budget on both reported grammars, and
-the conditional gap grammar exposes a larger failure. The next neurosymbolic experiment must use
-a richer grammar and show that learned ordering beats grammar-order and structural-heuristic
-baselines under the same budget.
-
-This negative row is the hinge between the gate result and the artifact-feedback result later in
-the paper. A plain neural proposer trained only on structural descriptors is not enough; the
-system becomes useful when verifier failures are promoted into reusable reasons. The generated
-C5 reason-learning row makes that repair measurable: at budget 8, `model_score` selects 7 unsafe
-rules and causes 172 validation false rejections, while reason-prior and trained-residual
-orderings recover useful certified rules with zero validation false rejections
-(@fig:claim-reason-learning). Thus the paper does not claim "neural proposal wins"; it claims
-that verifier-grounded traces can turn failed proposals into the next proposal policy's training
-signal.
-
-= Results: Calibration Under Exact Verifier Rewards
-
-Starting from a single supervised checkpoint, we clone two RL branches: strict policy gradient
-on exact rewards, and the same gradient regularized with KL-to-supervised-prior + entropy.
-
-#figure(
-  cetz.canvas({
-    import cetz.draw: *
-    let policies = (
-      (label: "Supervised", ece: 0.0704, nll: 2.9170),
-      (label: "Strict RL", ece: 0.1271, nll: 3.0611),
-      (label: "Strict RL (T=1.5)", ece: 0.0613, nll: 2.9063),
-      (label: "KL/ent RL", ece: 0.0604, nll: 2.9056),
-      (label: "KL/ent RL (T=1.0)", ece: 0.0604, nll: 2.9056),
-    )
-    plot.plot(
-      size: (10, 4.5),
-      x-label: none,
-      y-label: [ECE (lower is better)],
-      y-min: 0, y-max: 0.35,
-      y-tick-step: 0.05,
-      x-min: -0.5, x-max: 4.5,
-      x-tick-step: none,
-      x-ticks: policies.enumerate().map(((i, p)) => (i, text(size: 7.5pt, p.label))),
-      {
-        for (i, p) in policies.enumerate() {
-          let c = if p.label == "Strict RL" {
-            rgb("#d62728")
-          } else if p.label.starts-with("KL") {
-            rgb("#2ca02c")
-          } else {
-            rgb("#7f7f7f")
-          }
-          plot.add-bar(
-            ((i, p.ece),),
-            bar-width: 0.55,
-            style: (fill: c, stroke: black + 0.5pt),
-          )
-        }
-      },
-    )
-  }),
-  caption: [Expected calibration error by RL variant. Strict verifier RL degrades calibration
-    (ECE 0.070 $arrow.r$ 0.127) while leaving top-1 *unchanged at 9.13%* across all variants.
-    Post-hoc temperature scaling needs $T = 1.5$ to recover; KL/entropy regularization fixes it
-    at training time without that crutch.],
-) <fig:f3>
-
-#figure(
-  table(
-    columns: (auto, auto, auto, auto, auto, auto),
-    align: (left, right, right, right, right, right),
-    table.header[*Policy*][*T*][*Top-1*][*Top-10*][*NLL*][*ECE*],
-    [Supervised], [1.00], [9.13%], [78.01%], [2.9170], [0.0704],
-    [Strict verifier RL], [1.00], [9.13%], [78.01%], [3.0611], [*0.1271*],
-    [Strict RL, temp-scaled], [1.50], [9.13%], [78.01%], [2.9063], [0.0613],
-    [KL/entropy RL], [1.00], [9.13%], [78.01%], [2.9056], [0.0604],
-    [KL/entropy RL, temp-scaled], [1.00], [9.13%], [78.01%], [2.9056], [0.0604],
-  ),
-  caption: [RL ablation, single cloned supervised checkpoint, default split.],
-) <tab:f3>
-
-The mechanism: strict policy gradient on a sparse exact reward signal pushes logit magnitudes
-without changing their relative ordering. The KL penalty bounds movement away from the
-reference policy; the entropy bonus discourages collapse to a single overconfident action.
-Together they reproduce the standard RLHF training stabilization, applied here to verifier
-rewards instead of preference rewards.
-
-== Reliability Diagram
-
-#figure(
-  cetz.canvas({
-    import cetz.draw: *
-    plot.plot(
-      size: (8, 5.5),
-      x-label: [Predicted confidence],
-      y-label: [Empirical accuracy],
-      x-min: 0, x-max: 1,
-      y-min: 0, y-max: 1,
-      x-tick-step: 0.2,
-      y-tick-step: 0.2,
-      legend: "inner-north-west",
-      {
-        plot.add(
-          ((0, 0), (1, 1)),
-          style: (stroke: (paint: gray, dash: "dashed", thickness: 0.6pt)),
-          label: [perfect calibration],
-        )
-        plot.add(
-          (
-            (0.549, 0.667),
-            (0.655, 0.429),
-            (0.753, 0.667),
-            (0.856, 0.571),
-            (0.994, 0.975),
-          ),
-          mark: "o",
-          mark-size: 0.18,
-          style: (stroke: rgb("#2ca02c") + 1.2pt),
-          label: [delayed_claim, replay successor],
-        )
-      },
-    )
-  }),
-  caption: [Reliability diagram for the trace-replay successor on `delayed_claim`. Bins from
-    `results/latest/comparison.jsonl`. The high-confidence bin (894 of 1000 samples,
-    $hat(p) = 0.994$, $hat(p)_"emp" = 0.975$) carries most of the mass; the low-population mid
-    bins are noisier.],
-) <fig:reliability>
-
-= Results: Cross-Task Stress Surfaces
-
-The same shared neural library, scorer architecture, and verifier-backed task contract
-instantiate across the task families in @tab:schema. This section reports how the learned
-component behaves on each. The reported numbers are produced by `make results` and live in
-`results/latest/comparison.jsonl`; the figures in this section are driven by
-`paper/data.typ`, autogenerated from those same artifacts by
-`paper/scripts/extract_learning_curves.py` so the figures cannot drift from the underlying
-runs.
-
-== Per-task gate ablation
-
-Different tasks instantiate the certificate-gating loop differently: the prime-gap modular
-gate instance and grid-path have *gate ablations* in the strict sense (same scorer, with vs without the gate);
-delayed-claim has a trace-replay successor plus a production threshold+margin gate;
-ARC-AGI has a *scorer-vs-gate* ablation where the two rows are different architectures (a
-neural cell scorer and a symbolic transform gate over the same task). A single common-axis
-bar chart would obscure those distinctions, so @fig:cross-acc reports four small per-task
-panels with row labels that name what is being compared.
-
-#figure(
-  cetz.canvas({
-    import cetz.draw: *
-    // Four small per-task panels. Each carries its own row labels so the
-    // comparison is honest: prime/grid are gate ablations on the same scorer;
-    // delayed-claim includes its production threshold+margin gate; arc_agi is scorer vs gate.
-    let panels = (
-      (
-        title: [`prime_gap` — gate ablation (same scorer)],
-        rows: (
-          ("no gate (raw scorer)",   9.13, rgb("#a0a0a0")),
-          ("hand-wheel gate",       45.12, rgb("#5b8def")),
-          ("learned-wheel gate",    68.87, rgb("#2ca02c")),
-        ),
-      ),
-      (
-        title: [`grid_path` — gate ablation (priors disabled vs enabled)],
-        rows: (
-          ("raw, priors disabled",  57.40, rgb("#a0a0a0")),
-          ("cheap gate, priors disabled",69.20, rgb("#5b8def")),
-          ("cheap-bound, priors disabled",87.00, rgb("#9467bd")),
-          ("mixed gate, priors disabled",93.50, rgb("#2ca02c")),
-          ("raw, priors enabled",   75.80, rgb("#c0c0c0")),
-          ("cheap gate, priors enabled", 89.70, rgb("#5b8def")),
-          ("cheap-bound, priors enabled", 90.10, rgb("#9467bd")),
-          ("mixed gate, priors enabled", 95.30, rgb("#2ca02c")),
-        ),
-      ),
-      (
-        title: [`delayed_claim` — threshold+margin gate],
-        rows: (
-          ("raw supervised parent", 93.50, rgb("#a0a0a0")),
-          ("trace-replay successor",94.80, rgb("#5b8def")),
-          ("production gate",      100.00, rgb("#2ca02c")),
-        ),
-      ),
-      (
-        title: [`arc_agi` (`0520fde7`) — scorer vs certified gate],
-        rows: (
-          ("neural cell scorer",    28.56, rgb("#a0a0a0")),
-          ("certified transform",  100.00, rgb("#2ca02c")),
-        ),
-      ),
-    )
-    let cell_w = 6.4
-    let cell_h = 3.0
-    let col_gap = 0.6
-    let row_gap = 0.7
-    let cols = 2
-    for (i, p) in panels.enumerate() {
-      let col = calc.rem(i, cols)
-      let row = calc.div-euclid(i, cols)
-      let x0 = col * (cell_w + col_gap)
-      let y0 = -row * (cell_h + row_gap)
-      // axes
-      line((x0, y0), (x0 + cell_w, y0), stroke: 0.7pt)
-      line((x0, y0), (x0, y0 + cell_h), stroke: 0.7pt)
-      let nrows = p.rows.len()
-      let bar_band = cell_h / (nrows + 0.6)
-      let bar_h = bar_band * 0.55
-      let max_acc = 100.0
-      for (j, r) in p.rows.enumerate() {
-        let (label, value, color) = r
-        let cy = y0 + cell_h - (j + 0.6) * bar_band
-        let bx = x0 + value / max_acc * cell_w
-        rect((x0, cy - bar_h / 2), (bx, cy + bar_h / 2),
-          fill: color, stroke: black + 0.3pt)
-        content((bx + 0.1, cy), anchor: "west",
-          text(size: 7pt, [#calc.round(value * 10) / 10%]))
-        content((x0 - 0.1, cy), anchor: "east", text(size: 7pt, label))
-      }
-      content((x0 + cell_w / 2, y0 + cell_h + 0.35),
-        text(size: 8.5pt, weight: "bold", p.title))
-      for v in (0, 50, 100) {
-        let x = x0 + v / max_acc * cell_w
-        line((x, y0), (x, y0 - 0.1), stroke: 0.5pt)
-        content((x, y0 - 0.3), text(size: 7pt, [#v%]))
-      }
-    }
-  }),
-  caption: [Per-task accuracy by ablation row. Each panel labels its own comparison so the
-    rows are read against the right baseline: the prime-gap modular gate instance and grid-path are *gate ablations*
-    (same scorer, with vs without the gate; grid-path additionally varies whether the
-    Manhattan structural priors are enabled in the scorer features); delayed-claim includes
-    the trace-replay successor and the production threshold+margin gate over the same
-    generator, with parent-hash chain attesting model identity; ARC-AGI is a *scorer-vs-gate*
-    ablation where the two rows are different architectures over the same `0520fde7` task,
-    not the same model with vs without a gate. The ARC `100.00%` is on nine held-out cells of
-    one task; the public ARC evidence surface is the current measured `v15` row reported in
-    #claim_C1_arc_public_evidence_surface_summary. The historical `v10` row is used only as
-    a floor comparison; the hypothesis-induction layer in @sec:artifact-feedback adds
-    transform families beyond that floor (zero baseline-rate, 4/4 induction-rate on the
-    synthetic suite under `crlp.arc_induction.parity.v1`).],
-) <fig:cross-acc>
-
-== Training curves per task
-
-The four tasks expose learning on different timescales. `grid_path` and `delayed_claim`
-emit per-step training traces under `--trace-train`, so we plot rolling 50-step accuracy
-across a 4000-step supervised run. `prime_gap` does not emit a per-step training trace;
-its first-class binary reports per-epoch supervised loss on stdout, which decreases over
-8 epochs and is what we plot. `arc_agi` trains its cell scorer in a single supervised
-block and exposes per-epoch eval only by re-running the binary with different `--epochs`
-values, so we plot the top-1 / NLL curve over a 4-point sweep `{1, 2, 4, 8}`. Each panel
-labels its own x-axis honestly. The plotted data is imported verbatim from
-`paper/data.typ`, autogenerated by `paper/scripts/extract_learning_curves.py`.
-
-#figure(
-  cetz.canvas({
-    import cetz.draw: *
-    let cell_w = 5.6
-    let cell_h = 3.4
-    let col_gap = 0.9
-    let row_gap = 1.4
-    let cols = 2
-
-    // Render an XY-line panel with task-specific scaling.
-    let panel(idx, title, pts, xmax, ymax, color, x_label, y_label) = {
-      let col = calc.rem(idx, cols)
-      let row = calc.div-euclid(idx, cols)
-      let x0 = col * (cell_w + col_gap)
-      let y0 = -row * (cell_h + row_gap)
-      line((x0, y0), (x0 + cell_w, y0), stroke: 0.7pt)
-      line((x0, y0), (x0, y0 + cell_h), stroke: 0.7pt)
-      let xscale(v) = v / xmax * cell_w
-      let yscale(v) = v / ymax * cell_h
-      for g in (0.25, 0.5, 0.75, 1.0) {
-        if g <= 1.0 {
-          let y = y0 + g * cell_h
-          line((x0, y), (x0 + cell_w, y),
-            stroke: (paint: gray, thickness: 0.3pt, dash: "dotted"))
-          content((x0 - 0.1, y), anchor: "east",
-            text(size: 7pt, [#calc.round(g * ymax * 100) / 100]))
-        }
-      }
-      let mapped = pts.map(t => (x0 + xscale(t.at(0)), y0 + yscale(t.at(1))))
-      for j in range(mapped.len() - 1) {
-        line(mapped.at(j), mapped.at(j + 1), stroke: color + 1.0pt)
-      }
-      for pt in mapped {
-        circle(pt, radius: 0.06, fill: color, stroke: white + 0.3pt)
-      }
-      content((x0 + cell_w / 2, y0 + cell_h + 0.4), text(size: 9pt, weight: "bold", title))
-      content((x0 - 0.6, y0 + cell_h / 2), angle: 90deg, text(size: 7pt, y_label))
-      content((x0 + cell_w / 2, y0 - 0.55), text(size: 8pt, x_label))
-      content((x0, y0 - 0.35), anchor: "west", text(size: 7pt, [#pts.first().at(0)]))
-      content((x0 + cell_w, y0 - 0.35), anchor: "east", text(size: 7pt, str(xmax)))
-    }
-
-    // (0) prime_gap: per-epoch gated training loss (learned-wheel supervised).
-    //     The raw scorer is structurally flat at 12% top-1 because the 129-way
-    //     action space exceeds the minimal feature set's residual signal; what
-    //     trains is the gated loss, plotted here.
-    let pg = prime_gap_epoch_loss
-    let pg_pts = pg.map(t => (t.at(0), t.at(2)))
-    panel(0,
-      [`prime_gap` (gated supervised loss)],
-      pg_pts,
-      pg_pts.last().at(0),
-      0.50,
-      rgb("#2ca02c"),
-      [training epoch],
-      [loss (lower better)])
-
-    // (1) arc_agi: per-epoch raw cell-scorer top-1 on 0520fde7.
-    let arc = arc_epoch_eval
-    let arc_pts = arc.map(t => (t.at(0), t.at(1)))
-    panel(1,
-      [`arc_agi` (raw cell scorer top-1)],
-      arc_pts,
-      arc_pts.last().at(0),
-      0.40,
-      rgb("#9467bd"),
-      [training epoch],
-      [top-1 accuracy])
-
-    // (2) grid_path: per-step rolling accuracy (4000-step training trace).
-    let gp = learning_curves.at("grid_path")
-    let gp_pts = gp.map(t => (t.at(0), t.at(1)))
-    panel(2,
-      [`grid_path` (rolling-50 train accuracy)],
-      gp_pts,
-      gp_pts.last().at(0),
-      1.0,
-      rgb("#5b8def"),
-      [training step],
-      [accuracy])
-
-    // (3) delayed_claim: per-step rolling accuracy.
-    let dc = learning_curves.at("delayed_claim")
-    let dc_pts = dc.map(t => (t.at(0), t.at(1)))
-    panel(3,
-      [`delayed_claim` (rolling-50 train accuracy)],
-      dc_pts,
-      dc_pts.last().at(0),
-      1.0,
-      rgb("#d62728"),
-      [training step],
-      [accuracy])
-  }),
-  caption: [Per-task training-time curves on four different timescales, each labeled with
-    its own y-axis: *`prime_gap`* plots the per-epoch supervised loss of the *gated* scorer
-    (learned-wheel supervised), which decreases from 0.42 to 0.23 over 8 epochs and
-    plateaus around epoch 3 — the raw scorer's top-1 is structurally flat at $approx$12%
-    on this minimal feature set because the 129-way candidate space exceeds the residual
-    signal, which is the whole point of the gate. *`arc_agi`* plots per-epoch top-1 of the
-    raw cell scorer on `0520fde7` across the sweep $\{1, 2, 4, 8\}$ epochs; the scorer
-    climbs from 7.11% to 28.56% over the first four epochs and then plateaus, after which
-    additional epochs only inflate NLL (visible as ECE drift in @fig:cross-acc).
-    *`grid_path`* and *`delayed_claim`* plot rolling 50-step accuracy across the
-    4000-step supervised training trace produced under `--trace-train`. All four series are
-    imported from `paper/data.typ`, autogenerated by
-    `paper/scripts/extract_learning_curves.py` from the binaries' own outputs.],
-) <fig:learning>
-
-== Per-task interpretation
-
-*Prime-gap modular gate instance.* @fig:f1 already shows the *9.13 → 45.12 → 68.87%* progression at final
-evaluation. The training curve in @fig:learning shows that the cell scorer alone reaches
-$approx$20% top-1 — well below the hand-wheel and learned-wheel gated rows. The model is
-learning *something*, but on a 129-way action space the gate is the load-bearing component.
-
-*Grid-path.* The model has access to Manhattan structural priors (`candidate_manhattan_to_goal`,
-`candidate_manhattan_delta`); the *prior-disabled* rows quantify their value. With priors
-enabled, the raw scorer is at 75.80%; the cheap-local gate lifts this to 89.70%
-(+13.9pp), the cheap-bound gate reaches 90.10% (+14.3pp), and the mixed
-topology+bound+exact-distance gate reaches 95.30% (+19.5pp). With priors
-disabled at evaluation time, the cheap-local gate lifts 57.40% -> 69.20%, the
-cheap-bound gate reaches 87.00%, and the mixed gate reaches 93.50%. The clean
-cross-domain gate claim is now the non-exact cheap-bound family; the distance-dominance
-rule remains an explicitly labeled oracle-style upper bound. The
-family/budget proposer sweep is a robustness check: the default neural selector now targets
-train/validation residual marginal utility, which prevents overlapping clear-path rules from
-consuming the fixed budget, but it is not an "always wins" result at every tiny budget and seed.
-
-*Delayed-claim.* The supervised parent reaches 93.5% accuracy and ECE 0.0363; the trace-replay
-successor improves to 94.8% / ECE 0.0166 over the same evaluation set with a parent-hash chain
-attesting identity. The production threshold+margin gate then certifies 4 rules for the
-neural, closed-loop, structural, and validation-oracle orderings, with zero held-out false
-rejections. The accepted threshold rules remove dominated `ignore`/`act_cautiously` actions;
-the accepted utility-margin rules resolve the hard `trust` versus `request_more_evidence`
-residual. On the held-out generator this leaves 1.00 candidate/action, so the gated row is
-100.0% accurate with NLL 0.0000 and ECE 0.0000. The same direct gate stays exact on a shifted
-seed band, but clean-observation soundness is not the same thing as noisy-observation
-robustness: with observation noise 0.03 it records 23/1000 false rejections, and on a hard
-uncertainty+noise band it records 104/1000. The indirect risk-margin grammar is safer but
-less decisive: the structural/oracle row has zero false rejections under observation noise
-0.03, but only 94.6% accuracy and 1.35 candidates. The reliability diagram in
-@fig:reliability is from the replay successor before this deterministic gate.
-
-*ARC-AGI.* On the fixed `0520fde7` task, the neural cell scorer reaches 28.56% top-1 with
-*ECE 0.5574 — substantially worse calibration than any of the other three tasks*. The cause
-is structural: the cell scorer must distribute probability mass over 10 candidate colors per
-output cell while seeing only three training pairs and 9 held-out cells, so the softmax has
-neither enough data nor enough structure to align confidence with accuracy. The certified
-transform gate then sidesteps the calibration question entirely: it produces a *unique*
-grammar-consistent prediction or no prediction, so the held-out top-1 is either 100% or
-the gate abstains. On the public ARC corpus, #claim_C1_arc_public_evidence_surface_summary The
-historical `v10` row is retained only as a floor comparison; the current body claim is the
-measured `v15` evidence surface. The hypothesis-induction layer described in
-@sec:artifact-feedback adds transform families beyond that historical floor. Under the
-matched-baseline parity protocol `crlp.arc_induction.parity.v1`, on the synthetic
-move-to-anchor suite the baseline grammar certifies 0/4 tasks and the hypothesis-induction
-loader certifies 4/4 with zero regressions on the previously supported tasks; the same
-harness applied to the public ARC corpus is reported below as a scoped evidence surface
-rather than as a claim of competitive ARC performance.
-
-== Cross-domain port
-
-To show the substrate is not ARC-specific, the same `NNHypothesis` + `NNProgram` + evidence
-schema is instantiated in the `program_synthesis` task on a `filter_then_reduce` template
-(stages `enumerate → filter → reduce`, slots `filter.predicate_id`, `reduce.kind`,
-`output.type`). The existing certificate checker for the list-DSL abstractions accepts the
-compiled programs unchanged, and `make program-synthesis` emits *nine certified
-`crlp.hypothesis.evidence.v1` rows* (one per abstraction in the library: `count_positive`,
-`count_negative`, `count_even`, `sum_positive`, `sum_negative`, `any_positive`,
-`all_positive`, `first_positive_or_zero`, `any_even`). Eight of the nine cover one
-task-instance event each; `any_even` certifies but covers zero on the current
-fixture-task pool — the row appears in `results/latest/summary.md` as a "Program Synthesis
-Hypothesis Evidence" table. A corresponding `prime_gap` hypothesis cross-port is not yet
-part of the supported evidence.
-
-== One shared scorer across all four tasks
-
-The cross-task panels in @fig:learning trained a separate `f_theta` for each task. As an
-ablation, we replace the four scorers with *one shared scorer of the same architecture* —
-a single `[96 → 64 → 32 → 1]` MLP that takes a task-tagged action row (a fixed
-96-dimensional envelope with the task id as a one-hot prefix) and softmaxes over each
-task's candidate set. The shared scorer is trained on a uniform-random draw across the
-four tasks at matched per-task update budget; for the same total budget we also train four
-single-task baselines. Numbers are means across three seeds: 16 epochs $times$ 12 000
-steps per seed, for 192 000 total updates, captured from `crlp.multitask.summary.v1`
-rows. *Three-seed steady state is what the paper claims; the
-single-seed snapshot from the earlier capture is retained in `paper/data.typ` as
-historical context only.*
-
-#figure(
-  table(
-    columns: (auto, auto, auto, auto, auto, auto, auto),
-    align: (left, right, right, right, right, right, right),
-    table.header[*Task*][*Cands*][*Shared top-1*][*Single top-1*][*Δ top-1 (3-seed)*][*Shared NLL*][*Single NLL*],
-    ..multitask_rmt1.map(m => {
-      let delta = (m.shared_top1 - m.single_top1) * 100.0
-      let sign = if delta >= 0 { "+" } else { "−" }
-      let mag = calc.round(calc.abs(delta) * 10) / 10
-      let delta_text = if delta >= 0 { [#sign#mag pp] } else { [#sign#mag pp] }
-      let highlight(v) = text(weight: "bold", v)
-      let pct(v) = [#(calc.round(v * 1000) / 10)%]
-      let nll(v) = [#(calc.round(v * 10000) / 10000)]
-      (
-        raw(m.domain),
-        [#calc.round(m.candidate_count)],
-        if m.shared_top1 >= m.single_top1 { highlight(pct(m.shared_top1)) } else { pct(m.shared_top1) },
-        if m.single_top1 > m.shared_top1 { highlight(pct(m.single_top1)) } else { pct(m.single_top1) },
-        delta_text,
-        nll(m.shared_nll),
-        nll(m.single_nll),
-      )
-    }).flatten()
-  ),
-  caption: [Shared *one-MLP-on-all-four-tasks* vs *single-task* baseline at three-seed
-    steady state, with 192 000 total updates per seed. Same `[96 → 64 → 32 → 1]` MLP,
-    same task-tagged 96-feature envelope, same learning rate, three seeds, mean
-    reported. At steady state the multi-seed picture is much quieter than the single-seed
-    snapshot suggested: `delayed_claim` is statistically tied (+0.1pp); `prime_gap` and
-    `grid_path` are tied within sub-1pp; *`arc_agi` keeps a 16.6pp single-task advantage* on
-    the trained `0520fde7` task, down from the −28.6pp gap reported at the earlier 24 000-update
-    budget. The "positive transfer on delayed_claim" framing from the one-seed snapshot did
-    not survive replication and is retracted; the load-bearing multitask finding instead
-    comes from the OOD evaluation in @tab:multitask-ood below.],
-) <tab:multitask>
-
-*The load-bearing positive transfer signal is on OOD, not on the trained task.* In the
-same-envelope OOD evaluation,
-we evaluate the same two ARC scorers (shared and single-task) — both trained only on
-`0520fde7` — on a held-out suite of 12 same-envelope synthetic ARC tasks (7×3 → 3×3
-panel-composition tasks across families like `copy_left`, `copy_right`, `union`, `xor`,
-`row_any_intersection`). The shared scorer beats the single-task scorer on this OOD
-suite, even though it lost to it on the trained task in @tab:multitask. This is consistent
-with the standard interpretation of single-task vs multi-task training: the single-task
-scorer is over-specialising to the 270 effective training rows of `0520fde7` (3 train
-pairs × 9 cells × 10 candidate colors) while the shared scorer is constrained by joint
-training on three unrelated tasks to find more transferable features.
-
-#figure(
-  table(
-    columns: (auto, auto, auto, auto),
-    align: (left, right, right, right),
-    table.header[*Scorer*][*OOD top-1 (3-seed)*][*OOD NLL*][*OOD ECE*],
-    ..multitask_rmt2_aggregate.map(m => {
-      let mag(v) = calc.round(v * 10000) / 10000
-      let pct(v) = [#(calc.round(v * 1000) / 10)%]
-      let highlight = m.model_kind == "shared"
-      let row_label = if m.model_kind == "shared" {
-        text(weight: "bold", [shared (multi-task)])
-      } else {
-        [single-task ARC]
-      }
-      (
-        row_label,
-        if highlight { text(weight: "bold", pct(m.top1)) } else { pct(m.top1) },
-        [#mag(m.nll)],
-        [#mag(m.ece)],
-      )
-    }).flatten()
-  ),
-  caption: [Same-envelope ARC out-of-distribution evaluation. Both scorers were
-    trained only on `0520fde7`; this table evaluates each on a held-out suite of 12
-    synthetic 7×3 → 3×3 panel-composition tasks with the same 96-feature action envelope
-    and the same 10-way color action space. Three seeds, aggregate row. *The shared
-    multi-task scorer beats single-task by +5.57pp top-1 on OOD* despite losing by 16.6pp
-    on the trained task. NLL drops by 40% under shared (2.63 vs 4.37), confirming that
-    single-task is producing confidently wrong predictions on unseen tasks.],
-) <tab:multitask-ood>
-
-The reading is deliberately narrow. On the fixed ARC task, shared training loses
-in-distribution top-1; on same-envelope OOD, it improves top-1, NLL, and ECE. The
-certificate-gating contract makes that trade acceptable because the gate owns correctness
-where structure is already certified, while the scorer is most useful on the residual tasks
-the gate does not cover. Under a pure-scorer system this would be a direct
-memorization-vs-generalization tradeoff; under a verifier-gated system, the gate handles
-covered structure and the scorer can be optimized for residual ranking.
-
-Two boundary checks keep the claim from becoming too broad. First, the calibration audit
-shows a real tradeoff: on fixed `0520fde7`, shared training lowers NLL (4.08 vs 8.28) while
-worsening ECE (0.6995 vs 0.5589); on same-envelope OOD, it improves both NLL (2.63 vs
-4.37) and ECE (0.4481 vs 0.4820). Second, the delayed-claim leave-one-out row shows that
-transfer is sibling-specific rather than universal: all-domain training beats claim-only
-by +1.40pp, removing `grid_path` hurts most, and removing ARC slightly helps.
-
-The capacity sweep rules out the simplest architectural explanation. Wider is not
-monotonically better: `[96→32→16→1]` is the closest shared ARC row to single-task
-(-1.23pp), while `[96→256→128→1]` only partially recovers the `64x32` gap. Delayed-claim
-stays positive or tied at every capacity. The remaining question is whether the current
-small nets are undertrained, saturated, or missing cumulative protocol state.
-
-The shared-trunk/domain-head experiment is generated as an architecture gate, not as a
-single-model competence claim: #claim_C4_adapter_heads_shared_trunk_summary The paper
-promotes that architecture only if it passes the fixed-ARC, delayed-claim, grid, and ARC
-OOD gates; otherwise the result remains diagnostic evidence about interference and head
-capacity.
-
-#figure(
-  table(
-    columns: (auto, auto, auto, auto, auto, auto),
-    align: (left, right, right, right, right, right),
-    table.header[*Hidden*][*Params*][*ARC shared*][*ARC single*][*ARC Δ*][*Claim Δ*],
-    ..multitask_rmt6_capacity.map(m => {
-      let pct(v) = [#(calc.round(v * 1000) / 10)%]
-      let delta(v) = {
-        let pp = v * 100.0
-        let sign = if pp >= 0 { "+" } else { "−" }
-        let mag = calc.round(calc.abs(pp) * 100) / 100
-        [#sign#mag pp]
-      }
-      (
-        raw(m.hidden),
-        [#m.parameters],
-        pct(m.arc_shared_top1),
-        pct(m.arc_single_top1),
-        delta(m.arc_delta),
-        delta(m.claim_delta),
-      )
-    }).flatten()
-  ),
-  caption: [Fixed-task capacity sweep at the same three-seed, 192 000-update
-    protocol. The ARC gap is *not* monotonic in trunk size: `32x16` is closest
-    to single-task on fixed `0520fde7`, while `256x128` only partially recovers the
-    `64x32` baseline. Delayed-claim remains positive or tied at every capacity.],
-) <tab:multitask-capacity>
-
-The scorer-invariance audit fixes the boundary between learned scoring and certified ARC evidence. The public
-ARC transform gate and budgeted proposer path currently do not consume a multitask scorer
-checkpoint, so the comparison is an invariance audit over the scorer-independent path.
-Across 400 public train tasks and 400 public eval tasks, accepted rule sets, prediction
-hashes, loader summaries, and budgeted proposer aggregates were identical under the
-`shared_scorer_context` and `single_task_scorer_context` labels (`0` exact gate/loader
-mismatches and `0` proposer mismatches). This strengthens the verifier-correctness claim,
-but it also narrows the scorer claim: the audit does not show that the shared scorer improves
-public ARC search, only that the certified gate/proposer measurements are not contaminated
-by scorer choice in the current implementation.
-
-= Results: Artifact Feedback Loops
-
-The two central result rows are the C5 artifact-feedback rows: rejected-candidate learning
-and certified hypothesis-library feedback. The rest of the claim table is boundary evidence:
-ARC is a measured evidence surface, the capacity sweep guards architecture interpretation,
-and Signal is application pressure under replay, shadow, and guarded live-active logging. Each row is evaluated
-against a registered result artifact before the PDF is built, so unsupported or stale
-required claims fail before they become prose. The only non-blocking negative row remains
-the fixed-budget prime proposer claim, which is deliberately carried as a limitation.
-
-#figure(
-  table(
-    columns: (1.7fr, auto, auto, auto),
-    align: (left, left, left, center),
-    table.header[*Claim*][*Family*][*Status*][*Required*],
-    ..paper_claim_support_surfaces.map(s => (
-      [#raw(s.id)],
-      [#s.family],
-      if s.status == "supported" { text(weight: "bold", [supported]) } else { [#s.status] },
-      if s.required { [yes] } else { [no] },
-    )).flatten(),
-  ),
-  caption: [Generated claim status matrix. Required claims fail `make paper-support` if
-    their registered evidence is missing, stale, underpowered, or contradicted.],
-) <tab:generated-claim-support>
+*Rejected-candidate learning.* Failed rule proposals are logged with task, split, seed,
+reason family, false-rejection counts, and marginal verifier utility. Those rows become
+targets for a later residual ranker. The supported claim is scoped to prime/modular sweeps:
+#claim_C5_rejected_candidate_reason_learning_summary
 
 #figure(
   claim_coverage_chart(
     claim_C5_rejected_candidate_reason_learning_chart_rows,
     y-max: 260,
-    y-label: [budget-8 validation utility],
+    y-label: [accepted-rule utility],
   ),
-  caption: [C5 rejected-candidate reason learning. #claim_C5_rejected_candidate_reason_learning_summary],
+  caption: [Rejected-candidate reason learning. Verifier failures become training signal
+    without making the learned model authoritative.],
 ) <fig:claim-reason-learning>
+
+*Certified hypothesis-library feedback.* Repeated zero-false-rejection hypotheses are promoted
+into a reusable library, converted into slot priors, and checked on held-out tasks under the
+same tight budget. The supported claim is:
+#claim_C5_hypothesis_library_promotion_summary
 
 #figure(
   claim_coverage_chart(
     claim_C5_hypothesis_library_promotion_chart_rows,
-    y-max: 5,
-    y-label: [learned certified programs at budget 1],
+    y-max: 6,
+    y-label: [certified at 1],
   ),
-  caption: [C5 certified hypothesis-library promotion. #claim_C5_hypothesis_library_promotion_summary],
+  caption: [Certified hypothesis-library promotion. Certified hypotheses become proposal
+    priors only after passing the promotion gate.],
 ) <fig:claim-hypothesis-library>
 
-The next rows are intentionally not headline performance claims. ARC is kept as an evidence
-surface: it exposes which transform and hypothesis families are certified, where the grammar
-misses, and whether scorer-independent gate measurements stay invariant. Signal is kept as
-application pressure: it exercises replay-certified ranking, shadow logging, and live
-neural-active execution without claiming that active neural control beats the heuristic.
+Together these rows are the paper's feedback mechanism. Rejections and certifications are not
+post-hoc diagnostics; they are reusable artifacts that change the next proposal pass.
+
+= Boundary Evidence
+
+Boundary rows keep the thesis honest without becoming separate stories.
+
+*ARC.* ARC is a provenance and grammar-coverage stress surface. The paper reports the current
+measured public-corpus surface, not a headline ARC score:
+#claim_C1_arc_public_evidence_surface_summary Calibration remains conditional:
+#claim_C3_arc_ood_calibration_tradeoff_summary
 
 #figure(
   claim_coverage_chart(
     claim_C1_arc_public_evidence_surface_chart_rows,
     y-max: 1200,
-    y-label: [public ARC eval cells certified],
+    y-label: [evaluation cells],
   ),
-  caption: [C1 public ARC evidence surface. #claim_C1_arc_public_evidence_surface_summary
-    The chart is intentionally scoped to certified covered cells, not overall ARC
-    performance.],
+  caption: [Public ARC evidence surface. This is measured `v15` coverage and failure
+    taxonomy, not broad ARC competence.],
 ) <fig:claim-arc-public-surface>
 
-#figure(
-  claim_delta_chart(
-    claim_C3_arc_ood_calibration_tradeoff_chart_rows,
-    y-min: -16,
-    y-max: 6,
-    y-label: [shared ECE improvement vs single (pp)],
-  ),
-  caption: [C3 ARC calibration tradeoff. Positive bars mean shared scoring has lower ECE
-    than single-task scoring; negative bars mean worse ECE. #claim_C3_arc_ood_calibration_tradeoff_summary],
-) <fig:claim-arc-calibration-tradeoff>
-
-#figure(
-  claim_delta_chart(
-    claim_C4_delayed_claim_sibling_transfer_chart_rows,
-    y-min: 0,
-    y-max: 2.2,
-    y-label: [top-1 delta vs claim-only (pp)],
-  ),
-  caption: [C4 delayed-claim sibling transfer. #claim_C4_delayed_claim_sibling_transfer_summary],
-) <fig:claim-delayed-transfer>
-
-#figure(
-  claim_delta_chart(
-    claim_C4_multitask_capacity_tradeoff_chart_rows,
-    y-min: -18,
-    y-max: 2,
-    y-label: [ARC shared minus single top-1 (pp)],
-  ),
-  caption: [C4 capacity boundary. Negative bars mean the shared scorer still trails the
-    single-task ARC scorer at that trunk size. #claim_C4_multitask_capacity_tradeoff_summary],
-) <fig:claim-capacity-boundary>
-
-= Results: Signal Live Execution Boundary
-
-Signal is the practical reach test for the protocol, but the claim is intentionally
-narrow. The current result is not "a tiny net flies the game" and not "neural control beats
-the heuristic." Signal is split into generated evidence rows: an offline counterfactual
-replay row, a live shadow row, and a live neural-active row. In the replay row, each sampled
-state enumerates nine WASD candidates, the Signal simulator replays the candidates, and the
-ranker learns from replay-certified utility, damage, and death outcomes.
-
-#figure(
-  claim_coverage_chart(
-    claim_C9_signal_flight_replay_control_chart_rows,
-    y-max: 90,
-    y-label: [held-out top-1 (%)],
-  ),
-  caption: [C9 Signal replay-control vignette. #claim_C9_signal_flight_replay_control_summary
-    The baseline is the primitive no-safety goal-heading WASD policy. This row supports
-    bounded replay-certified ranking only; live execution is tracked by the separate
-    neural-active claim.],
-) <fig:claim-signal-flight>
+*Signal.* Signal is a deterministic-replay pressure test. Offline replay scores bounded WASD
+candidate actions against recorded simulator consequences, and closed-loop replay evaluates
+guarded rollout rows before any live-control language is admitted. The live `neural_active`
+row is narrower: a running local Signal pilot applies checkpoint-ranked WASD proposals only
+through protocol checks and safety gates, and those gates may veto execution instead of
+letting the neural top choice own control. The trace records active source, checkpoint hash,
+latency, protocol compatibility, safety-gate rows, damage/death telemetry, and replay-ready
+frames:
+#claim_C9_signal_flight_replay_control_summary
+#claim_C9_signal_live_neural_active_summary The paper still does not claim active neural
+control improves utility, regret, damage, or death versus the heuristic baseline.
 
 #figure(
   claim_coverage_chart(
     claim_C9_signal_live_neural_active_chart_rows,
-    y-max: 300,
+    y-max: 260,
     y-label: [live rows],
   ),
-  caption: [C9 Signal live neural-active execution. #claim_C9_signal_live_neural_active_summary
-    This row supports live guarded neural-active execution and replay-ready telemetry, not
-    comparative utility or safety versus the heuristic baseline.],
+  caption: [Signal guarded live neural-active execution. The row establishes live
+    checkpoint-ranked execution and replay-ready telemetry, not comparative active-control
+    superiority.],
 ) <fig:claim-signal-live-active>
 
-This is why Signal belongs in @tab:schema even before it becomes a headline control
-experiment: it changes the environment class without changing the contract. Candidate
-enumeration is still explicit, the verifier is authoritative simulator replay or logged
-live telemetry, the certificate is a replayed or replay-ready outcome record rather than a
-theorem-like proof, and the neural component still ranks candidates rather than owning
-safety. The next unsupported gate is comparative active control: summarize active neural
-episodes against a heuristic baseline with utility, regret, damage, and death.
+*Architecture and language-adjacent probes.* Shared-scorer, adapter, and tiny-net rows remain
+boundary evidence: #claim_C4_multitask_capacity_tradeoff_summary
+#claim_C4_adapter_heads_shared_trunk_summary Haiku prototypes use corpus-derived vocabulary,
+adjacency, syllable/shape constraints, and real-vs-corrupt discrimination as a
+`corpus_proxy` operator. They test how the architecture behaves when the "verifier" is only
+dataset grounding; they are intentionally not promoted as semantic language understanding.
 
-= Executable Accountability and Claim Governance <sec:artifact-feedback>
+= Claim Governance
 
-The hybrid architecture is the contribution; the audit contract is the discipline that makes
-the claims reproducible. Six pieces matter:
+The paper construction layer mirrors the protocol. Result scripts emit canonical summaries,
+the claim compiler converts those summaries into Typst macros and limitation candidates, and
+the PDF consumes those macros rather than hand-maintained numbers. The trace determinism row
+is currently supported: #claim_C8_trace_determinism_audit_summary
+This is not a claim that every sentence is cryptographically enforced. It is the narrower
+claim that registered empirical claims cannot remain supported when their required artifacts
+are missing, stale, contradicted, or underpowered.
 
-The generated C5 rows make the artifact-feedback loop explicit. Rejected candidate traces
-become reason priors and a trained residual that repair the prime/modular proposer
-economics without introducing false rejections (@fig:claim-reason-learning). Repeated
-zero-false-rejection hypothesis bindings become a reusable library prior and feed that
-prior back into budgeted proposal ranking (@fig:claim-hypothesis-library). In both cases,
-the method is the experiment: verified claim outcomes become the next round's proposal
-features, and the claim compiler decides whether the paper may say the loop helped.
+#figure(
+  table(
+    columns: (1.2fr, 0.8fr, 2.6fr),
+    align: (left, left, left),
+    inset: 5pt,
+    table.header[*Class*][*Count*][*Body rule*],
+    [supported], [#paper_claim_status_counts.supported],
+      [May be interpreted, using generated summaries and artifact-backed scope.],
+    [contradicted], [#paper_claim_status_counts.contradicted],
+      [Must remain negative evidence, limitation, or claim-change work.],
+    [underpowered], [#paper_claim_status_counts.underpowered],
+      [May motivate roadmap items, not body-strength architecture claims.],
+    [missing/stale], [#paper_claim_status_counts.missing / #paper_claim_status_counts.stale],
+      [Must block or remove body claims until artifacts are regenerated.],
+  ),
+  caption: [Generated claim-gate summary. The detailed support-surface rows remain in
+    `paper/generated/claims.typ`; the body uses the counts and generated claim macros rather
+    than forcing every long row into the PDF.],
+) <tab:generated-claim-support>
 
-- *Stable action IDs.* Trace rows carry `schema: "crlp.trace.v1"`, `trace_version: 1`, and
-  `action_id_contract: "stable_unique_action_ids"`, plus a declared ranking policy and
-  selected-score margin. Replay resolves `target_index` to the trace row's `action_id`,
-  then maps that stable id back into the regenerated candidate row. The trace determinism
-  audit projects rows onto replay-semantic fields, hashes that projection, and reports the
-  count of `rank_fp_sensitive` decisions rather than requiring bit-identical logits.
-- *Checkpoint identity.* SHA-256 over the exact checkpoint bytes, plus `parent_model_hash`,
-  `feature_encoder_version`, and `feature_set` in metadata. Successor models declare their
-  parent; comparison reports carry both hashes and the evaluated `feature_set`.
-- *Hypothesis layer.* `NNHypothesis` (header `include/nn_hypothesis.h`) sits one level above
-  `NNProgram`: a *template* declares a typed operator skeleton as a sequence of stages with
-  named, typed slots; a *binding* fills each slot with a concrete value inferred from
-  observed task evidence; `nn_hypothesis_compile` produces a composed `NNProgram` whose
-  canonical id binds back to the hypothesis template, so the existing verifier and
-  closed-loop policy treat it as any other program. `crlp.hypothesis.evidence.v1` rows are
-  emitted by `nn_hypothesis_write_evidence_json`, a library function reused by both
-  `arc_agi` and `program_synthesis`. The provenance contract holds: state-observation
-  slot values are `NN_FEATURE_STATE_OBSERVATION`, gate-derived support / residual gain
-  appear only on the evidence row, never on the hypothesis feature vector that a
-  selection-mode proposer scores against.
-- *Certificate-gated baselines.* `crlp.arc_induction.parity.v1` records the matched
-  baseline-vs-induction certification delta per split (training, evaluation) on the public
-  ARC corpus or any synthetic split; `crlp.program_proposer.summary.v1` records
-  matched-budget rule-set comparisons across `{random, grammar-order, structural, learned,
-  closed-loop, oracle}`. Both schemas attest *what was held fixed* between rows, which is
-  the load-bearing thing for cross-task comparison.
-- *Pure C, no third-party deps.* The neural library is dense layers, sigmoid/ReLU/tanh/linear,
-  MSE and softmax cross-entropy, SGD, batched 4-by-4 tiled forward/backward, cloned networks,
-  action scoring, pairwise ranking loss, and cached policy-gradient updates with optional
-  KL/entropy regularization. $approx$3k lines for the core; the current certified modular
-  gate implementation is split into focused C modules for data, features, rule search,
-  training, evaluation, and replay.
-- *CI and local gates.* The PR workflow runs on `ubuntu-24.04` and executes
-  `make paper-ci`, which checks the editorial-vs-claim-change PR contract before compiling
-  through the generated claim path; local `make check` broadens that to the C test,
-  sanitizer, smoke, and task-evaluation targets. Result refreshes capture
-  `crlp.environment.v1` for runner identity, and the canonical result path emits a
-  *timing-stripped* `comparison.canonical.jsonl` so the diff that gates "should the paper
-  rewrite?" cannot be triggered by wallclock noise. Drift shows up as a visible
-  `cc_version` or `git_dirty` difference rather than as silent numeric drift.
+Editorial agents fit the same governance model. They may improve wording, structure,
+transitions, and clarity through reviewable pull requests. They may not change claim scope,
+numeric results, generated summaries, citations, or experiment interpretation unless they
+open an explicit claim-change PR. This disclosure is operational rather than decorative: AI
+agents are reviewable assistants, while empirical claims are generated from repository
+artifacts and checked before compilation.
 
-== Editorial PR boundary
+= Limitations
 
-AI agents were used as editorial and engineering assistants through reviewable pull
-requests. Human authors accepted or rejected all edits. Empirical claims were generated
-from repository artifacts and checked by CI before paper compilation. Editorial-only
-agent changes may improve wording, structure, transitions, and clarity, but CI rejects
-committed generated artifacts, numeric edits, citation edits, generated claim-binding
-edits, and source/test/script edits in editorial PRs. Claim scope, numeric results,
-generated summaries, citations, and experiment interpretation require an explicit
-claim-change PR with the affected claim id, artifact path, regenerated command,
-before/after scope, and interpretation rationale.
+#set enum(numbering: "1.", spacing: 6pt)
 
-= Limitations <sec:limitations>
++ *Scope is deliberately narrow.* The paper supports verifier-grounded residual ranking and
+  executable claim governance. It does not support broad task solving, broad ARC
+  competence, semantic language understanding, or competitive theorem proving.
++ *Multi-seed intervals are still uneven.* The clean prime-gate headline now has a generated
+  seed interval. Some boundary rows still need more explicit confidence intervals before
+  they should be treated as stable quantitative laws.
++ *The fixed-budget proposer result is negative.* The generated contradiction is not an
+  embarrassment; it is the reason rejected-candidate learning matters.
++ *Architecture claims are underpowered or contradicted.* Tiny-net plateau evidence remains
+  underpowered, and adapter heads are diagnostic rather than promoted architecture.
++ *Signal is live but not comparative.* The live `neural_active` row establishes guarded
+  checkpoint-ranked execution with replay-ready telemetry. It does not establish active
+  neural improvement over the heuristic baseline.
++ *Corpus proxies are weaker than verifiers.* The haiku task can ground train-split
+  adjacency, shape, and corruption discrimination. It cannot ground truth or semantics.
++ *Executable accountability is partial.* Claim compilation catches unsupported generated
+  claims, stale evidence, and limitation candidates. It does not replace human judgment
+  about interpretation, ethics, or whether a domain belongs in the paper.
 
-#set enum(numbering: "L1.")
-+ *Experiment-family scope is frozen for this paper.* The current evidence matrix is already
-  broad enough to support the protocol claim. Additional domains would make the draft less
-  falsifiable unless they replace a weaker row or pass the same candidate/verifier/gate/scorer
-  trace standard. New domains belong in roadmap notes, not body evidence.
-+ *Proposer learning remains weak.* The fixed-budget baseline shows grammar order and
-  a simple structural heuristic beat the current neural proposer on both the unconditional
-  candidate grammar and the conditional gap grammar. The load-bearing claim is certificate-gated
-  rule discovery, not learned proposer superiority. The negative result is reported deliberately.
-+ *Cross-task verifier-RL comparison missing.* Calibration evidence is on the
-  prime-gap modular gate instance only. The pipeline supports running strict-vs-KL on
-  grid-path and delayed-claim; the comparison is not in canonical results yet.
-+ *Limited cross-domain gate coverage.* The prime-gap modular gate instance and
-  grid-path have the strongest *gate ablations* in the strict sense. Delayed-claim now has
-  a production threshold+margin gate that resolves its held-out deterministic generator,
-  including the hard `trust` versus `request_more_evidence` residual, and it now reports
-  shifted/noisy stress rows. Those rows are mixed: the direct grammar is exact under clean
-  seed shift but false-rejects under observation noise, while the indirect proxy avoids
-  false rejections but leaves a larger residual. This is evidence of the robustness frontier,
-  not a broad noisy-claim solution.
-  ARC-AGI's "gate" is a different architecture (transform grammar) over the same task, not
-  the same scorer with vs without filtering, so it is reported separately in @fig:cross-acc.
-+ *Reason-coded learning is not CDCL.* GRASP and CSP look-back motivate the rejected-candidate
-  row, but the artifact does not learn sound clauses, prove nogoods, or prune search with
-  CDCL semantics. Reason codes and false-rejection counters are training and audit features
-  for residual ranking; deterministic verifiers still own admissibility.
-+ *Statistical rigor.* Default `make prime-gap-experiments` runs 1 seed; the harness
-  supports more (`PRIME_GAP_EXPERIMENT_SEEDS=…`). The 9.13 → 45.12 → 68.87% deltas, the
-  73.22% baseline saving, the grid-path 75.80 -> 90.10 cheap-bound gate delta,
-  the 95.30 mixed-gate upper bound, and the modular-rule-search negative
-  result all need confidence intervals across $gt.eq 5$ seeds before any of them should be
-  treated as a stable property.
-+ *Learned-wheel calibration tradeoff* needs a reliability-diagram pass. The learned wheel
-  improves ranking sharply (@tab:f1) but has higher ECE (0.1402) than the raw minimal row
-  (0.1076).
-+ *ARC ECE outlier.* The 0.5574 ECE on the `0520fde7` cell scorer is reported, with the
-  structural explanation (10 colors × 3 train pairs is too sparse for the softmax to align
-  with accuracy). It is not yet replicated across multiple ARC tasks; the structural
-  argument is suggestive, not proof.
-+ *Signal lacks a comparative active-control result.* The Signal rows now support offline
-  replay ranking, live shadow evidence, and guarded live neural-active execution
-  (@fig:claim-signal-live-active). They do not yet support the stronger claim that active
-  neural control improves utility, regret, damage, or death versus the heuristic baseline.
-+ *Executable accountability is partial.* The claim compiler turns artifact support, generated
-  summaries, environment identity, and limitation candidates into build gates. It does not
-  replace human review of intended use, ethical scope, interpretation, or whether a reported
-  domain is worth studying.
-+ *No competitive large-system baseline.* The related-work comparison now positions the
-  protocol against learned verifiers, RLVR, AlphaGeometry-style formal search, DreamCoder,
-  Hypothesis Search, and ARC systems, but the artifact does not empirically compare against
-  those large systems. That is acceptable for the protocol claim; it would not be acceptable
-  for a claim of competitive theorem proving, language-model reasoning, or ARC performance.
-+ *Single-runner numbers.* All headline percentages were captured from a single CI
-  baseline run (`ubuntu-24.04` + `gcc-13`, see `results/latest/environment.json`). Laptop
-  runs produce different `model_ms_per_sample` and minor numerical differences in
-  `nll` / `ece` at the third decimal; the canonical pipeline strips timing fields and now
-  exposes a replay-semantic trace hash plus `rank_fp_sensitive` counts, but a cross-machine
-  double-blind has not yet been run. Raw logits remain diagnostics rather than semantic
-  trace identity.
+#set enum(numbering: "1.")
 
 #let paper_support_status = if paper_claim_support_ok { [passing] } else { [failing] }
 
@@ -1652,37 +530,22 @@ before/after scope, and interpretation rationale.
     )).flatten(),
   ),
   caption: [Generated limitation candidates from the paper-claim compiler. The required
-    claim support gate is currently #paper_support_status. Optional contradicted claims remain visible
-    here instead of blocking PDF compilation.],
+    claim support gate is currently #paper_support_status. Optional contradicted claims
+    remain visible here instead of blocking PDF compilation.],
 ) <tab:generated-limitations>
-
-#set enum(numbering: "1.")
 
 = Conclusion
 
-The paper's strongest claim is narrow: certified candidate mechanisms should own
-admissibility, and small learned components should rank, calibrate, reuse, or learn around
-those certified hypotheses. The two main empirical contributions are the feedback loops.
-Rejected candidate rows become reason-coded targets for a later safety-first residual
-ranker; certified hypotheses become reusable library priors and are checked on held-out
-proposal budgets. The construction contribution is the claim-governance layer around those
-results: generated support rows, environment identity, checkpoint and trace hashes, and
-limitation candidates decide what the manuscript may say. The gate, tiny-net, ARC, and
-Signal rows matter because they keep that claim honest: modular gates show the protocol can
-sharply reduce residual search, capacity audits block a naive wider-is-better story, ARC
-reports current measured `v15` public-corpus coverage rather than broad competence, and
-Signal keeps the loop under replay-grounded application pressure without claiming
-comparative live-control performance.
+The result is a disciplined loop: enumerate candidates, ground them with an exact check or
+replayable operator, let a small model rank the residual, preserve the trace, and bind the
+paper's claims to generated evidence. Prime-gap shows the clean certified-gate anchor.
+Rejected-candidate learning and hypothesis-library promotion show that verifier artifacts can
+feed back into later proposal structure. ARC, Signal, tiny-net, adapter, and haiku rows mark
+the boundary rather than widening the thesis.
 
-The negative fixed-budget proposer result is therefore not an embarrassment. It is evidence
-that the protocol is falsifiable: a flat neural proposer over structural rows is weak, but
-the verifier trace can still become useful training signal. The broader implication is
-pragmatic. When correctness, safety, or auditability matter, end-to-end learning should not
-own the whole decision or the whole narrative. Verifier-grounded ranking substrates provide
-a smaller, auditable contract: symbolic or replay checkers own admissibility, neural
-components spend capacity on search and prioritization, and the trace artifacts make both
-success and failure reusable. The paper-construction contract mirrors the method: evidence
-is generated first, prose is downstream of artifacts, and claim changes require reviewable
-diffs rather than hidden narrative drift.
+The broader lesson is pragmatic. When correctness, safety, or auditability matter, the model
+should not own the whole decision and the paper should not own the whole narrative. The
+checker or replay system owns admissibility and consequence. The learned component owns
+ranking pressure. The repository trace owns what the manuscript is allowed to say.
 
 #bibliography("references.bib")
