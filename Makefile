@@ -240,6 +240,10 @@ NEURAL_GRAMMAR_DISCOVERY_PROGRAM_SYNTHESIS_TRACE ?= $(NEURAL_GRAMMAR_DISCOVERY_D
 NEURAL_GRAMMAR_DISCOVERY_GRID_TRACE ?= $(BUILD_DIR)/grid_path.jsonl
 NEURAL_GRAMMAR_DISCOVERY_SIGNAL_MINING_TRACE ?= $(BUILD_DIR)/signal_mining_smoke/trace.jsonl
 NEURAL_GRAMMAR_DISCOVERY_ARC_PROBE_COMPARE_LIMIT ?= 64
+NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_TRIAGE ?= $(HYPOTHESIS_LIBRARY_PUBLIC_TRIAGE_DIR)/coverage_triage.jsonl
+NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_LIMIT ?= 64
+NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_PER_FAMILY ?= 12
+NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_COMPARE_LIMIT ?= 64
 
 SIGNAL_FLIGHT_INCLUDE_FLAGS := \
 	-I$(SIGNAL_FLIGHT_SIGNAL_DIR)/server \
@@ -781,8 +785,8 @@ hypothesis-library-neural-failure-proof: $(ARC_AGI) hypothesis-library-neural-di
 	$(PYTHON) scripts/arc_neural_failure_proof.py --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --mutation-verification $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR)/mutation_verification.jsonl --candidate-sketches $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR)/candidate_sketches.jsonl --triage $(HYPOTHESIS_LIBRARY_PUBLIC_TRIAGE_DIR)/coverage_triage.jsonl --output-dir $(HYPOTHESIS_LIBRARY_NEURAL_FAILURE_PROOF_DIR)
 
 .PHONY: neural-grammar-discovery
-neural-grammar-discovery: $(NN_GRAMMAR_DISCOVERY_RUNTIME) hypothesis-library-neural-failure-proof haiku-word-lm-smoke haiku-understanding-smoke program-synthesis-sketch-source grid-path-trace signal-mining-smoke
-	$(PYTHON) scripts/neural_grammar_discovery.py --domains $(NEURAL_GRAMMAR_DISCOVERY_DOMAINS) --arc-failure-proof $(NEURAL_GRAMMAR_DISCOVERY_ARC_PROOF) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --arc-agi ./$(ARC_AGI) --arc-probe-compare-limit $(NEURAL_GRAMMAR_DISCOVERY_ARC_PROBE_COMPARE_LIMIT) --haiku-word-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_WORD_TRACE) --haiku-understanding-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_UNDERSTANDING_TRACE) --program-synthesis-trace $(NEURAL_GRAMMAR_DISCOVERY_PROGRAM_SYNTHESIS_TRACE) --grid-path-trace $(NEURAL_GRAMMAR_DISCOVERY_GRID_TRACE) --signal-mining-trace $(NEURAL_GRAMMAR_DISCOVERY_SIGNAL_MINING_TRACE) --output-dir $(NEURAL_GRAMMAR_DISCOVERY_DIR) --runtime ./$(NN_GRAMMAR_DISCOVERY_RUNTIME)
+neural-grammar-discovery: $(NN_GRAMMAR_DISCOVERY_RUNTIME) $(ARC_AGI) hypothesis-library-neural-failure-proof haiku-word-lm-smoke haiku-understanding-smoke program-synthesis-sketch-source grid-path-trace signal-mining-smoke
+	$(PYTHON) scripts/neural_grammar_discovery.py --domains $(NEURAL_GRAMMAR_DISCOVERY_DOMAINS) --arc-failure-proof $(NEURAL_GRAMMAR_DISCOVERY_ARC_PROOF) --arc-heldout-triage $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_TRIAGE) --arc-heldout-limit $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_LIMIT) --arc-heldout-per-family $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_PER_FAMILY) --arc-heldout-compare-limit $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_COMPARE_LIMIT) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --arc-agi ./$(ARC_AGI) --arc-probe-compare-limit $(NEURAL_GRAMMAR_DISCOVERY_ARC_PROBE_COMPARE_LIMIT) --haiku-word-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_WORD_TRACE) --haiku-understanding-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_UNDERSTANDING_TRACE) --program-synthesis-trace $(NEURAL_GRAMMAR_DISCOVERY_PROGRAM_SYNTHESIS_TRACE) --grid-path-trace $(NEURAL_GRAMMAR_DISCOVERY_GRID_TRACE) --signal-mining-trace $(NEURAL_GRAMMAR_DISCOVERY_SIGNAL_MINING_TRACE) --output-dir $(NEURAL_GRAMMAR_DISCOVERY_DIR) --runtime ./$(NN_GRAMMAR_DISCOVERY_RUNTIME)
 
 paper-grade-evidence-core: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit multitask-adapter-heads experiment-matrix
 	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR)

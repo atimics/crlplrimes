@@ -52,6 +52,8 @@ enum {
     ARC_HYPOTHESIS_NEURAL_WEIGHT = 24,
     ARC_HYPOTHESIS_COLD_START_WEIGHT = 8,
     ARC_HYPOTHESIS_SLOT_PROBE_CAPACITY = 512,
+    ARC_SKETCH_PROBE_INPUT_CAPACITY = 4096,
+    ARC_SKETCH_PROBE_RECORD_CAPACITY = 4096,
     ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY = 13,
     ARC_HYPOTHESIS_TEMPLATE_BUCKETS = 13,
     ARC_HYPOTHESIS_SLOT_TYPE_BUCKETS = 9,
@@ -162,7 +164,30 @@ typedef enum {
 typedef enum {
     ARC_SKETCH_OP_CROP = 0,
     ARC_SKETCH_OP_TILE_REPEAT = 1,
+    ARC_SKETCH_OP_MACROCELL_SUBSTITUTE = 2,
+    ARC_SKETCH_OP_LATTICE_SAMPLE = 3,
+    ARC_SKETCH_OP_COMPONENT_COLOR_SUMMARY = 4,
+    ARC_SKETCH_OP_NORMALIZED_CROP = 5,
+    ARC_SKETCH_OP_POINT_LINE_PROJECT = 6,
+    ARC_SKETCH_OP_OBJECT_MASK_EXTRACT = 7,
+    ARC_SKETCH_OP_AXIS_PROJECTION_COMPRESS = 8,
+    ARC_SKETCH_OP_SEPARATOR_PANEL_MAP = 9,
 } ARCSketchOpKind;
+
+typedef struct {
+    int selector;
+    int op;
+    uint8_t background;
+    uint8_t color;
+    uint8_t output_color;
+    int x_anchor;
+    int y_anchor;
+    int x_offset;
+    int y_offset;
+    size_t width;
+    size_t height;
+    size_t period;
+} ARCSketchProgramSpec;
 
 /* ARC-AGI-1 training task 0520fde7, reduced to balanced output-cell color scoring. */
 static const uint8_t ARC_0520FDE7_TRAIN_INPUTS[ARC_TRAIN_PAIR_COUNT][ARC_INPUT_CELLS] = {
@@ -320,9 +345,14 @@ typedef struct {
     const char *hypothesis_library_prior_path;
     const char *task_ids;
     const char *exclude_task_ids;
+    const char *arc_sketch_probe_candidates_path;
+    const char *arc_sketch_probe_public_arc_dir;
+    const char *arc_sketch_probe_sources_path;
+    const char *arc_sketch_probe_prior_path;
     int loader_summary_only;
     int program_budget_grid;
     int induction_smoke;
+    size_t arc_sketch_probe_sketches_per_task;
     int hypothesis_neural_prior_enabled;
     int hypothesis_slot_prior_enabled;
     int hypothesis_cold_start_enabled;
@@ -351,6 +381,41 @@ typedef struct {
     ARCGridPair test[ARC_MAX_PAIRS];
     size_t test_count;
 } ARCTask;
+
+typedef struct {
+    char family[ARC_TRANSFORM_NAME_BYTES];
+    char task_id[ARC_MAX_TASK_ID];
+    char split[64];
+    size_t support_tasks;
+    size_t proposal_count;
+    double utility_mean;
+} ARCSketchProbeInput;
+
+typedef struct {
+    char family[ARC_TRANSFORM_NAME_BYTES];
+    char task_id[ARC_MAX_TASK_ID];
+    char split[64];
+    char task_path[ARC_MAX_TASK_PATH];
+    char library_id[ARC_TRANSFORM_NAME_BYTES * 2];
+    ARCSketchProgramSpec spec;
+    size_t support_tasks;
+    size_t proposal_count;
+    double utility_mean;
+    size_t sketch_index;
+} ARCSketchProbeRecord;
+
+typedef struct {
+    char family[ARC_TRANSFORM_NAME_BYTES];
+    char task_id[ARC_MAX_TASK_ID];
+    char split[64];
+    char task_path[ARC_MAX_TASK_PATH];
+    size_t attempted;
+    size_t emitted;
+    size_t unsupported_shape;
+    size_t no_train_match;
+    size_t duplicate;
+    size_t cap_hit;
+} ARCSketchProbeSummary;
 
 typedef struct {
     size_t count;
@@ -8292,21 +8357,6 @@ static const NNHypothesisTemplate *arc_hypothesis_template_sketch_program(void)
     return &template_ref;
 }
 
-typedef struct {
-    int selector;
-    int op;
-    uint8_t background;
-    uint8_t color;
-    uint8_t output_color;
-    int x_anchor;
-    int y_anchor;
-    int x_offset;
-    int y_offset;
-    size_t width;
-    size_t height;
-    size_t period;
-} ARCSketchProgramSpec;
-
 static int arc_sketch_program_spec_from_hypothesis(const NNHypothesis *hypothesis,
                                                    ARCSketchProgramSpec *spec)
 {
@@ -8381,6 +8431,791 @@ static int arc_sketch_copy_region(const ARCGrid *input,
     return 1;
 }
 
+static int arc_sketch_macrocell_active(size_t x, size_t y, size_t period, int motif_kind)
+{
+    if (period == 0) {
+        return 0;
+    }
+    switch (motif_kind) {
+    case 0:
+        return 1;
+    case 1:
+        return (x == 0 || x + 1u == period) && (y == 0 || y + 1u == period);
+    case 2:
+        return x == 0 || y == 0 || x + 1u == period || y + 1u == period;
+    case 3:
+        return x == y || x + y + 1u == period;
+    default:
+        return x == period / 2u && y == period / 2u;
+    }
+}
+
+static int arc_apply_sketch_macrocell_substitute(const ARCSketchProgramSpec *spec,
+                                                 const ARCGrid *input,
+                                                 ARCGrid *output)
+{
+    if (spec == NULL || input == NULL || output == NULL ||
+        spec->period == 0 ||
+        input->width * spec->period > ARC_MAX_GRID_WIDTH ||
+        input->height * spec->period > ARC_MAX_GRID_HEIGHT) {
+        return 0;
+    }
+    arc_init_grid(output, input->width * spec->period, input->height * spec->period);
+    for (size_t y = 0; y < output->height; ++y) {
+        for (size_t x = 0; x < output->width; ++x) {
+            output->cells[y * output->width + x] = spec->background;
+        }
+    }
+    int any_trigger = spec->color == spec->background;
+    for (size_t y = 0; y < input->height; ++y) {
+        for (size_t x = 0; x < input->width; ++x) {
+            uint8_t value = input->cells[y * input->width + x];
+            if ((any_trigger && value == spec->background) ||
+                (!any_trigger && value != spec->color)) {
+                continue;
+            }
+            uint8_t motif_color =
+                spec->output_color == spec->background ? value : spec->output_color;
+            for (size_t yy = 0; yy < spec->period; ++yy) {
+                for (size_t xx = 0; xx < spec->period; ++xx) {
+                    int active = 0;
+                    if (spec->x_anchor == 5 &&
+                        input->width == spec->period &&
+                        input->height == spec->period) {
+                        active = input->cells[yy * input->width + xx] == spec->background;
+                    } else {
+                        active = arc_sketch_macrocell_active(xx,
+                                                             yy,
+                                                             spec->period,
+                                                             spec->x_anchor);
+                    }
+                    if (!active) {
+                        continue;
+                    }
+                    size_t out_x = x * spec->period + xx;
+                    size_t out_y = y * spec->period + yy;
+                    output->cells[out_y * output->width + out_x] = motif_color;
+                }
+            }
+        }
+    }
+    return 1;
+}
+
+static int arc_apply_sketch_lattice_sample(const ARCSketchProgramSpec *spec,
+                                           const ARCGrid *input,
+                                           ARCGrid *output)
+{
+    if (spec != NULL && spec->x_anchor == 1) {
+        if (input == NULL || output == NULL ||
+            input->width != input->height ||
+            input->width < 3u ||
+            (input->width % 2u) == 0 ||
+            spec->width != 3u ||
+            spec->height != 3u) {
+            return 0;
+        }
+        size_t last = input->width - 1u;
+        arc_init_grid(output, spec->width, spec->height);
+        for (size_t cell = 0; cell < arc_grid_cells(output); ++cell) {
+            output->cells[cell] = spec->background;
+        }
+        for (size_t y = 0; y < input->height; ++y) {
+            for (size_t x = 0; x < input->width; ++x) {
+                uint8_t value = input->cells[y * input->width + x];
+                if (value == spec->background) {
+                    continue;
+                }
+                if (x != y && x + y != last) {
+                    return 0;
+                }
+                size_t out_x = 1u;
+                size_t out_y = 1u;
+                if (x < y) {
+                    out_x = 0u;
+                } else if (x > y) {
+                    out_x = 2u;
+                } else if (x == 0u) {
+                    out_x = 0u;
+                } else if (x == last) {
+                    out_x = 2u;
+                }
+                if (x + y < last) {
+                    out_y = 0u;
+                } else if (x + y > last) {
+                    out_y = 2u;
+                } else if (y == 0u) {
+                    out_y = 0u;
+                } else if (y == last) {
+                    out_y = 2u;
+                }
+                uint8_t *target = &output->cells[out_y * output->width + out_x];
+                if (*target != spec->background && *target != value) {
+                    return 0;
+                }
+                *target = value;
+            }
+        }
+        return 1;
+    }
+    if (spec == NULL || input == NULL || output == NULL ||
+        spec->period == 0 || spec->width == 0 || spec->height == 0 ||
+        spec->width > ARC_MAX_GRID_WIDTH || spec->height > ARC_MAX_GRID_HEIGHT) {
+        return 0;
+    }
+    int64_t last_x =
+        (int64_t)spec->x_offset + (int64_t)(spec->width - 1u) * (int64_t)spec->period;
+    int64_t last_y =
+        (int64_t)spec->y_offset + (int64_t)(spec->height - 1u) * (int64_t)spec->period;
+    if (spec->x_offset < 0 || spec->y_offset < 0 ||
+        last_x < 0 || last_y < 0 ||
+        last_x >= (int64_t)input->width || last_y >= (int64_t)input->height) {
+        return 0;
+    }
+    arc_init_grid(output, spec->width, spec->height);
+    for (size_t y = 0; y < spec->height; ++y) {
+        for (size_t x = 0; x < spec->width; ++x) {
+            size_t in_x = (size_t)spec->x_offset + x * spec->period;
+            size_t in_y = (size_t)spec->y_offset + y * spec->period;
+            output->cells[y * output->width + x] =
+                input->cells[in_y * input->width + in_x];
+        }
+    }
+    return 1;
+}
+
+static int arc_apply_sketch_point_line_project(const ARCSketchProgramSpec *spec,
+                                               const ARCGrid *input,
+                                               ARCGrid *output)
+{
+    if (spec == NULL || input == NULL || output == NULL ||
+        input->width == 0 || input->height == 0) {
+        return 0;
+    }
+    typedef struct {
+        size_t x;
+        size_t y;
+        uint8_t color;
+    } ARCPointLineSeed;
+    ARCPointLineSeed seeds[ARC_COLOR_COUNT];
+    size_t seed_count = 0;
+    for (size_t y = 0; y < input->height; ++y) {
+        for (size_t x = 0; x < input->width; ++x) {
+            uint8_t color = input->cells[y * input->width + x];
+            if (color == spec->background) {
+                continue;
+            }
+            if (seed_count >= sizeof(seeds) / sizeof(seeds[0])) {
+                return 0;
+            }
+            seeds[seed_count].x = x;
+            seeds[seed_count].y = y;
+            seeds[seed_count].color = color;
+            ++seed_count;
+        }
+    }
+    if (seed_count < 2u) {
+        return 0;
+    }
+    arc_init_grid(output, input->width, input->height);
+    for (size_t cell = 0; cell < arc_grid_cells(output); ++cell) {
+        output->cells[cell] = spec->background;
+    }
+    for (size_t seed = 0; seed < seed_count; ++seed) {
+        for (size_t y = 0; y < output->height; ++y) {
+            output->cells[y * output->width + seeds[seed].x] = seeds[seed].color;
+        }
+        for (size_t x = 0; x < output->width; ++x) {
+            output->cells[seeds[seed].y * output->width + x] = seeds[seed].color;
+        }
+    }
+    for (size_t lhs = 0; lhs < seed_count; ++lhs) {
+        for (size_t rhs = lhs + 1u; rhs < seed_count; ++rhs) {
+            if (seeds[lhs].x == seeds[rhs].x || seeds[lhs].y == seeds[rhs].y) {
+                continue;
+            }
+            output->cells[seeds[lhs].y * output->width + seeds[rhs].x] =
+                spec->output_color;
+            output->cells[seeds[rhs].y * output->width + seeds[lhs].x] =
+                spec->output_color;
+        }
+    }
+    return 1;
+}
+
+static uint8_t arc_grid_most_common_non_background_color(const ARCGrid *grid,
+                                                         uint8_t background)
+{
+    size_t counts[ARC_COLOR_COUNT];
+    memset(counts, 0, sizeof(counts));
+    if (grid == NULL) {
+        return background;
+    }
+    for (size_t cell = 0; cell < arc_grid_cells(grid); ++cell) {
+        uint8_t color = grid->cells[cell];
+        if (color < ARC_COLOR_COUNT && color != background) {
+            ++counts[color];
+        }
+    }
+    uint8_t best = background;
+    size_t best_count = 0;
+    for (uint8_t color = 0; color < ARC_COLOR_COUNT; ++color) {
+        if (counts[color] > best_count) {
+            best_count = counts[color];
+            best = color;
+        }
+    }
+    return best;
+}
+
+static int arc_apply_sketch_component_color_summary(const ARCSketchProgramSpec *spec,
+                                                    const ARCGrid *input,
+                                                    ARCGrid *output)
+{
+    if (spec == NULL || input == NULL || output == NULL ||
+        spec->width == 0 || spec->height == 0 ||
+        spec->width > ARC_MAX_GRID_WIDTH || spec->height > ARC_MAX_GRID_HEIGHT) {
+        return 0;
+    }
+    size_t min_x = 0;
+    size_t min_y = 0;
+    size_t max_x = 0;
+    size_t max_y = 0;
+    if (!arc_grid_non_background_bbox(input,
+                                      spec->background,
+                                      &min_x,
+                                      &min_y,
+                                      &max_x,
+                                      &max_y)) {
+        return 0;
+    }
+    ARCScene scene;
+    if (!arc_extract_scene(input, spec->background, &scene)) {
+        return 0;
+    }
+    uint8_t ignore_color = spec->color == spec->background
+                               ? arc_grid_most_common_non_background_color(input,
+                                                                            spec->background)
+                               : spec->color;
+    arc_init_grid(output, spec->width, spec->height);
+    for (size_t cell = 0; cell < arc_grid_cells(output); ++cell) {
+        output->cells[cell] = spec->output_color;
+    }
+    double span_x = (double)(max_x - min_x + 1u);
+    double span_y = (double)(max_y - min_y + 1u);
+    for (size_t object_index = 0; object_index < scene.object_count; ++object_index) {
+        const ARCObject *object = &scene.objects[object_index];
+        if (object->color == ignore_color || object->color == spec->background) {
+            continue;
+        }
+        double rel_x = (object->centroid_x - (double)min_x) / span_x;
+        double rel_y = (object->centroid_y - (double)min_y) / span_y;
+        if (rel_x < 0.0) {
+            rel_x = 0.0;
+        }
+        if (rel_y < 0.0) {
+            rel_y = 0.0;
+        }
+        size_t out_x = (size_t)(rel_x * (double)spec->width);
+        size_t out_y = (size_t)(rel_y * (double)spec->height);
+        if (out_x >= spec->width) {
+            out_x = spec->width - 1u;
+        }
+        if (out_y >= spec->height) {
+            out_y = spec->height - 1u;
+        }
+        output->cells[out_y * output->width + out_x] = object->color;
+    }
+    return 1;
+}
+
+static int arc_apply_sketch_object_mask_extract(const ARCSketchProgramSpec *spec,
+                                                const ARCGrid *input,
+                                                ARCGrid *output)
+{
+    size_t min_x = 0;
+    size_t min_y = 0;
+    size_t max_x = 0;
+    size_t max_y = 0;
+    uint8_t selected_mask[ARC_MAX_GRID_CELLS];
+    int use_component_mask = 0;
+    memset(selected_mask, 0, sizeof(selected_mask));
+    if (spec == NULL || input == NULL || output == NULL ||
+        input->width == 0 || input->height == 0) {
+        return 0;
+    }
+    if (spec->color == spec->background &&
+        spec->x_anchor == ARC_OBJECT_SELECTOR_ALL_COLOR) {
+        ARCComponent component;
+        if (!arc_find_largest_component(input, spec->background, &component)) {
+            return 0;
+        }
+        min_x = component.min_x;
+        min_y = component.min_y;
+        max_x = component.max_x;
+        max_y = component.max_y;
+        memcpy(selected_mask, component.mask, sizeof(selected_mask));
+        use_component_mask = 1;
+    } else {
+        ARCScene scene;
+        ARCObject object;
+        uint8_t selector = (uint8_t)spec->x_anchor;
+        if (selector >= ARC_OBJECT_SELECTOR_KIND_COUNT) {
+            selector = ARC_OBJECT_SELECTOR_LARGEST_COLOR;
+        }
+        if (!arc_extract_scene(input, spec->background, &scene) ||
+            !arc_select_scene_object(&scene,
+                                     selector,
+                                     spec->color,
+                                     spec->output_color,
+                                     &object)) {
+            return 0;
+        }
+        min_x = object.min_x;
+        min_y = object.min_y;
+        max_x = object.max_x;
+        max_y = object.max_y;
+    }
+    if (min_x > max_x || min_y > max_y ||
+        max_x >= input->width || max_y >= input->height) {
+        return 0;
+    }
+    size_t width = max_x - min_x + 1u;
+    size_t height = max_y - min_y + 1u;
+    if (width == 0 || height == 0 ||
+        width > ARC_MAX_GRID_WIDTH || height > ARC_MAX_GRID_HEIGHT) {
+        return 0;
+    }
+    arc_init_grid(output, width, height);
+    for (size_t cell = 0; cell < arc_grid_cells(output); ++cell) {
+        output->cells[cell] = spec->background;
+    }
+    for (size_t y = 0; y < height; ++y) {
+        for (size_t x = 0; x < width; ++x) {
+            size_t source = (min_y + y) * input->width + min_x + x;
+            size_t target = y * output->width + x;
+            uint8_t value = input->cells[source];
+            int selected = use_component_mask ? selected_mask[source] : value == spec->color;
+            if (spec->y_anchor == 2) {
+                output->cells[target] = value;
+            } else if (spec->y_anchor == 3) {
+                output->cells[target] =
+                    value == spec->background ? spec->output_color : value;
+            } else if (selected) {
+                output->cells[target] =
+                    spec->y_anchor == 1 ? spec->output_color : value;
+            }
+        }
+    }
+    return 1;
+}
+
+static uint8_t arc_line_projection_color(const ARCGrid *input,
+                                         uint8_t background,
+                                         uint8_t output_color,
+                                         int axis,
+                                         size_t index,
+                                         int mode)
+{
+    size_t counts[ARC_COLOR_COUNT];
+    memset(counts, 0, sizeof(counts));
+    uint8_t first = background;
+    uint8_t last = background;
+    size_t total = 0;
+    size_t extent = axis == 0 ? input->width : input->height;
+    for (size_t offset = 0; offset < extent; ++offset) {
+        size_t x = axis == 0 ? offset : index;
+        size_t y = axis == 0 ? index : offset;
+        uint8_t color = input->cells[y * input->width + x];
+        if (color == background || color >= ARC_COLOR_COUNT) {
+            continue;
+        }
+        if (total == 0) {
+            first = color;
+        }
+        last = color;
+        ++counts[color];
+        ++total;
+    }
+    if (total == 0) {
+        return background;
+    }
+    if (mode == 0) {
+        return first;
+    }
+    if (mode == 1) {
+        return last;
+    }
+    if (mode == 3) {
+        return output_color;
+    }
+    uint8_t best = first;
+    size_t best_count = 0;
+    for (uint8_t color = 0; color < ARC_COLOR_COUNT; ++color) {
+        if (counts[color] > best_count) {
+            best = color;
+            best_count = counts[color];
+        }
+    }
+    return best;
+}
+
+static int arc_apply_sketch_axis_projection_compress(const ARCSketchProgramSpec *spec,
+                                                     const ARCGrid *input,
+                                                     ARCGrid *output)
+{
+    if (spec == NULL || input == NULL || output == NULL ||
+        input->width == 0 || input->height == 0) {
+        return 0;
+    }
+    int axis = spec->x_anchor == 1 ? 1 : 0;
+    int mode = spec->y_anchor;
+    if (axis == 0) {
+        arc_init_grid(output, 1, input->height);
+        for (size_t y = 0; y < input->height; ++y) {
+            output->cells[y] =
+                arc_line_projection_color(input,
+                                          spec->background,
+                                          spec->output_color,
+                                          axis,
+                                          y,
+                                          mode);
+        }
+    } else {
+        arc_init_grid(output, input->width, 1);
+        for (size_t x = 0; x < input->width; ++x) {
+            output->cells[x] =
+                arc_line_projection_color(input,
+                                          spec->background,
+                                          spec->output_color,
+                                          axis,
+                                          x,
+                                          mode);
+        }
+    }
+    return 1;
+}
+
+static int arc_find_separator_ranges_for_color(const ARCGrid *input,
+                                               uint8_t separator,
+                                               ARCRange *row_ranges,
+                                               size_t *row_count_out,
+                                               ARCRange *col_ranges,
+                                               size_t *col_count_out)
+{
+    size_t full_rows[ARC_MAX_GRID_HEIGHT];
+    size_t full_cols[ARC_MAX_GRID_WIDTH];
+    size_t full_row_count =
+        arc_full_color_rows(input, separator, full_rows, ARC_MAX_GRID_HEIGHT);
+    size_t full_col_count =
+        arc_full_color_cols(input, separator, full_cols, ARC_MAX_GRID_WIDTH);
+    if (full_row_count == 0 && full_col_count == 0) {
+        return 0;
+    }
+    if (row_ranges != NULL && row_count_out != NULL) {
+        *row_count_out = arc_ranges_from_separators(input->height,
+                                                    full_rows,
+                                                    full_row_count,
+                                                    row_ranges,
+                                                    ARC_MAX_GRID_HEIGHT);
+    }
+    if (col_ranges != NULL && col_count_out != NULL) {
+        *col_count_out = arc_ranges_from_separators(input->width,
+                                                    full_cols,
+                                                    full_col_count,
+                                                    col_ranges,
+                                                    ARC_MAX_GRID_WIDTH);
+    }
+    return 1;
+}
+
+static int arc_detect_separator_color(const ARCGrid *input,
+                                      uint8_t background,
+                                      uint8_t *separator_out)
+{
+    uint8_t found = 0;
+    size_t found_count = 0;
+    for (uint8_t color = 0; color < ARC_COLOR_COUNT; ++color) {
+        if (color == background) {
+            continue;
+        }
+        size_t full_rows[ARC_MAX_GRID_HEIGHT];
+        size_t full_cols[ARC_MAX_GRID_WIDTH];
+        size_t full_row_count =
+            arc_full_color_rows(input, color, full_rows, ARC_MAX_GRID_HEIGHT);
+        size_t full_col_count =
+            arc_full_color_cols(input, color, full_cols, ARC_MAX_GRID_WIDTH);
+        if (full_row_count == 0 && full_col_count == 0) {
+            continue;
+        }
+        found = color;
+        ++found_count;
+    }
+    if (found_count != 1) {
+        return 0;
+    }
+    *separator_out = found;
+    return 1;
+}
+
+static size_t arc_panel_non_background_count(const ARCGrid *input,
+                                             const ARCRange *row_range,
+                                             const ARCRange *col_range,
+                                             uint8_t background,
+                                             uint8_t separator)
+{
+    size_t count = 0;
+    for (size_t y = row_range->min; y <= row_range->max; ++y) {
+        for (size_t x = col_range->min; x <= col_range->max; ++x) {
+            uint8_t color = input->cells[y * input->width + x];
+            if (color != background && color != separator) {
+                ++count;
+            }
+        }
+    }
+    return count;
+}
+
+static int arc_panel_content_bbox(const ARCGrid *input,
+                                  const ARCRange *row_range,
+                                  const ARCRange *col_range,
+                                  uint8_t background,
+                                  uint8_t separator,
+                                  size_t *min_x_out,
+                                  size_t *min_y_out,
+                                  size_t *max_x_out,
+                                  size_t *max_y_out)
+{
+    int found = 0;
+    size_t min_x = col_range->max;
+    size_t min_y = row_range->max;
+    size_t max_x = col_range->min;
+    size_t max_y = row_range->min;
+    for (size_t y = row_range->min; y <= row_range->max; ++y) {
+        for (size_t x = col_range->min; x <= col_range->max; ++x) {
+            uint8_t color = input->cells[y * input->width + x];
+            if (color == background || color == separator) {
+                continue;
+            }
+            if (!found || x < min_x) {
+                min_x = x;
+            }
+            if (!found || y < min_y) {
+                min_y = y;
+            }
+            if (!found || x > max_x) {
+                max_x = x;
+            }
+            if (!found || y > max_y) {
+                max_y = y;
+            }
+            found = 1;
+        }
+    }
+    if (!found) {
+        return 0;
+    }
+    *min_x_out = min_x;
+    *min_y_out = min_y;
+    *max_x_out = max_x;
+    *max_y_out = max_y;
+    return 1;
+}
+
+static int arc_copy_panel_range(const ARCGrid *input,
+                                const ARCRange *row_range,
+                                const ARCRange *col_range,
+                                ARCGrid *output)
+{
+    size_t width = col_range->max - col_range->min + 1u;
+    size_t height = row_range->max - row_range->min + 1u;
+    if (width == 0 || height == 0 ||
+        width > ARC_MAX_GRID_WIDTH || height > ARC_MAX_GRID_HEIGHT) {
+        return 0;
+    }
+    arc_init_grid(output, width, height);
+    for (size_t y = 0; y < height; ++y) {
+        for (size_t x = 0; x < width; ++x) {
+            output->cells[y * output->width + x] =
+                input->cells[(row_range->min + y) * input->width + col_range->min + x];
+        }
+    }
+    return 1;
+}
+
+static int arc_apply_sketch_separator_panel_map(const ARCSketchProgramSpec *spec,
+                                                const ARCGrid *input,
+                                                ARCGrid *output)
+{
+    ARCRange row_ranges[ARC_MAX_GRID_HEIGHT];
+    ARCRange col_ranges[ARC_MAX_GRID_WIDTH];
+    size_t row_count = 0;
+    size_t col_count = 0;
+    uint8_t separator = spec == NULL ? 0 : spec->color;
+    if (spec == NULL || input == NULL || output == NULL ||
+        separator >= ARC_COLOR_COUNT) {
+        return 0;
+    }
+    if (separator == spec->background &&
+        !arc_detect_separator_color(input, spec->background, &separator)) {
+        return 0;
+    }
+    if (
+        !arc_find_separator_ranges_for_color(input,
+                                             separator,
+                                             row_ranges,
+                                             &row_count,
+                                             col_ranges,
+                                             &col_count) ||
+        row_count == 0 || col_count == 0) {
+        return 0;
+    }
+    if (spec->x_anchor == 0) {
+        size_t kept_rows = 0;
+        size_t kept_cols = 0;
+        int keep_rows[ARC_MAX_GRID_HEIGHT];
+        int keep_cols[ARC_MAX_GRID_WIDTH];
+        for (size_t y = 0; y < input->height; ++y) {
+            int full_separator = 1;
+            for (size_t x = 0; x < input->width; ++x) {
+                if (input->cells[y * input->width + x] != separator) {
+                    full_separator = 0;
+                    break;
+                }
+            }
+            keep_rows[y] = !full_separator;
+            kept_rows += keep_rows[y] ? 1u : 0u;
+        }
+        for (size_t x = 0; x < input->width; ++x) {
+            int full_separator = 1;
+            for (size_t y = 0; y < input->height; ++y) {
+                if (input->cells[y * input->width + x] != separator) {
+                    full_separator = 0;
+                    break;
+                }
+            }
+            keep_cols[x] = !full_separator;
+            kept_cols += keep_cols[x] ? 1u : 0u;
+        }
+        if (kept_rows == 0 || kept_cols == 0) {
+            return 0;
+        }
+        arc_init_grid(output, kept_cols, kept_rows);
+        size_t out_y = 0;
+        for (size_t y = 0; y < input->height; ++y) {
+            if (!keep_rows[y]) {
+                continue;
+            }
+            size_t out_x = 0;
+            for (size_t x = 0; x < input->width; ++x) {
+                if (!keep_cols[x]) {
+                    continue;
+                }
+                output->cells[out_y * output->width + out_x] =
+                    input->cells[y * input->width + x];
+                ++out_x;
+            }
+            ++out_y;
+        }
+        return 1;
+    }
+    if (spec->x_anchor == 3) {
+        size_t cell_width = 0;
+        size_t cell_height = 0;
+        size_t bbox_min_x[ARC_MAX_GRID_HEIGHT][ARC_MAX_GRID_WIDTH];
+        size_t bbox_min_y[ARC_MAX_GRID_HEIGHT][ARC_MAX_GRID_WIDTH];
+        size_t bbox_max_x[ARC_MAX_GRID_HEIGHT][ARC_MAX_GRID_WIDTH];
+        size_t bbox_max_y[ARC_MAX_GRID_HEIGHT][ARC_MAX_GRID_WIDTH];
+        uint8_t panel_has_content[ARC_MAX_GRID_HEIGHT][ARC_MAX_GRID_WIDTH];
+        memset(panel_has_content, 0, sizeof(panel_has_content));
+        for (size_t row = 0; row < row_count; ++row) {
+            for (size_t col = 0; col < col_count; ++col) {
+                if (!arc_panel_content_bbox(input,
+                                            &row_ranges[row],
+                                            &col_ranges[col],
+                                            spec->background,
+                                            separator,
+                                            &bbox_min_x[row][col],
+                                            &bbox_min_y[row][col],
+                                            &bbox_max_x[row][col],
+                                            &bbox_max_y[row][col])) {
+                    continue;
+                }
+                size_t width = bbox_max_x[row][col] - bbox_min_x[row][col] + 1u;
+                size_t height = bbox_max_y[row][col] - bbox_min_y[row][col] + 1u;
+                if (width > cell_width) {
+                    cell_width = width;
+                }
+                if (height > cell_height) {
+                    cell_height = height;
+                }
+                panel_has_content[row][col] = 1;
+            }
+        }
+        if (cell_width == 0 || cell_height == 0 ||
+            cell_width * col_count > ARC_MAX_GRID_WIDTH ||
+            cell_height * row_count > ARC_MAX_GRID_HEIGHT) {
+            return 0;
+        }
+        arc_init_grid(output, cell_width * col_count, cell_height * row_count);
+        for (size_t cell = 0; cell < arc_grid_cells(output); ++cell) {
+            output->cells[cell] = spec->background;
+        }
+        for (size_t row = 0; row < row_count; ++row) {
+            for (size_t col = 0; col < col_count; ++col) {
+                if (!panel_has_content[row][col]) {
+                    continue;
+                }
+                size_t width = bbox_max_x[row][col] - bbox_min_x[row][col] + 1u;
+                size_t height = bbox_max_y[row][col] - bbox_min_y[row][col] + 1u;
+                for (size_t y = 0; y < height; ++y) {
+                    for (size_t x = 0; x < width; ++x) {
+                        uint8_t value =
+                            input->cells[(bbox_min_y[row][col] + y) * input->width +
+                                         bbox_min_x[row][col] + x];
+                        if (value == separator) {
+                            value = spec->background;
+                        }
+                        output->cells[(row * cell_height + y) * output->width +
+                                      col * cell_width + x] = value;
+                    }
+                }
+            }
+        }
+        return 1;
+    }
+    size_t best_row = 0;
+    size_t best_col = 0;
+    size_t best_count = 0;
+    int found = 0;
+    for (size_t row = 0; row < row_count; ++row) {
+        for (size_t col = 0; col < col_count; ++col) {
+            size_t count = arc_panel_non_background_count(input,
+                                                          &row_ranges[row],
+                                                          &col_ranges[col],
+                                                          spec->background,
+                                                          separator);
+            if (count == 0) {
+                continue;
+            }
+            int better = !found || count > best_count;
+            if (spec->x_anchor == 2) {
+                better = !found || count < best_count;
+            }
+            if (better) {
+                found = 1;
+                best_count = count;
+                best_row = row;
+                best_col = col;
+            }
+        }
+    }
+    if (!found) {
+        return 0;
+    }
+    return arc_copy_panel_range(input, &row_ranges[best_row], &col_ranges[best_col], output);
+}
+
 static int arc_apply_sketch_program_hypothesis(const NNHypothesis *hypothesis,
                                                const ARCGrid *input,
                                                ARCGrid *output)
@@ -8398,7 +9233,28 @@ static int arc_apply_sketch_program_hypothesis(const NNHypothesis *hypothesis,
         candidate.scale = spec.period;
         return arc_apply_tile_motif_parity_repeat_candidate(&candidate, input, output);
     }
-    if (spec.op != ARC_SKETCH_OP_CROP) {
+    if (spec.op == ARC_SKETCH_OP_MACROCELL_SUBSTITUTE) {
+        return arc_apply_sketch_macrocell_substitute(&spec, input, output);
+    }
+    if (spec.op == ARC_SKETCH_OP_LATTICE_SAMPLE) {
+        return arc_apply_sketch_lattice_sample(&spec, input, output);
+    }
+    if (spec.op == ARC_SKETCH_OP_COMPONENT_COLOR_SUMMARY) {
+        return arc_apply_sketch_component_color_summary(&spec, input, output);
+    }
+    if (spec.op == ARC_SKETCH_OP_POINT_LINE_PROJECT) {
+        return arc_apply_sketch_point_line_project(&spec, input, output);
+    }
+    if (spec.op == ARC_SKETCH_OP_OBJECT_MASK_EXTRACT) {
+        return arc_apply_sketch_object_mask_extract(&spec, input, output);
+    }
+    if (spec.op == ARC_SKETCH_OP_AXIS_PROJECTION_COMPRESS) {
+        return arc_apply_sketch_axis_projection_compress(&spec, input, output);
+    }
+    if (spec.op == ARC_SKETCH_OP_SEPARATOR_PANEL_MAP) {
+        return arc_apply_sketch_separator_panel_map(&spec, input, output);
+    }
+    if (spec.op != ARC_SKETCH_OP_CROP && spec.op != ARC_SKETCH_OP_NORMALIZED_CROP) {
         return 0;
     }
 
@@ -8448,7 +9304,17 @@ static int arc_apply_sketch_program_hypothesis(const NNHypothesis *hypothesis,
     } else {
         return 0;
     }
-    return arc_sketch_copy_region(input, origin_x, origin_y, width, height, output);
+    if (!arc_sketch_copy_region(input, origin_x, origin_y, width, height, output)) {
+        return 0;
+    }
+    if (spec.op == ARC_SKETCH_OP_NORMALIZED_CROP) {
+        for (size_t cell = 0; cell < arc_grid_cells(output); ++cell) {
+            if (output->cells[cell] == spec.background) {
+                output->cells[cell] = spec.output_color;
+            }
+        }
+    }
+    return 1;
 }
 
 static int arc_candidate_from_sketch_program_hypothesis(const NNHypothesis *hypothesis,
@@ -8505,6 +9371,31 @@ static int arc_bind_sketch_program(NNHypothesis *hypothesis,
            nn_hypothesis_bind(hypothesis, "sketch.width", (double)width, (int64_t)width) &&
            nn_hypothesis_bind(hypothesis, "sketch.height", (double)height, (int64_t)height) &&
            nn_hypothesis_bind(hypothesis, "sketch.period", (double)period, (int64_t)period);
+}
+
+static int arc_candidate_from_sketch_program_values(ARCTransformCandidate *candidate,
+                                                    const ARCSketchProgramSpec *spec)
+{
+    NNHypothesis hypothesis;
+    if (candidate == NULL || spec == NULL ||
+        !nn_hypothesis_init(&hypothesis, arc_hypothesis_template_sketch_program()) ||
+        !arc_bind_sketch_program(&hypothesis,
+                                 spec->selector,
+                                 spec->op,
+                                 spec->background,
+                                 spec->color,
+                                 spec->output_color,
+                                 spec->x_anchor,
+                                 spec->y_anchor,
+                                 spec->x_offset,
+                                 spec->y_offset,
+                                 spec->width,
+                                 spec->height,
+                                 spec->period) ||
+        !arc_candidate_from_sketch_program_hypothesis(&hypothesis, candidate)) {
+        return 0;
+    }
+    return 1;
 }
 
 static size_t arc_try_add_sketch_program(const ARCHypothesisTemplateBinding *binding,
@@ -12885,6 +13776,1391 @@ static int arc_load_task_file(const char *path, const char *id, ARCTask *task)
     return ok;
 }
 
+static const char *arc_sketch_op_name(int op)
+{
+    switch (op) {
+    case ARC_SKETCH_OP_CROP:
+        return "crop";
+    case ARC_SKETCH_OP_TILE_REPEAT:
+        return "tile_repeat";
+    case ARC_SKETCH_OP_MACROCELL_SUBSTITUTE:
+        return "macrocell_substitute";
+    case ARC_SKETCH_OP_LATTICE_SAMPLE:
+        return "lattice_sample";
+    case ARC_SKETCH_OP_COMPONENT_COLOR_SUMMARY:
+        return "component_color_summary";
+    case ARC_SKETCH_OP_NORMALIZED_CROP:
+        return "masked_or_normalized_crop";
+    case ARC_SKETCH_OP_POINT_LINE_PROJECT:
+        return "point_line_project";
+    case ARC_SKETCH_OP_OBJECT_MASK_EXTRACT:
+        return "object_mask_extract";
+    case ARC_SKETCH_OP_AXIS_PROJECTION_COMPRESS:
+        return "axis_projection_compress";
+    case ARC_SKETCH_OP_SEPARATOR_PANEL_MAP:
+        return "separator_panel_map";
+    default:
+        return "unknown";
+    }
+}
+
+static int arc_sketch_probe_spec_equal(const ARCSketchProgramSpec *lhs,
+                                       const ARCSketchProgramSpec *rhs)
+{
+    return lhs != NULL && rhs != NULL &&
+           lhs->selector == rhs->selector &&
+           lhs->op == rhs->op &&
+           lhs->background == rhs->background &&
+           lhs->color == rhs->color &&
+           lhs->output_color == rhs->output_color &&
+           lhs->x_anchor == rhs->x_anchor &&
+           lhs->y_anchor == rhs->y_anchor &&
+           lhs->x_offset == rhs->x_offset &&
+           lhs->y_offset == rhs->y_offset &&
+           lhs->width == rhs->width &&
+           lhs->height == rhs->height &&
+           lhs->period == rhs->period;
+}
+
+static uint64_t arc_sketch_probe_spec_hash(const char *family,
+                                           const char *task_id,
+                                           const ARCSketchProgramSpec *spec)
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+    if (family != NULL) {
+        for (const unsigned char *p = (const unsigned char *)family; *p != '\0'; ++p) {
+            hash = arc_hash_mix(hash, *p);
+        }
+    }
+    if (task_id != NULL) {
+        for (const unsigned char *p = (const unsigned char *)task_id; *p != '\0'; ++p) {
+            hash = arc_hash_mix(hash, *p);
+        }
+    }
+    if (spec != NULL) {
+        hash = arc_hash_mix(hash, (uint64_t)(uint32_t)spec->selector);
+        hash = arc_hash_mix(hash, (uint64_t)(uint32_t)spec->op);
+        hash = arc_hash_mix(hash, spec->background);
+        hash = arc_hash_mix(hash, spec->color);
+        hash = arc_hash_mix(hash, spec->output_color);
+        hash = arc_hash_mix(hash, (uint64_t)(uint32_t)spec->x_anchor);
+        hash = arc_hash_mix(hash, (uint64_t)(uint32_t)spec->y_anchor);
+        hash = arc_hash_mix(hash, (uint64_t)(uint32_t)spec->x_offset);
+        hash = arc_hash_mix(hash, (uint64_t)(uint32_t)spec->y_offset);
+        hash = arc_hash_mix(hash, (uint64_t)spec->width);
+        hash = arc_hash_mix(hash, (uint64_t)spec->height);
+        hash = arc_hash_mix(hash, (uint64_t)spec->period);
+    }
+    return hash;
+}
+
+static void arc_public_task_path(const char *public_arc_dir,
+                                 const char *split,
+                                 const char *task_id,
+                                 char *out,
+                                 size_t out_size)
+{
+    const char *split_dir = split;
+    if (strcmp(split, "public_training") == 0 ||
+        strcmp(split, "training") == 0 ||
+        strcmp(split, "train") == 0) {
+        split_dir = "training";
+    } else if (strcmp(split, "public_evaluation") == 0 ||
+               strcmp(split, "evaluation") == 0 ||
+               strcmp(split, "eval") == 0) {
+        split_dir = "evaluation";
+    }
+    snprintf(out, out_size, "%s/%s/%s.json", public_arc_dir, split_dir, task_id);
+}
+
+static int arc_sketch_probe_append_if_exact(const ARCSketchProbeInput *input,
+                                            const char *task_path,
+                                            const ARCTask *task,
+                                            const ARCSketchProgramSpec *spec,
+                                            ARCSketchProbeRecord *records,
+                                            size_t *record_count,
+                                            ARCSketchProgramSpec *emitted_specs,
+                                            size_t *emitted_count,
+                                            size_t sketches_per_task,
+                                            ARCSketchProbeSummary *summary)
+{
+    ARCTransformCandidate candidate;
+    size_t checked = 0;
+    size_t mismatches = 0;
+    size_t unsupported = 0;
+    if (input == NULL || task == NULL || spec == NULL || records == NULL ||
+        record_count == NULL || emitted_specs == NULL || emitted_count == NULL ||
+        summary == NULL) {
+        return 0;
+    }
+    ++summary->attempted;
+    if (*emitted_count >= sketches_per_task) {
+        ++summary->cap_hit;
+        return 0;
+    }
+    for (size_t i = 0; i < *emitted_count; ++i) {
+        if (arc_sketch_probe_spec_equal(&emitted_specs[i], spec)) {
+            ++summary->duplicate;
+            return 0;
+        }
+    }
+    if (!arc_candidate_from_sketch_program_values(&candidate, spec) ||
+        !arc_candidate_matches_train(task,
+                                     &candidate,
+                                     &checked,
+                                     &mismatches,
+                                     &unsupported)) {
+        if (unsupported > 0 || checked == 0) {
+            ++summary->unsupported_shape;
+        } else {
+            ++summary->no_train_match;
+        }
+        return 0;
+    }
+    if (*record_count >= ARC_SKETCH_PROBE_RECORD_CAPACITY) {
+        ++summary->cap_hit;
+        return 0;
+    }
+    uint64_t hash = arc_sketch_probe_spec_hash(input->family, input->task_id, spec);
+    ARCSketchProbeRecord *record = &records[*record_count];
+    memset(record, 0, sizeof(*record));
+    snprintf(record->family, sizeof(record->family), "%s", input->family);
+    snprintf(record->task_id, sizeof(record->task_id), "%s", input->task_id);
+    snprintf(record->split, sizeof(record->split), "%s", input->split);
+    snprintf(record->task_path, sizeof(record->task_path), "%s", task_path);
+    snprintf(record->library_id,
+             sizeof(record->library_id),
+             "ngd:%s:%s:%016llx",
+             input->family,
+             input->task_id,
+             (unsigned long long)hash);
+    record->spec = *spec;
+    record->support_tasks = input->support_tasks;
+    record->proposal_count = input->proposal_count == 0 ? 1u : input->proposal_count;
+    record->utility_mean = input->utility_mean;
+    record->sketch_index = *emitted_count + 1u;
+    emitted_specs[*emitted_count] = *spec;
+    ++*emitted_count;
+    ++*record_count;
+    ++summary->emitted;
+    return 1;
+}
+
+static void arc_mine_macrocell_sketches(const ARCSketchProbeInput *input,
+                                        const char *task_path,
+                                        const ARCTask *task,
+                                        ARCSketchProbeRecord *records,
+                                        size_t *record_count,
+                                        ARCSketchProgramSpec *emitted_specs,
+                                        size_t *emitted_count,
+                                        size_t sketches_per_task,
+                                        ARCSketchProbeSummary *summary)
+{
+    if (task == NULL || task->train_count == 0) {
+        return;
+    }
+    const ARCGrid *first_input = &task->train[0].input;
+    const ARCGrid *first_output = &task->train[0].output;
+    if (first_input->width == 0 || first_input->height == 0 ||
+        first_output->width % first_input->width != 0 ||
+        first_output->height % first_input->height != 0) {
+        ++summary->unsupported_shape;
+        return;
+    }
+    size_t scale_x = first_output->width / first_input->width;
+    size_t scale_y = first_output->height / first_input->height;
+    if (scale_x == 0 || scale_x != scale_y || scale_x > 6u) {
+        ++summary->unsupported_shape;
+        return;
+    }
+    for (size_t pair = 1; pair < task->train_count; ++pair) {
+        if (task->train[pair].output.width != task->train[pair].input.width * scale_x ||
+            task->train[pair].output.height != task->train[pair].input.height * scale_x) {
+            ++summary->unsupported_shape;
+            return;
+        }
+    }
+    uint8_t backgrounds[ARC_COLOR_COUNT];
+    size_t background_count =
+        arc_task_relation_backgrounds(task,
+                                      backgrounds,
+                                      sizeof(backgrounds) / sizeof(backgrounds[0]));
+    int has_zero_background = 0;
+    int has_dominant_background = 0;
+    uint8_t dominant_background = arc_grid_dominant_color(first_input);
+    for (size_t i = 0; i < background_count; ++i) {
+        if (backgrounds[i] == 0) {
+            has_zero_background = 1;
+        }
+        if (backgrounds[i] == dominant_background) {
+            has_dominant_background = 1;
+        }
+    }
+    if (!has_zero_background && background_count < ARC_COLOR_COUNT) {
+        backgrounds[background_count++] = 0;
+    }
+    if (!has_dominant_background && background_count < ARC_COLOR_COUNT) {
+        backgrounds[background_count++] = dominant_background;
+    }
+    uint8_t colors[ARC_COLOR_COUNT];
+    size_t color_count = arc_grid_nonzero_colors(first_input, colors, ARC_COLOR_COUNT);
+    for (size_t background_index = 0;
+         background_index < background_count;
+         ++background_index) {
+        uint8_t background = backgrounds[background_index];
+        ARCSketchProgramSpec spec;
+        memset(&spec, 0, sizeof(spec));
+        spec.selector = ARC_SKETCH_SELECTOR_LATTICE;
+        spec.op = ARC_SKETCH_OP_MACROCELL_SUBSTITUTE;
+        spec.background = background;
+        spec.color = background;
+        spec.output_color = background;
+        spec.period = scale_x;
+        for (int motif_kind = 0; motif_kind <= 5; ++motif_kind) {
+            spec.x_anchor = motif_kind;
+            arc_sketch_probe_append_if_exact(input,
+                                             task_path,
+                                             task,
+                                             &spec,
+                                             records,
+                                             record_count,
+                                             emitted_specs,
+                                             emitted_count,
+                                             sketches_per_task,
+                                             summary);
+        }
+        for (size_t color_index = 0; color_index < color_count; ++color_index) {
+            uint8_t color = colors[color_index];
+            if (color == background) {
+                continue;
+            }
+            spec.color = color;
+            spec.output_color = color;
+            for (int motif_kind = 0; motif_kind <= 5; ++motif_kind) {
+                spec.x_anchor = motif_kind;
+                arc_sketch_probe_append_if_exact(input,
+                                                 task_path,
+                                                 task,
+                                                 &spec,
+                                                 records,
+                                                 record_count,
+                                                 emitted_specs,
+                                                 emitted_count,
+                                                 sketches_per_task,
+                                                 summary);
+            }
+        }
+    }
+}
+
+static void arc_mine_lattice_sample_sketches(const ARCSketchProbeInput *input,
+                                             const char *task_path,
+                                             const ARCTask *task,
+                                             ARCSketchProbeRecord *records,
+                                             size_t *record_count,
+                                             ARCSketchProgramSpec *emitted_specs,
+                                             size_t *emitted_count,
+                                             size_t sketches_per_task,
+                                             ARCSketchProbeSummary *summary)
+{
+    if (task == NULL || task->train_count == 0) {
+        return;
+    }
+    const ARCGrid *first_output = &task->train[0].output;
+    for (size_t period = 2; period <= 6; ++period) {
+        for (size_t x_offset = 0; x_offset < period; ++x_offset) {
+            for (size_t y_offset = 0; y_offset < period; ++y_offset) {
+                ARCSketchProgramSpec spec;
+                memset(&spec, 0, sizeof(spec));
+                spec.selector = ARC_SKETCH_SELECTOR_LATTICE;
+                spec.op = ARC_SKETCH_OP_LATTICE_SAMPLE;
+                spec.background = arc_grid_dominant_color(&task->train[0].input);
+                spec.x_offset = (int)x_offset;
+                spec.y_offset = (int)y_offset;
+                spec.width = first_output->width;
+                spec.height = first_output->height;
+                spec.period = period;
+                arc_sketch_probe_append_if_exact(input,
+                                                 task_path,
+                                                 task,
+                                                 &spec,
+                                                 records,
+                                                 record_count,
+                                                 emitted_specs,
+                                                 emitted_count,
+                                                 sketches_per_task,
+                                                 summary);
+            }
+        }
+    }
+}
+
+static void arc_mine_diagonal_compact_sketches(const ARCSketchProbeInput *input,
+                                               const char *task_path,
+                                               const ARCTask *task,
+                                               ARCSketchProbeRecord *records,
+                                               size_t *record_count,
+                                               ARCSketchProgramSpec *emitted_specs,
+                                               size_t *emitted_count,
+                                               size_t sketches_per_task,
+                                               ARCSketchProbeSummary *summary)
+{
+    if (task == NULL || task->train_count == 0) {
+        return;
+    }
+    const ARCGrid *first_input = &task->train[0].input;
+    const ARCGrid *first_output = &task->train[0].output;
+    if (first_input->width != first_input->height ||
+        (first_input->width % 2u) == 0 ||
+        first_output->width != 3u ||
+        first_output->height != 3u) {
+        ++summary->unsupported_shape;
+        return;
+    }
+    uint8_t backgrounds[ARC_COLOR_COUNT];
+    size_t background_count =
+        arc_task_relation_backgrounds(task,
+                                      backgrounds,
+                                      sizeof(backgrounds) / sizeof(backgrounds[0]));
+    int has_zero_background = 0;
+    int has_dominant_background = 0;
+    uint8_t dominant_background = arc_grid_dominant_color(first_input);
+    for (size_t i = 0; i < background_count; ++i) {
+        if (backgrounds[i] == 0) {
+            has_zero_background = 1;
+        }
+        if (backgrounds[i] == dominant_background) {
+            has_dominant_background = 1;
+        }
+    }
+    if (!has_zero_background && background_count < ARC_COLOR_COUNT) {
+        backgrounds[background_count++] = 0;
+    }
+    if (!has_dominant_background && background_count < ARC_COLOR_COUNT) {
+        backgrounds[background_count++] = dominant_background;
+    }
+    for (size_t background_index = 0;
+         background_index < background_count;
+         ++background_index) {
+        ARCSketchProgramSpec spec;
+        memset(&spec, 0, sizeof(spec));
+        spec.selector = ARC_SKETCH_SELECTOR_LATTICE;
+        spec.op = ARC_SKETCH_OP_LATTICE_SAMPLE;
+        spec.background = backgrounds[background_index];
+        spec.width = first_output->width;
+        spec.height = first_output->height;
+        spec.x_anchor = 1;
+        arc_sketch_probe_append_if_exact(input,
+                                         task_path,
+                                         task,
+                                         &spec,
+                                         records,
+                                         record_count,
+                                         emitted_specs,
+                                         emitted_count,
+                                         sketches_per_task,
+                                         summary);
+    }
+}
+
+static void arc_mine_point_line_project_sketches(const ARCSketchProbeInput *input,
+                                                 const char *task_path,
+                                                 const ARCTask *task,
+                                                 ARCSketchProbeRecord *records,
+                                                 size_t *record_count,
+                                                 ARCSketchProgramSpec *emitted_specs,
+                                                 size_t *emitted_count,
+                                                 size_t sketches_per_task,
+                                                 ARCSketchProbeSummary *summary)
+{
+    if (task == NULL || task->train_count == 0) {
+        return;
+    }
+    const ARCGrid *first_input = &task->train[0].input;
+    const ARCGrid *first_output = &task->train[0].output;
+    if (!arc_grid_same_shape(first_input, first_output)) {
+        ++summary->unsupported_shape;
+        return;
+    }
+    uint8_t backgrounds[ARC_COLOR_COUNT];
+    size_t background_count =
+        arc_task_relation_backgrounds(task,
+                                      backgrounds,
+                                      sizeof(backgrounds) / sizeof(backgrounds[0]));
+    if (background_count < ARC_COLOR_COUNT) {
+        int has_zero = 0;
+        for (size_t i = 0; i < background_count; ++i) {
+            has_zero = has_zero || backgrounds[i] == 0;
+        }
+        if (!has_zero) {
+            backgrounds[background_count++] = 0;
+        }
+    }
+    uint8_t output_colors[ARC_COLOR_COUNT];
+    size_t output_color_count =
+        arc_grid_nonzero_colors(first_output, output_colors, ARC_COLOR_COUNT);
+    arc_add_unique_color(output_colors,
+                         ARC_COLOR_COUNT,
+                         &output_color_count,
+                         arc_grid_dominant_color(first_output));
+    for (size_t background_index = 0;
+         background_index < background_count;
+         ++background_index) {
+        for (size_t output_color_index = 0;
+             output_color_index < output_color_count;
+             ++output_color_index) {
+            ARCSketchProgramSpec spec;
+            memset(&spec, 0, sizeof(spec));
+            spec.selector = ARC_SKETCH_SELECTOR_LATTICE;
+            spec.op = ARC_SKETCH_OP_POINT_LINE_PROJECT;
+            spec.background = backgrounds[background_index];
+            spec.output_color = output_colors[output_color_index];
+            arc_sketch_probe_append_if_exact(input,
+                                             task_path,
+                                             task,
+                                             &spec,
+                                             records,
+                                             record_count,
+                                             emitted_specs,
+                                             emitted_count,
+                                             sketches_per_task,
+                                             summary);
+        }
+    }
+}
+
+static void arc_mine_component_summary_sketches(const ARCSketchProbeInput *input,
+                                                const char *task_path,
+                                                const ARCTask *task,
+                                                ARCSketchProbeRecord *records,
+                                                size_t *record_count,
+                                                ARCSketchProgramSpec *emitted_specs,
+                                                size_t *emitted_count,
+                                                size_t sketches_per_task,
+                                                ARCSketchProbeSummary *summary)
+{
+    if (task == NULL || task->train_count == 0) {
+        return;
+    }
+    uint8_t backgrounds[2];
+    size_t background_count =
+        arc_task_relation_backgrounds(task,
+                                      backgrounds,
+                                      sizeof(backgrounds) / sizeof(backgrounds[0]));
+    const ARCGrid *first_input = &task->train[0].input;
+    const ARCGrid *first_output = &task->train[0].output;
+    uint8_t colors[ARC_COLOR_COUNT];
+    size_t color_count = arc_grid_nonzero_colors(first_input, colors, ARC_COLOR_COUNT);
+    for (size_t background_index = 0;
+         background_index < background_count;
+         ++background_index) {
+        uint8_t background = backgrounds[background_index];
+        ARCSketchProgramSpec spec;
+        memset(&spec, 0, sizeof(spec));
+        spec.selector = ARC_SKETCH_SELECTOR_FOREGROUND_BBOX_PANEL;
+        spec.op = ARC_SKETCH_OP_COMPONENT_COLOR_SUMMARY;
+        spec.background = background;
+        spec.color = background;
+        spec.output_color = arc_grid_dominant_color(first_output);
+        spec.width = first_output->width;
+        spec.height = first_output->height;
+        arc_sketch_probe_append_if_exact(input,
+                                         task_path,
+                                         task,
+                                         &spec,
+                                         records,
+                                         record_count,
+                                         emitted_specs,
+                                         emitted_count,
+                                         sketches_per_task,
+                                         summary);
+        for (size_t color_index = 0; color_index < color_count; ++color_index) {
+            spec.color = colors[color_index];
+            arc_sketch_probe_append_if_exact(input,
+                                             task_path,
+                                             task,
+                                             &spec,
+                                             records,
+                                             record_count,
+                                             emitted_specs,
+                                             emitted_count,
+                                             sketches_per_task,
+                                             summary);
+        }
+    }
+}
+
+static void arc_mine_crop_sketches(const ARCSketchProbeInput *input,
+                                   const char *task_path,
+                                   const ARCTask *task,
+                                   ARCSketchProbeRecord *records,
+                                   size_t *record_count,
+                                   ARCSketchProgramSpec *emitted_specs,
+                                   size_t *emitted_count,
+                                   size_t sketches_per_task,
+                                   ARCSketchProbeSummary *summary)
+{
+    if (task == NULL || task->train_count == 0) {
+        return;
+    }
+    const ARCGrid *first_input = &task->train[0].input;
+    const ARCGrid *first_output = &task->train[0].output;
+    if (first_output->width == 0 || first_output->height == 0 ||
+        first_output->width > first_input->width ||
+        first_output->height > first_input->height) {
+        return;
+    }
+    uint8_t backgrounds[2];
+    size_t background_count =
+        arc_task_relation_backgrounds(task,
+                                      backgrounds,
+                                      sizeof(backgrounds) / sizeof(backgrounds[0]));
+    for (size_t background_index = 0;
+         background_index < background_count;
+         ++background_index) {
+        uint8_t background = backgrounds[background_index];
+        for (int op = ARC_SKETCH_OP_CROP; op <= ARC_SKETCH_OP_NORMALIZED_CROP; op += 5) {
+            for (size_t origin_y = 0;
+                 origin_y + first_output->height <= first_input->height;
+                 ++origin_y) {
+                for (size_t origin_x = 0;
+                     origin_x + first_output->width <= first_input->width;
+                     ++origin_x) {
+                    for (int selector = ARC_SKETCH_SELECTOR_GRID_PANEL;
+                         selector <= ARC_SKETCH_SELECTOR_FOREGROUND_BBOX_PANEL;
+                         ++selector) {
+                        size_t bbox_min_x = 0;
+                        size_t bbox_min_y = 0;
+                        size_t bbox_max_x = first_input->width - 1u;
+                        size_t bbox_max_y = first_input->height - 1u;
+                        if (selector == ARC_SKETCH_SELECTOR_FOREGROUND_BBOX_PANEL &&
+                            !arc_grid_non_background_bbox(first_input,
+                                                          background,
+                                                          &bbox_min_x,
+                                                          &bbox_min_y,
+                                                          &bbox_max_x,
+                                                          &bbox_max_y)) {
+                            continue;
+                        }
+                        size_t base_width = bbox_max_x - bbox_min_x + 1u;
+                        size_t base_height = bbox_max_y - bbox_min_y + 1u;
+                        if (first_output->width > base_width ||
+                            first_output->height > base_height) {
+                            continue;
+                        }
+                        for (int x_mode = 0; x_mode <= 2; ++x_mode) {
+                            size_t x_span = base_width - first_output->width;
+                            int64_t x_base = (int64_t)bbox_min_x;
+                            if (x_mode == 1) {
+                                x_base += (int64_t)(x_span / 2u);
+                            } else if (x_mode == 2) {
+                                x_base += (int64_t)x_span;
+                            }
+                            int x_offset = (int)((int64_t)origin_x - x_base);
+                            for (int y_mode = 0; y_mode <= 2; ++y_mode) {
+                                size_t y_span = base_height - first_output->height;
+                                int64_t y_base = (int64_t)bbox_min_y;
+                                if (y_mode == 1) {
+                                    y_base += (int64_t)(y_span / 2u);
+                                } else if (y_mode == 2) {
+                                    y_base += (int64_t)y_span;
+                                }
+                                ARCSketchProgramSpec spec;
+                                memset(&spec, 0, sizeof(spec));
+                                spec.selector = selector;
+                                spec.op = op;
+                                spec.background = background;
+                                spec.output_color = arc_grid_dominant_color(first_output);
+                                spec.x_anchor = x_mode;
+                                spec.y_anchor = y_mode;
+                                spec.x_offset = x_offset;
+                                spec.y_offset = (int)((int64_t)origin_y - y_base);
+                                spec.width = first_output->width;
+                                spec.height = first_output->height;
+                                arc_sketch_probe_append_if_exact(input,
+                                                                 task_path,
+                                                                 task,
+                                                                 &spec,
+                                                                 records,
+                                                                 record_count,
+                                                                 emitted_specs,
+                                                                 emitted_count,
+                                                                 sketches_per_task,
+                                                                 summary);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    uint8_t colors[ARC_COLOR_COUNT];
+    size_t color_count = arc_grid_nonzero_colors(first_input, colors, ARC_COLOR_COUNT);
+    for (size_t color_index = 0; color_index < color_count; ++color_index) {
+        for (int op = ARC_SKETCH_OP_CROP; op <= ARC_SKETCH_OP_NORMALIZED_CROP; op += 5) {
+            ARCSketchProgramSpec spec;
+            memset(&spec, 0, sizeof(spec));
+            spec.selector = ARC_SKETCH_SELECTOR_COLOR_BBOX;
+            spec.op = op;
+            spec.background = arc_grid_dominant_color(first_input);
+            spec.color = colors[color_index];
+            spec.output_color = arc_grid_dominant_color(first_output);
+            arc_sketch_probe_append_if_exact(input,
+                                             task_path,
+                                             task,
+                                             &spec,
+                                             records,
+                                             record_count,
+                                             emitted_specs,
+                                             emitted_count,
+                                             sketches_per_task,
+                                             summary);
+        }
+    }
+}
+
+static void arc_mine_object_mask_extract_sketches(const ARCSketchProbeInput *input,
+                                                  const char *task_path,
+                                                  const ARCTask *task,
+                                                  ARCSketchProbeRecord *records,
+                                                  size_t *record_count,
+                                                  ARCSketchProgramSpec *emitted_specs,
+                                                  size_t *emitted_count,
+                                                  size_t sketches_per_task,
+                                                  ARCSketchProbeSummary *summary)
+{
+    if (task == NULL || task->train_count == 0) {
+        return;
+    }
+    const ARCGrid *first_input = &task->train[0].input;
+    const ARCGrid *first_output = &task->train[0].output;
+    uint8_t backgrounds[ARC_COLOR_COUNT];
+    size_t background_count =
+        arc_task_relation_backgrounds(task,
+                                      backgrounds,
+                                      sizeof(backgrounds) / sizeof(backgrounds[0]));
+    uint8_t input_colors[ARC_COLOR_COUNT];
+    size_t input_color_count = arc_grid_nonzero_colors(first_input,
+                                                       input_colors,
+                                                       ARC_COLOR_COUNT);
+    uint8_t output_colors[ARC_COLOR_COUNT];
+    size_t output_color_count = arc_grid_nonzero_colors(first_output,
+                                                        output_colors,
+                                                        ARC_COLOR_COUNT);
+    arc_add_unique_color(output_colors,
+                         ARC_COLOR_COUNT,
+                         &output_color_count,
+                         arc_grid_dominant_color(first_output));
+    uint8_t selectors[] = {
+        ARC_OBJECT_SELECTOR_UNIQUE_COLOR,
+        ARC_OBJECT_SELECTOR_LARGEST_COLOR,
+        ARC_OBJECT_SELECTOR_SMALLEST_COLOR,
+        ARC_OBJECT_SELECTOR_INTERIOR_COLOR,
+        ARC_OBJECT_SELECTOR_TOUCHING_BORDER_COLOR,
+    };
+    for (size_t background_index = 0;
+         background_index < background_count;
+         ++background_index) {
+        uint8_t background = backgrounds[background_index];
+        ARCSketchProgramSpec component_spec;
+        memset(&component_spec, 0, sizeof(component_spec));
+        component_spec.selector = ARC_SKETCH_SELECTOR_FOREGROUND_BBOX_PANEL;
+        component_spec.op = ARC_SKETCH_OP_OBJECT_MASK_EXTRACT;
+        component_spec.background = background;
+        component_spec.color = background;
+        component_spec.output_color = background;
+        component_spec.x_anchor = ARC_OBJECT_SELECTOR_ALL_COLOR;
+        for (int mode = 0; mode <= 3; ++mode) {
+            component_spec.y_anchor = mode;
+            if (mode == 1 || mode == 3) {
+                for (size_t output_color_index = 0;
+                     output_color_index < output_color_count;
+                     ++output_color_index) {
+                    component_spec.output_color = output_colors[output_color_index];
+                    arc_sketch_probe_append_if_exact(input,
+                                                     task_path,
+                                                     task,
+                                                     &component_spec,
+                                                     records,
+                                                     record_count,
+                                                     emitted_specs,
+                                                     emitted_count,
+                                                     sketches_per_task,
+                                                     summary);
+                }
+            } else {
+                component_spec.output_color = background;
+                arc_sketch_probe_append_if_exact(input,
+                                                 task_path,
+                                                 task,
+                                                 &component_spec,
+                                                 records,
+                                                 record_count,
+                                                 emitted_specs,
+                                                 emitted_count,
+                                                 sketches_per_task,
+                                                 summary);
+            }
+        }
+        for (size_t color_index = 0;
+             color_index < input_color_count;
+             ++color_index) {
+            uint8_t color = input_colors[color_index];
+            if (color == background) {
+                continue;
+            }
+            for (size_t selector_index = 0;
+                 selector_index < sizeof(selectors) / sizeof(selectors[0]);
+                 ++selector_index) {
+                ARCSketchProgramSpec spec;
+                memset(&spec, 0, sizeof(spec));
+                spec.selector = ARC_SKETCH_SELECTOR_COLOR_BBOX;
+                spec.op = ARC_SKETCH_OP_OBJECT_MASK_EXTRACT;
+                spec.background = background;
+                spec.color = color;
+                spec.x_anchor = selectors[selector_index];
+                for (int mode = 0; mode <= 3; ++mode) {
+                    spec.y_anchor = mode;
+                    if (mode == 1 || mode == 3) {
+                        for (size_t output_color_index = 0;
+                             output_color_index < output_color_count;
+                             ++output_color_index) {
+                            spec.output_color = output_colors[output_color_index];
+                            arc_sketch_probe_append_if_exact(input,
+                                                             task_path,
+                                                             task,
+                                                             &spec,
+                                                             records,
+                                                             record_count,
+                                                             emitted_specs,
+                                                             emitted_count,
+                                                             sketches_per_task,
+                                                             summary);
+                        }
+                    } else {
+                        spec.output_color = background;
+                        arc_sketch_probe_append_if_exact(input,
+                                                         task_path,
+                                                         task,
+                                                         &spec,
+                                                         records,
+                                                         record_count,
+                                                         emitted_specs,
+                                                         emitted_count,
+                                                         sketches_per_task,
+                                                         summary);
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void arc_mine_axis_projection_compress_sketches(const ARCSketchProbeInput *input,
+                                                       const char *task_path,
+                                                       const ARCTask *task,
+                                                       ARCSketchProbeRecord *records,
+                                                       size_t *record_count,
+                                                       ARCSketchProgramSpec *emitted_specs,
+                                                       size_t *emitted_count,
+                                                       size_t sketches_per_task,
+                                                       ARCSketchProbeSummary *summary)
+{
+    if (task == NULL || task->train_count == 0) {
+        return;
+    }
+    const ARCGrid *first_input = &task->train[0].input;
+    const ARCGrid *first_output = &task->train[0].output;
+    uint8_t backgrounds[ARC_COLOR_COUNT];
+    size_t background_count =
+        arc_task_relation_backgrounds(task,
+                                      backgrounds,
+                                      sizeof(backgrounds) / sizeof(backgrounds[0]));
+    uint8_t output_colors[ARC_COLOR_COUNT];
+    size_t output_color_count = arc_grid_nonzero_colors(first_output,
+                                                        output_colors,
+                                                        ARC_COLOR_COUNT);
+    arc_add_unique_color(output_colors,
+                         ARC_COLOR_COUNT,
+                         &output_color_count,
+                         arc_grid_dominant_color(first_output));
+    arc_add_unique_color(output_colors,
+                         ARC_COLOR_COUNT,
+                         &output_color_count,
+                         arc_grid_most_common_non_background_color(first_input,
+                                                                    arc_grid_dominant_color(first_input)));
+    for (size_t background_index = 0;
+         background_index < background_count;
+         ++background_index) {
+        for (int axis = 0; axis <= 1; ++axis) {
+            for (int mode = 0; mode <= 3; ++mode) {
+                for (size_t output_color_index = 0;
+                     output_color_index < output_color_count;
+                     ++output_color_index) {
+                    ARCSketchProgramSpec spec;
+                    memset(&spec, 0, sizeof(spec));
+                    spec.selector = ARC_SKETCH_SELECTOR_LATTICE;
+                    spec.op = ARC_SKETCH_OP_AXIS_PROJECTION_COMPRESS;
+                    spec.background = backgrounds[background_index];
+                    spec.output_color = output_colors[output_color_index];
+                    spec.x_anchor = axis;
+                    spec.y_anchor = mode;
+                    arc_sketch_probe_append_if_exact(input,
+                                                     task_path,
+                                                     task,
+                                                     &spec,
+                                                     records,
+                                                     record_count,
+                                                     emitted_specs,
+                                                     emitted_count,
+                                                     sketches_per_task,
+                                                     summary);
+                }
+            }
+        }
+    }
+}
+
+static void arc_mine_separator_panel_map_sketches(const ARCSketchProbeInput *input,
+                                                  const char *task_path,
+                                                  const ARCTask *task,
+                                                  ARCSketchProbeRecord *records,
+                                                  size_t *record_count,
+                                                  ARCSketchProgramSpec *emitted_specs,
+                                                  size_t *emitted_count,
+                                                  size_t sketches_per_task,
+                                                  ARCSketchProbeSummary *summary)
+{
+    if (task == NULL || task->train_count == 0) {
+        return;
+    }
+    const ARCGrid *first_input = &task->train[0].input;
+    uint8_t backgrounds[ARC_COLOR_COUNT];
+    size_t background_count =
+        arc_task_relation_backgrounds(task,
+                                      backgrounds,
+                                      sizeof(backgrounds) / sizeof(backgrounds[0]));
+    uint8_t separator_colors[ARC_COLOR_COUNT];
+    size_t separator_color_count = arc_grid_nonzero_colors(first_input,
+                                                           separator_colors,
+                                                           ARC_COLOR_COUNT);
+    for (size_t background_index = 0;
+         background_index < background_count;
+         ++background_index) {
+        for (size_t separator_index = 0;
+             separator_index <= separator_color_count;
+             ++separator_index) {
+            uint8_t separator = separator_index == separator_color_count
+                                    ? backgrounds[background_index]
+                                    : separator_colors[separator_index];
+            if (separator == backgrounds[background_index] &&
+                separator_index != separator_color_count) {
+                continue;
+            }
+            for (int mode = 0; mode <= 3; ++mode) {
+                ARCSketchProgramSpec spec;
+                memset(&spec, 0, sizeof(spec));
+                spec.selector = ARC_SKETCH_SELECTOR_GRID_PANEL;
+                spec.op = ARC_SKETCH_OP_SEPARATOR_PANEL_MAP;
+                spec.background = backgrounds[background_index];
+                spec.color = separator;
+                spec.output_color = arc_grid_dominant_color(&task->train[0].output);
+                spec.x_anchor = mode;
+                arc_sketch_probe_append_if_exact(input,
+                                                 task_path,
+                                                 task,
+                                                 &spec,
+                                                 records,
+                                                 record_count,
+                                                 emitted_specs,
+                                                 emitted_count,
+                                                 sketches_per_task,
+                                                 summary);
+            }
+        }
+    }
+}
+
+static int arc_read_sketch_probe_inputs(const char *path,
+                                        ARCSketchProbeInput *inputs,
+                                        size_t capacity,
+                                        size_t *count_out)
+{
+    FILE *fp = fopen(path, "r");
+    char line[4096];
+    size_t count = 0;
+    if (fp == NULL || inputs == NULL || count_out == NULL) {
+        if (fp != NULL) {
+            fclose(fp);
+        }
+        return 0;
+    }
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        if (strncmp(line, "family\t", strlen("family\t")) == 0 ||
+            line[0] == '\0' || line[0] == '\n' || line[0] == '#') {
+            continue;
+        }
+        if (count >= capacity) {
+            fclose(fp);
+            return 0;
+        }
+        char *fields[6];
+        size_t field_count = arc_split_tab_fields(line, fields, 6);
+        if (field_count != 6) {
+            fclose(fp);
+            return 0;
+        }
+        ARCSketchProbeInput *input = &inputs[count];
+        memset(input, 0, sizeof(*input));
+        snprintf(input->family, sizeof(input->family), "%s", fields[0]);
+        snprintf(input->task_id, sizeof(input->task_id), "%s", fields[1]);
+        snprintf(input->split, sizeof(input->split), "%s", fields[2]);
+        input->support_tasks = (size_t)strtoull(fields[3], NULL, 10);
+        input->proposal_count = (size_t)strtoull(fields[4], NULL, 10);
+        input->utility_mean = strtod(fields[5], NULL);
+        ++count;
+    }
+    fclose(fp);
+    *count_out = count;
+    return 1;
+}
+
+static void arc_write_sketch_probe_slot_values(FILE *fp, const ARCSketchProgramSpec *spec)
+{
+    fprintf(fp,
+            "{\"sketch.background\":%u,\"sketch.color\":%u,"
+            "\"sketch.height\":%zu,\"sketch.op\":%d,"
+            "\"sketch.output_color\":%u,\"sketch.period\":%zu,"
+            "\"sketch.selector\":%d,\"sketch.width\":%zu,"
+            "\"sketch.x_anchor\":%d,\"sketch.x_offset\":%d,"
+            "\"sketch.y_anchor\":%d,\"sketch.y_offset\":%d}",
+            (unsigned)spec->background,
+            (unsigned)spec->color,
+            spec->height,
+            spec->op,
+            (unsigned)spec->output_color,
+            spec->period,
+            spec->selector,
+            spec->width,
+            spec->x_anchor,
+            spec->x_offset,
+            spec->y_anchor,
+            spec->y_offset);
+}
+
+static int arc_write_sketch_probe_sources(const char *path,
+                                          const ARCSketchProbeRecord *records,
+                                          size_t record_count,
+                                          const ARCSketchProbeSummary *summaries,
+                                          size_t summary_count)
+{
+    FILE *fp = fopen(path, "w");
+    if (fp == NULL) {
+        return 0;
+    }
+    for (size_t i = 0; i < summary_count; ++i) {
+        const ARCSketchProbeSummary *summary = &summaries[i];
+        fputs("{\"schema\":\"crlp.neural_grammar_discovery.arc_sketch_program_probe_summary.v1\","
+              "\"report_version\":1,\"family\":",
+              fp);
+        nn_write_json_string(fp, summary->family);
+        fputs(",\"task_id\":", fp);
+        nn_write_json_string(fp, summary->task_id);
+        fputs(",\"split\":", fp);
+        nn_write_json_string(fp, summary->split);
+        fputs(",\"task_path\":", fp);
+        nn_write_json_string(fp, summary->task_path);
+        fprintf(fp,
+                ",\"attempted\":%zu,\"emitted\":%zu,"
+                "\"rejection_counts\":{\"unsupported_shape\":%zu,"
+                "\"no_train_match\":%zu,\"duplicate\":%zu,\"cap_hit\":%zu}}\n",
+                summary->attempted,
+                summary->emitted,
+                summary->unsupported_shape,
+                summary->no_train_match,
+                summary->duplicate,
+                summary->cap_hit);
+    }
+    for (size_t i = 0; i < record_count; ++i) {
+        const ARCSketchProbeRecord *record = &records[i];
+        fputs("{\"schema\":\"crlp.neural_grammar_discovery.arc_sketch_program_probe.v1\","
+              "\"report_version\":1,\"library_id\":",
+              fp);
+        nn_write_json_string(fp, record->library_id);
+        fputs(",\"template_id\":1036,\"template_name\":\"arc_sketch_program\",\"family\":", fp);
+        nn_write_json_string(fp, record->family);
+        fprintf(fp, ",\"candidate_group_size\":%zu,\"task_id\":", record->support_tasks);
+        nn_write_json_string(fp, record->task_id);
+        fputs(",\"split\":", fp);
+        nn_write_json_string(fp, record->split);
+        fputs(",\"task_path\":", fp);
+        nn_write_json_string(fp, record->task_path);
+        fprintf(fp,
+                ",\"sketch_index\":%zu,\"slot_values\":",
+                record->sketch_index);
+        arc_write_sketch_probe_slot_values(fp, &record->spec);
+        fprintf(fp,
+                ",\"proposal_count\":%zu,\"support_tasks\":%zu,"
+                "\"utility_mean\":%.8f,\"compiler\":\"arc_sketch_program_probe_compiler\","
+                "\"op_name\":",
+                record->proposal_count,
+                record->support_tasks,
+                record->utility_mean);
+        nn_write_json_string(fp, arc_sketch_op_name(record->spec.op));
+        fputs(",\"promotion_path\":\"tsv_probe_loaded_by_arc_agi_verifier\"}\n", fp);
+    }
+    int ok = !ferror(fp);
+    fclose(fp);
+    return ok;
+}
+
+static void arc_write_sketch_probe_prior_row(FILE *fp,
+                                             const char *schema,
+                                             const ARCSketchProbeRecord *record,
+                                             const char *slot_name,
+                                             const char *slot_type,
+                                             int64_t slot_integer)
+{
+    fprintf(fp,
+            "%s\t1036\tarc_sketch_program\t%s\t%s\t%s\t%.8f\t%lld\t%zu\t0\t%zu\t%zu\t%.8f\n",
+            schema,
+            record->library_id,
+            slot_name,
+            slot_type,
+            (double)slot_integer,
+            (long long)slot_integer,
+            record->proposal_count,
+            record->support_tasks,
+            record->support_tasks,
+            record->utility_mean);
+}
+
+static int arc_write_sketch_probe_prior(const char *path,
+                                        const ARCSketchProbeRecord *records,
+                                        size_t record_count)
+{
+    FILE *fp = fopen(path, "w");
+    if (fp == NULL) {
+        return 0;
+    }
+    fputs("schema_version\ttemplate_id\ttemplate_name\tlibrary_id\tslot_name\t"
+          "slot_type\tslot_value\tslot_integer\tproposal_count\tcertified_count\t"
+          "support_tasks\tcovered_events\tutility_mean\n",
+          fp);
+    for (size_t i = 0; i < record_count; ++i) {
+        const ARCSketchProbeRecord *record = &records[i];
+        arc_write_sketch_probe_prior_row(fp,
+                                         "crlp.arc_neural_discovery.template_probe.v1",
+                                         record,
+                                         "__template__",
+                                         "template",
+                                         0);
+        arc_write_sketch_probe_prior_row(fp,
+                                         "crlp.arc_neural_discovery.slot_probe.v1",
+                                         record,
+                                         "sketch.selector",
+                                         "integer",
+                                         record->spec.selector);
+        arc_write_sketch_probe_prior_row(fp,
+                                         "crlp.arc_neural_discovery.slot_probe.v1",
+                                         record,
+                                         "sketch.op",
+                                         "integer",
+                                         record->spec.op);
+        arc_write_sketch_probe_prior_row(fp,
+                                         "crlp.arc_neural_discovery.slot_probe.v1",
+                                         record,
+                                         "sketch.background",
+                                         "color",
+                                         record->spec.background);
+        arc_write_sketch_probe_prior_row(fp,
+                                         "crlp.arc_neural_discovery.slot_probe.v1",
+                                         record,
+                                         "sketch.color",
+                                         "color",
+                                         record->spec.color);
+        arc_write_sketch_probe_prior_row(fp,
+                                         "crlp.arc_neural_discovery.slot_probe.v1",
+                                         record,
+                                         "sketch.output_color",
+                                         "color",
+                                         record->spec.output_color);
+        arc_write_sketch_probe_prior_row(fp,
+                                         "crlp.arc_neural_discovery.slot_probe.v1",
+                                         record,
+                                         "sketch.x_anchor",
+                                         "integer",
+                                         record->spec.x_anchor);
+        arc_write_sketch_probe_prior_row(fp,
+                                         "crlp.arc_neural_discovery.slot_probe.v1",
+                                         record,
+                                         "sketch.y_anchor",
+                                         "integer",
+                                         record->spec.y_anchor);
+        arc_write_sketch_probe_prior_row(fp,
+                                         "crlp.arc_neural_discovery.slot_probe.v1",
+                                         record,
+                                         "sketch.x_offset",
+                                         "offset",
+                                         record->spec.x_offset);
+        arc_write_sketch_probe_prior_row(fp,
+                                         "crlp.arc_neural_discovery.slot_probe.v1",
+                                         record,
+                                         "sketch.y_offset",
+                                         "offset",
+                                         record->spec.y_offset);
+        arc_write_sketch_probe_prior_row(fp,
+                                         "crlp.arc_neural_discovery.slot_probe.v1",
+                                         record,
+                                         "sketch.width",
+                                         "integer",
+                                         (int64_t)record->spec.width);
+        arc_write_sketch_probe_prior_row(fp,
+                                         "crlp.arc_neural_discovery.slot_probe.v1",
+                                         record,
+                                         "sketch.height",
+                                         "integer",
+                                         (int64_t)record->spec.height);
+        arc_write_sketch_probe_prior_row(fp,
+                                         "crlp.arc_neural_discovery.slot_probe.v1",
+                                         record,
+                                         "sketch.period",
+                                         "integer",
+                                         (int64_t)record->spec.period);
+    }
+    int ok = !ferror(fp);
+    fclose(fp);
+    return ok;
+}
+
+static int arc_export_sketch_program_probes(const ARCConfig *config)
+{
+    if (config == NULL ||
+        config->arc_sketch_probe_candidates_path == NULL ||
+        config->arc_sketch_probe_public_arc_dir == NULL ||
+        config->arc_sketch_probe_sources_path == NULL ||
+        config->arc_sketch_probe_prior_path == NULL) {
+        return 0;
+    }
+    ARCSketchProbeInput *inputs =
+        calloc(ARC_SKETCH_PROBE_INPUT_CAPACITY, sizeof(*inputs));
+    ARCSketchProbeRecord *records =
+        calloc(ARC_SKETCH_PROBE_RECORD_CAPACITY, sizeof(*records));
+    ARCSketchProbeSummary *summaries =
+        calloc(ARC_SKETCH_PROBE_INPUT_CAPACITY, sizeof(*summaries));
+    if (inputs == NULL || records == NULL || summaries == NULL) {
+        free(inputs);
+        free(records);
+        free(summaries);
+        return 0;
+    }
+    size_t input_count = 0;
+    size_t record_count = 0;
+    size_t summary_count = 0;
+    int ok = arc_read_sketch_probe_inputs(config->arc_sketch_probe_candidates_path,
+                                          inputs,
+                                          ARC_SKETCH_PROBE_INPUT_CAPACITY,
+                                          &input_count);
+    if (!ok) {
+        free(inputs);
+        free(records);
+        free(summaries);
+        return 0;
+    }
+    size_t cap = config->arc_sketch_probe_sketches_per_task == 0
+                     ? 8u
+                     : config->arc_sketch_probe_sketches_per_task;
+    if (cap > 64u) {
+        cap = 64u;
+    }
+    for (size_t i = 0; i < input_count; ++i) {
+        ARCTask task;
+        char task_path[ARC_MAX_TASK_PATH];
+        arc_public_task_path(config->arc_sketch_probe_public_arc_dir,
+                             inputs[i].split,
+                             inputs[i].task_id,
+                             task_path,
+                             sizeof(task_path));
+        ARCSketchProbeSummary *summary = &summaries[summary_count++];
+        memset(summary, 0, sizeof(*summary));
+        snprintf(summary->family, sizeof(summary->family), "%s", inputs[i].family);
+        snprintf(summary->task_id, sizeof(summary->task_id), "%s", inputs[i].task_id);
+        snprintf(summary->split, sizeof(summary->split), "%s", inputs[i].split);
+        snprintf(summary->task_path, sizeof(summary->task_path), "%s", task_path);
+        if (!arc_load_task_file(task_path, inputs[i].task_id, &task)) {
+            ++summary->unsupported_shape;
+            continue;
+        }
+        ARCSketchProgramSpec emitted_specs[64];
+        size_t emitted_count = 0;
+        memset(emitted_specs, 0, sizeof(emitted_specs));
+        if (strcmp(inputs[i].family, "arc.patch_lattice_template_family") == 0 ||
+            strcmp(inputs[i].family, "arc.tiling_canvas_growth_family") == 0) {
+            arc_mine_macrocell_sketches(&inputs[i],
+                                        task_path,
+                                        &task,
+                                        records,
+                                        &record_count,
+                                        emitted_specs,
+                                        &emitted_count,
+                                        cap,
+                                        summary);
+            arc_mine_lattice_sample_sketches(&inputs[i],
+                                             task_path,
+                                             &task,
+                                             records,
+                                             &record_count,
+                                             emitted_specs,
+                                             &emitted_count,
+                                             cap,
+                                             summary);
+            if (strcmp(inputs[i].family, "arc.patch_lattice_template_family") == 0) {
+                arc_mine_point_line_project_sketches(&inputs[i],
+                                                     task_path,
+                                                     &task,
+                                                     records,
+                                                     &record_count,
+                                                     emitted_specs,
+                                                     &emitted_count,
+                                                     cap,
+                                                     summary);
+            }
+        }
+        if (strcmp(inputs[i].family, "arc.separator_panel_extraction_family") == 0) {
+            arc_mine_separator_panel_map_sketches(&inputs[i],
+                                                 task_path,
+                                                 &task,
+                                                 records,
+                                                 &record_count,
+                                                 emitted_specs,
+                                                 &emitted_count,
+                                                 cap,
+                                                 summary);
+            arc_mine_component_summary_sketches(&inputs[i],
+                                               task_path,
+                                               &task,
+                                               records,
+                                               &record_count,
+                                               emitted_specs,
+                                               &emitted_count,
+                                               cap,
+                                               summary);
+            arc_mine_crop_sketches(&inputs[i],
+                                   task_path,
+                                   &task,
+                                   records,
+                                   &record_count,
+                                   emitted_specs,
+                                   &emitted_count,
+                                   cap,
+                                   summary);
+        }
+        if (strcmp(inputs[i].family, "arc.crop_object_selection_family") == 0) {
+            arc_mine_object_mask_extract_sketches(&inputs[i],
+                                                 task_path,
+                                                 &task,
+                                                 records,
+                                                 &record_count,
+                                                 emitted_specs,
+                                                 &emitted_count,
+                                                 cap,
+                                                 summary);
+            arc_mine_diagonal_compact_sketches(&inputs[i],
+                                               task_path,
+                                               &task,
+                                               records,
+                                               &record_count,
+                                               emitted_specs,
+                                               &emitted_count,
+                                               cap,
+                                               summary);
+            arc_mine_crop_sketches(&inputs[i],
+                                   task_path,
+                                   &task,
+                                   records,
+                                   &record_count,
+                                   emitted_specs,
+                                   &emitted_count,
+                                   cap,
+                                   summary);
+            arc_mine_lattice_sample_sketches(&inputs[i],
+                                             task_path,
+                                             &task,
+                                             records,
+                                             &record_count,
+                                             emitted_specs,
+                                             &emitted_count,
+                                             cap,
+                                             summary);
+        }
+        if (strcmp(inputs[i].family, "arc.projection_compression_family") == 0) {
+            arc_mine_axis_projection_compress_sketches(&inputs[i],
+                                                      task_path,
+                                                      &task,
+                                                      records,
+                                                      &record_count,
+                                                      emitted_specs,
+                                                      &emitted_count,
+                                                      cap,
+                                                      summary);
+            arc_mine_separator_panel_map_sketches(&inputs[i],
+                                                 task_path,
+                                                 &task,
+                                                 records,
+                                                 &record_count,
+                                                 emitted_specs,
+                                                 &emitted_count,
+                                                 cap,
+                                                 summary);
+        }
+        if (strcmp(inputs[i].family, "arc.compositional_transform_family") == 0) {
+            arc_mine_object_mask_extract_sketches(&inputs[i],
+                                                 task_path,
+                                                 &task,
+                                                 records,
+                                                 &record_count,
+                                                 emitted_specs,
+                                                 &emitted_count,
+                                                 cap,
+                                                 summary);
+            arc_mine_axis_projection_compress_sketches(&inputs[i],
+                                                      task_path,
+                                                      &task,
+                                                      records,
+                                                      &record_count,
+                                                      emitted_specs,
+                                                      &emitted_count,
+                                                      cap,
+                                                      summary);
+            arc_mine_separator_panel_map_sketches(&inputs[i],
+                                                 task_path,
+                                                 &task,
+                                                 records,
+                                                 &record_count,
+                                                 emitted_specs,
+                                                 &emitted_count,
+                                                 cap,
+                                                 summary);
+        }
+    }
+    ok = arc_write_sketch_probe_sources(config->arc_sketch_probe_sources_path,
+                                        records,
+                                        record_count,
+                                        summaries,
+                                        summary_count) &&
+         arc_write_sketch_probe_prior(config->arc_sketch_probe_prior_path,
+                                      records,
+                                      record_count);
+    fprintf(stderr,
+            "exported %zu ARC sketch program probes from %zu promoted rows\n",
+            record_count,
+            input_count);
+    free(inputs);
+    free(records);
+    free(summaries);
+    return ok;
+}
+
 static int arc_task_file_compare(const void *lhs, const void *rhs)
 {
     const ARCTaskFile *left = lhs;
@@ -13514,6 +15790,9 @@ static void print_usage(FILE *stream)
           "[--program-train-max-tasks count] [--program-learning-rate rate] "
           "[--hypothesis-library-prior path] [--hypothesis-prior-hidden count] "
           "[--task-ids comma-list] [--exclude-task-ids comma-list] "
+          "[--arc-sketch-probe-candidates path] [--public-arc-dir path] "
+          "[--arc-sketch-probe-sources path] [--arc-sketch-probe-prior path] "
+          "[--arc-sketches-per-task count] "
           "[--hypothesis-top-k count] [--disable-hypothesis-neural-prior] "
           "[--disable-hypothesis-slot-prior] [--disable-hypothesis-cold-start] "
           "[--disable-hypothesis-structural-score] "
@@ -13544,9 +15823,14 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->hypothesis_library_prior_path = NULL;
     config->task_ids = NULL;
     config->exclude_task_ids = NULL;
+    config->arc_sketch_probe_candidates_path = NULL;
+    config->arc_sketch_probe_public_arc_dir = NULL;
+    config->arc_sketch_probe_sources_path = NULL;
+    config->arc_sketch_probe_prior_path = NULL;
     config->loader_summary_only = 0;
     config->program_budget_grid = 0;
     config->induction_smoke = 0;
+    config->arc_sketch_probe_sketches_per_task = 8;
     config->hypothesis_neural_prior_enabled = 1;
     config->hypothesis_slot_prior_enabled = 1;
     config->hypothesis_cold_start_enabled = 1;
@@ -13626,6 +15910,35 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             if (config->exclude_task_ids[0] == '\0') {
                 return 0;
             }
+        } else if (strcmp(argv[i], "--arc-sketch-probe-candidates") == 0 &&
+                   i + 1 < argc) {
+            config->arc_sketch_probe_candidates_path = argv[++i];
+            if (config->arc_sketch_probe_candidates_path[0] == '\0') {
+                return 0;
+            }
+        } else if ((strcmp(argv[i], "--public-arc-dir") == 0 ||
+                    strcmp(argv[i], "--arc-sketch-probe-public-arc-dir") == 0) &&
+                   i + 1 < argc) {
+            config->arc_sketch_probe_public_arc_dir = argv[++i];
+            if (config->arc_sketch_probe_public_arc_dir[0] == '\0') {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--arc-sketch-probe-sources") == 0 &&
+                   i + 1 < argc) {
+            config->arc_sketch_probe_sources_path = argv[++i];
+            if (config->arc_sketch_probe_sources_path[0] == '\0') {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--arc-sketch-probe-prior") == 0 &&
+                   i + 1 < argc) {
+            config->arc_sketch_probe_prior_path = argv[++i];
+            if (config->arc_sketch_probe_prior_path[0] == '\0') {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--arc-sketches-per-task") == 0 && i + 1 < argc) {
+            if (!nn_parse_size_text(argv[++i], &config->arc_sketch_probe_sketches_per_task)) {
+                return 0;
+            }
         } else if (strcmp(argv[i], "--hypothesis-prior-hidden") == 0 && i + 1 < argc) {
             const char *value = argv[++i];
             if (strcmp(value, "0") == 0) {
@@ -13681,6 +15994,12 @@ int main(int argc, char **argv)
         return nn_experiment_write_schema_json(stdout, &ARC_AGI_EXPERIMENT_SPEC)
                    ? EXIT_SUCCESS
                    : EXIT_FAILURE;
+    }
+    if (config.arc_sketch_probe_candidates_path != NULL ||
+        config.arc_sketch_probe_public_arc_dir != NULL ||
+        config.arc_sketch_probe_sources_path != NULL ||
+        config.arc_sketch_probe_prior_path != NULL) {
+        return arc_export_sketch_program_probes(&config) ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (config.task_dir != NULL) {
         return run_arc_task_loader(&config) ? EXIT_SUCCESS : EXIT_FAILURE;

@@ -90,6 +90,16 @@ typedef struct {
     double score;
 } NNGDScoredSketch;
 
+typedef struct {
+    int loaded;
+    unsigned epochs_seen_before;
+    unsigned epochs_seen_after;
+    size_t training_examples_seen_before;
+    size_t training_examples_seen_after;
+    size_t restored_weights;
+    size_t ignored_weights;
+} NNGDMemoryState;
+
 static const NNGDSketch *nn_gd_sort_sketches = NULL;
 
 static char *nn_gd_strdup(const char *value) {
@@ -1472,6 +1482,80 @@ static int nn_gd_build_vocab(const NNGDSketchList *sketches, NNGDStringList *voc
     return 0;
 }
 
+static int nn_gd_load_neural_checkpoint(const char *path,
+                                        const NNGDStringList *vocab,
+                                        double *weights,
+                                        double *bias,
+                                        NNGDMemoryState *memory) {
+    FILE *fp;
+    char line[NN_GD_LINE_MAX];
+    char *fields[NN_GD_MAX_FIELDS];
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        return 0;
+    }
+    memory->loaded = 1;
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        size_t field_count = nn_gd_split_tabs(line, fields, NN_GD_MAX_FIELDS);
+        const char *kind = nn_gd_field(fields, field_count, 0U);
+        if (strcmp(kind, "bias") == 0) {
+            *bias = nn_gd_parse_double(nn_gd_field(fields, field_count, 1U));
+        } else if (strcmp(kind, "epochs_seen") == 0) {
+            memory->epochs_seen_before =
+                (unsigned)nn_gd_parse_long(nn_gd_field(fields, field_count, 1U));
+        } else if (strcmp(kind, "training_examples_seen") == 0) {
+            long parsed = nn_gd_parse_long(nn_gd_field(fields, field_count, 1U));
+            memory->training_examples_seen_before = parsed < 0L ? 0U : (size_t)parsed;
+        } else if (strcmp(kind, "token") == 0) {
+            const char *token = nn_gd_field(fields, field_count, 1U);
+            long index = nn_gd_token_index(vocab, token);
+            if (index >= 0L) {
+                weights[index] = nn_gd_parse_double(nn_gd_field(fields, field_count, 2U));
+                ++memory->restored_weights;
+            } else {
+                ++memory->ignored_weights;
+            }
+        }
+    }
+    fclose(fp);
+    return 0;
+}
+
+static int nn_gd_save_neural_checkpoint(const char *path,
+                                        const NNGDStringList *vocab,
+                                        const double *weights,
+                                        double bias,
+                                        const NNGDMemoryState *memory) {
+    FILE *fp;
+    size_t i;
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+    fp = fopen(path, "w");
+    if (fp == NULL) {
+        return -1;
+    }
+    fputs("schema\tcrlp.grammar_sketch.memory.v1\n", fp);
+    fprintf(fp, "bias\t%.17g\n", bias);
+    fprintf(fp, "epochs_seen\t%u\n", memory->epochs_seen_after);
+    fprintf(fp, "training_examples_seen\t%zu\n", memory->training_examples_seen_after);
+    fprintf(fp, "vocab_size\t%zu\n", vocab->count);
+    for (i = 0; i < vocab->count; ++i) {
+        fputs("token\t", fp);
+        fputs(vocab->items[i], fp);
+        fprintf(fp, "\t%.17g\n", weights[i]);
+    }
+    if (ferror(fp)) {
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    return 0;
+}
+
 static int nn_gd_write_neural_rows(FILE *fp,
                                    const NNGDSketchList *sketches,
                                    const NNGDLabelList *labels,
@@ -1479,7 +1563,8 @@ static int nn_gd_write_neural_rows(FILE *fp,
                                    const double *weights,
                                    double bias,
                                    unsigned epochs,
-                                   double learning_rate) {
+                                   double learning_rate,
+                                   const NNGDMemoryState *memory) {
     NNGDScoredSketch *scores;
     size_t i;
     scores = (NNGDScoredSketch *)calloc(sketches->count, sizeof(NNGDScoredSketch));
@@ -1512,12 +1597,25 @@ static int nn_gd_write_neural_rows(FILE *fp,
         fprintf(fp,
                 ",\"score\":%.8f,\"rank_features\":{\"epochs\":%u,"
                 "\"learning_rate\":%.17g,\"vocab_size\":%zu,"
-                "\"training_examples\":%zu},\"rank\":%zu}\n",
+                "\"training_examples\":%zu,\"checkpoint_loaded\":%s,"
+                "\"checkpoint_epochs_seen_before\":%u,"
+                "\"checkpoint_epochs_seen_after\":%u,"
+                "\"checkpoint_training_examples_seen_before\":%zu,"
+                "\"checkpoint_training_examples_seen_after\":%zu,"
+                "\"checkpoint_restored_weights\":%zu,"
+                "\"checkpoint_ignored_weights\":%zu},\"rank\":%zu}\n",
                 scores[i].score,
                 epochs,
                 learning_rate,
                 vocab->count,
                 labels->count,
+                memory->loaded ? "true" : "false",
+                memory->epochs_seen_before,
+                memory->epochs_seen_after,
+                memory->training_examples_seen_before,
+                memory->training_examples_seen_after,
+                memory->restored_weights,
+                memory->ignored_weights,
                 i + 1U);
     }
     free(scores);
@@ -1528,11 +1626,14 @@ int nn_grammar_discovery_write_neural_sketch_proposals(
     const char *sketches_path,
     const char *examples_path,
     const char *proposals_output_path,
+    const char *checkpoint_input_path,
+    const char *checkpoint_output_path,
     unsigned epochs,
     double learning_rate) {
     NNGDSketchList sketches = {0};
     NNGDLabelList labels = {0};
     NNGDStringList vocab = {0};
+    NNGDMemoryState memory = {0};
     double *weights = NULL;
     double bias = 0.0;
     FILE *output = NULL;
@@ -1547,6 +1648,13 @@ int nn_grammar_discovery_write_neural_sketch_proposals(
     }
     weights = (double *)calloc(vocab.count == 0U ? 1U : vocab.count, sizeof(double));
     if (weights == NULL) {
+        goto done;
+    }
+    if (nn_gd_load_neural_checkpoint(checkpoint_input_path,
+                                     &vocab,
+                                     weights,
+                                     &bias,
+                                     &memory) != 0) {
         goto done;
     }
     for (epoch = 0U; epoch < epochs; ++epoch) {
@@ -1568,6 +1676,16 @@ int nn_grammar_discovery_write_neural_sketch_proposals(
             }
         }
     }
+    memory.epochs_seen_after = memory.epochs_seen_before + epochs;
+    memory.training_examples_seen_after =
+        memory.training_examples_seen_before + labels.count;
+    if (nn_gd_save_neural_checkpoint(checkpoint_output_path,
+                                     &vocab,
+                                     weights,
+                                     bias,
+                                     &memory) != 0) {
+        goto done;
+    }
     output = fopen(proposals_output_path, "w");
     if (output == NULL) {
         goto done;
@@ -1579,7 +1697,8 @@ int nn_grammar_discovery_write_neural_sketch_proposals(
                                 weights,
                                 bias,
                                 epochs,
-                                learning_rate) != 0) {
+                                learning_rate,
+                                &memory) != 0) {
         goto done;
     }
     status = 0;

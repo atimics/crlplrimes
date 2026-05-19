@@ -30,57 +30,27 @@ GRAMMAR_SKETCH_PROPOSAL_SCHEMA = "crlp.grammar_sketch.proposal.v1"
 GRAMMAR_SKETCH_VERIFICATION_SCHEMA = "crlp.grammar_sketch.verification.v1"
 PROMOTED_GRAMMAR_SKETCH_SCHEMA = "crlp.grammar_sketch.promoted.v1"
 ARC_SKETCH_PROBE_SCHEMA = "crlp.neural_grammar_discovery.arc_sketch_program_probe.v1"
+ARC_SKETCH_PROBE_SUMMARY_SCHEMA = (
+    "crlp.neural_grammar_discovery.arc_sketch_program_probe_summary.v1"
+)
 ARC_SKETCH_PROBE_COMPARISON_SCHEMA = (
     "crlp.neural_grammar_discovery.arc_sketch_program_probe_comparison.v1"
 )
 
-ARC_SKETCH_TEMPLATE_ID = 1036
 ARC_SKETCH_TEMPLATE_NAME = "arc_sketch_program"
-ARC_SKETCH_TEMPLATE_PROBE_SCHEMA = "crlp.arc_neural_discovery.template_probe.v1"
-ARC_SKETCH_SLOT_PROBE_SCHEMA = "crlp.arc_neural_discovery.slot_probe.v1"
-ARC_SKETCH_PRIOR_FIELDS = [
-    "schema_version",
-    "template_id",
-    "template_name",
-    "library_id",
-    "slot_name",
-    "slot_type",
-    "slot_value",
-    "slot_integer",
-    "proposal_count",
-    "certified_count",
+ARC_SKETCH_PROBE_CANDIDATE_FIELDS = [
+    "family",
+    "task_id",
+    "split",
     "support_tasks",
-    "covered_events",
+    "proposal_count",
     "utility_mean",
 ]
-ARC_SKETCH_SLOT_SPECS = [
-    ("sketch.selector", "integer"),
-    ("sketch.op", "integer"),
-    ("sketch.background", "color"),
-    ("sketch.color", "color"),
-    ("sketch.output_color", "color"),
-    ("sketch.x_anchor", "integer"),
-    ("sketch.y_anchor", "integer"),
-    ("sketch.x_offset", "offset"),
-    ("sketch.y_offset", "offset"),
-    ("sketch.width", "integer"),
-    ("sketch.height", "integer"),
-    ("sketch.period", "integer"),
-]
-ARC_SKETCH_SELECTOR_GRID_PANEL = 0
-ARC_SKETCH_SELECTOR_FOREGROUND_BBOX_PANEL = 1
-ARC_SKETCH_SELECTOR_COLOR_BBOX = 2
-ARC_SKETCH_SELECTOR_LATTICE = 3
-ARC_SKETCH_OP_CROP = 0
-ARC_SKETCH_OP_TILE_REPEAT = 1
-ARC_PUBLIC_SPLIT_DIRS = {
-    "public_training": "training",
-    "training": "training",
-    "train": "training",
-    "public_evaluation": "evaluation",
-    "evaluation": "evaluation",
-    "eval": "evaluation",
-}
+ARC_SKETCH_PRIOR_HEADER = (
+    "schema_version\ttemplate_id\ttemplate_name\tlibrary_id\tslot_name\t"
+    "slot_type\tslot_value\tslot_integer\tproposal_count\tcertified_count\t"
+    "support_tasks\tcovered_events\tutility_mean\n"
+)
 
 
 GRID_ACTIONS = {
@@ -242,6 +212,14 @@ def safe_float(value: Any) -> float:
         return 0.0
 
 
+def safe_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)
+
+
 def parse_json_rows(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
@@ -259,16 +237,6 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8") as fp:
         for row in rows:
             fp.write(json.dumps(row, sort_keys=True, separators=(",", ":")))
-            fp.write("\n")
-
-
-def write_tsv(path: Path, rows: list[dict[str, Any]], fields: list[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fp:
-        fp.write("\t".join(fields))
-        fp.write("\n")
-        for row in rows:
-            fp.write("\t".join(str(row.get(field, "")) for field in fields))
             fp.write("\n")
 
 
@@ -295,227 +263,6 @@ def mean(values: list[float]) -> float:
 def top_examples(rows: tuple[dict[str, Any], ...], key: str, limit: int = 12) -> list[str]:
     values = [str(row.get(key, "")) for row in rows if row.get(key, "")]
     return sorted(dict.fromkeys(values))[:limit]
-
-
-def grid_shape(grid: list[list[int]]) -> tuple[int, int]:
-    if not grid:
-        return 0, 0
-    return len(grid[0]), len(grid)
-
-
-def grid_equal(left: list[list[int]], right: list[list[int]]) -> bool:
-    return left == right
-
-
-def dominant_color(grid: list[list[int]]) -> int:
-    counts: Counter[int] = Counter()
-    for row in grid:
-        for value in row:
-            counts[int(value)] += 1
-    if not counts:
-        return 0
-    return counts.most_common(1)[0][0]
-
-
-def nonzero_colors(grid: list[list[int]]) -> list[int]:
-    return sorted({int(value) for row in grid for value in row if int(value) != 0})
-
-
-def crop_grid(
-    grid: list[list[int]],
-    origin_x: int,
-    origin_y: int,
-    width: int,
-    height: int,
-) -> list[list[int]] | None:
-    input_width, input_height = grid_shape(grid)
-    if (
-        width <= 0
-        or height <= 0
-        or origin_x < 0
-        or origin_y < 0
-        or origin_x + width > input_width
-        or origin_y + height > input_height
-    ):
-        return None
-    return [row[origin_x : origin_x + width] for row in grid[origin_y : origin_y + height]]
-
-
-def color_bbox(grid: list[list[int]], color: int) -> tuple[int, int, int, int] | None:
-    xs: list[int] = []
-    ys: list[int] = []
-    for y, row in enumerate(grid):
-        for x, value in enumerate(row):
-            if int(value) == color:
-                xs.append(x)
-                ys.append(y)
-    if not xs:
-        return None
-    return min(xs), min(ys), max(xs), max(ys)
-
-
-def non_background_bbox(
-    grid: list[list[int]],
-    background: int,
-) -> tuple[int, int, int, int] | None:
-    xs: list[int] = []
-    ys: list[int] = []
-    for y, row in enumerate(grid):
-        for x, value in enumerate(row):
-            if int(value) != background:
-                xs.append(x)
-                ys.append(y)
-    if not xs:
-        return None
-    return min(xs), min(ys), max(xs), max(ys)
-
-
-def subgrid_origins(
-    input_grid: list[list[int]],
-    output_grid: list[list[int]],
-) -> list[tuple[int, int]]:
-    input_width, input_height = grid_shape(input_grid)
-    output_width, output_height = grid_shape(output_grid)
-    origins: list[tuple[int, int]] = []
-    if (
-        output_width <= 0
-        or output_height <= 0
-        or output_width > input_width
-        or output_height > input_height
-    ):
-        return origins
-    for y in range(input_height - output_height + 1):
-        for x in range(input_width - output_width + 1):
-            if crop_grid(input_grid, x, y, output_width, output_height) == output_grid:
-                origins.append((x, y))
-    return origins
-
-
-def panel_origin(input_extent: int, panel_extent: int, anchor: int, offset: int) -> int | None:
-    if panel_extent <= 0 or panel_extent > input_extent or anchor < 0 or anchor > 2:
-        return None
-    span = input_extent - panel_extent
-    base = 0
-    if anchor == 1:
-        base = span // 2
-    elif anchor == 2:
-        base = span
-    origin = base + offset
-    if origin < 0 or origin + panel_extent > input_extent:
-        return None
-    return origin
-
-
-def bbox_panel_origin(
-    input_grid: list[list[int]],
-    background: int,
-    panel_width: int,
-    panel_height: int,
-    x_anchor: int,
-    y_anchor: int,
-    x_offset: int,
-    y_offset: int,
-) -> tuple[int, int] | None:
-    bbox = non_background_bbox(input_grid, background)
-    if bbox is None:
-        return None
-    min_x, min_y, max_x, max_y = bbox
-    bbox_width = max_x - min_x + 1
-    bbox_height = max_y - min_y + 1
-    if panel_width > bbox_width or panel_height > bbox_height:
-        return None
-    x_span = bbox_width - panel_width
-    y_span = bbox_height - panel_height
-    x_base = min_x + (x_span // 2 if x_anchor == 1 else x_span if x_anchor == 2 else 0)
-    y_base = min_y + (y_span // 2 if y_anchor == 1 else y_span if y_anchor == 2 else 0)
-    origin_x = x_base + x_offset
-    origin_y = y_base + y_offset
-    input_width, input_height = grid_shape(input_grid)
-    if (
-        origin_x < 0
-        or origin_y < 0
-        or origin_x + panel_width > input_width
-        or origin_y + panel_height > input_height
-    ):
-        return None
-    return origin_x, origin_y
-
-
-def sketch_slot_values(**values: int) -> dict[str, int]:
-    defaults = {
-        "sketch.selector": 0,
-        "sketch.op": 0,
-        "sketch.background": 0,
-        "sketch.color": 0,
-        "sketch.output_color": 0,
-        "sketch.x_anchor": 0,
-        "sketch.y_anchor": 0,
-        "sketch.x_offset": 0,
-        "sketch.y_offset": 0,
-        "sketch.width": 0,
-        "sketch.height": 0,
-        "sketch.period": 0,
-    }
-    defaults.update(values)
-    return defaults
-
-
-def apply_crop_sketch(
-    input_grid: list[list[int]],
-    values: dict[str, int],
-) -> list[list[int]] | None:
-    selector = values["sketch.selector"]
-    width = values["sketch.width"]
-    height = values["sketch.height"]
-    if selector == ARC_SKETCH_SELECTOR_GRID_PANEL:
-        input_width, input_height = grid_shape(input_grid)
-        origin_x = panel_origin(
-            input_width, width, values["sketch.x_anchor"], values["sketch.x_offset"]
-        )
-        origin_y = panel_origin(
-            input_height, height, values["sketch.y_anchor"], values["sketch.y_offset"]
-        )
-        if origin_x is None or origin_y is None:
-            return None
-        return crop_grid(input_grid, origin_x, origin_y, width, height)
-    if selector == ARC_SKETCH_SELECTOR_FOREGROUND_BBOX_PANEL:
-        origin = bbox_panel_origin(
-            input_grid,
-            values["sketch.background"],
-            width,
-            height,
-            values["sketch.x_anchor"],
-            values["sketch.y_anchor"],
-            values["sketch.x_offset"],
-            values["sketch.y_offset"],
-        )
-        if origin is None:
-            return None
-        return crop_grid(input_grid, origin[0], origin[1], width, height)
-    if selector == ARC_SKETCH_SELECTOR_COLOR_BBOX:
-        bbox = color_bbox(input_grid, values["sketch.color"])
-        if bbox is None:
-            return None
-        min_x, min_y, max_x, max_y = bbox
-        return crop_grid(input_grid, min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
-    return None
-
-
-def arc_train_pairs(task: dict[str, Any]) -> list[tuple[list[list[int]], list[list[int]]]]:
-    pairs: list[tuple[list[list[int]], list[list[int]]]] = []
-    for pair in task.get("train", []) or []:
-        if not isinstance(pair, dict):
-            continue
-        input_grid = pair.get("input")
-        output_grid = pair.get("output")
-        if isinstance(input_grid, list) and isinstance(output_grid, list):
-            pairs.append((input_grid, output_grid))
-    return pairs
-
-
-def arc_task_path(public_arc_dir: Path, split: str, task_id: str) -> Path:
-    split_dir = ARC_PUBLIC_SPLIT_DIRS.get(split, split)
-    return public_arc_dir / split_dir / f"{task_id}.json"
 
 
 def normalized_slot(name: str, value: Any, slot_type: str = "symbol") -> dict[str, Any]:
@@ -900,7 +647,7 @@ def run_c_runtime(
     groups: list[CandidateGroup],
     sketches: list[dict[str, Any]],
     sketch_examples: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     runtime = Path(args.runtime)
     if not runtime.is_file():
         raise FileNotFoundError(
@@ -913,340 +660,328 @@ def run_c_runtime(
     compiled_output = args.output_dir / "compiled_grammar_deltas.jsonl"
     verification_output = args.output_dir / "grammar_delta_verification.jsonl"
     neural_proposals_output = runtime_dir / "neural_sketch_proposals.jsonl"
+    sketch_memory = Path(args.sketch_memory) if args.sketch_memory else (
+        args.output_dir / "grammar_sketch_memory.tsv"
+    )
+    memory_input = sketch_memory if args.resume_sketch_memory and sketch_memory.is_file() else None
     write_runtime_candidate_rows(candidate_rows, candidates, groups)
     write_runtime_sketch_tables(sketch_rows, sketch_example_rows, sketches, sketch_examples)
-    subprocess.run(
-        [
-            str(runtime),
-            "--candidate-rows",
-            str(candidate_rows),
-            "--compiled-output",
-            str(compiled_output),
-            "--verification-output",
-            str(verification_output),
-            "--sketches",
-            str(sketch_rows),
-            "--sketch-examples",
-            str(sketch_example_rows),
-            "--neural-proposals-output",
-            str(neural_proposals_output),
-        ],
-        check=True,
+    command = [
+        str(runtime),
+        "--candidate-rows",
+        str(candidate_rows),
+        "--compiled-output",
+        str(compiled_output),
+        "--verification-output",
+        str(verification_output),
+        "--sketches",
+        str(sketch_rows),
+        "--sketch-examples",
+        str(sketch_example_rows),
+        "--neural-proposals-output",
+        str(neural_proposals_output),
+        "--memory-out",
+        str(sketch_memory),
+    ]
+    if memory_input is not None:
+        command.extend(["--memory-in", str(memory_input)])
+    subprocess.run(command, check=True)
+    neural_proposals = parse_json_rows(neural_proposals_output)
+    rank_features = (
+        neural_proposals[0].get("rank_features", {})
+        if neural_proposals and isinstance(neural_proposals[0].get("rank_features"), dict)
+        else {}
     )
+    memory_summary = {
+        "schema": "crlp.grammar_sketch.memory.summary.v1",
+        "report_version": 1,
+        "checkpoint_path": str(sketch_memory),
+        "resume_requested": bool(args.resume_sketch_memory),
+        "checkpoint_loaded": bool(rank_features.get("checkpoint_loaded", False)),
+        "checkpoint_epochs_seen_before": safe_int(
+            rank_features.get("checkpoint_epochs_seen_before")
+        ),
+        "checkpoint_epochs_seen_after": safe_int(
+            rank_features.get("checkpoint_epochs_seen_after")
+        ),
+        "checkpoint_training_examples_seen_before": safe_int(
+            rank_features.get("checkpoint_training_examples_seen_before")
+        ),
+        "checkpoint_training_examples_seen_after": safe_int(
+            rank_features.get("checkpoint_training_examples_seen_after")
+        ),
+        "checkpoint_restored_weights": safe_int(rank_features.get("checkpoint_restored_weights")),
+        "checkpoint_ignored_weights": safe_int(rank_features.get("checkpoint_ignored_weights")),
+        "vocab_size": safe_int(rank_features.get("vocab_size")),
+        "training_examples": safe_int(rank_features.get("training_examples")),
+    }
     return (
         parse_json_rows(compiled_output),
         parse_json_rows(verification_output),
-        parse_json_rows(neural_proposals_output),
+        neural_proposals,
+        memory_summary,
     )
 
 
-def arc_sketch_template_probe_row(
-    library_id: str,
-    proposal_count: int,
-    support_tasks: int,
-    utility_mean: float,
-) -> dict[str, Any]:
-    return {
-        "schema_version": ARC_SKETCH_TEMPLATE_PROBE_SCHEMA,
-        "template_id": ARC_SKETCH_TEMPLATE_ID,
-        "template_name": ARC_SKETCH_TEMPLATE_NAME,
-        "library_id": library_id,
-        "slot_name": "__template__",
-        "slot_type": "template",
-        "slot_value": "0.00000000",
-        "slot_integer": 0,
-        "proposal_count": max(1, proposal_count),
-        "certified_count": 0,
-        "support_tasks": support_tasks,
-        "covered_events": support_tasks,
-        "utility_mean": f"{utility_mean:.8f}",
-    }
-
-
-def arc_sketch_slot_probe_rows(
-    library_id: str,
-    values: dict[str, int],
-    proposal_count: int,
-    support_tasks: int,
-    utility_mean: float,
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for slot_name, slot_type in ARC_SKETCH_SLOT_SPECS:
-        slot_integer = int(values[slot_name])
-        rows.append(
-            {
-                "schema_version": ARC_SKETCH_SLOT_PROBE_SCHEMA,
-                "template_id": ARC_SKETCH_TEMPLATE_ID,
-                "template_name": ARC_SKETCH_TEMPLATE_NAME,
-                "library_id": library_id,
-                "slot_name": slot_name,
-                "slot_type": slot_type,
-                "slot_value": f"{float(slot_integer):.8f}",
-                "slot_integer": slot_integer,
-                "proposal_count": max(1, proposal_count),
-                "certified_count": 0,
-                "support_tasks": support_tasks,
-                "covered_events": support_tasks,
-                "utility_mean": f"{utility_mean:.8f}",
-            }
-        )
-    return rows
-
-
-def arc_sketch_values_train_consistent(
-    pairs: list[tuple[list[list[int]], list[list[int]]]],
-    values: dict[str, int],
-) -> bool:
-    if not pairs:
-        return False
-    if values["sketch.op"] != ARC_SKETCH_OP_CROP:
-        return True
-    for input_grid, output_grid in pairs:
-        if not grid_equal(apply_crop_sketch(input_grid, values) or [], output_grid):
-            return False
-    return True
-
-
-def synthesize_arc_panel_sketches(
-    pairs: list[tuple[list[list[int]], list[list[int]]]],
-    limit: int,
-) -> list[dict[str, int]]:
-    if not pairs:
-        return []
-    first_input, first_output = pairs[0]
-    output_width, output_height = grid_shape(first_output)
-    if output_width == 0 or output_height == 0:
-        return []
-    background = dominant_color(first_input)
-    values: list[dict[str, int]] = []
-    for origin_x, origin_y in subgrid_origins(first_input, first_output):
-        for selector in [
-            ARC_SKETCH_SELECTOR_GRID_PANEL,
-            ARC_SKETCH_SELECTOR_FOREGROUND_BBOX_PANEL,
-        ]:
-            if selector == ARC_SKETCH_SELECTOR_GRID_PANEL:
-                base_min_x = 0
-                base_min_y = 0
-                base_width, base_height = grid_shape(first_input)
-            else:
-                bbox = non_background_bbox(first_input, background)
-                if bbox is None:
-                    continue
-                base_min_x, base_min_y, max_x, max_y = bbox
-                base_width = max_x - base_min_x + 1
-                base_height = max_y - base_min_y + 1
-            if output_width > base_width or output_height > base_height:
+def write_arc_probe_candidate_record_rows(
+    path: Path,
+    records: list[dict[str, Any]],
+) -> int:
+    row_count = 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fp:
+        fp.write("\t".join(ARC_SKETCH_PROBE_CANDIDATE_FIELDS))
+        fp.write("\n")
+        for record in records:
+            family = str(record.get("family", ""))
+            task_id = str(record.get("task_id", ""))
+            split = str(record.get("split", ""))
+            if not family or not task_id or not split:
                 continue
-            for x_anchor in range(3):
-                x_span = base_width - output_width
-                x_base = base_min_x + (
-                    x_span // 2 if x_anchor == 1 else x_span if x_anchor == 2 else 0
-                )
-                x_offset = origin_x - x_base
-                for y_anchor in range(3):
-                    y_span = base_height - output_height
-                    y_base = base_min_y + (
-                        y_span // 2
-                        if y_anchor == 1
-                        else y_span
-                        if y_anchor == 2
-                        else 0
-                    )
-                    y_offset = origin_y - y_base
-                    row = sketch_slot_values(
-                        **{
-                            "sketch.selector": selector,
-                            "sketch.op": ARC_SKETCH_OP_CROP,
-                            "sketch.background": background,
-                            "sketch.x_anchor": x_anchor,
-                            "sketch.y_anchor": y_anchor,
-                            "sketch.x_offset": x_offset,
-                            "sketch.y_offset": y_offset,
-                            "sketch.width": output_width,
-                            "sketch.height": output_height,
-                        }
-                    )
-                    if arc_sketch_values_train_consistent(pairs, row):
-                        values.append(row)
-                        if len(values) >= limit:
-                            return values
-    return values
-
-
-def synthesize_arc_color_bbox_sketches(
-    pairs: list[tuple[list[list[int]], list[list[int]]]],
-    limit: int,
-) -> list[dict[str, int]]:
-    if not pairs:
-        return []
-    first_input, _first_output = pairs[0]
-    background = dominant_color(first_input)
-    values: list[dict[str, int]] = []
-    for color in nonzero_colors(first_input):
-        row = sketch_slot_values(
-            **{
-                "sketch.selector": ARC_SKETCH_SELECTOR_COLOR_BBOX,
-                "sketch.op": ARC_SKETCH_OP_CROP,
-                "sketch.background": background,
-                "sketch.color": color,
-            }
-        )
-        if arc_sketch_values_train_consistent(pairs, row):
-            values.append(row)
-            if len(values) >= limit:
-                return values
-    return values
-
-
-def synthesize_arc_lattice_sketches(
-    pairs: list[tuple[list[list[int]], list[list[int]]]],
-    limit: int,
-) -> list[dict[str, int]]:
-    if not pairs:
-        return []
-    backgrounds = sorted({dominant_color(input_grid) for input_grid, _output in pairs})
-    if 0 not in backgrounds:
-        backgrounds.insert(0, 0)
-    values: list[dict[str, int]] = []
-    for background in backgrounds[:3]:
-        for period in [2, 3]:
-            values.append(
-                sketch_slot_values(
-                    **{
-                        "sketch.selector": ARC_SKETCH_SELECTOR_LATTICE,
-                        "sketch.op": ARC_SKETCH_OP_TILE_REPEAT,
-                        "sketch.background": background,
-                        "sketch.period": period,
-                    }
+            fp.write(
+                "{}\t{}\t{}\t{}\t{}\t{:.8f}\n".format(
+                    family,
+                    task_id,
+                    split,
+                    max(1, safe_int(record.get("support_tasks"))),
+                    max(1, min(64, safe_int(record.get("proposal_count")))),
+                    safe_float(record.get("utility_mean")),
                 )
             )
-            if len(values) >= limit:
-                return values
-    return values
+            row_count += 1
+    return row_count
 
 
-def synthesize_arc_sketch_values(
-    family: str,
-    task: dict[str, Any],
-    limit: int,
-) -> list[dict[str, int]]:
-    pairs = arc_train_pairs(task)
-    if family == "arc.crop_object_selection_family":
-        return synthesize_arc_color_bbox_sketches(pairs, limit)
-    if family == "arc.separator_panel_extraction_family":
-        return synthesize_arc_panel_sketches(pairs, limit)
-    if family in {
-        "arc.patch_lattice_template_family",
-        "arc.tiling_canvas_growth_family",
-    }:
-        return synthesize_arc_lattice_sketches(pairs, limit)
-    return []
+def write_empty_arc_probe_artifacts(source_path: Path, prior_path: Path) -> None:
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text("", encoding="utf-8")
+    prior_path.parent.mkdir(parents=True, exist_ok=True)
+    prior_path.write_text(ARC_SKETCH_PRIOR_HEADER, encoding="utf-8")
 
 
-def arc_probe_family_source_rows(
+def arc_probe_prior_row_count(path: Path) -> int:
+    if not path.is_file():
+        return 0
+    with path.open("r", encoding="utf-8") as fp:
+        return max(0, sum(1 for _line in fp) - 1)
+
+
+def run_arc_sketch_candidate_export(
+    records: list[dict[str, Any]],
+    arc_agi: Path,
+    public_arc_dir: Path,
+    candidate_path: Path,
+    source_path: Path,
+    prior_path: Path,
+    sketches_per_task: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, int]:
+    candidate_count = write_arc_probe_candidate_record_rows(candidate_path, records)
+    if (
+        candidate_count == 0
+        or not arc_agi.is_file()
+        or str(public_arc_dir) in {"", "."}
+        or not public_arc_dir.is_dir()
+    ):
+        write_empty_arc_probe_artifacts(source_path, prior_path)
+        return [], [], 0, candidate_count
+    command = [
+        str(arc_agi),
+        "--arc-sketch-probe-candidates",
+        str(candidate_path),
+        "--public-arc-dir",
+        str(public_arc_dir),
+        "--arc-sketch-probe-sources",
+        str(source_path),
+        "--arc-sketch-probe-prior",
+        str(prior_path),
+        "--arc-sketches-per-task",
+        str(sketches_per_task),
+    ]
+    subprocess.run(command, check=True)
+    source_rows = parse_json_rows(source_path)
+    probe_rows = [
+        row for row in source_rows if row.get("schema") == ARC_SKETCH_PROBE_SCHEMA
+    ]
+    summary_rows = [
+        row
+        for row in source_rows
+        if row.get("schema") == ARC_SKETCH_PROBE_SUMMARY_SCHEMA
+    ]
+    return probe_rows, summary_rows, arc_probe_prior_row_count(prior_path), candidate_count
+
+
+def run_arc_sketch_probe_export(
     groups: list[CandidateGroup],
     promoted: list[dict[str, Any]],
+    arc_agi: Path,
     public_arc_dir: Path,
+    output_dir: Path,
     sketches_per_task: int,
-) -> list[dict[str, Any]]:
-    if str(public_arc_dir) in {"", "."} or not public_arc_dir.is_dir():
-        return []
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, int]:
+    source_path = output_dir / "arc_sketch_program_probe_sources.jsonl"
+    prior_path = output_dir / "arc_sketch_program_probe_prior.tsv"
+    candidate_path = output_dir / "runtime" / "arc_sketch_probe_candidates.tsv"
     promoted_families = {
         str(row.get("family", ""))
         for row in promoted
         if row.get("domain") == "arc_agi"
     }
-    source_rows: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    records: list[dict[str, Any]] = []
+    seen_records: set[tuple[str, str, str]] = set()
     for group in groups:
         if group.domain != "arc_agi" or group.family not in promoted_families:
             continue
         support = len(group.rows)
-        utility = mean([safe_float(row.get("slot_probe_scored_rows")) for row in group.rows])
+        utility = mean(
+            [safe_float(row.get("slot_probe_scored_rows")) for row in group.rows]
+        )
         proposal_count = max(
             1,
-            min(64, int(round(mean([safe_float(row.get("slot_probe_seeded_proposals")) for row in group.rows]))) or support),
+            min(
+                64,
+                int(
+                    round(
+                        mean(
+                            [
+                                safe_float(row.get("slot_probe_seeded_proposals"))
+                                for row in group.rows
+                            ]
+                        )
+                    )
+                )
+                or support,
+            ),
         )
-        for row in group.rows:
-            task_id = str(row.get("task_id", ""))
-            split = str(row.get("split", ""))
-            task_path = arc_task_path(public_arc_dir, split, task_id)
-            if not task_id or not task_path.is_file():
+        for source in group.rows:
+            task_id = str(source.get("task_id", ""))
+            split = str(source.get("split", ""))
+            key = (group.family, task_id, split)
+            if not task_id or not split or key in seen_records:
                 continue
-            try:
-                task = json.loads(task_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            for index, values in enumerate(
-                synthesize_arc_sketch_values(group.family, task, sketches_per_task),
-                start=1,
-            ):
-                signature = stable_id(group.family, task_id, values)
-                if signature in seen:
-                    continue
-                seen.add(signature)
-                library_id = "ngd:{}:{}:{}".format(
-                    group.family.replace(".", "_"),
-                    task_id,
-                    signature,
-                )
-                source_rows.append(
-                    {
-                        "schema": ARC_SKETCH_PROBE_SCHEMA,
-                        "report_version": 1,
-                        "library_id": library_id,
-                        "template_id": ARC_SKETCH_TEMPLATE_ID,
-                        "template_name": ARC_SKETCH_TEMPLATE_NAME,
-                        "family": group.family,
-                        "candidate_group_size": support,
-                        "task_id": task_id,
-                        "split": split,
-                        "task_path": str(task_path),
-                        "sketch_index": index,
-                        "slot_values": values,
-                        "proposal_count": proposal_count,
-                        "support_tasks": support,
-                        "utility_mean": utility,
-                        "compiler": "arc_sketch_program_probe_compiler",
-                        "promotion_path": "tsv_probe_loaded_by_arc_agi_verifier",
-                    }
-                )
-    return source_rows
+            seen_records.add(key)
+            records.append(
+                {
+                    "family": group.family,
+                    "task_id": task_id,
+                    "split": split,
+                    "support_tasks": support,
+                    "proposal_count": proposal_count,
+                    "utility_mean": utility,
+                }
+            )
+    return run_arc_sketch_candidate_export(
+        records,
+        arc_agi,
+        public_arc_dir,
+        candidate_path,
+        source_path,
+        prior_path,
+        sketches_per_task,
+    )
 
 
-def arc_probe_prior_rows(source_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    families = sorted({str(row.get("family", "")) for row in source_rows})
-    if source_rows:
-        rows.append(
-            arc_sketch_template_probe_row(
-                "ngd:arc_sketch_program:template",
-                proposal_count=len(source_rows),
-                support_tasks=len({str(row.get("task_id", "")) for row in source_rows}),
-                utility_mean=mean([safe_float(row.get("utility_mean")) for row in source_rows]),
-            )
+def arc_task_key(row: dict[str, Any]) -> tuple[str, str]:
+    return (str(row.get("task_id", "")), str(row.get("split", "")))
+
+
+def arc_heldout_candidate_records(
+    triage_path: Path,
+    excluded_keys: set[tuple[str, str]],
+    limit: int,
+    per_family: int,
+) -> list[dict[str, Any]]:
+    if limit == 0 or per_family == 0:
+        return []
+    records: list[dict[str, Any]] = []
+    counts_by_family: Counter[str] = Counter()
+    seen: set[tuple[str, str, str]] = set()
+    for row in parse_json_rows(triage_path):
+        priority = str(row.get("priority") or row.get("triage_priority") or "")
+        spec = ARC_PRIORITY_TO_DELTA.get(priority)
+        if spec is None:
+            continue
+        if safe_bool(row.get("certified")):
+            continue
+        if safe_int(row.get("proposals_train_consistent_pre_cap")) > 0:
+            continue
+        task_id, split = arc_task_key(row)
+        if not task_id or not split or (task_id, split) in excluded_keys:
+            continue
+        family = str(spec["family"])
+        key = (family, task_id, split)
+        if key in seen:
+            continue
+        if per_family >= 0 and counts_by_family[family] >= per_family:
+            continue
+        records.append(
+            {
+                "family": family,
+                "task_id": task_id,
+                "split": split,
+                "support_tasks": max(1, safe_int(row.get("train_pairs"))),
+                "proposal_count": max(1, min(64, safe_int(row.get("proposals_generated")))),
+                "utility_mean": max(1.0, safe_float(row.get("rejected_evidence"))),
+                "priority": priority,
+                "structural_label": row.get("structural_label", ""),
+                "diagnostic_bucket": row.get("diagnostic_bucket", ""),
+            }
         )
-    for family in families:
-        family_rows = [row for row in source_rows if row.get("family") == family]
-        rows.append(
-            arc_sketch_template_probe_row(
-                f"ngd:{family.replace('.', '_')}:template",
-                proposal_count=len(family_rows),
-                support_tasks=len({str(row.get("task_id", "")) for row in family_rows}),
-                utility_mean=mean([safe_float(row.get("utility_mean")) for row in family_rows]),
-            )
-        )
-    for row in source_rows:
-        rows.extend(
-            arc_sketch_slot_probe_rows(
-                str(row["library_id"]),
-                row["slot_values"],
-                safe_int(row.get("proposal_count")),
-                safe_int(row.get("support_tasks")),
-                safe_float(row.get("utility_mean")),
-            )
-        )
-    return rows
+        seen.add(key)
+        counts_by_family[family] += 1
+        if limit >= 0 and len(records) >= limit:
+            break
+    return records
+
+
+def run_arc_sketch_heldout_export(
+    triage_path: Path,
+    excluded_keys: set[tuple[str, str]],
+    arc_agi: Path,
+    public_arc_dir: Path,
+    output_dir: Path,
+    sketches_per_task: int,
+    limit: int,
+    per_family: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, int, list[dict[str, Any]]]:
+    candidate_jsonl_path = output_dir / "arc_sketch_program_heldout_candidates.jsonl"
+    candidate_tsv_path = output_dir / "runtime" / "arc_sketch_heldout_candidates.tsv"
+    source_path = output_dir / "arc_sketch_program_heldout_sources.jsonl"
+    prior_path = output_dir / "arc_sketch_program_heldout_prior.tsv"
+    records = arc_heldout_candidate_records(
+        triage_path,
+        excluded_keys,
+        limit,
+        per_family,
+    )
+    write_jsonl(candidate_jsonl_path, records)
+    probe_rows, summary_rows, prior_count, candidate_count = run_arc_sketch_candidate_export(
+        records,
+        arc_agi,
+        public_arc_dir,
+        candidate_tsv_path,
+        source_path,
+        prior_path,
+        sketches_per_task,
+    )
+    return probe_rows, summary_rows, prior_count, candidate_count, records
+
+
+def aggregate_arc_probe_rejections(
+    summary_rows: list[dict[str, Any]],
+) -> dict[str, dict[str, int]]:
+    totals: dict[str, Counter[str]] = defaultdict(Counter)
+    for row in summary_rows:
+        family = str(row.get("family", ""))
+        totals[family]["attempted"] += safe_int(row.get("attempted"))
+        totals[family]["emitted"] += safe_int(row.get("emitted"))
+        rejects = row.get("rejection_counts", {})
+        if isinstance(rejects, dict):
+            for reason, count in rejects.items():
+                totals[family][str(reason)] += safe_int(count)
+    return {
+        family: dict(sorted(counter.items()))
+        for family, counter in sorted(totals.items())
+    }
 
 
 def run_arc_log(command: list[str], log_path: Path) -> int:
@@ -1259,6 +994,29 @@ def run_arc_log(command: list[str], log_path: Path) -> int:
             check=False,
         )
     return int(completed.returncode)
+
+
+def write_filtered_arc_prior(
+    global_prior_path: Path,
+    output_path: Path,
+    library_ids: set[str],
+) -> int:
+    if not global_prior_path.is_file() or not library_ids:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(ARC_SKETCH_PRIOR_HEADER, encoding="utf-8")
+        return 0
+    kept = 0
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with global_prior_path.open("r", encoding="utf-8") as source:
+        header = source.readline()
+        with output_path.open("w", encoding="utf-8") as target:
+            target.write(header if header else ARC_SKETCH_PRIOR_HEADER)
+            for line in source:
+                fields = line.rstrip("\n").split("\t")
+                if len(fields) >= 4 and fields[3] in library_ids:
+                    target.write(line)
+                    kept += 1
+    return kept
 
 
 def arc_log_metrics(log_path: Path) -> dict[str, Any]:
@@ -1340,14 +1098,24 @@ def compare_arc_sketch_probes(
     source_rows: list[dict[str, Any]],
     output_dir: Path,
     limit: int,
+    log_dir_name: str = "arc_sketch_program_probe_logs",
 ) -> list[dict[str, Any]]:
     if not source_rows or not arc_agi.is_file() or not prior_path.is_file() or limit == 0:
         return []
     selected_rows: list[dict[str, Any]] = []
     seen_tasks: set[str] = set()
     rows_by_family: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in sorted(source_rows, key=lambda item: (str(item.get("task_id", "")), str(item.get("library_id", "")))):
+    rows_by_task: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in sorted(
+        source_rows,
+        key=lambda item: (
+            str(item.get("task_id", "")),
+            str(item.get("split", "")),
+            str(item.get("library_id", "")),
+        ),
+    ):
         rows_by_family[str(row.get("family", ""))].append(row)
+        rows_by_task[(str(row.get("task_id", "")), str(row.get("split", "")))].append(row)
     family_names = sorted(rows_by_family)
     while family_names:
         progressed = False
@@ -1371,13 +1139,21 @@ def compare_arc_sketch_probes(
 
     flags = arc_probe_compare_flags()
     rows: list[dict[str, Any]] = []
-    log_dir = output_dir / "arc_sketch_program_probe_logs"
+    log_dir = output_dir / log_dir_name
     for row in selected_rows:
         task_path = Path(str(row["task_path"]))
         task_id = str(row["task_id"])
+        split = str(row.get("split", ""))
         task_dir = task_path.parent
         baseline_log = log_dir / f"{task_id}.baseline.jsonl"
         probed_log = log_dir / f"{task_id}.probed.jsonl"
+        task_prior = log_dir / f"{task_id}.prior.tsv"
+        task_library_ids = {
+            str(task_row.get("library_id", ""))
+            for task_row in rows_by_task.get((task_id, split), [])
+            if task_row.get("library_id")
+        }
+        task_prior_rows = write_filtered_arc_prior(prior_path, task_prior, task_library_ids)
         base_command = [
             str(arc_agi),
             "--task-dir",
@@ -1397,13 +1173,15 @@ def compare_arc_sketch_probes(
             "--max-tasks",
             "1",
             "--hypothesis-library-prior",
-            str(prior_path),
+            str(task_prior),
             *flags,
         ]
         baseline_exit = run_arc_log(base_command, baseline_log)
         probed_exit = run_arc_log(probed_command, probed_log)
         baseline_metrics = arc_log_metrics(baseline_log)
         probed_metrics = arc_log_metrics(probed_log)
+        baseline_certified = safe_int(baseline_metrics.get("certified_tasks")) > 0
+        probed_certified = safe_int(probed_metrics.get("certified_tasks")) > 0
         rows.append(
             {
                 "schema": ARC_SKETCH_PROBE_COMPARISON_SCHEMA,
@@ -1415,7 +1193,9 @@ def compare_arc_sketch_probes(
                 "probed_exit_code": probed_exit,
                 "baseline_log": str(baseline_log),
                 "probed_log": str(probed_log),
-                "prior_path": str(prior_path),
+                "prior_path": str(task_prior),
+                "global_prior_path": str(prior_path),
+                "task_prior_row_count": task_prior_rows,
                 "baseline": baseline_metrics,
                 "probed": probed_metrics,
                 "delta": {
@@ -1441,36 +1221,50 @@ def compare_arc_sketch_probes(
                     probed_metrics.get("sketch_train_consistent_pre_cap")
                 )
                 > safe_int(baseline_metrics.get("sketch_train_consistent_pre_cap")),
+                "baseline_certified": baseline_certified,
+                "probed_certified": probed_certified,
+                "baseline_already_certified": baseline_certified and probed_certified,
+                "newly_certified": probed_certified and not baseline_certified,
             }
         )
     return rows
 
 
-def arc_sketch_probe_markdown(rows: list[dict[str, Any]], source_count: int) -> str:
+def arc_sketch_probe_markdown(
+    rows: list[dict[str, Any]],
+    source_count: int,
+    title: str = "ARC Sketch Program Probe Comparison",
+) -> str:
     lines = [
-        "# ARC Sketch Program Probe Comparison",
+        f"# {title}",
         "",
         f"- Probe source sketches: {source_count}",
         f"- Compared tasks: {len(rows)}",
         f"- Tasks with extra sketch train-consistent pre-cap proposals: {sum(1 for row in rows if row.get('probe_added_train_consistent_sketch'))}",
         f"- Tasks selecting `arc_sketch_program`: {sum(1 for row in rows if row.get('probe_selected_sketch'))}",
         f"- Certified task delta: {sum(safe_int(row.get('delta', {}).get('certified_tasks')) for row in rows)}",
+        f"- Newly certified baseline-unsolved tasks: {sum(1 for row in rows if row.get('newly_certified'))}",
+        f"- Baseline-already-certified tasks: {sum(1 for row in rows if row.get('baseline_already_certified'))}",
         "",
-        "| Task | Family | Base Sketch TC | Probed Sketch TC | Base Selected | Probed Selected | Certified Delta |",
-        "| --- | --- | ---: | ---: | --- | --- | ---: |",
+        "| Task | Family | Base TC pre-cap | Probed TC pre-cap | Base TC retained | Probed TC retained | Base Selected | Probed Selected | New Solve | Baseline Solved | Certified Delta |",
+        "| --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | ---: |",
     ]
     for row in rows:
         base = row.get("baseline", {})
         probed = row.get("probed", {})
         delta = row.get("delta", {})
         lines.append(
-            "| `{}` | `{}` | {} | {} | `{}` | `{}` | {} |".format(
+            "| `{}` | `{}` | {} | {} | {} | {} | `{}` | `{}` | `{}` | `{}` | {} |".format(
                 row.get("task_id", ""),
                 row.get("family", ""),
                 safe_int(base.get("sketch_train_consistent_pre_cap")),
                 safe_int(probed.get("sketch_train_consistent_pre_cap")),
+                safe_int(base.get("sketch_train_consistent_retained")),
+                safe_int(probed.get("sketch_train_consistent_retained")),
                 base.get("selected_template", ""),
                 probed.get("selected_template", ""),
+                row.get("newly_certified", False),
+                row.get("baseline_already_certified", False),
                 safe_int(delta.get("certified_tasks")),
             )
         )
@@ -2149,7 +1943,13 @@ def markdown_summary(
     verifications: list[dict[str, Any]],
     promoted: list[dict[str, Any]],
     arc_sketch_probe_sources: list[dict[str, Any]],
+    arc_sketch_probe_summaries: list[dict[str, Any]],
     arc_sketch_probe_comparison: list[dict[str, Any]],
+    arc_sketch_heldout_sources: list[dict[str, Any]],
+    arc_sketch_heldout_summaries: list[dict[str, Any]],
+    arc_sketch_heldout_comparison: list[dict[str, Any]],
+    arc_sketch_heldout_candidate_count: int,
+    sketch_memory_summary: dict[str, Any],
     sketches: list[dict[str, Any]],
     sketch_examples: list[dict[str, Any]],
     sketch_proposals: list[dict[str, Any]],
@@ -2176,9 +1976,17 @@ def markdown_summary(
         f"- Promoted deltas: {len(promoted)}",
         f"- ARC sketch program probe sketches: {len(arc_sketch_probe_sources)}",
         f"- ARC sketch program compared tasks: {len(arc_sketch_probe_comparison)}",
+        f"- Held-out ARC candidate tasks: {arc_sketch_heldout_candidate_count}",
+        f"- Held-out ARC sketch program sketches: {len(arc_sketch_heldout_sources)}",
+        f"- Held-out ARC compared tasks: {len(arc_sketch_heldout_comparison)}",
         f"- Grammar sketches: {len(sketches)}",
         f"- Grammar sketch examples: {len(sketch_examples)}",
         f"- Grammar sketch proposals: {len(sketch_proposals)}",
+        "- Grammar sketch memory: `{}` (loaded: `{}`, epochs seen: {})".format(
+            sketch_memory_summary.get("checkpoint_path", ""),
+            sketch_memory_summary.get("checkpoint_loaded", False),
+            sketch_memory_summary.get("checkpoint_epochs_seen_after", 0),
+        ),
         f"- Promoted grammar sketches: {len(promoted_sketches)}",
         "",
         "| Domain | Candidates |",
@@ -2193,7 +2001,7 @@ def markdown_summary(
     for status, count in status_counts.most_common():
         lines.append(f"| `{status}` | {count} |")
 
-    if arc_sketch_probe_sources:
+    if arc_sketch_probe_sources or arc_sketch_probe_summaries:
         lines.extend(["", "## ARC Sketch Program Probes", ""])
         lines.extend(["| Family | Probe sketches |", "| --- | ---: |"])
         probe_family_counts = Counter(
@@ -2206,6 +2014,42 @@ def markdown_summary(
         }
         for family in sorted(set(probe_family_counts) | promoted_arc_families):
             lines.append(f"| `{family}` | {probe_family_counts.get(family, 0)} |")
+        op_counts = Counter(str(row.get("op_name", "")) for row in arc_sketch_probe_sources)
+        lines.extend(["", "| Sketch op | Probe sketches |", "| --- | ---: |"])
+        for op_name, count in op_counts.most_common():
+            lines.append(f"| `{op_name}` | {count} |")
+        if arc_sketch_probe_summaries:
+            rejection_totals: dict[str, Counter[str]] = defaultdict(Counter)
+            emitted_by_family: Counter[str] = Counter()
+            attempted_by_family: Counter[str] = Counter()
+            for row in arc_sketch_probe_summaries:
+                family = str(row.get("family", ""))
+                emitted_by_family[family] += safe_int(row.get("emitted"))
+                attempted_by_family[family] += safe_int(row.get("attempted"))
+                rejects = row.get("rejection_counts", {})
+                if isinstance(rejects, dict):
+                    for reason, count in rejects.items():
+                        rejection_totals[family][str(reason)] += safe_int(count)
+            lines.extend(
+                [
+                    "",
+                    "| Family | Attempted | Emitted | Unsupported shape | No train match | Duplicate | Cap hit |",
+                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+                ]
+            )
+            for family in sorted(set(attempted_by_family) | set(emitted_by_family)):
+                rejects = rejection_totals[family]
+                lines.append(
+                    "| `{}` | {} | {} | {} | {} | {} | {} |".format(
+                        family,
+                        attempted_by_family.get(family, 0),
+                        emitted_by_family.get(family, 0),
+                        rejects.get("unsupported_shape", 0),
+                        rejects.get("no_train_match", 0),
+                        rejects.get("duplicate", 0),
+                        rejects.get("cap_hit", 0),
+                    )
+                )
         if arc_sketch_probe_comparison:
             lines.extend(
                 [
@@ -2230,6 +2074,116 @@ def markdown_summary(
                         sum(
                             safe_int(row.get("delta", {}).get("certified_tasks"))
                             for row in arc_sketch_probe_comparison
+                        )
+                    ),
+                    "| newly certified baseline-unsolved tasks | {} |".format(
+                        sum(1 for row in arc_sketch_probe_comparison if row.get("newly_certified"))
+                    ),
+                    "| baseline-already-certified tasks | {} |".format(
+                        sum(
+                            1
+                            for row in arc_sketch_probe_comparison
+                            if row.get("baseline_already_certified")
+                        )
+                    ),
+                ]
+            )
+
+    if (
+        arc_sketch_heldout_candidate_count > 0
+        or arc_sketch_heldout_sources
+        or arc_sketch_heldout_summaries
+    ):
+        lines.extend(["", "## Held-Out ARC Sketch Program Probes", ""])
+        lines.append(f"- Candidate tasks: {arc_sketch_heldout_candidate_count}")
+        lines.append("")
+        lines.extend(["| Family | Probe sketches |", "| --- | ---: |"])
+        heldout_family_counts = Counter(
+            str(row.get("family", "")) for row in arc_sketch_heldout_sources
+        )
+        heldout_summary_families = {
+            str(row.get("family", "")) for row in arc_sketch_heldout_summaries
+        }
+        for family in sorted(set(heldout_family_counts) | heldout_summary_families):
+            lines.append(f"| `{family}` | {heldout_family_counts.get(family, 0)} |")
+        heldout_op_counts = Counter(
+            str(row.get("op_name", "")) for row in arc_sketch_heldout_sources
+        )
+        lines.extend(["", "| Sketch op | Probe sketches |", "| --- | ---: |"])
+        for op_name, count in heldout_op_counts.most_common():
+            lines.append(f"| `{op_name}` | {count} |")
+        if not heldout_op_counts:
+            lines.append("| `(none)` | 0 |")
+        if arc_sketch_heldout_summaries:
+            rejection_totals: dict[str, Counter[str]] = defaultdict(Counter)
+            emitted_by_family: Counter[str] = Counter()
+            attempted_by_family: Counter[str] = Counter()
+            for row in arc_sketch_heldout_summaries:
+                family = str(row.get("family", ""))
+                emitted_by_family[family] += safe_int(row.get("emitted"))
+                attempted_by_family[family] += safe_int(row.get("attempted"))
+                rejects = row.get("rejection_counts", {})
+                if isinstance(rejects, dict):
+                    for reason, count in rejects.items():
+                        rejection_totals[family][str(reason)] += safe_int(count)
+            lines.extend(
+                [
+                    "",
+                    "| Family | Attempted | Emitted | Unsupported shape | No train match | Duplicate | Cap hit |",
+                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+                ]
+            )
+            for family in sorted(set(attempted_by_family) | set(emitted_by_family)):
+                rejects = rejection_totals[family]
+                lines.append(
+                    "| `{}` | {} | {} | {} | {} | {} | {} |".format(
+                        family,
+                        attempted_by_family.get(family, 0),
+                        emitted_by_family.get(family, 0),
+                        rejects.get("unsupported_shape", 0),
+                        rejects.get("no_train_match", 0),
+                        rejects.get("duplicate", 0),
+                        rejects.get("cap_hit", 0),
+                    )
+                )
+        if arc_sketch_heldout_comparison:
+            lines.extend(
+                [
+                    "",
+                    "| Held-out comparison | Tasks |",
+                    "| --- | ---: |",
+                    "| extra sketch train-consistent pre-cap proposals | {} |".format(
+                        sum(
+                            1
+                            for row in arc_sketch_heldout_comparison
+                            if row.get("probe_added_train_consistent_sketch")
+                        )
+                    ),
+                    "| selected `arc_sketch_program` | {} |".format(
+                        sum(
+                            1
+                            for row in arc_sketch_heldout_comparison
+                            if row.get("probe_selected_sketch")
+                        )
+                    ),
+                    "| certified task delta | {} |".format(
+                        sum(
+                            safe_int(row.get("delta", {}).get("certified_tasks"))
+                            for row in arc_sketch_heldout_comparison
+                        )
+                    ),
+                    "| newly certified baseline-unsolved tasks | {} |".format(
+                        sum(
+                            1
+                            for row in arc_sketch_heldout_comparison
+                            if row.get("newly_certified")
+                        )
+                    ),
+                    "| baseline-already-certified tasks | {} |".format(
+                        sum(
+                            1
+                            for row in arc_sketch_heldout_comparison
+                            if row.get("baseline_already_certified")
                         )
                     ),
                 ]
@@ -2324,7 +2278,7 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     candidates = [build_candidate(group) for group in groups]
     sketches, sketch_examples = build_sketch_corpus(args, domains)
-    compiled_deltas, verifications, neural_sketch_proposals = run_c_runtime(
+    compiled_deltas, verifications, neural_sketch_proposals, sketch_memory_summary = run_c_runtime(
         args,
         candidates,
         groups,
@@ -2332,13 +2286,36 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         sketch_examples,
     )
     promoted = promoted_rows(candidates, verifications)
-    arc_sketch_probe_sources = arc_probe_family_source_rows(
+    (
+        arc_sketch_probe_sources,
+        arc_sketch_probe_summaries,
+        arc_sketch_probe_prior_row_count,
+        arc_sketch_probe_candidate_count,
+    ) = run_arc_sketch_probe_export(
         groups,
         promoted,
+        args.arc_agi,
         args.public_arc_dir,
+        args.output_dir,
         args.arc_probe_sketches_per_task,
     )
-    arc_sketch_probe_prior_rows = arc_probe_prior_rows(arc_sketch_probe_sources)
+    excluded_arc_keys = {arc_task_key(row) for row in parse_json_rows(args.arc_failure_proof)}
+    (
+        arc_sketch_heldout_sources,
+        arc_sketch_heldout_summaries,
+        arc_sketch_heldout_prior_row_count,
+        arc_sketch_heldout_candidate_count,
+        arc_sketch_heldout_candidates,
+    ) = run_arc_sketch_heldout_export(
+        args.arc_heldout_triage,
+        excluded_arc_keys,
+        args.arc_agi,
+        args.public_arc_dir,
+        args.output_dir,
+        args.arc_probe_sketches_per_task,
+        args.arc_heldout_limit,
+        args.arc_heldout_per_family,
+    )
     sketch_proposals = build_sketch_proposals(
         sketches,
         sketch_examples,
@@ -2350,15 +2327,6 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
     write_jsonl(args.output_dir / "compiled_grammar_deltas.jsonl", compiled_deltas)
     write_jsonl(args.output_dir / "grammar_delta_verification.jsonl", verifications)
     write_jsonl(args.output_dir / "promoted_grammar_deltas.jsonl", promoted)
-    write_jsonl(
-        args.output_dir / "arc_sketch_program_probe_sources.jsonl",
-        arc_sketch_probe_sources,
-    )
-    write_tsv(
-        args.output_dir / "arc_sketch_program_probe_prior.tsv",
-        arc_sketch_probe_prior_rows,
-        ARC_SKETCH_PRIOR_FIELDS,
-    )
     arc_sketch_probe_comparison = compare_arc_sketch_probes(
         args.arc_agi,
         args.output_dir / "arc_sketch_program_probe_prior.tsv",
@@ -2366,9 +2334,21 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         args.output_dir,
         args.arc_probe_compare_limit,
     )
+    arc_sketch_heldout_comparison = compare_arc_sketch_probes(
+        args.arc_agi,
+        args.output_dir / "arc_sketch_program_heldout_prior.tsv",
+        arc_sketch_heldout_sources,
+        args.output_dir,
+        args.arc_heldout_compare_limit,
+        "arc_sketch_program_heldout_logs",
+    )
     write_jsonl(
         args.output_dir / "arc_sketch_program_probe_comparison.jsonl",
         arc_sketch_probe_comparison,
+    )
+    write_jsonl(
+        args.output_dir / "arc_sketch_program_heldout_comparison.jsonl",
+        arc_sketch_heldout_comparison,
     )
     (args.output_dir / "arc_sketch_program_probe_comparison.md").write_text(
         arc_sketch_probe_markdown(
@@ -2377,11 +2357,20 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         ),
         encoding="utf-8",
     )
+    (args.output_dir / "arc_sketch_program_heldout_comparison.md").write_text(
+        arc_sketch_probe_markdown(
+            arc_sketch_heldout_comparison,
+            len(arc_sketch_heldout_sources),
+            "Held-Out ARC Sketch Program Probe Comparison",
+        ),
+        encoding="utf-8",
+    )
     write_jsonl(args.output_dir / "grammar_sketches.jsonl", sketches)
     write_jsonl(args.output_dir / "grammar_sketch_examples.jsonl", sketch_examples)
     write_jsonl(args.output_dir / "grammar_sketch_proposals.jsonl", sketch_proposals)
     write_jsonl(args.output_dir / "grammar_sketch_verification.jsonl", sketch_verifications)
     write_jsonl(args.output_dir / "promoted_grammar_sketches.jsonl", promoted_sketches)
+    write_jsonl(args.output_dir / "grammar_sketch_memory_summary.jsonl", [sketch_memory_summary])
     summary = {
         "schema": SUMMARY_SCHEMA,
         "report_version": 1,
@@ -2390,8 +2379,9 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         "compiled_delta_count": len(compiled_deltas),
         "verification_count": len(verifications),
         "promoted_count": len(promoted),
+        "arc_sketch_program_probe_candidate_count": arc_sketch_probe_candidate_count,
         "arc_sketch_program_probe_source_count": len(arc_sketch_probe_sources),
-        "arc_sketch_program_probe_prior_row_count": len(arc_sketch_probe_prior_rows),
+        "arc_sketch_program_probe_prior_row_count": arc_sketch_probe_prior_row_count,
         "arc_sketch_program_probe_comparison_count": len(arc_sketch_probe_comparison),
         "arc_sketch_program_probe_added_train_consistent_tasks": sum(
             1
@@ -2404,6 +2394,14 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         "arc_sketch_program_probe_certified_task_delta": sum(
             safe_int(row.get("delta", {}).get("certified_tasks"))
             for row in arc_sketch_probe_comparison
+        ),
+        "arc_sketch_program_probe_newly_certified_tasks": sum(
+            1 for row in arc_sketch_probe_comparison if row.get("newly_certified")
+        ),
+        "arc_sketch_program_probe_baseline_already_certified_tasks": sum(
+            1
+            for row in arc_sketch_probe_comparison
+            if row.get("baseline_already_certified")
         ),
         "arc_sketch_program_probe_sources_by_family": {
             family: Counter(
@@ -2418,11 +2416,63 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
                 | {str(row.get("family", "")) for row in arc_sketch_probe_sources}
             )
         },
+        "arc_sketch_program_probe_sources_by_op": dict(
+            sorted(Counter(str(row.get("op_name", "")) for row in arc_sketch_probe_sources).items())
+        ),
+        "arc_sketch_program_probe_rejections_by_family": aggregate_arc_probe_rejections(
+            arc_sketch_probe_summaries
+        ),
+        "arc_sketch_program_heldout_candidate_count": arc_sketch_heldout_candidate_count,
+        "arc_sketch_program_heldout_source_count": len(arc_sketch_heldout_sources),
+        "arc_sketch_program_heldout_prior_row_count": arc_sketch_heldout_prior_row_count,
+        "arc_sketch_program_heldout_comparison_count": len(
+            arc_sketch_heldout_comparison
+        ),
+        "arc_sketch_program_heldout_added_train_consistent_tasks": sum(
+            1
+            for row in arc_sketch_heldout_comparison
+            if row.get("probe_added_train_consistent_sketch")
+        ),
+        "arc_sketch_program_heldout_selected_tasks": sum(
+            1 for row in arc_sketch_heldout_comparison if row.get("probe_selected_sketch")
+        ),
+        "arc_sketch_program_heldout_certified_task_delta": sum(
+            safe_int(row.get("delta", {}).get("certified_tasks"))
+            for row in arc_sketch_heldout_comparison
+        ),
+        "arc_sketch_program_heldout_newly_certified_tasks": sum(
+            1 for row in arc_sketch_heldout_comparison if row.get("newly_certified")
+        ),
+        "arc_sketch_program_heldout_baseline_already_certified_tasks": sum(
+            1
+            for row in arc_sketch_heldout_comparison
+            if row.get("baseline_already_certified")
+        ),
+        "arc_sketch_program_heldout_sources_by_family": {
+            family: Counter(
+                str(row.get("family", "")) for row in arc_sketch_heldout_sources
+            ).get(family, 0)
+            for family in sorted(
+                {str(row.get("family", "")) for row in arc_sketch_heldout_candidates}
+                | {str(row.get("family", "")) for row in arc_sketch_heldout_sources}
+            )
+        },
+        "arc_sketch_program_heldout_sources_by_op": dict(
+            sorted(
+                Counter(
+                    str(row.get("op_name", "")) for row in arc_sketch_heldout_sources
+                ).items()
+            )
+        ),
+        "arc_sketch_program_heldout_rejections_by_family": aggregate_arc_probe_rejections(
+            arc_sketch_heldout_summaries
+        ),
         "grammar_sketch_count": len(sketches),
         "grammar_sketch_example_count": len(sketch_examples),
         "grammar_sketch_proposal_count": len(sketch_proposals),
         "grammar_sketch_verification_count": len(sketch_verifications),
         "promoted_grammar_sketch_count": len(promoted_sketches),
+        "grammar_sketch_memory": sketch_memory_summary,
         "by_domain": dict(sorted(Counter(row["domain"] for row in candidates).items())),
         "compiled_delta_by_compiler": dict(
             sorted(Counter(row["compiler"] for row in compiled_deltas).items())
@@ -2444,6 +2494,7 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         ),
         "source_artifacts": {
             "arc_failure_proof": str(args.arc_failure_proof),
+            "arc_heldout_triage": str(args.arc_heldout_triage),
             "public_arc_dir": str(args.public_arc_dir),
             "haiku_word_trace": str(args.haiku_word_trace),
             "haiku_understanding_trace": str(args.haiku_understanding_trace),
@@ -2460,7 +2511,13 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
             verifications,
             promoted,
             arc_sketch_probe_sources,
+            arc_sketch_probe_summaries,
             arc_sketch_probe_comparison,
+            arc_sketch_heldout_sources,
+            arc_sketch_heldout_summaries,
+            arc_sketch_heldout_comparison,
+            arc_sketch_heldout_candidate_count,
+            sketch_memory_summary,
             sketches,
             sketch_examples,
             sketch_proposals,
@@ -2475,13 +2532,19 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         "verifications": verifications,
         "promoted": promoted,
         "arc_sketch_probe_sources": arc_sketch_probe_sources,
-        "arc_sketch_probe_prior_rows": arc_sketch_probe_prior_rows,
+        "arc_sketch_probe_prior_rows": arc_sketch_probe_prior_row_count,
+        "arc_sketch_probe_summaries": arc_sketch_probe_summaries,
         "arc_sketch_probe_comparison": arc_sketch_probe_comparison,
+        "arc_sketch_heldout_sources": arc_sketch_heldout_sources,
+        "arc_sketch_heldout_prior_rows": arc_sketch_heldout_prior_row_count,
+        "arc_sketch_heldout_summaries": arc_sketch_heldout_summaries,
+        "arc_sketch_heldout_comparison": arc_sketch_heldout_comparison,
         "sketches": sketches,
         "sketch_examples": sketch_examples,
         "sketch_proposals": sketch_proposals,
         "sketch_verifications": sketch_verifications,
         "promoted_sketches": promoted_sketches,
+        "sketch_memory_summary": sketch_memory_summary,
     }
 
 
@@ -2500,6 +2563,17 @@ def main() -> None:
         "--runtime",
         type=Path,
         default=Path("build/float/neural_grammar_discovery_runtime"),
+    )
+    parser.add_argument(
+        "--sketch-memory",
+        type=Path,
+        default=None,
+        help="C neural sketch proposer checkpoint path; defaults under --output-dir.",
+    )
+    parser.add_argument(
+        "--resume-sketch-memory",
+        action="store_true",
+        help="Load --sketch-memory before training when the checkpoint exists.",
     )
     parser.add_argument(
         "--arc-agi",
@@ -2521,6 +2595,30 @@ def main() -> None:
         type=int,
         default=64,
         help="Maximum promoted ARC support tasks to replay for baseline-vs-probed comparison; use -1 for no cap.",
+    )
+    parser.add_argument(
+        "--arc-heldout-triage",
+        type=Path,
+        default=Path("build/float/hypothesis_library_public_triage/coverage_triage.jsonl"),
+        help="Public ARC triage rows used to build held-out sketch-probe tasks.",
+    )
+    parser.add_argument(
+        "--arc-heldout-limit",
+        type=int,
+        default=64,
+        help="Maximum held-out ARC triage tasks to export; use -1 for no cap.",
+    )
+    parser.add_argument(
+        "--arc-heldout-per-family",
+        type=int,
+        default=12,
+        help="Maximum held-out ARC triage tasks per promoted family; use -1 for no cap.",
+    )
+    parser.add_argument(
+        "--arc-heldout-compare-limit",
+        type=int,
+        default=64,
+        help="Maximum held-out ARC tasks to replay for baseline-vs-probed comparison; use -1 for no cap.",
     )
     parser.add_argument(
         "--arc-failure-proof",
@@ -2558,7 +2656,7 @@ def main() -> None:
 
     outputs = run(args)
     print(
-        "wrote {} delta candidates, {} compiled deltas, {} promoted deltas, {} ARC sketch probes, {} ARC probe comparisons, {} grammar sketches, {} sketch examples, {} sketch proposals, {} promoted sketches to {}".format(
+        "wrote {} delta candidates, {} compiled deltas, {} promoted deltas, {} ARC sketch probes, {} ARC probe comparisons, {} grammar sketches, {} sketch examples, {} sketch proposals, {} promoted sketches, sketch memory {} to {}".format(
             len(outputs["candidates"]),
             len(outputs["compiled_deltas"]),
             len(outputs["promoted"]),
@@ -2568,6 +2666,7 @@ def main() -> None:
             len(outputs["sketch_examples"]),
             len(outputs["sketch_proposals"]),
             len(outputs["promoted_sketches"]),
+            outputs["sketch_memory_summary"].get("checkpoint_path", ""),
             args.output_dir,
         )
     )

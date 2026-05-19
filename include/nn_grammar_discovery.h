@@ -9,6 +9,8 @@ int nn_grammar_discovery_write_neural_sketch_proposals(
     const char *sketches_path,
     const char *examples_path,
     const char *proposals_output_path,
+    const char *checkpoint_input_path,
+    const char *checkpoint_output_path,
     unsigned epochs,
     double learning_rate);
 

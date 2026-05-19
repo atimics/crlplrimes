@@ -28,7 +28,8 @@ static void usage(const char *argv0) {
     fprintf(stderr,
             "usage: %s [--candidate-rows PATH --compiled-output PATH "
             "--verification-output PATH] [--sketches PATH --sketch-examples PATH "
-            "--neural-proposals-output PATH] [--epochs N] [--learning-rate LR]\n",
+            "--neural-proposals-output PATH] [--memory-in PATH] [--memory-out PATH] "
+            "[--epochs N] [--learning-rate LR]\n",
             argv0);
 }
 
@@ -40,6 +41,8 @@ int main(int argc, char **argv) {
     const char *sketch_examples = arg_value(argc, argv, "--sketch-examples");
     const char *neural_proposals_output =
         arg_value(argc, argv, "--neural-proposals-output");
+    const char *memory_in = arg_value(argc, argv, "--memory-in");
+    const char *memory_out = arg_value(argc, argv, "--memory-out");
     const char *epochs_arg = arg_value(argc, argv, "--epochs");
     const char *learning_rate_arg = arg_value(argc, argv, "--learning-rate");
     unsigned epochs = epochs_arg == NULL ? 64U : (unsigned)strtoul(epochs_arg, NULL, 10);
@@ -70,6 +73,8 @@ int main(int argc, char **argv) {
         if (nn_grammar_discovery_write_neural_sketch_proposals(sketches,
                                                                sketch_examples,
                                                                neural_proposals_output,
+                                                               memory_in,
+                                                               memory_out,
                                                                epochs,
                                                                learning_rate) != 0) {
             fprintf(stderr, "failed to train neural sketch proposer\n");

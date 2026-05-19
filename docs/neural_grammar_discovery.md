@@ -38,16 +38,27 @@ Outputs:
 - `build/float/neural_grammar_discovery/arc_sketch_program_probe_prior.tsv`
 - `build/float/neural_grammar_discovery/arc_sketch_program_probe_comparison.jsonl`
 - `build/float/neural_grammar_discovery/arc_sketch_program_probe_comparison.md`
+- `build/float/neural_grammar_discovery/arc_sketch_program_heldout_candidates.jsonl`
+- `build/float/neural_grammar_discovery/arc_sketch_program_heldout_sources.jsonl`
+- `build/float/neural_grammar_discovery/arc_sketch_program_heldout_prior.tsv`
+- `build/float/neural_grammar_discovery/arc_sketch_program_heldout_comparison.jsonl`
+- `build/float/neural_grammar_discovery/arc_sketch_program_heldout_comparison.md`
 - `build/float/neural_grammar_discovery/grammar_sketches.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketch_examples.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketch_proposals.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketch_verification.jsonl`
 - `build/float/neural_grammar_discovery/promoted_grammar_sketches.jsonl`
+- `build/float/neural_grammar_discovery/grammar_sketch_memory.tsv`
+- `build/float/neural_grammar_discovery/grammar_sketch_memory_summary.jsonl`
 
 The Python driver only assembles source rows and reports. Delta compilation,
 delta replay predicates, and the neural-linear sketch proposer run through the
 C runtime at `build/float/neural_grammar_discovery_runtime`, with normalized
 runtime TSVs kept under `build/float/neural_grammar_discovery/runtime/`.
+The C proposer writes a checkpoint containing bias, token vocabulary, token
+weights, epochs seen, and training examples seen. Use
+`--resume-sketch-memory --sketch-memory <path>` to continue from a prior
+checkpoint instead of starting the scorer from zero weights.
 - `build/float/neural_grammar_discovery/summary.jsonl`
 - `build/float/neural_grammar_discovery/summary.md`
 
@@ -112,14 +123,26 @@ The first ARC/haiku promotion paths are intentionally narrow:
   replay, and zero train-consistent current-template proposals.
 - ARC execution uses one generic C hypothesis template, `arc_sketch_program`,
   rather than one bespoke template per promoted family. Its slots encode a
-  selector, operation, geometry, color, and repeat parameters, then a small
-  interpreter materializes crop and tile-repeat sketch programs for the existing
-  train verifier.
-- Promoted ARC family pressure is also compiled into `arc_sketch_program` TSV
-  probe rows. The TSV is loaded by `arc_agi` through the existing
-  `crlp.arc_neural_discovery.template_probe.v1` and
-  `crlp.arc_neural_discovery.slot_probe.v1` contracts, then compared against a
-  no-prior baseline under the same verifier flags.
+  selector, operation, geometry, color, and repeat parameters, then the C sketch
+  VM materializes crop, normalized crop, object-mask extraction, lattice sample,
+  diagonal sparse-lattice compaction, macrocell substitute, point-line
+  projection, axis projection/compression, separator-panel mapping, tile-repeat,
+  and component-summary sketches for the existing train verifier.
+- Promoted ARC family pressure is exported by `arc_agi` itself. Python writes
+  only promoted-family task rows, invokes the C probe exporter, and consumes the
+  resulting `arc_sketch_program_probe_sources.jsonl` and
+  `arc_sketch_program_probe_prior.tsv`. The exporter emits TSV priors through
+  the existing `crlp.arc_neural_discovery.template_probe.v1` and
+  `crlp.arc_neural_discovery.slot_probe.v1` contracts only after the C verifier
+  proves a sketch exact on every train pair.
+- ARC also runs a held-out triage slice from public coverage rows, excluding
+  the failure-proof/source tasks. This produces separate held-out candidate,
+  source, prior, comparison, and log artifacts so source-slice repair is not
+  mistaken for broad ARC learning. The comparison report splits newly certified
+  baseline-unsolved tasks from tasks that the baseline already certified.
+- ARC probe sources include per-family rejection summaries for unsupported
+  shapes, train mismatches, duplicates, and cap hits. These are diagnostic gap
+  certificates; they are not executable promoted programs.
 - Haiku generation compiles bottleneck candidates into executable trace
   constraints over strict-adjacency generation rows.
 - Haiku understanding compiles corruption-family candidates into symbolic
