@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 PRIOR_SCHEMA = "crlp.hypothesis_library.prior.v1"
+TEMPLATE_PRIOR_SCHEMA = "crlp.hypothesis_library.template_prior.v1"
 PROTOCOL_LIBRARY_SCHEMA = "crlp.protocol.library_promotion.v1"
 
 
@@ -214,9 +215,40 @@ def prior_rows(
     )
 
 
+def template_prior_rows(promotions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for promotion in promotions:
+        if not promotion.get("promoted"):
+            continue
+        proposal_count = max(
+            int(promotion.get("covered_events", 0) or 0),
+            int(promotion.get("certified_hypotheses", 0) or 0),
+            1,
+        )
+        rows.append(
+            {
+                "schema_version": TEMPLATE_PRIOR_SCHEMA,
+                "template_id": promotion["template_id"],
+                "template_name": promotion["template_name"],
+                "library_id": promotion["library_id"],
+                "slot_name": "__template__",
+                "slot_type": "template",
+                "slot_value": "0.00000000",
+                "slot_integer": 0,
+                "proposal_count": proposal_count,
+                "certified_count": proposal_count,
+                "support_tasks": promotion["support_tasks"],
+                "covered_events": promotion["covered_events"],
+                "utility_mean": promotion["utility_mean"],
+            }
+        )
+    return rows
+
+
 def selection_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     library_keys = {
         "library_prior_entries",
+        "library_prior_template_rows",
         "library_prior_slot_rows",
         "library_prior_seeded_proposals",
         "library_prior_seeded_certified",
@@ -225,6 +257,7 @@ def selection_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     out: dict[str, Any] = {
         "selection_rows": 0,
         "library_prior_entries": 0,
+        "library_prior_template_rows": 0,
         "library_prior_slot_rows": 0,
         "library_prior_seeded_proposals": 0,
         "library_prior_seeded_certified": 0,
@@ -272,6 +305,7 @@ def selection_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         )
         for key in (
             "library_prior_entries",
+            "library_prior_template_rows",
             "library_prior_slot_rows",
             "library_prior_seeded_proposals",
             "library_prior_seeded_certified",
@@ -507,7 +541,7 @@ def write_markdown(
         "This experiment groups certified `crlp.hypothesis.evidence.v1` rows by template, "
         "proof kind, and certificate reason. Repeated zero-false-rejection groups become "
         "library-entry candidates with invariant and variable slot summaries, then exports "
-        "certified slot priors that can seed ARC hypothesis proposal ranking.",
+        "certified template and slot priors that can seed ARC hypothesis proposal ranking.",
         "",
         f"Prior rows exported: `{prior_row_count}`",
         "",
@@ -542,8 +576,8 @@ def write_markdown(
             "- Candidate set: certified hypothesis evidence rows.",
             "- Verifier: domain certificate checker that produced the source evidence.",
             "- Certificate/gate: zero false rejections plus proof-kind and reason agreement.",
-            "- Scorer role: promoted entries seed the ARC hypothesis slot prior before proposal ranking.",
-            "- Trace artifact: `crlp.hypothesis_library.promotion.v1`, normalized `crlp.protocol.library_promotion.v1`, and `crlp.hypothesis_library.prior.v1` TSV rows.",
+            "- Scorer role: promoted entries seed ARC hypothesis template-family and slot priors before proposal ranking.",
+            "- Trace artifact: `crlp.hypothesis_library.promotion.v1`, normalized `crlp.protocol.library_promotion.v1`, `crlp.hypothesis_library.template_prior.v1`, and `crlp.hypothesis_library.prior.v1` TSV rows.",
             "- Protocol point: repeated successful slot bindings become explicit library objects.",
             "",
         ]
@@ -584,7 +618,16 @@ def main() -> int:
         )
     )
 
-    priors = prior_rows(groups, promotions_by_key)
+    priors = sorted(
+        template_prior_rows(promotions) + prior_rows(groups, promotions_by_key),
+        key=lambda row: (
+            int(row["template_id"]),
+            str(row["library_id"]),
+            0 if row["schema_version"] == TEMPLATE_PRIOR_SCHEMA else 1,
+            str(row["slot_name"]),
+            int(row["slot_integer"]),
+        ),
+    )
     prior_path = args.output_dir / "library_prior.tsv"
     write_prior_tsv(prior_path, priors)
     feedback_selection = (

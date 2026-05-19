@@ -40,8 +40,8 @@ jobs:
       - name: Run unit + sanitizer + trace determinism + double-precision tests
         run: make check
 
-      - name: Smoke-run ARC induction
-        run: make arc-agi-induction-smoke
+      - name: Smoke-run experimental sandboxes
+        run: make experimental-check
 
       - name: Upload environment manifest
         if: always()

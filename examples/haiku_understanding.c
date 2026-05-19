@@ -10,14 +10,14 @@
 #include <time.h>
 
 enum {
-    HU_FEATURE_COUNT = 48,
+    HU_FEATURE_COUNT = 56,
     HU_MAX_POEMS = 10000,
     HU_MAX_LINE_WORDS = 32,
     HU_MAX_WORD_LEN = 64,
     HU_MAX_VOCAB = 30000,
     HU_ADJ_BUCKETS = 524288,
     HU_MAX_ADJ_EDGES = 400000,
-    HU_FEATURE_ENCODER_VERSION = 2,
+    HU_FEATURE_ENCODER_VERSION = 3,
     HU_CORRUPT_LINE_SHUFFLE = 0,
     HU_CORRUPT_LINE_SPLICE = 1,
     HU_CORRUPT_SYLLABLE_BREAK = 2,
@@ -25,7 +25,8 @@ enum {
     HU_CORRUPT_WORD_SALAD = 4,
     HU_CORRUPT_TOPIC_SPLICE = 5,
     HU_CORRUPT_SAME_SEASON_SPLICE = 6,
-    HU_CORRUPT_COUNT = 7,
+    HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE = 7,
+    HU_CORRUPT_COUNT = 8,
     HU_ADJ_START = -1,
     HU_ADJ_BOUNDARY = -2,
 };
@@ -60,6 +61,13 @@ typedef struct {
 } HUCorpus;
 
 typedef struct {
+    size_t topic_splice_source[HU_MAX_POEMS];
+    size_t same_season_splice_source[HU_MAX_POEMS];
+    size_t plausible_splice_source[HU_MAX_POEMS];
+    int plausible_splice_line[HU_MAX_POEMS];
+} HUSpliceCache;
+
+typedef struct {
     int line;
     int prev_word_id;
     int next_word_id;
@@ -83,6 +91,7 @@ typedef struct {
     size_t epochs;
     size_t max_poems;
     size_t trace_limit;
+    size_t plausible_negative_extra_updates;
     double learning_rate;
     unsigned int seed;
 } HUConfig;
@@ -92,8 +101,29 @@ typedef struct {
     size_t correct;
     size_t by_type_pairs[HU_CORRUPT_COUNT];
     size_t by_type_correct[HU_CORRUPT_COUNT];
+    size_t by_type_symbolic_correct[HU_CORRUPT_COUNT];
+    double by_type_plan_delta_sum[HU_CORRUPT_COUNT];
+    double by_type_tightness_delta_sum[HU_CORRUPT_COUNT];
     double nll;
 } HUEval;
+
+typedef struct {
+    double line_similarity01;
+    double line_similarity12;
+    double line_similarity02;
+    double adjacent_line_tightness;
+    double poem_topic_tightness;
+    double min_line_similarity;
+    double max_line_similarity;
+    double line_similarity_spread;
+    double topic_core_ratio;
+    double topic_drift;
+    double cross_line_reuse;
+    double adjacency_ratio;
+    double bigram_ratio;
+    double exact_syllable_ratio;
+    double plan_score;
+} HUCoherenceMetrics;
 
 static const HUVocab *g_sort_vocab;
 
@@ -511,9 +541,18 @@ static const char *corruption_name(int type)
             return "topic_splice";
         case HU_CORRUPT_SAME_SEASON_SPLICE:
             return "same_season_splice";
+        case HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE:
+            return "plausible_topic_splice";
         default:
             return "unknown";
     }
+}
+
+static int is_hard_negative_corruption(int type)
+{
+    return type == HU_CORRUPT_LINE_SPLICE || type == HU_CORRUPT_WORD_SALAD ||
+           type == HU_CORRUPT_TOPIC_SPLICE || type == HU_CORRUPT_SAME_SEASON_SPLICE ||
+           type == HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE;
 }
 
 static void copy_poem(HUPoem *dst, const HUPoem *src)
@@ -527,6 +566,18 @@ static void copy_line(HUPoem *dst, int dst_line, const HUPoem *src, int src_line
     for (size_t i = 0; i < src->line_counts[src_line]; ++i) {
         dst->words[dst_line][i] = src->words[src_line][i];
     }
+}
+
+static int line_syllable_count(const HUVocab *vocab, const HUPoem *poem, int line)
+{
+    int count = 0;
+    if (vocab == NULL || poem == NULL || line < 0 || line >= 3) {
+        return count;
+    }
+    for (size_t i = 0; i < poem->line_counts[line]; ++i) {
+        count += vocab->entries[poem->words[line][i]].syllables;
+    }
+    return count;
 }
 
 static unsigned int line_topic_mask(const HUVocab *vocab, const HUPoem *poem, int line)
@@ -618,6 +669,116 @@ static double line_coherence_similarity(const HUVocab *vocab,
     return 0.5 * topic + 0.5 * content;
 }
 
+static double clamp_unit(double value)
+{
+    if (value < 0.0) {
+        return 0.0;
+    }
+    if (value > 1.0) {
+        return 1.0;
+    }
+    return value;
+}
+
+static void compute_coherence_metrics(const HUVocab *vocab,
+                                      const HUAdjacency *adjacency,
+                                      const HUPoem *poem,
+                                      HUCoherenceMetrics *metrics)
+{
+    memset(metrics, 0, sizeof(*metrics));
+    size_t adjacent_supported = 0;
+    size_t adjacent_total = 0;
+    size_t bigram_supported = 0;
+    size_t bigram_total = 0;
+    size_t exact_lines = 0;
+    int line_syllables[3] = {0, 0, 0};
+
+    for (int line = 0; line < 3; ++line) {
+        int prev = HU_ADJ_START;
+        for (size_t i = 0; i < poem->line_counts[line]; ++i) {
+            int word_id = poem->words[line][i];
+            line_syllables[line] += vocab->entries[word_id].syllables;
+            adjacent_total += 1;
+            if (adjacency_has(adjacency, line, prev, word_id)) {
+                adjacent_supported += 1;
+            }
+            if (prev != HU_ADJ_START) {
+                bigram_total += 1;
+                if (adjacency_has(adjacency, line, prev, word_id)) {
+                    bigram_supported += 1;
+                }
+            }
+            prev = word_id;
+        }
+        adjacent_total += 1;
+        if (adjacency_has(adjacency, line, prev, HU_ADJ_BOUNDARY)) {
+            adjacent_supported += 1;
+        }
+        if (line_syllables[line] == HU_TARGET_SYLLABLES[line]) {
+            exact_lines += 1;
+        }
+    }
+
+    metrics->line_similarity01 = line_coherence_similarity(vocab, poem, 0, poem, 1);
+    metrics->line_similarity12 = line_coherence_similarity(vocab, poem, 1, poem, 2);
+    metrics->line_similarity02 = line_coherence_similarity(vocab, poem, 0, poem, 2);
+    metrics->adjacent_line_tightness =
+        (metrics->line_similarity01 + metrics->line_similarity12) / 2.0;
+    metrics->poem_topic_tightness =
+        (metrics->line_similarity01 + metrics->line_similarity12 + metrics->line_similarity02) /
+        3.0;
+    metrics->min_line_similarity = metrics->line_similarity01;
+    if (metrics->line_similarity12 < metrics->min_line_similarity) {
+        metrics->min_line_similarity = metrics->line_similarity12;
+    }
+    if (metrics->line_similarity02 < metrics->min_line_similarity) {
+        metrics->min_line_similarity = metrics->line_similarity02;
+    }
+    metrics->max_line_similarity = metrics->line_similarity01;
+    if (metrics->line_similarity12 > metrics->max_line_similarity) {
+        metrics->max_line_similarity = metrics->line_similarity12;
+    }
+    if (metrics->line_similarity02 > metrics->max_line_similarity) {
+        metrics->max_line_similarity = metrics->line_similarity02;
+    }
+    metrics->line_similarity_spread =
+        metrics->max_line_similarity - metrics->min_line_similarity;
+    metrics->cross_line_reuse =
+        (line_content_similarity(vocab, poem, 0, poem, 1) +
+         line_content_similarity(vocab, poem, 1, poem, 2) +
+         line_content_similarity(vocab, poem, 0, poem, 2)) /
+        3.0;
+    metrics->adjacency_ratio =
+        adjacent_total > 0 ? (double)adjacent_supported / (double)adjacent_total : 0.0;
+    metrics->bigram_ratio =
+        bigram_total > 0 ? (double)bigram_supported / (double)bigram_total : 0.0;
+    metrics->exact_syllable_ratio = (double)exact_lines / 3.0;
+
+    unsigned int topic0 = line_topic_mask(vocab, poem, 0) & 7u;
+    unsigned int topic1 = line_topic_mask(vocab, poem, 1) & 7u;
+    unsigned int topic2 = line_topic_mask(vocab, poem, 2) & 7u;
+    unsigned int topic_union = topic0 | topic1 | topic2;
+    unsigned int topic_intersection = topic0 & topic1 & topic2;
+    metrics->topic_core_ratio = topic_union != 0u
+                                    ? (double)count_mask_bits(topic_intersection) /
+                                          (double)count_mask_bits(topic_union)
+                                    : 0.0;
+    metrics->topic_drift = (double)(count_mask_bits(topic0 ^ topic1) +
+                                    count_mask_bits(topic1 ^ topic2) +
+                                    count_mask_bits(topic0 ^ topic2)) /
+                           9.0;
+
+    metrics->plan_score =
+        clamp_unit(0.30 * metrics->poem_topic_tightness +
+                   0.20 * metrics->min_line_similarity +
+                   0.10 * metrics->adjacent_line_tightness +
+                   0.10 * (1.0 - metrics->line_similarity_spread) +
+                   0.10 * metrics->topic_core_ratio +
+                   0.10 * metrics->adjacency_ratio +
+                   0.05 * metrics->bigram_ratio +
+                   0.05 * metrics->exact_syllable_ratio);
+}
+
 static size_t select_splice_source(const HUCorpus *corpus,
                                    const HUVocab *vocab,
                                    size_t poem_index,
@@ -655,6 +816,118 @@ static size_t select_splice_source(const HUCorpus *corpus,
     return best;
 }
 
+static size_t select_plausible_splice_source(const HUCorpus *corpus,
+                                             const HUVocab *vocab,
+                                             const HUAdjacency *adjacency,
+                                             size_t poem_index,
+                                             uint64_t mix,
+                                             int *line_out)
+{
+    const HUPoem *real = &corpus->poems[poem_index];
+    HUCoherenceMetrics real_metrics;
+    compute_coherence_metrics(vocab, adjacency, real, &real_metrics);
+    size_t best = poem_index;
+    int best_line = (int)((mix >> 18) % 3u);
+    double best_score = -1e9;
+    size_t fallback_best = poem_index;
+    int fallback_line = best_line;
+    double fallback_score = -1e9;
+    if (corpus->count <= 1) {
+        if (line_out != NULL) {
+            *line_out = best_line;
+        }
+        return best;
+    }
+
+    for (size_t offset = 1; offset < corpus->count; ++offset) {
+        size_t candidate = (poem_index + offset + (size_t)(mix % corpus->count)) % corpus->count;
+        if (candidate == poem_index) {
+            continue;
+        }
+        for (int line = 0; line < 3; ++line) {
+            if (line_syllable_count(vocab, real, line) !=
+                line_syllable_count(vocab, &corpus->poems[candidate], line)) {
+                continue;
+            }
+            HUPoem corrupt;
+            copy_poem(&corrupt, real);
+            copy_line(&corrupt, line, &corpus->poems[candidate], line);
+            HUCoherenceMetrics corrupt_metrics;
+            compute_coherence_metrics(vocab, adjacency, &corrupt, &corrupt_metrics);
+            double plan_drop = real_metrics.plan_score - corrupt_metrics.plan_score;
+            double topic_drop =
+                real_metrics.poem_topic_tightness - corrupt_metrics.poem_topic_tightness;
+            double fallback = corrupt_metrics.adjacency_ratio +
+                              0.50 * clamp_unit(plan_drop + 0.15) +
+                              0.25 * clamp_unit(topic_drop + 0.15);
+            if (fallback > fallback_score) {
+                fallback_score = fallback;
+                fallback_best = candidate;
+                fallback_line = line;
+            }
+            if (corrupt_metrics.exact_syllable_ratio + 1e-9 <
+                    real_metrics.exact_syllable_ratio ||
+                corrupt_metrics.adjacency_ratio < 0.45) {
+                continue;
+            }
+            double plausibility = 0.45 * corrupt_metrics.adjacency_ratio +
+                                  0.25 * corrupt_metrics.bigram_ratio +
+                                  0.20 * corrupt_metrics.exact_syllable_ratio +
+                                  0.10 * (1.0 - corrupt_metrics.line_similarity_spread);
+            double wrongness = 0.60 * clamp_unit(plan_drop + 0.15) +
+                               0.40 * clamp_unit(topic_drop + 0.15);
+            double score = plausibility + wrongness;
+            if (score > best_score) {
+                best_score = score;
+                best = candidate;
+                best_line = line;
+            }
+        }
+    }
+    if (best == poem_index) {
+        best = fallback_best;
+        best_line = fallback_line;
+    }
+    if (line_out != NULL) {
+        *line_out = best_line;
+    }
+    return best;
+}
+
+static void build_splice_cache(const HUCorpus *corpus,
+                               const HUVocab *vocab,
+                               const HUAdjacency *adjacency,
+                               unsigned int seed,
+                               HUSpliceCache *cache)
+{
+    for (size_t poem_index = 0; poem_index < corpus->count; ++poem_index) {
+        uint64_t topic_mix =
+            (uint64_t)seed + poem_index * 1103515245ull +
+            (uint64_t)HU_CORRUPT_TOPIC_SPLICE * 7919ull;
+        int topic_line = (int)((topic_mix >> 10) % 3u);
+        cache->topic_splice_source[poem_index] =
+            select_splice_source(corpus, vocab, poem_index, topic_line, 0, topic_mix);
+
+        uint64_t same_season_mix =
+            (uint64_t)seed + poem_index * 1103515245ull +
+            (uint64_t)HU_CORRUPT_SAME_SEASON_SPLICE * 7919ull;
+        int same_season_line = (int)((same_season_mix >> 14) % 3u);
+        cache->same_season_splice_source[poem_index] = select_splice_source(
+            corpus, vocab, poem_index, same_season_line, 1, same_season_mix);
+
+        uint64_t plausible_mix =
+            (uint64_t)seed + poem_index * 1103515245ull +
+            (uint64_t)HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE * 7919ull;
+        cache->plausible_splice_source[poem_index] =
+            select_plausible_splice_source(corpus,
+                                           vocab,
+                                           adjacency,
+                                           poem_index,
+                                           plausible_mix,
+                                           &cache->plausible_splice_line[poem_index]);
+    }
+}
+
 static int ranked_vocab_id(const HUVocab *vocab, size_t offset)
 {
     if (vocab->count == 0) {
@@ -665,6 +938,7 @@ static int ranked_vocab_id(const HUVocab *vocab, size_t offset)
 
 static void make_corruption(const HUCorpus *corpus,
                             const HUVocab *vocab,
+                            const HUSpliceCache *splice_cache,
                             size_t poem_index,
                             int type,
                             unsigned int seed,
@@ -731,7 +1005,9 @@ static void make_corruption(const HUCorpus *corpus,
         }
         case HU_CORRUPT_TOPIC_SPLICE: {
             int line = (int)((mix >> 10) % 3u);
-            size_t other = select_splice_source(corpus, vocab, poem_index, line, 0, mix);
+            size_t other = splice_cache != NULL
+                               ? splice_cache->topic_splice_source[poem_index]
+                               : select_splice_source(corpus, vocab, poem_index, line, 0, mix);
             if (other != poem_index) {
                 copy_line(out, line, &corpus->poems[other], line);
             }
@@ -739,7 +1015,23 @@ static void make_corruption(const HUCorpus *corpus,
         }
         case HU_CORRUPT_SAME_SEASON_SPLICE: {
             int line = (int)((mix >> 14) % 3u);
-            size_t other = select_splice_source(corpus, vocab, poem_index, line, 1, mix);
+            size_t other = splice_cache != NULL
+                               ? splice_cache->same_season_splice_source[poem_index]
+                               : select_splice_source(corpus, vocab, poem_index, line, 1, mix);
+            if (other != poem_index) {
+                copy_line(out, line, &corpus->poems[other], line);
+            }
+            break;
+        }
+        case HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE: {
+            int line = (int)((mix >> 18) % 3u);
+            size_t other = poem_index;
+            if (splice_cache != NULL) {
+                line = splice_cache->plausible_splice_line[poem_index];
+                other = splice_cache->plausible_splice_source[poem_index];
+            } else {
+                other = select_splice_source(corpus, vocab, poem_index, line, 1, mix);
+            }
             if (other != poem_index) {
                 copy_line(out, line, &corpus->poems[other], line);
             }
@@ -903,15 +1195,8 @@ static void fill_features(const HUVocab *vocab,
             lines_with_abstract += 1;
         }
     }
-    double line_similarity01 = line_coherence_similarity(vocab, poem, 0, poem, 1);
-    double line_similarity12 = line_coherence_similarity(vocab, poem, 1, poem, 2);
-    double line_similarity02 = line_coherence_similarity(vocab, poem, 0, poem, 2);
-    double poem_topic_tightness =
-        (line_similarity01 + line_similarity12 + line_similarity02) / 3.0;
-    double cross_line_reuse =
-        line_content_similarity(vocab, poem, 0, poem, 1) +
-        line_content_similarity(vocab, poem, 1, poem, 2) +
-        line_content_similarity(vocab, poem, 0, poem, 2);
+    HUCoherenceMetrics coherence;
+    compute_coherence_metrics(vocab, adjacency, poem, &coherence);
 
     features[0] = (nn_real)1;
     features[1] = (nn_real)(total_words / 40.0);
@@ -955,14 +1240,22 @@ static void fill_features(const HUVocab *vocab,
     features[37] = stopwords > total_words / 2u ? (nn_real)1 : (nn_real)0;
     features[38] = repeated_positions == 0 ? (nn_real)1 : (nn_real)0;
     features[39] = abstract_words == 0 ? (nn_real)1 : (nn_real)0;
-    features[40] = (nn_real)line_similarity01;
-    features[41] = (nn_real)line_similarity12;
-    features[42] = (nn_real)line_similarity02;
-    features[43] = (nn_real)poem_topic_tightness;
+    features[40] = (nn_real)coherence.line_similarity01;
+    features[41] = (nn_real)coherence.line_similarity12;
+    features[42] = (nn_real)coherence.line_similarity02;
+    features[43] = (nn_real)coherence.poem_topic_tightness;
     features[44] = (nn_real)((double)lines_with_nature / 3.0);
     features[45] = (nn_real)((double)lines_with_season / 3.0);
     features[46] = (nn_real)((double)lines_with_abstract / 3.0);
-    features[47] = (nn_real)(cross_line_reuse / 3.0);
+    features[47] = (nn_real)coherence.cross_line_reuse;
+    features[48] = (nn_real)coherence.min_line_similarity;
+    features[49] = (nn_real)coherence.max_line_similarity;
+    features[50] = (nn_real)coherence.line_similarity_spread;
+    features[51] = (nn_real)coherence.adjacent_line_tightness;
+    features[52] = (nn_real)(1.0 - coherence.line_similarity_spread);
+    features[53] = (nn_real)coherence.topic_core_ratio;
+    features[54] = (nn_real)(1.0 - coherence.topic_drift);
+    features[55] = (nn_real)coherence.plan_score;
 }
 
 static void fill_pair_features(const HUVocab *vocab,
@@ -1007,15 +1300,25 @@ static void train_pair(NeuralNet *net,
 }
 
 static int write_trace_row(FILE *trace,
+                           const HUVocab *vocab,
+                           const HUAdjacency *adjacency,
                            const HUPoem *real,
                            const HUPoem *corrupt,
                            int type,
                            size_t poem_index,
                            const nn_real *scores,
                            const nn_real *probabilities,
-                           const char *model_hash,
-                           const HUAdjacency *adjacency)
+                           const char *model_hash)
 {
+    HUCoherenceMetrics real_metrics;
+    HUCoherenceMetrics corrupt_metrics;
+    compute_coherence_metrics(vocab, adjacency, real, &real_metrics);
+    compute_coherence_metrics(vocab, adjacency, corrupt, &corrupt_metrics);
+    double plan_delta = real_metrics.plan_score - corrupt_metrics.plan_score;
+    double tightness_delta =
+        real_metrics.poem_topic_tightness - corrupt_metrics.poem_topic_tightness;
+    double min_similarity_delta =
+        real_metrics.min_line_similarity - corrupt_metrics.min_line_similarity;
     uint64_t state_hash = hash_mix_u64(hash_poem(real), hash_poem(corrupt));
     return fprintf(trace,
                    "{\"schema\":\"crlp.haiku_understanding.trace.v1\","
@@ -1025,6 +1328,21 @@ static int write_trace_row(FILE *trace,
                    "\"real_score\":%.9g,\"corrupt_score\":%.9g,"
                    "\"real_probability\":%.9g,\"corrupt_probability\":%.9g,"
                    "\"selected\":\"%s\",\"model_hash\":\"%s\","
+                   "\"real_plan_score\":%.9g,\"corrupt_plan_score\":%.9g,"
+                   "\"plan_score_delta\":%.9g,\"symbolic_selected\":\"%s\","
+                   "\"real_topic_tightness\":%.9g,\"corrupt_topic_tightness\":%.9g,"
+                   "\"topic_tightness_delta\":%.9g,"
+                   "\"real_min_line_similarity\":%.9g,"
+                   "\"corrupt_min_line_similarity\":%.9g,"
+                   "\"min_line_similarity_delta\":%.9g,"
+                   "\"real_line_similarity_spread\":%.9g,"
+                   "\"corrupt_line_similarity_spread\":%.9g,"
+                   "\"real_adjacency_ratio\":%.9g,"
+                   "\"corrupt_adjacency_ratio\":%.9g,"
+                   "\"real_bigram_ratio\":%.9g,"
+                   "\"corrupt_bigram_ratio\":%.9g,"
+                   "\"real_exact_syllable_ratio\":%.9g,"
+                   "\"corrupt_exact_syllable_ratio\":%.9g,"
                    "\"adjacency_hash\":\"%016llx\"}\n",
                    poem_index,
                    corruption_name(type),
@@ -1036,12 +1354,31 @@ static int write_trace_row(FILE *trace,
                    (double)probabilities[1],
                    scores[0] >= scores[1] ? "real" : "corrupt",
                    model_hash,
+                   real_metrics.plan_score,
+                   corrupt_metrics.plan_score,
+                   plan_delta,
+                   plan_delta >= 0.0 ? "real" : "corrupt",
+                   real_metrics.poem_topic_tightness,
+                   corrupt_metrics.poem_topic_tightness,
+                   tightness_delta,
+                   real_metrics.min_line_similarity,
+                   corrupt_metrics.min_line_similarity,
+                   min_similarity_delta,
+                   real_metrics.line_similarity_spread,
+                   corrupt_metrics.line_similarity_spread,
+                   real_metrics.adjacency_ratio,
+                   corrupt_metrics.adjacency_ratio,
+                   real_metrics.bigram_ratio,
+                   corrupt_metrics.bigram_ratio,
+                   real_metrics.exact_syllable_ratio,
+                   corrupt_metrics.exact_syllable_ratio,
                    (unsigned long long)adjacency->hash) > 0;
 }
 
 static HUEval evaluate_split(NeuralNet *net,
                              const HUVocab *vocab,
                              const HUAdjacency *adjacency,
+                             const HUSpliceCache *splice_cache,
                              const HUCorpus *corpus,
                              size_t start,
                              size_t end,
@@ -1056,12 +1393,19 @@ static HUEval evaluate_split(NeuralNet *net,
         const HUPoem *real = &corpus->poems[p];
         for (int type = 0; type < HU_CORRUPT_COUNT; ++type) {
             HUPoem corrupt;
-            make_corruption(corpus, vocab, p, type, config->seed, &corrupt);
+            make_corruption(corpus, vocab, splice_cache, p, type, config->seed, &corrupt);
             nn_real scores[2];
             nn_real probabilities[2];
             if (!score_pair(net, vocab, adjacency, real, &corrupt, scores, probabilities)) {
                 continue;
             }
+            HUCoherenceMetrics real_metrics;
+            HUCoherenceMetrics corrupt_metrics;
+            compute_coherence_metrics(vocab, adjacency, real, &real_metrics);
+            compute_coherence_metrics(vocab, adjacency, &corrupt, &corrupt_metrics);
+            double plan_delta = real_metrics.plan_score - corrupt_metrics.plan_score;
+            double tightness_delta =
+                real_metrics.poem_topic_tightness - corrupt_metrics.poem_topic_tightness;
             double probability = (double)probabilities[0];
             if (probability < 1e-12) {
                 probability = 1e-12;
@@ -1069,20 +1413,26 @@ static HUEval evaluate_split(NeuralNet *net,
             eval.nll += -log(probability);
             eval.pairs += 1;
             eval.by_type_pairs[type] += 1;
+            eval.by_type_plan_delta_sum[type] += plan_delta;
+            eval.by_type_tightness_delta_sum[type] += tightness_delta;
+            if (plan_delta >= 0.0) {
+                eval.by_type_symbolic_correct[type] += 1;
+            }
             if (scores[0] >= scores[1]) {
                 eval.correct += 1;
                 eval.by_type_correct[type] += 1;
             }
             if (trace != NULL && (config->trace_limit == 0 || traced < config->trace_limit)) {
                 (void)write_trace_row(trace,
+                                      vocab,
+                                      adjacency,
                                       real,
                                       &corrupt,
                                       type,
                                       p,
                                       scores,
                                       probabilities,
-                                      model_hash,
-                                      adjacency);
+                                      model_hash);
                 traced += 1;
             }
         }
@@ -1094,7 +1444,8 @@ static void usage(const char *argv0)
 {
     fprintf(stderr,
             "usage: %s [--corpus path] [--epochs N] [--lr R] [--seed N]\n"
-            "       [--max-poems N] [--trace path] [--trace-limit N] [--save path]\n",
+            "       [--max-poems N] [--trace path] [--trace-limit N] [--save path]\n"
+            "       [--plausible-negative-extra-updates N]\n",
             argv0);
 }
 
@@ -1106,6 +1457,7 @@ static int parse_config(int argc, char **argv, HUConfig *config)
     config->epochs = 8;
     config->max_poems = 0;
     config->trace_limit = 2000;
+    config->plausible_negative_extra_updates = 1;
     config->learning_rate = 0.006;
     config->seed = 20240518u;
     for (int i = 1; i < argc; ++i) {
@@ -1125,6 +1477,12 @@ static int parse_config(int argc, char **argv, HUConfig *config)
             }
         } else if (strcmp(argv[i], "--trace-limit") == 0 && i + 1 < argc) {
             if (!nn_parse_size_nonnegative_text(argv[++i], &config->trace_limit)) {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--plausible-negative-extra-updates") == 0 &&
+                   i + 1 < argc) {
+            if (!nn_parse_size_nonnegative_text(argv[++i],
+                                                &config->plausible_negative_extra_updates)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--lr") == 0 && i + 1 < argc) {
@@ -1169,6 +1527,8 @@ int main(int argc, char **argv)
                 adjacency.overflow);
         return EXIT_FAILURE;
     }
+    static HUSpliceCache splice_cache;
+    build_splice_cache(&corpus, &vocab, &adjacency, config.seed, &splice_cache);
 
     const size_t layers[] = {HU_FEATURE_COUNT, 64, 32, 1};
     NNConfig nn_config;
@@ -1202,15 +1562,19 @@ int main(int argc, char **argv)
 
     double training_seconds = 0.0;
     size_t total_updates = 0;
+    size_t mined_plausible_negative_examples = 0;
+    size_t mined_plausible_negative_updates = 0;
     for (size_t epoch = 1; epoch <= config.epochs; ++epoch) {
         double started = (double)clock() / (double)CLOCKS_PER_SEC;
         double loss_sum = 0.0;
         size_t updates = 0;
+        size_t epoch_mined = 0;
+        size_t epoch_mined_updates = 0;
         for (size_t p = 0; p < train_count; ++p) {
             const HUPoem *real = &corpus.poems[p];
             for (int type = 0; type < HU_CORRUPT_COUNT; ++type) {
                 HUPoem corrupt;
-                make_corruption(&corpus, &vocab, p, type, config.seed, &corrupt);
+                make_corruption(&corpus, &vocab, &splice_cache, p, type, config.seed, &corrupt);
                 train_pair(net,
                            &vocab,
                            &adjacency,
@@ -1219,15 +1583,49 @@ int main(int argc, char **argv)
                            config.learning_rate,
                            &loss_sum,
                            &updates);
+                if (type == HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE &&
+                    config.plausible_negative_extra_updates > 0) {
+                    nn_real scores[2];
+                    nn_real probabilities[2];
+                    if (score_pair(net,
+                                   &vocab,
+                                   &adjacency,
+                                   real,
+                                   &corrupt,
+                                   scores,
+                                   probabilities) &&
+                        scores[0] <= scores[1] + (nn_real)0.05) {
+                        epoch_mined += 1;
+                        for (size_t extra = 0;
+                             extra < config.plausible_negative_extra_updates;
+                             ++extra) {
+                            size_t before = updates;
+                            train_pair(net,
+                                       &vocab,
+                                       &adjacency,
+                                       real,
+                                       &corrupt,
+                                       config.learning_rate,
+                                       &loss_sum,
+                                       &updates);
+                            epoch_mined_updates += updates - before;
+                        }
+                    }
+                }
             }
         }
         double elapsed = (double)clock() / (double)CLOCKS_PER_SEC - started;
         training_seconds += elapsed;
         total_updates += updates;
-        printf("epoch %zu loss=%.4f updates=%zu %.0f pairs/s\n",
+        mined_plausible_negative_examples += epoch_mined;
+        mined_plausible_negative_updates += epoch_mined_updates;
+        printf("epoch %zu loss=%.4f updates=%zu mined_plausible=%zu "
+               "mined_updates=%zu %.0f pairs/s\n",
                epoch,
                updates > 0 ? loss_sum / (double)updates : 0.0,
                updates,
+               epoch_mined,
+               epoch_mined_updates,
                elapsed > 0.0 ? (double)updates / elapsed : 0.0);
     }
 
@@ -1237,7 +1635,7 @@ int main(int argc, char **argv)
         nn_checkpoint_meta_init(&meta, HU_FEATURE_ENCODER_VERSION);
         if (!nn_checkpoint_meta_set_notes(&meta,
                                           "haiku_understanding real-vs-corrupt scorer") ||
-            !nn_checkpoint_meta_set_feature_set(&meta, "haiku_understanding_v1")) {
+            !nn_checkpoint_meta_set_feature_set(&meta, "haiku_understanding_v3")) {
             fprintf(stderr, "checkpoint metadata is too long\n");
             nn_free(net);
             return EXIT_FAILURE;
@@ -1261,11 +1659,12 @@ int main(int argc, char **argv)
         }
     }
 
-    HUEval train_eval =
-        evaluate_split(net, &vocab, &adjacency, &corpus, 0, train_count, &config, model_hash, NULL);
+    HUEval train_eval = evaluate_split(
+        net, &vocab, &adjacency, &splice_cache, &corpus, 0, train_count, &config, model_hash, NULL);
     HUEval valid_eval = evaluate_split(net,
                                        &vocab,
                                        &adjacency,
+                                       &splice_cache,
                                        &corpus,
                                        train_count,
                                        corpus.count,
@@ -1295,26 +1694,141 @@ int main(int argc, char **argv)
                          ? (double)valid_eval.by_type_correct[type] /
                                (double)valid_eval.by_type_pairs[type]
                          : 0.0;
-        printf("valid_%s pairs=%zu top1=%.2f%%\n",
+        double symbolic_acc = valid_eval.by_type_pairs[type] > 0
+                                  ? (double)valid_eval.by_type_symbolic_correct[type] /
+                                        (double)valid_eval.by_type_pairs[type]
+                                  : 0.0;
+        double avg_plan_delta = valid_eval.by_type_pairs[type] > 0
+                                    ? valid_eval.by_type_plan_delta_sum[type] /
+                                          (double)valid_eval.by_type_pairs[type]
+                                    : 0.0;
+        printf("valid_%s pairs=%zu top1=%.2f%% symbolic_top1=%.2f%% avg_plan_delta=%.4f\n",
                corruption_name(type),
                valid_eval.by_type_pairs[type],
-               acc * 100.0);
+               acc * 100.0,
+               symbolic_acc * 100.0,
+               avg_plan_delta);
     }
+    size_t symbolic_correct = 0;
+    double plan_delta_sum = 0.0;
+    double tightness_delta_sum = 0.0;
+    for (int type = 0; type < HU_CORRUPT_COUNT; ++type) {
+        symbolic_correct += valid_eval.by_type_symbolic_correct[type];
+        plan_delta_sum += valid_eval.by_type_plan_delta_sum[type];
+        tightness_delta_sum += valid_eval.by_type_tightness_delta_sum[type];
+    }
+    double symbolic_top1 =
+        valid_eval.pairs > 0 ? (double)symbolic_correct / (double)valid_eval.pairs : 0.0;
+    double avg_plan_delta =
+        valid_eval.pairs > 0 ? plan_delta_sum / (double)valid_eval.pairs : 0.0;
+    double avg_tightness_delta =
+        valid_eval.pairs > 0 ? tightness_delta_sum / (double)valid_eval.pairs : 0.0;
     printf("training_seconds=%.6f total_updates=%zu\n", training_seconds, total_updates);
     size_t coherence_pairs = valid_eval.by_type_pairs[HU_CORRUPT_TOPIC_SPLICE] +
                              valid_eval.by_type_pairs[HU_CORRUPT_SAME_SEASON_SPLICE];
     size_t coherence_correct = valid_eval.by_type_correct[HU_CORRUPT_TOPIC_SPLICE] +
                                valid_eval.by_type_correct[HU_CORRUPT_SAME_SEASON_SPLICE];
+    size_t coherence_symbolic_correct =
+        valid_eval.by_type_symbolic_correct[HU_CORRUPT_TOPIC_SPLICE] +
+        valid_eval.by_type_symbolic_correct[HU_CORRUPT_SAME_SEASON_SPLICE];
+    double coherence_plan_delta_sum =
+        valid_eval.by_type_plan_delta_sum[HU_CORRUPT_TOPIC_SPLICE] +
+        valid_eval.by_type_plan_delta_sum[HU_CORRUPT_SAME_SEASON_SPLICE];
+    double coherence_tightness_delta_sum =
+        valid_eval.by_type_tightness_delta_sum[HU_CORRUPT_TOPIC_SPLICE] +
+        valid_eval.by_type_tightness_delta_sum[HU_CORRUPT_SAME_SEASON_SPLICE];
     double coherence_top1 =
         coherence_pairs > 0 ? (double)coherence_correct / (double)coherence_pairs : 0.0;
+    double coherence_symbolic_top1 = coherence_pairs > 0
+                                         ? (double)coherence_symbolic_correct /
+                                               (double)coherence_pairs
+                                         : 0.0;
+    double coherence_avg_plan_delta = coherence_pairs > 0
+                                          ? coherence_plan_delta_sum / (double)coherence_pairs
+                                          : 0.0;
+    double coherence_avg_tightness_delta =
+        coherence_pairs > 0 ? coherence_tightness_delta_sum / (double)coherence_pairs : 0.0;
+
+    size_t hard_negative_pairs = 0;
+    size_t hard_negative_correct = 0;
+    size_t hard_negative_symbolic_correct = 0;
+    double hard_negative_plan_delta_sum = 0.0;
+    double hard_negative_tightness_delta_sum = 0.0;
+    for (int type = 0; type < HU_CORRUPT_COUNT; ++type) {
+        if (!is_hard_negative_corruption(type)) {
+            continue;
+        }
+        hard_negative_pairs += valid_eval.by_type_pairs[type];
+        hard_negative_correct += valid_eval.by_type_correct[type];
+        hard_negative_symbolic_correct += valid_eval.by_type_symbolic_correct[type];
+        hard_negative_plan_delta_sum += valid_eval.by_type_plan_delta_sum[type];
+        hard_negative_tightness_delta_sum += valid_eval.by_type_tightness_delta_sum[type];
+    }
+    double hard_negative_top1 = hard_negative_pairs > 0
+                                    ? (double)hard_negative_correct /
+                                          (double)hard_negative_pairs
+                                    : 0.0;
+    double hard_negative_symbolic_top1 =
+        hard_negative_pairs > 0
+            ? (double)hard_negative_symbolic_correct / (double)hard_negative_pairs
+            : 0.0;
+    double hard_negative_avg_plan_delta =
+        hard_negative_pairs > 0 ? hard_negative_plan_delta_sum / (double)hard_negative_pairs
+                                : 0.0;
+    double hard_negative_avg_tightness_delta =
+        hard_negative_pairs > 0
+            ? hard_negative_tightness_delta_sum / (double)hard_negative_pairs
+            : 0.0;
+    size_t plausible_negative_pairs =
+        valid_eval.by_type_pairs[HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE];
+    size_t plausible_negative_correct =
+        valid_eval.by_type_correct[HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE];
+    size_t plausible_negative_symbolic_correct =
+        valid_eval.by_type_symbolic_correct[HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE];
+    double plausible_negative_top1 =
+        plausible_negative_pairs > 0
+            ? (double)plausible_negative_correct / (double)plausible_negative_pairs
+            : 0.0;
+    double plausible_negative_symbolic_top1 =
+        plausible_negative_pairs > 0
+            ? (double)plausible_negative_symbolic_correct /
+                  (double)plausible_negative_pairs
+            : 0.0;
+    double plausible_negative_avg_plan_delta =
+        plausible_negative_pairs > 0
+            ? valid_eval.by_type_plan_delta_sum[HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE] /
+                  (double)plausible_negative_pairs
+            : 0.0;
+    double plausible_negative_avg_tightness_delta =
+        plausible_negative_pairs > 0
+            ? valid_eval.by_type_tightness_delta_sum[HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE] /
+                  (double)plausible_negative_pairs
+            : 0.0;
 
     printf("{\"schema\":\"crlp.haiku_understanding.summary.v1\",\"poems\":%zu,"
            "\"train_pairs\":%zu,\"valid_pairs\":%zu,\"train_top1\":%.6f,"
            "\"valid_top1\":%.6f,\"valid_nll\":%.6f,\"updates\":%zu,"
+           "\"plausible_negative_extra_updates\":%zu,"
+           "\"mined_plausible_negative_examples\":%zu,"
+           "\"mined_plausible_negative_updates\":%zu,"
            "\"vocab_entries\":%zu,\"adjacency_edges\":%zu,"
            "\"adjacency_transitions\":%zu,\"adjacency_hash\":\"%016llx\","
            "\"feature_encoder_version\":%u,\"model_hash\":\"%s\","
+           "\"symbolic_top1\":%.6f,\"avg_plan_delta\":%.6f,"
+           "\"avg_topic_tightness_delta\":%.6f,"
            "\"coherence_pairs\":%zu,\"coherence_top1\":%.6f,"
+           "\"coherence_symbolic_top1\":%.6f,"
+           "\"coherence_avg_plan_delta\":%.6f,"
+           "\"coherence_avg_topic_tightness_delta\":%.6f,"
+           "\"hard_negative_pairs\":%zu,\"hard_negative_top1\":%.6f,"
+           "\"hard_negative_symbolic_top1\":%.6f,"
+           "\"hard_negative_avg_plan_delta\":%.6f,"
+           "\"hard_negative_avg_topic_tightness_delta\":%.6f,"
+           "\"plausible_negative_pairs\":%zu,"
+           "\"plausible_negative_top1\":%.6f,"
+           "\"plausible_negative_symbolic_top1\":%.6f,"
+           "\"plausible_negative_avg_plan_delta\":%.6f,"
+           "\"plausible_negative_avg_topic_tightness_delta\":%.6f,"
            "\"by_corruption\":{",
            corpus.count,
            train_eval.pairs,
@@ -1323,24 +1837,60 @@ int main(int argc, char **argv)
            valid_acc,
            valid_nll,
            total_updates,
+           config.plausible_negative_extra_updates,
+           mined_plausible_negative_examples,
+           mined_plausible_negative_updates,
            vocab.count,
            adjacency.count,
            adjacency.transitions,
            (unsigned long long)adjacency.hash,
            (unsigned int)HU_FEATURE_ENCODER_VERSION,
            model_hash,
+           symbolic_top1,
+           avg_plan_delta,
+           avg_tightness_delta,
            coherence_pairs,
-           coherence_top1);
+           coherence_top1,
+           coherence_symbolic_top1,
+           coherence_avg_plan_delta,
+           coherence_avg_tightness_delta,
+           hard_negative_pairs,
+           hard_negative_top1,
+           hard_negative_symbolic_top1,
+           hard_negative_avg_plan_delta,
+           hard_negative_avg_tightness_delta,
+           plausible_negative_pairs,
+           plausible_negative_top1,
+           plausible_negative_symbolic_top1,
+           plausible_negative_avg_plan_delta,
+           plausible_negative_avg_tightness_delta);
     for (int type = 0; type < HU_CORRUPT_COUNT; ++type) {
         double acc = valid_eval.by_type_pairs[type] > 0
                          ? (double)valid_eval.by_type_correct[type] /
                                (double)valid_eval.by_type_pairs[type]
                          : 0.0;
-        printf("%s\"%s\":{\"pairs\":%zu,\"top1\":%.6f}",
+        double symbolic_acc = valid_eval.by_type_pairs[type] > 0
+                                  ? (double)valid_eval.by_type_symbolic_correct[type] /
+                                        (double)valid_eval.by_type_pairs[type]
+                                  : 0.0;
+        double avg_type_plan_delta = valid_eval.by_type_pairs[type] > 0
+                                         ? valid_eval.by_type_plan_delta_sum[type] /
+                                               (double)valid_eval.by_type_pairs[type]
+                                         : 0.0;
+        double avg_type_tightness_delta = valid_eval.by_type_pairs[type] > 0
+                                              ? valid_eval.by_type_tightness_delta_sum[type] /
+                                                    (double)valid_eval.by_type_pairs[type]
+                                              : 0.0;
+        printf("%s\"%s\":{\"pairs\":%zu,\"top1\":%.6f,"
+               "\"symbolic_top1\":%.6f,\"avg_plan_delta\":%.6f,"
+               "\"avg_topic_tightness_delta\":%.6f}",
                type == 0 ? "" : ",",
                corruption_name(type),
                valid_eval.by_type_pairs[type],
-               acc);
+               acc,
+               symbolic_acc,
+               avg_type_plan_delta,
+               avg_type_tightness_delta);
     }
     printf("}}\n");
 

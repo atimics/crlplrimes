@@ -5,6 +5,7 @@ results/**/coverage-cache/
 # paper/data.json is a derived helper produced by `make paper-data`; the paper
 # embeds values inline so the PDF builds without it.
 paper/data.json
+paper/agent_candidates/next_prompt.md
 *.o
 *.a
 *.so

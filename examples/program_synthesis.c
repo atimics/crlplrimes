@@ -695,6 +695,148 @@ static int ps_value_equal(const PSValue *a, const PSValue *b)
     return a->integer == b->integer;
 }
 
+static int ps_eval_target_with_candidate(PSOp target, PSOp candidate, const PSList *input, PSValue *out)
+{
+    if (target == candidate) {
+        *out = ps_eval_op(candidate, input);
+        return 1;
+    }
+
+    switch (target) {
+    case PS_OP_COUNT_POSITIVE:
+        if (candidate == PS_OP_FILTER_POSITIVE) {
+            PSList list = ps_filter_list(input, candidate);
+            *out = ps_value_int((int)list.length);
+            return 1;
+        }
+        break;
+    case PS_OP_COUNT_NEGATIVE:
+        if (candidate == PS_OP_FILTER_NEGATIVE) {
+            PSList list = ps_filter_list(input, candidate);
+            *out = ps_value_int((int)list.length);
+            return 1;
+        }
+        break;
+    case PS_OP_COUNT_EVEN:
+        if (candidate == PS_OP_FILTER_EVEN) {
+            PSList list = ps_filter_list(input, candidate);
+            *out = ps_value_int((int)list.length);
+            return 1;
+        }
+        break;
+    case PS_OP_ANY_POSITIVE:
+        if (candidate == PS_OP_FILTER_POSITIVE) {
+            PSList list = ps_filter_list(input, candidate);
+            *out = ps_value_bool(list.length > 0);
+            return 1;
+        }
+        break;
+    case PS_OP_ALL_POSITIVE:
+        if (candidate == PS_OP_FILTER_POSITIVE) {
+            PSList list = ps_filter_list(input, candidate);
+            *out = ps_value_bool(list.length == input->length);
+            return 1;
+        }
+        break;
+    case PS_OP_SUM_POSITIVE:
+        if (candidate == PS_OP_FILTER_POSITIVE) {
+            PSList list = ps_filter_list(input, candidate);
+            *out = ps_value_int(ps_sum_list(&list));
+            return 1;
+        }
+        if (candidate == PS_OP_SUM) {
+            PSList list = ps_filter_list(input, PS_OP_FILTER_POSITIVE);
+            *out = ps_value_int(ps_sum_list(&list));
+            return 1;
+        }
+        break;
+    case PS_OP_SUM_NEGATIVE:
+        if (candidate == PS_OP_FILTER_NEGATIVE) {
+            PSList list = ps_filter_list(input, candidate);
+            *out = ps_value_int(ps_sum_list(&list));
+            return 1;
+        }
+        if (candidate == PS_OP_SUM) {
+            PSList list = ps_filter_list(input, PS_OP_FILTER_NEGATIVE);
+            *out = ps_value_int(ps_sum_list(&list));
+            return 1;
+        }
+        break;
+    case PS_OP_SUM_SQUARES:
+        if (candidate == PS_OP_MAP_SQUARE) {
+            PSList list = ps_map_list(input, candidate);
+            *out = ps_value_int(ps_sum_list(&list));
+            return 1;
+        }
+        if (candidate == PS_OP_SUM) {
+            PSList list = ps_map_list(input, PS_OP_MAP_SQUARE);
+            *out = ps_value_int(ps_sum_list(&list));
+            return 1;
+        }
+        break;
+    case PS_OP_DOUBLE_SUM:
+        if (candidate == PS_OP_MAP_DOUBLE) {
+            PSList list = ps_map_list(input, candidate);
+            *out = ps_value_int(ps_sum_list(&list));
+            return 1;
+        }
+        if (candidate == PS_OP_SUM) {
+            PSList list = ps_map_list(input, PS_OP_MAP_DOUBLE);
+            *out = ps_value_int(ps_sum_list(&list));
+            return 1;
+        }
+        break;
+    case PS_OP_SUM_ABS:
+        if (candidate == PS_OP_MAP_ABS) {
+            PSList list = ps_map_list(input, candidate);
+            *out = ps_value_int(ps_sum_list(&list));
+            return 1;
+        }
+        if (candidate == PS_OP_SUM) {
+            PSList list = ps_map_list(input, PS_OP_MAP_ABS);
+            *out = ps_value_int(ps_sum_list(&list));
+            return 1;
+        }
+        break;
+    case PS_OP_FIRST_POSITIVE:
+        if (candidate == PS_OP_FILTER_POSITIVE) {
+            PSList list = ps_filter_list(input, candidate);
+            *out = ps_value_int(list.length == 0 ? 0 : list.values[0]);
+            return 1;
+        }
+        break;
+    case PS_OP_ANY_EVEN:
+        if (candidate == PS_OP_FILTER_EVEN) {
+            PSList list = ps_filter_list(input, candidate);
+            *out = ps_value_bool(list.length > 0);
+            return 1;
+        }
+        break;
+    default:
+        break;
+    }
+
+    return 0;
+}
+
+static int ps_verify_candidate_supports_task(PSOp candidate, const PSTask *task)
+{
+    if (task == NULL) {
+        return 0;
+    }
+    for (size_t i = 0; i < PS_EXAMPLES_PER_TASK; ++i) {
+        PSValue produced;
+        if (!ps_eval_target_with_candidate(task->target_op,
+                                           candidate,
+                                           &task->examples[i].input,
+                                           &produced) ||
+            !ps_value_equal(&produced, &task->examples[i].expected)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static PSTask ps_make_task(const char *name,
                            const char *family,
                            PSSplit split,
@@ -1220,6 +1362,7 @@ static int ps_build_coverage_for_split(const PSContext *context,
                                        PSSplit split,
                                        NNRuleCoverage *coverage)
 {
+    (void)domain;
     size_t task_indices[64];
     size_t event_count = 0;
     if (!ps_split_task_indices(context, split, task_indices, 64, &event_count) ||
@@ -1231,19 +1374,13 @@ static int ps_build_coverage_for_split(const PSContext *context,
         if (!certified[rule_index]) {
             continue;
         }
+        if (rules[rule_index].template_id >= context->spec_count) {
+            continue;
+        }
         const PSAbstractionSpec *spec = &context->specs[rules[rule_index].template_id];
-        uint64_t bit = ps_mask1(spec->op);
         for (size_t event = 0; event < event_count; ++event) {
             const PSTask *task = &context->tasks[task_indices[event]];
-            if ((task->useful_mask & bit) == 0) {
-                continue;
-            }
-            NNVerifyResult verify;
-            if (!nn_symbolic_domain_verify_action(domain, task, rule_index, &verify)) {
-                nn_rule_coverage_free(coverage);
-                return 0;
-            }
-            if (verify.correct || spec->op != task->target_op) {
+            if (ps_verify_candidate_supports_task(spec->op, task)) {
                 nn_rule_coverage_set(coverage, rule_index, event);
             }
         }
@@ -1361,6 +1498,9 @@ static int ps_emit_hypothesis_evidence(const PSContext *context,
                                   spec->op,
                                   &test_events);
         size_t events = train_events + validation_events + test_events;
+        if (events == 0) {
+            continue;
+        }
         NNHypothesisEvidence evidence = {
             .task = "program_synthesis",
             .task_instance = spec->name,
@@ -1981,8 +2121,8 @@ static int ps_write_schema(void)
     spec.neural_scorer = "static structural scorer or closed-loop residual proposer";
     spec.grounding_authority = NN_GROUNDING_EXACT_CHECK;
     spec.grounding_operator = "deterministic DSL execution against task input/output examples";
-    spec.exact_verifier = "run candidate abstraction on every input/output example";
-    spec.verifier_feedback = "per-task exact pass/fail plus compression coverage diagnostics";
+    spec.exact_verifier = "run direct candidate or candidate-bearing decomposition on every example";
+    spec.verifier_feedback = "per-task executable support checks plus compression coverage diagnostics";
     spec.candidate_grammar = "typed list/int DSL abstractions enumerated by the program synthesizer";
     spec.outcome_row_schema = "crlp.rule_search.summary.v1 proposer rows";
     spec.claim_scope = "synthetic list-routine abstraction discovery under declared task-family splits";

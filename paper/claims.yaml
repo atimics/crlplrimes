@@ -17,7 +17,24 @@
       "comparative live neural-control improvement",
       "generic cross-domain reason-code safety",
       "wider MLPs solve the ARC geometry failure"
-    ]
+    ],
+    "paper_agent_trace": {
+      "schema": "crlp.paper_agent_candidate.v1",
+      "generated_artifacts": [
+        "paper/generated/paper_agent_trace.jsonl",
+        "paper/generated/paper_agent_trace.md"
+      ],
+      "input_artifacts": [
+        "paper/agent_candidates/*.jsonl"
+      ],
+      "candidate_types": [
+        "claim_sentence",
+        "audit_summary",
+        "limitation_candidate",
+        "agent_brief"
+      ],
+      "invariant": "LLMs propose paper text; claim, source, and scope verifiers decide which surfaces may use it."
+    }
   },
   "claim_families": [
     {

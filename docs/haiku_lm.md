@@ -121,16 +121,40 @@ real haiku vs corrupted haiku
 ```
 
 The corruption families are line shuffle, line splice from another poem,
-syllable-budget break, repetition, frequent-word salad, topic splice, and
-same-season splice. The candidate features include syllable errors, line
+syllable-budget break, repetition, frequent-word salad, topic splice,
+same-season splice, and plausible topic splice. The plausible splice family
+preserves line position and syllable form, prefers train-adjacency-plausible
+replacement lines, and uses the resulting pair as a coherence negative rather
+than an obvious form violation. The candidate features include syllable errors, line
 balance, repetition, stopword/nature/season/abstract word ratios,
 word-frequency priors, train-split adjacency coverage, line-to-line topic
-similarity, poem topic tightness, per-line topic coverage, and cross-line
-content reuse. The trace schema is `crlp.haiku_understanding.trace.v1`; the
-summary schema is `crlp.haiku_understanding.summary.v1` and includes
-`coherence_top1` over the topic-splice families. This benchmark measures
-whether the engine can reject near-miss poems, not whether generated poems are
-good.
+similarity, poem topic tightness, per-line topic coverage, cross-line content
+reuse, minimum line-pair similarity, line-pair spread, topic-core consistency,
+topic drift, and a symbolic poem-plan score. Feature encoder v3 keeps this as
+a small neurosymbolic verifier: the dense scorer sees explicit poem-level
+coherence aggregates rather than relying on a larger hidden model to infer
+them.
+
+The trace schema is `crlp.haiku_understanding.trace.v1`; rows are extended with
+additive verifier fields such as `real_plan_score`, `corrupt_plan_score`,
+`plan_score_delta`, `symbolic_selected`, topic-tightness deltas, minimum
+line-similarity deltas, line-spread values, and adjacency ratios. The summary
+schema is `crlp.haiku_understanding.summary.v1` and includes neural and
+symbolic top-1 diagnostics by corruption family, `coherence_top1` over the
+topic-splice families, and a `hard_negative_*` cohort for `line_splice`,
+`word_salad`, `topic_splice`, `same_season_splice`, and
+`plausible_topic_splice`. Plausibility traces also expose bigram and exact
+syllable ratios. The `plausible_negative_*` cohort isolates the form-valid,
+adjacency-plausible coherence failures. This benchmark measures whether the
+engine can reject near-miss poems, not whether generated poems are good.
+
+Training also includes a small online hard-negative loop for the plausible
+splice family. After the normal update, the scorer re-scores the plausible
+splice; if the corrupt candidate is still tied with or above the real poem, the
+example receives `--plausible-negative-extra-updates` additional updates. The
+summary records `mined_plausible_negative_examples` and
+`mined_plausible_negative_updates`, making the curriculum auditable rather than
+silently changing the dataset mix.
 
 Next architecture gates before calling this an LLM:
 

@@ -1,7 +1,7 @@
 # Self-Authoring Paper Roadmap
 
 Date: 2026-05-17
-Status: R-P.1, R-P.2, R-P.3, R-P.5, R-P.6, R-P.7, and R-P.8 implemented; R-P.4 remains open
+Status: R-P.1, R-P.2, R-P.3, R-P.5, R-P.6, R-P.7, R-P.8, R-P.9, and R-P.10 implemented; R-P.4 and R-P.11 remain open
 
 ## Purpose
 
@@ -43,6 +43,8 @@ make paper-support
   -> paper/generated/roadmap_links.md
   -> paper/generated/support_report.md
   -> paper/generated/agent_instructions.md
+  -> paper/generated/paper_agent_trace.jsonl
+  -> paper/generated/paper_agent_trace.md
   -> fails if any required claim is stale, missing, underpowered, or contradicted
 
 make paper-pdf
@@ -97,6 +99,16 @@ paper/generated/support_report.md
 paper/generated/agent_instructions.md
   claim-targeted briefs for future research agents without letting them rewrite the paper by hand
 
+paper/generated/paper_agent_trace.jsonl
+  meta-level LLM/proposer candidate trace with accepted and rejected paper-text rows
+
+paper/generated/paper_agent_trace.md
+  human-readable summary of the meta-level candidate trace
+
+paper/agent_candidates/*.jsonl
+  optional LLM-authored paper-text proposals that the compiler validates before
+  appending accepted/rejected verdict rows to the generated trace
+
 .github/pull_request_template.md
   review checklist separating editorial-only edits from explicit claim changes
 
@@ -109,6 +121,9 @@ docs/editorial-agent-prs.md
 
 scripts/check_editorial_pr.py
   CI enforcement for editorial-only PRs and claim-change PR audit fields
+
+docs/meta-paper-agent.md
+  LLM-as-proposer paper-authoring schema, verifier layers, and tightening plan
 ```
 
 `paper/paper.typ` should import `paper/generated/claims.typ` in the same spirit
@@ -183,6 +198,33 @@ R-MT, R-S, or R-W items; they make those items machine-actionable.
 | R-P.6 | Link every paper roadmap item to the claim family it supports or unblocks; `roadmap_links.md` now reports zero unlinked rows. | done | self-authoring |
 | R-P.7 | Generate limitation candidates from contradicted and underpowered claims. | done | self-authoring |
 | R-P.8 | Add an editorial-agent PR boundary: prose-only review checklist, claim-change escape hatch, CI enforcement, paper gates, and disclosure language. | done | self-authoring |
+| R-P.9 | Emit a meta-level paper-agent candidate trace where claim sentences, audit summaries, limitation candidates, and agent briefs are accepted or rejected by the claim compiler. | done | C8 |
+| R-P.10 | Accept external LLM proposal rows from `paper/agent_candidates/*.jsonl`, validate schema/source/surface/scope gates, and append accepted/rejected verdict rows to the generated trace. | done | C8 |
+| R-P.11 | Require accepted `candidate_id` coverage for changed claim-like paper prose. | 1d | C8 |
+
+## Meta-Level Paper Agent
+
+The same architecture now applies one level up:
+
+```text
+paper artifacts + source rows + claim registry
+  -> LLM proposes paper text
+  -> claim/source/scope verifiers accept or reject each candidate
+  -> accepted candidates may enter paper surfaces
+  -> rejected candidates feed the next proposal pass
+```
+
+`make paper-claims` reads LLM proposal rows from
+`paper/agent_candidates/*.jsonl` and emits `paper/generated/paper_agent_trace.jsonl`
+with schema `crlp.paper_agent_candidate.v1`. The generated rows cover claim
+sentences, audit summaries, limitation candidates, and agent briefs. External
+LLM rows are accepted or rejected by the same compiler. A `claim_sentence` is
+accepted only when the referenced claim is supported; contradicted or
+underpowered claim sentences are rejected and converted into residual feedback
+or limitation candidates.
+
+The detailed contract and tightening plan live in
+[`docs/meta-paper-agent.md`](meta-paper-agent.md).
 
 ## Submission Tiers
 
@@ -223,6 +265,8 @@ multitask table, and major captions with generated variables from:
 3. `C4.arc_ood_shared_vs_single`
 
 `make paper-support` now implements the required-claim gate, and
-`paper/generated/roadmap_links.md` reports zero unlinked roadmap rows. R-P.4 is
-the remaining systems task: replace body/abstract literal metrics with generated
-claim variables so stale evidence cannot survive as hard-coded prose.
+`paper/generated/roadmap_links.md` reports zero unlinked roadmap rows. R-P.4
+remains the core paper-hardening task: replace body/abstract literal metrics
+with generated claim variables so stale evidence cannot survive as hard-coded
+prose. R-P.11 is the next meta-agent hardening task: require changed
+claim-like prose to cite an accepted `candidate_id`.

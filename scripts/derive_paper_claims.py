@@ -27,6 +27,28 @@ from typing import Any
 STATUS_ORDER = ("supported", "contradicted", "underpowered", "missing", "stale")
 FAIL_STATUSES = {"contradicted", "underpowered", "missing", "stale"}
 UNSUPPORTED_SAFE_SURFACES = {"limitations", "roadmap", "paper_support"}
+PAPER_AGENT_SCHEMA = "crlp.paper_agent_candidate.v1"
+PAPER_AGENT_TRACE_VERSION = 1
+PAPER_AGENT_VERIFIER = "paper_claim_compiler"
+PAPER_AGENT_CANDIDATE_TYPES = (
+    "claim_sentence",
+    "audit_summary",
+    "limitation_candidate",
+    "agent_brief",
+)
+PAPER_AGENT_REQUIRED_SOURCE_TYPES = {"claim_sentence"}
+PAPER_AGENT_TYPE_SURFACES = {
+    "audit_summary": {"gap_report", "support_report", "paper_support"},
+    "limitation_candidate": {"limitations"},
+    "agent_brief": {"agent_instructions", "roadmap"},
+}
+PAPER_AGENT_NON_CLAIM_PATTERNS = (
+    re.compile(r"\bgeneral task solving\b", re.IGNORECASE),
+    re.compile(r"\bcompetitive ARC performance\b", re.IGNORECASE),
+    re.compile(r"\bsolve[sd]?\s+(?:the\s+)?ARC\b", re.IGNORECASE),
+    re.compile(r"\bwider MLPs?\s+solve\b", re.IGNORECASE),
+    re.compile(r"\blive neural-control improvement\b", re.IGNORECASE),
+)
 ROADMAP_ROW_RE = re.compile(
     r"^\s*\[(R-[A-Z0-9]+(?:-[A-Z0-9]+)?(?:\.\d+[a-z]?)?)"
     r"(?: \*(?:done|prototype|audit)\*)?\], \[(.*?)\], \[(.*?)\], \[(.*?)\],"
@@ -120,6 +142,31 @@ def source_metadata(repo: Path, source: str) -> dict[str, Any]:
         "modified_utc": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
         "row_count": count_source_rows(path),
     }
+
+
+def scrub_volatile_generated_fields(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: scrub_volatile_generated_fields(child)
+            for key, child in value.items()
+            if key not in {"generated_at", "modified_utc"}
+        }
+    if isinstance(value, list):
+        return [scrub_volatile_generated_fields(item) for item in value]
+    return value
+
+
+def write_json_if_meaningful_change(path: Path, payload: dict[str, Any]) -> None:
+    text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            pass
+        else:
+            if scrub_volatile_generated_fields(existing) == scrub_volatile_generated_fields(payload):
+                return
+    path.write_text(text, encoding="utf-8")
 
 
 def pct(value: float | int | None, digits: int = 2) -> str:
@@ -2256,6 +2303,523 @@ def merge_unique(existing: list[Any], additions: list[Any]) -> list[Any]:
     return out
 
 
+def stable_json_hash(payload: dict[str, Any], length: int = 16) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:length]
+
+
+def claim_source_refs(claim: dict[str, Any], sources: dict[str, Any]) -> list[dict[str, Any]]:
+    provenance = claim.get("provenance", {})
+    paths = []
+    source = provenance.get("source")
+    if source:
+        paths.append(str(source))
+    paths.extend(str(item) for item in provenance.get("secondary_sources", []))
+    refs: list[dict[str, Any]] = []
+    for path in paths:
+        metadata = sources.get(path, {})
+        refs.append(
+            {
+                "path": path,
+                "exists": bool(metadata.get("exists")),
+                "sha256": metadata.get("sha256"),
+                "row_count": metadata.get("row_count"),
+            }
+        )
+    return refs
+
+
+def repo_relative_path(repo: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(repo.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def repo_arg_path(repo: Path, path: Path) -> Path:
+    if path.is_absolute():
+        return path
+    return repo / path
+
+
+def normalize_string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = str(item).strip()
+        if text and text not in seen:
+            out.append(text)
+            seen.add(text)
+    return out
+
+
+def normalize_external_source_refs(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, (str, dict)):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    refs: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, str):
+            path = item.strip()
+            ref: dict[str, Any] = {"path": path}
+        elif isinstance(item, dict):
+            path = str(item.get("path") or item.get("source") or "").strip()
+            ref = {"path": path}
+            for key in ("exists", "sha256", "row_count"):
+                if key in item:
+                    ref[key] = item[key]
+        else:
+            continue
+        if path:
+            refs.append(ref)
+    return refs
+
+
+def is_generated_output_source(source: str) -> bool:
+    return source.strip().lstrip("./").startswith("paper/generated/")
+
+
+def current_source_ref(repo: Path, sources: dict[str, Any], source: str) -> dict[str, Any]:
+    generated_output = is_generated_output_source(source)
+    if generated_output:
+        metadata = source_metadata(repo, source)
+    elif source not in sources:
+        sources[source] = source_metadata(repo, source)
+        metadata = sources[source]
+    else:
+        metadata = sources.get(source, {})
+    return {
+        "path": source,
+        "exists": bool(metadata.get("exists")),
+        "sha256": None if generated_output else metadata.get("sha256"),
+        "row_count": metadata.get("row_count"),
+    }
+
+
+def source_ref_validation_errors(
+    candidate_type: str,
+    submitted_ref: dict[str, Any],
+    current_ref: dict[str, Any],
+) -> list[str]:
+    errors: list[str] = []
+    requires_source = candidate_type in PAPER_AGENT_REQUIRED_SOURCE_TYPES
+    if not current_ref.get("exists"):
+        return ["missing_source_ref"]
+    submitted_sha = submitted_ref.get("sha256")
+    submitted_row_count = submitted_ref.get("row_count")
+    if requires_source:
+        if not submitted_sha:
+            errors.append("missing_source_ref")
+        if current_ref.get("row_count") is not None and submitted_row_count is None:
+            errors.append("missing_source_ref")
+    if submitted_sha and submitted_sha != current_ref.get("sha256"):
+        errors.append("stale_source_ref")
+    if submitted_row_count is not None and current_ref.get("row_count") is not None:
+        try:
+            if int(submitted_row_count) != int(current_ref["row_count"]):
+                errors.append("stale_source_ref")
+        except (TypeError, ValueError):
+            errors.append("stale_source_ref")
+    return errors
+
+
+def read_paper_agent_candidate_inputs(repo: Path, candidates_dir: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not candidates_dir.exists():
+        return rows
+    for path in sorted(candidates_dir.glob("*.jsonl")):
+        with path.open(encoding="utf-8") as handle:
+            for line_no, line in enumerate(handle, start=1):
+                text = line.strip()
+                if not text or text.startswith("#"):
+                    continue
+                input_ref = {"path": repo_relative_path(repo, path), "line": line_no}
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError as exc:
+                    parsed = {
+                        "_parse_error": f"{exc.msg} at column {exc.colno}",
+                        "proposed_text": text[:240],
+                    }
+                if not isinstance(parsed, dict):
+                    parsed = {
+                        "_parse_error": "candidate row is not a JSON object",
+                        "proposed_text": text[:240],
+                    }
+                row = dict(parsed)
+                row["_input_ref"] = input_ref
+                rows.append(row)
+    return rows
+
+
+def external_candidate_allowed_surfaces(
+    candidate_type: str,
+    claim_ids: list[str],
+    claim_by_id: dict[str, dict[str, Any]],
+) -> set[str]:
+    if candidate_type == "claim_sentence":
+        allowed: set[str] = set()
+        for claim_id in claim_ids:
+            claim = claim_by_id.get(claim_id)
+            if claim is not None:
+                allowed.update(str(surface) for surface in claim.get("paper_surfaces", []))
+        return allowed
+    return set(PAPER_AGENT_TYPE_SURFACES.get(candidate_type, set()))
+
+
+def external_support_status(
+    claim_ids: list[str],
+    claim_by_id: dict[str, dict[str, Any]],
+) -> str | None:
+    statuses = [
+        str(claim_by_id[claim_id].get("status", "missing"))
+        for claim_id in claim_ids
+        if claim_id in claim_by_id
+    ]
+    if not statuses:
+        return None
+    unique = sorted(set(statuses))
+    if len(unique) == 1:
+        return unique[0]
+    return "mixed"
+
+
+def external_candidate_scope_errors(text: str, non_claims: list[str]) -> list[str]:
+    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    for non_claim in non_claims:
+        if str(non_claim).strip().lower() in normalized:
+            return ["contradicts_non_claim"]
+    for pattern in PAPER_AGENT_NON_CLAIM_PATTERNS:
+        if pattern.search(text):
+            return ["contradicts_non_claim"]
+    return []
+
+
+def external_candidate_feedback(errors: list[str]) -> list[str]:
+    messages = {
+        "invalid_json": "Submit one JSON object per JSONL line.",
+        "invalid_schema": f"Set schema to {PAPER_AGENT_SCHEMA}.",
+        "invalid_trace_version": f"Set trace_version to {PAPER_AGENT_TRACE_VERSION}.",
+        "invalid_candidate_type": "Use a registered paper-agent candidate_type.",
+        "invalid_proposer_kind": "External proposal rows must use proposer_kind=llm.",
+        "empty_proposed_text": "Include the candidate sentence or paragraph in proposed_text.",
+        "missing_prompt_hash": "Include a stable prompt_hash for LLM-authored proposals.",
+        "unknown_claim_id": "Reference only claim ids registered in paper/claims.yaml.",
+        "unsupported_claim": "Move unsupported claim text to limitations/roadmap or strengthen the evidence first.",
+        "missing_source_ref": "Attach existing source_refs with current sha256 and row_count.",
+        "stale_source_ref": "Refresh source_refs from the current artifact hashes and row counts.",
+        "disallowed_surface": "Use only surfaces registered for the referenced claim or candidate type.",
+        "contradicts_non_claim": "Remove registered non-claims from proposed paper text.",
+    }
+    return [messages.get(error, f"Fix validation error: {error}") for error in errors]
+
+
+def validate_external_paper_agent_candidate(
+    row: dict[str, Any],
+    repo: Path,
+    claim_by_id: dict[str, dict[str, Any]],
+    sources: dict[str, Any],
+    registry: dict[str, Any],
+) -> dict[str, Any]:
+    non_claims = list(registry.get("paper_contract", {}).get("non_claims", []))
+    errors: list[str] = []
+    input_ref = row.get("_input_ref", {})
+    parse_error = row.get("_parse_error")
+    candidate_type = str(row.get("candidate_type") or "invalid_candidate").strip()
+    if parse_error:
+        errors.append("invalid_json")
+        candidate_type = "invalid_candidate"
+    else:
+        if row.get("schema") != PAPER_AGENT_SCHEMA:
+            errors.append("invalid_schema")
+        if row.get("trace_version") != PAPER_AGENT_TRACE_VERSION:
+            errors.append("invalid_trace_version")
+        if candidate_type not in PAPER_AGENT_CANDIDATE_TYPES:
+            errors.append("invalid_candidate_type")
+
+    proposer_kind = str(row.get("proposer_kind") or "llm").strip()
+    if proposer_kind != "llm":
+        errors.append("invalid_proposer_kind")
+    model_id = row.get("proposer_model") or row.get("model_id")
+    prompt_hash = row.get("prompt_hash")
+    if proposer_kind == "llm" and not prompt_hash:
+        errors.append("missing_prompt_hash")
+
+    proposed_text = str(row.get("proposed_text") or "").strip()
+    if not proposed_text:
+        errors.append("empty_proposed_text")
+        if parse_error:
+            proposed_text = str(parse_error)
+
+    claim_ids = normalize_string_list(row.get("claim_ids"))
+    unknown_claim_ids = [claim_id for claim_id in claim_ids if claim_id not in claim_by_id]
+    if unknown_claim_ids:
+        errors.append("unknown_claim_id")
+    if candidate_type == "claim_sentence":
+        if not claim_ids:
+            errors.append("unknown_claim_id")
+        unsupported = [
+            claim_id
+            for claim_id in claim_ids
+            if claim_id in claim_by_id and claim_by_id[claim_id].get("status") != "supported"
+        ]
+        if unsupported:
+            errors.append("unsupported_claim")
+
+    paper_surfaces = normalize_string_list(row.get("paper_surfaces"))
+    if candidate_type in PAPER_AGENT_CANDIDATE_TYPES:
+        allowed_surfaces = external_candidate_allowed_surfaces(candidate_type, claim_ids, claim_by_id)
+        if not paper_surfaces or any(surface not in allowed_surfaces for surface in paper_surfaces):
+            errors.append("disallowed_surface")
+
+    submitted_source_refs = normalize_external_source_refs(row.get("source_refs"))
+    current_refs = [
+        current_source_ref(repo, sources, ref["path"])
+        for ref in submitted_source_refs
+    ]
+    if candidate_type in PAPER_AGENT_REQUIRED_SOURCE_TYPES and not submitted_source_refs:
+        errors.append("missing_source_ref")
+    for submitted_ref, current_ref in zip(submitted_source_refs, current_refs):
+        errors.extend(source_ref_validation_errors(candidate_type, submitted_ref, current_ref))
+
+    errors.extend(external_candidate_scope_errors(proposed_text, non_claims))
+    errors = normalize_string_list(errors)
+
+    accepted = not errors
+    support_status = external_support_status(claim_ids, claim_by_id)
+    verdict = paper_agent_candidate_row(
+        candidate_type=candidate_type,
+        proposer_kind=proposer_kind,
+        proposed_text=proposed_text,
+        claim_ids=claim_ids,
+        paper_surfaces=paper_surfaces,
+        source_refs=current_refs,
+        verifier_status="accepted" if accepted else "rejected",
+        support_status=support_status,
+        rejection_reason=None if accepted else errors[0],
+        accepted_surface=paper_surfaces[0] if accepted and paper_surfaces else None,
+        residual_feedback=[] if accepted else external_candidate_feedback(errors),
+        scope_constraints=non_claims,
+        required_for_submission=any(
+            bool(claim_by_id[claim_id].get("required_for_submission", False))
+            for claim_id in claim_ids
+            if claim_id in claim_by_id
+        ),
+        decision_rule={
+            "external_candidate": True,
+            "validation_errors": errors,
+        },
+        model_id=str(model_id) if model_id else None,
+        prompt_hash=str(prompt_hash) if prompt_hash else None,
+    )
+    verdict["input_ref"] = input_ref
+    if row.get("candidate_id"):
+        verdict["external_candidate_id"] = row.get("candidate_id")
+    if parse_error:
+        verdict["parse_error"] = parse_error
+    verdict["submitted_source_refs"] = submitted_source_refs
+    verdict["validation_errors"] = errors
+    return verdict
+
+
+def external_paper_agent_trace_rows(
+    rows: list[dict[str, Any]],
+    repo: Path,
+    claims: list[dict[str, Any]],
+    sources: dict[str, Any],
+    registry: dict[str, Any],
+) -> list[dict[str, Any]]:
+    claim_by_id = {claim["id"]: claim for claim in claims}
+    return [
+        validate_external_paper_agent_candidate(row, repo, claim_by_id, sources, registry)
+        for row in rows
+    ]
+
+
+def paper_agent_candidate_row(
+    *,
+    candidate_type: str,
+    proposed_text: str,
+    proposer_kind: str,
+    claim_ids: list[str],
+    paper_surfaces: list[str],
+    source_refs: list[dict[str, Any]],
+    verifier_status: str,
+    support_status: str | None = None,
+    rejection_reason: str | None = None,
+    accepted_surface: str | None = None,
+    residual_feedback: list[str] | None = None,
+    scope_constraints: list[str] | None = None,
+    required_for_submission: bool = False,
+    decision_rule: dict[str, Any] | None = None,
+    model_id: str | None = None,
+    prompt_hash: str | None = None,
+) -> dict[str, Any]:
+    basis = {
+        "candidate_type": candidate_type,
+        "proposed_text": proposed_text,
+        "claim_ids": claim_ids,
+        "paper_surfaces": paper_surfaces,
+        "source_paths": [ref.get("path") for ref in source_refs],
+    }
+    return {
+        "schema": PAPER_AGENT_SCHEMA,
+        "trace_version": PAPER_AGENT_TRACE_VERSION,
+        "candidate_id": stable_json_hash(basis),
+        "candidate_type": candidate_type,
+        "proposer_kind": proposer_kind,
+        "proposer_model": model_id,
+        "prompt_hash": prompt_hash,
+        "proposed_text": proposed_text,
+        "claim_ids": claim_ids,
+        "claim_family_ids": sorted({claim_family_id(claim_id) for claim_id in claim_ids}),
+        "paper_surfaces": paper_surfaces,
+        "source_refs": source_refs,
+        "required_for_submission": required_for_submission,
+        "verifier": {
+            "name": PAPER_AGENT_VERIFIER,
+            "status": verifier_status,
+            "support_status": support_status,
+            "decision_rule": decision_rule or {},
+        },
+        "verifier_status": verifier_status,
+        "accepted_surface": accepted_surface,
+        "rejection_reason": rejection_reason,
+        "residual_feedback": residual_feedback or [],
+        "scope_constraints": scope_constraints or [],
+    }
+
+
+def paper_agent_trace_rows(
+    claims: list[dict[str, Any]],
+    limitations: list[dict[str, Any]],
+    experiment_map: dict[str, Any],
+    repo: Path,
+    sources: dict[str, Any],
+    registry: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    non_claims = list(registry.get("paper_contract", {}).get("non_claims", []))
+    claim_by_id = {claim["id"]: claim for claim in claims}
+
+    for claim in claims:
+        status = str(claim.get("status", "missing"))
+        source_refs = claim_source_refs(claim, sources)
+        accepted = status == "supported"
+        rows.append(
+            paper_agent_candidate_row(
+                candidate_type="claim_sentence",
+                proposer_kind="claim_registry",
+                proposed_text=str(claim.get("claim_text", "")),
+                claim_ids=[claim["id"]],
+                paper_surfaces=list(claim.get("paper_surfaces", [])),
+                source_refs=source_refs,
+                verifier_status="accepted" if accepted else "rejected",
+                support_status=status,
+                rejection_reason=None if accepted else f"claim_status_{status}",
+                accepted_surface="paper" if accepted else None,
+                residual_feedback=list(claim.get("residual", [])),
+                scope_constraints=non_claims,
+                required_for_submission=bool(claim.get("required_for_submission")),
+                decision_rule=dict(claim.get("decision_rule", {})),
+            )
+        )
+        if claim.get("summary"):
+            rows.append(
+                paper_agent_candidate_row(
+                    candidate_type="audit_summary",
+                    proposer_kind="claim_compiler",
+                    proposed_text=str(claim.get("summary", "")),
+                    claim_ids=[claim["id"]],
+                    paper_surfaces=["gap_report", "support_report"],
+                    source_refs=source_refs,
+                    verifier_status="accepted",
+                    support_status=status,
+                    accepted_surface="audit",
+                    residual_feedback=list(claim.get("residual", [])),
+                    scope_constraints=non_claims,
+                    required_for_submission=bool(claim.get("required_for_submission")),
+                    decision_rule=dict(claim.get("decision_rule", {})),
+                )
+            )
+
+    for item in limitations:
+        claim_id = str(item.get("claim_id", ""))
+        claim = claim_by_id.get(claim_id, {})
+        rows.append(
+            paper_agent_candidate_row(
+                candidate_type="limitation_candidate",
+                proposer_kind="claim_compiler",
+                proposed_text=str(item.get("text", "")),
+                claim_ids=[claim_id] if claim_id else [],
+                paper_surfaces=["limitations"],
+                source_refs=claim_source_refs(claim, sources) if claim else [],
+                verifier_status="accepted",
+                support_status=str(item.get("status", "")),
+                accepted_surface="limitations",
+                residual_feedback=list(item.get("residual", [])),
+                scope_constraints=non_claims,
+                required_for_submission=bool(claim.get("required_for_submission", False)),
+                decision_rule=dict(claim.get("decision_rule", {})) if claim else {},
+            )
+        )
+
+    for experiment in experiment_map.get("experiments", []):
+        claim_ids = [claim.get("id") for claim in experiment.get("claims", []) if claim.get("id")]
+        source_refs = [
+            current_source_ref(repo, sources, str(artifact))
+            for artifact in experiment.get("artifacts", [])
+        ]
+        for instruction in experiment.get("agent_instructions", []):
+            rows.append(
+                paper_agent_candidate_row(
+                    candidate_type="agent_brief",
+                    proposer_kind="claim_registry",
+                    proposed_text=str(instruction),
+                    claim_ids=claim_ids,
+                    paper_surfaces=["agent_instructions", "roadmap"],
+                    source_refs=source_refs,
+                    verifier_status="accepted",
+                    support_status="brief",
+                    accepted_surface="agent_instructions",
+                    scope_constraints=non_claims,
+                )
+            )
+
+    return rows
+
+
+def paper_agent_trace_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    by_status: dict[str, int] = {}
+    by_type: dict[str, int] = {}
+    by_proposer_kind: dict[str, int] = {}
+    external_by_status: dict[str, int] = {}
+    for row in rows:
+        status = str(row.get("verifier_status", "unknown"))
+        candidate_type = str(row.get("candidate_type", "unknown"))
+        proposer_kind = str(row.get("proposer_kind", "unknown"))
+        by_status[status] = by_status.get(status, 0) + 1
+        by_type[candidate_type] = by_type.get(candidate_type, 0) + 1
+        by_proposer_kind[proposer_kind] = by_proposer_kind.get(proposer_kind, 0) + 1
+        if row.get("input_ref"):
+            external_by_status[status] = external_by_status.get(status, 0) + 1
+    return {
+        "schema": PAPER_AGENT_SCHEMA,
+        "trace_version": PAPER_AGENT_TRACE_VERSION,
+        "row_count": len(rows),
+        "verifier_status_counts": dict(sorted(by_status.items())),
+        "candidate_type_counts": dict(sorted(by_type.items())),
+        "proposer_kind_counts": dict(sorted(by_proposer_kind.items())),
+        "external_row_count": sum(1 for row in rows if row.get("input_ref")),
+        "external_verifier_status_counts": dict(sorted(external_by_status.items())),
+    }
+
+
 def experiment_map_from_registry(
     registry: dict[str, Any],
     claims: list[dict[str, Any]],
@@ -2417,6 +2981,7 @@ def write_claims_typ(
     surfaced_audit: list[dict[str, Any]],
     limitations: list[dict[str, Any]],
     roadmap: dict[str, Any],
+    paper_agent_summary: dict[str, Any],
 ) -> None:
     source_rows = [
         {"path": source, **info}
@@ -2449,6 +3014,7 @@ def write_claims_typ(
         f"#let paper_claim_sources = {typ_value(source_rows)}",
         f"#let paper_claim_limitations = {typ_value(limitations)}",
         f"#let paper_claim_roadmap_audit = {typ_value(roadmap)}",
+        f"#let paper_agent_trace_summary = {typ_value(paper_agent_summary)}",
         f"#let paper_claim_support_surfaces = {typ_value(support_rows)}",
         "",
         "#let paper_claims = (",
@@ -2614,6 +3180,62 @@ def write_roadmap_report(path: Path, audit: dict[str, Any]) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_paper_agent_trace(path: Path, rows: list[dict[str, Any]]) -> None:
+    text = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+    path.write_text(text, encoding="utf-8")
+
+
+def write_paper_agent_report(
+    path: Path,
+    rows: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> None:
+    rejected = [row for row in rows if row.get("verifier_status") == "rejected"]
+    lines = [
+        "# Paper Agent Candidate Trace",
+        "",
+        "Generated by `make paper-claims`.",
+        "",
+        f"- Schema: `{summary['schema']}`",
+        f"- Trace version: `{summary['trace_version']}`",
+        f"- Rows: {summary['row_count']}",
+        f"- Verifier status counts: `{json.dumps(summary['verifier_status_counts'], sort_keys=True)}`",
+        f"- Candidate type counts: `{json.dumps(summary['candidate_type_counts'], sort_keys=True)}`",
+        f"- Proposer kind counts: `{json.dumps(summary.get('proposer_kind_counts', {}), sort_keys=True)}`",
+        f"- External candidate rows: {summary.get('external_row_count', 0)}",
+        "- External verifier status counts: "
+        f"`{json.dumps(summary.get('external_verifier_status_counts', {}), sort_keys=True)}`",
+        "",
+        "## Contract",
+        "",
+        "LLM-authored paper text is a proposal, not an authority. A sentence can move into the paper only when its `verifier_status` is `accepted` for the intended surface. Rejected claim sentences remain useful as residual feedback for the next proposal pass.",
+        "",
+    ]
+    external_rows = [row for row in rows if row.get("input_ref")]
+    if external_rows:
+        lines.extend(["## External Candidate Inputs", ""])
+        for row in external_rows:
+            input_ref = row.get("input_ref", {})
+            claim_ids = ", ".join(f"`{claim_id}`" for claim_id in row.get("claim_ids", [])) or "none"
+            location = f"{input_ref.get('path', 'unknown')}:{input_ref.get('line', '?')}"
+            reason = row.get("rejection_reason") or "accepted"
+            lines.append(
+                f"- `{location}` {row.get('verifier_status')}: {claim_ids}; "
+                f"type=`{row.get('candidate_type')}`; reason=`{reason}`"
+            )
+        lines.append("")
+    if rejected:
+        lines.extend(["## Rejected Claim Sentences", ""])
+        for row in rejected:
+            claim_ids = ", ".join(f"`{claim_id}`" for claim_id in row.get("claim_ids", [])) or "none"
+            lines.append(
+                f"- {claim_ids}: `{row.get('rejection_reason')}`; "
+                f"text={row.get('proposed_text')}"
+            )
+        lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def write_agent_instructions(path: Path, experiment_map: dict[str, Any]) -> None:
     lines = [
         "# Claim-Experiment Agent Instructions",
@@ -2698,6 +3320,7 @@ def write_support_report(
     limitations: list[dict[str, Any]],
     roadmap: dict[str, Any],
     experiment_map: dict[str, Any],
+    paper_agent_summary: dict[str, Any],
 ) -> None:
     lines = [
         "# Paper Support Check",
@@ -2711,6 +3334,12 @@ def write_support_report(
         f"- Roadmap rows without claim-family tags: {roadmap.get('missing_count', 0)}",
         f"- Roadmap rows with unregistered claim-family tags: {roadmap.get('unregistered_count', 0)}",
         f"- Claim-linked experiment briefs: {len(experiment_map.get('experiments', []))}",
+        f"- Paper-agent trace rows: {paper_agent_summary.get('row_count', 0)}",
+        "- Paper-agent verifier statuses: "
+        f"`{json.dumps(paper_agent_summary.get('verifier_status_counts', {}), sort_keys=True)}`",
+        f"- External paper-agent candidate rows: {paper_agent_summary.get('external_row_count', 0)}",
+        "- External paper-agent verifier statuses: "
+        f"`{json.dumps(paper_agent_summary.get('external_verifier_status_counts', {}), sort_keys=True)}`",
         "",
     ]
     if failures:
@@ -2744,6 +3373,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--claims", type=Path, default=Path("paper/claims.yaml"))
     parser.add_argument("--output-dir", type=Path, default=Path("paper/generated"))
     parser.add_argument("--paper", type=Path, default=Path("paper/paper.typ"))
+    parser.add_argument("--agent-candidates-dir", type=Path, default=Path("paper/agent_candidates"))
     parser.add_argument("--fail-required", action="store_true")
     parser.add_argument("--support-check", action="store_true")
     parser.add_argument("--fail-unlinked-roadmap", action="store_true")
@@ -2752,6 +3382,7 @@ def main(argv: list[str] | None = None) -> int:
     repo = Path(__file__).resolve().parents[1]
     registry = read_json(repo / args.claims)
     output_dir = repo / args.output_dir
+    agent_candidates_dir = repo_arg_path(repo, args.agent_candidates_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     claims: list[dict[str, Any]] = []
@@ -2784,6 +3415,18 @@ def main(argv: list[str] | None = None) -> int:
     ]
     roadmap = roadmap_audit(repo / args.paper, claims, family_ids)
     experiment_map = experiment_map_from_registry(registry, claims)
+    paper_agent_rows = paper_agent_trace_rows(claims, limitations, experiment_map, repo, sources, registry)
+    external_candidate_inputs = read_paper_agent_candidate_inputs(repo, agent_candidates_dir)
+    paper_agent_rows.extend(
+        external_paper_agent_trace_rows(
+            external_candidate_inputs,
+            repo,
+            claims,
+            sources,
+            registry,
+        )
+    )
+    paper_agent_summary = paper_agent_trace_summary(paper_agent_rows)
     payload = {
         "schema": "crlp.paper_claims.v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -2799,16 +3442,23 @@ def main(argv: list[str] | None = None) -> int:
             "limitation_count": len(limitations),
             "roadmap_missing_links": roadmap.get("missing_count", 0),
             "roadmap_unregistered_claim_refs": roadmap.get("unregistered_count", 0),
+            "paper_agent_external_rows": paper_agent_summary.get("external_row_count", 0),
+            "paper_agent_external_rejections": paper_agent_summary.get(
+                "external_verifier_status_counts",
+                {},
+            ).get("rejected", 0),
         },
         "roadmap_audit": roadmap,
         "experiment_map": experiment_map,
+        "paper_agent_trace": {
+            **paper_agent_summary,
+            "path": str(args.output_dir / "paper_agent_trace.jsonl"),
+            "report": str(args.output_dir / "paper_agent_trace.md"),
+        },
         "limitations": limitations,
         "claims": claims,
     }
-    (output_dir / "claims.json").write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    write_json_if_meaningful_change(output_dir / "claims.json", payload)
     write_claims_typ(
         output_dir / "claims.typ",
         claims,
@@ -2819,11 +3469,14 @@ def main(argv: list[str] | None = None) -> int:
         surfaced_audit,
         limitations,
         roadmap,
+        paper_agent_summary,
     )
     write_gap_report(output_dir / "gap_report.md", claims, counts, sources)
     write_limitations_report(output_dir / "limitations.md", limitations)
     write_roadmap_report(output_dir / "roadmap_links.md", roadmap)
     write_agent_instructions(output_dir / "agent_instructions.md", experiment_map)
+    write_paper_agent_trace(output_dir / "paper_agent_trace.jsonl", paper_agent_rows)
+    write_paper_agent_report(output_dir / "paper_agent_trace.md", paper_agent_rows, paper_agent_summary)
     write_support_report(
         output_dir / "support_report.md",
         failures,
@@ -2832,6 +3485,7 @@ def main(argv: list[str] | None = None) -> int:
         limitations,
         roadmap,
         experiment_map,
+        paper_agent_summary,
     )
 
     print(
@@ -2843,7 +3497,9 @@ def main(argv: list[str] | None = None) -> int:
         f"limitations={len(limitations)}; "
         f"surfaced_unsupported_failures={len(surfaced_failures)}; "
         f"roadmap_unlinked={roadmap.get('missing_count', 0)}; "
-        f"roadmap_unregistered={roadmap.get('unregistered_count', 0)}"
+        f"roadmap_unregistered={roadmap.get('unregistered_count', 0)}; "
+        f"paper_agent_rows={paper_agent_summary.get('row_count', 0)}; "
+        f"external_paper_agent_rows={paper_agent_summary.get('external_row_count', 0)}"
     )
     print(f"wrote {output_dir / 'gap_report.md'}")
     should_fail_required = args.fail_required or args.support_check

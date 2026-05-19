@@ -9,15 +9,6 @@ name: results
 
 on:
   workflow_dispatch:
-    inputs:
-      arc_agi_task_dir:
-        description: "Optional ARC corpus path (left empty: builtin task only)."
-        required: false
-        default: ""
-      arc_agi_max_tasks:
-        description: "Max ARC tasks per split."
-        required: false
-        default: "400"
   schedule:
     - cron: "23 7 * * *"  # 07:23 UTC daily
 
@@ -53,11 +44,6 @@ jobs:
         run: python3 scripts/environment_manifest.py --output results/latest/environment.json
 
       - name: Run make results
-        env:
-          # On schedule triggers `inputs.*` is empty; fall back to safe defaults
-          # so capture_results.py receives well-formed CLI args.
-          ARC_AGI_TASK_DIR: ${{ inputs.arc_agi_task_dir || '' }}
-          ARC_AGI_MAX_TASKS: ${{ inputs.arc_agi_max_tasks || '400' }}
         run: make results
 
       - name: Canonicalize comparison.jsonl
@@ -103,8 +89,6 @@ jobs:
             - runner: `ubuntu-24.04`
             - compiler: `${{ env.CC }}`
             - REAL: `${{ env.REAL }}`
-            - ARC_AGI_TASK_DIR: `${{ inputs.arc_agi_task_dir }}`
-            - ARC_AGI_MAX_TASKS: `${{ inputs.arc_agi_max_tasks }}`
           commit-message: "ci(results): captured run ${{ github.run_id }}"
           add-paths: |
             results/latest/comparison.jsonl

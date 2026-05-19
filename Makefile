@@ -96,10 +96,26 @@ HYPOTHESIS_LIBRARY_PROMOTION_TASK_IDS ?= move_to_anchor,move_to_anchor_x
 HYPOTHESIS_LIBRARY_HELDOUT_TASK_IDS ?= bbox_panel_selection,connect_aligned,extend_aligned_sequence,fill_enclosed,move_to_anchor_both_positive,move_to_anchor_y,object_extract,panel_selection,recolor_by_reference,translate
 HYPOTHESIS_LIBRARY_ABLATION_BASE_FLAGS ?= --task-dir tests/fixtures/arc_hypothesis --task-ids $(HYPOTHESIS_LIBRARY_HELDOUT_TASK_IDS) --max-tasks 10 --program-budget-tight-grid --loader-summary-only --induction --min-induction-evidence 8 --hypothesis-top-k 1 --disable-hypothesis-coverage-selection --disable-hypothesis-structural-score --disable-hypothesis-train-filter
 HYPOTHESIS_LIBRARY_SPLIT_SWEEP_DIR ?= $(BUILD_DIR)/hypothesis_library_split_sweep
+HYPOTHESIS_LIBRARY_FEEDBACK_LOOP_DIR ?= $(BUILD_DIR)/hypothesis_library_feedback_loop
 HYPOTHESIS_LIBRARY_PUBLIC_DIR ?= $(BUILD_DIR)/hypothesis_library_public
 HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR ?=
 HYPOTHESIS_LIBRARY_PUBLIC_TRAIN_MAX_TASKS ?= 400
 HYPOTHESIS_LIBRARY_PUBLIC_EVAL_MAX_TASKS ?= 400
+HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR ?= $(BUILD_DIR)/hypothesis_library_public_filter
+HYPOTHESIS_LIBRARY_PUBLIC_FILTER_MAX_TASKS ?= 400
+HYPOTHESIS_LIBRARY_PUBLIC_FILTER_SOURCE_MAX_TASKS ?= $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_MAX_TASKS)
+HYPOTHESIS_LIBRARY_PUBLIC_FILTER_HELDOUT_MAX_TASKS ?= $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_MAX_TASKS)
+HYPOTHESIS_LIBRARY_PUBLIC_FILTER_SOURCE_COUNT ?= 24
+HYPOTHESIS_LIBRARY_PUBLIC_FILTER_HELDOUT_COUNT ?= 48
+HYPOTHESIS_LIBRARY_PUBLIC_FILTER_EXTRA ?=
+HYPOTHESIS_LIBRARY_PUBLIC_REPORT_TOP_K ?= 20
+HYPOTHESIS_LIBRARY_PUBLIC_TRIAGE_DIR ?= $(BUILD_DIR)/hypothesis_library_public_triage
+HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR ?= $(BUILD_DIR)/hypothesis_library_neural_discovery
+HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_CLUSTERS ?= 12
+HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_VERIFY ?= 0
+HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_MUTATIONS_PER_CLUSTER ?= 2
+HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_MUTATION_VERIFY ?= 1
+HYPOTHESIS_LIBRARY_NEURAL_FAILURE_PROOF_DIR ?= $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR)/failure_proof
 TINY_NET_PLATEAU_AUDIT_DIR ?= $(BUILD_DIR)/tiny_net_plateau_audit
 TINY_NET_AUDIT_SEEDS ?= 20240516,20240517,20240518
 TINY_NET_AUDIT_CAPACITIES ?= 8x4,16x8,32x16,64x32
@@ -111,6 +127,10 @@ ARC_AGI_MAX_TASKS ?= 400
 ARC_EVIDENCE_SURFACE_DIR ?= $(BUILD_DIR)/arc_evidence_surface
 ARC_FAMILY_DIAGNOSTICS ?= results/2026-05-17-arc-induction-task-diagnostics.tasks.jsonl
 ARC_FAMILY_DISCOVERY_DIR ?= $(BUILD_DIR)/arc_family_discovery
+PAPER_AGENT_PROMPT ?= paper/agent_candidates/next_prompt.md
+PAPER_AGENT_OUTPUT ?= paper/agent_candidates/llm_proposals.jsonl
+PAPER_AGENT_MODEL ?= manual-llm
+PAPER_AGENT_LLM_CMD ?=
 SIGNAL_FLIGHT_SIGNAL_DIR ?= ../signal
 SIGNAL_FLIGHT_TRACE_BIN ?= $(SIGNAL_FLIGHT_SIGNAL_DIR)/build/flight_trace
 SIGNAL_FLIGHT_TRAIN_TRACE ?= $(BUILD_DIR)/signal_flight_train.csv
@@ -209,6 +229,14 @@ HAIKU_UNDERSTANDING_HF_EPOCHS ?= 4
 HAIKU_UNDERSTANDING_SYNTHETIC_EPOCHS ?= 4
 HAIKU_UNDERSTANDING_LEARNING_RATE ?= 0.006
 HAIKU_UNDERSTANDING_TRACE_LIMIT ?= 2000
+NEURAL_GRAMMAR_DISCOVERY_DIR ?= $(BUILD_DIR)/neural_grammar_discovery
+NEURAL_GRAMMAR_DISCOVERY_DOMAINS ?= arc,haiku,program_synthesis,grid_path,signal_mining
+NEURAL_GRAMMAR_DISCOVERY_ARC_PROOF ?= $(HYPOTHESIS_LIBRARY_NEURAL_FAILURE_PROOF_DIR)/task_proof_rows.jsonl
+NEURAL_GRAMMAR_DISCOVERY_HAIKU_WORD_TRACE ?= $(HAIKU_WORD_LM_DIR)/smoke_trace.jsonl
+NEURAL_GRAMMAR_DISCOVERY_HAIKU_UNDERSTANDING_TRACE ?= $(HAIKU_UNDERSTANDING_DIR)/smoke_trace.jsonl
+NEURAL_GRAMMAR_DISCOVERY_PROGRAM_SYNTHESIS_TRACE ?= $(NEURAL_GRAMMAR_DISCOVERY_DIR)/program_synthesis_source.jsonl
+NEURAL_GRAMMAR_DISCOVERY_GRID_TRACE ?= $(BUILD_DIR)/grid_path.jsonl
+NEURAL_GRAMMAR_DISCOVERY_SIGNAL_MINING_TRACE ?= $(BUILD_DIR)/signal_mining_smoke/trace.jsonl
 
 SIGNAL_FLIGHT_INCLUDE_FLAGS := \
 	-I$(SIGNAL_FLIGHT_SIGNAL_DIR)/server \
@@ -263,7 +291,7 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-public paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit experiment-matrix results paper-pdf paper-data paper-claims paper-support editorial-pr-check paper-ci neurosymbolic-tune python-check benchmark test sanitize check clean
+.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit experiment-matrix results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune python-check benchmark test sanitize check experimental-check clean
 
 all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(BENCHMARK)
 
@@ -658,6 +686,11 @@ program-synthesis: $(PROGRAM_SYNTHESIS)
 program-synthesis-baselines: $(PROGRAM_SYNTHESIS)
 	./$(PROGRAM_SYNTHESIS) --proposer all --budget-grid
 
+.PHONY: program-synthesis-sketch-source
+program-synthesis-sketch-source: $(PROGRAM_SYNTHESIS)
+	mkdir -p $(NEURAL_GRAMMAR_DISCOVERY_DIR)
+	./$(PROGRAM_SYNTHESIS) --proposer all --max-rules 16 > $(NEURAL_GRAMMAR_DISCOVERY_PROGRAM_SYNTHESIS_TRACE)
+
 modular-gate-search: $(MODULAR_GATE_SEARCH)
 	./$(MODULAR_GATE_SEARCH)
 
@@ -672,7 +705,7 @@ arc-agi-loader: $(ARC_AGI)
 	./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS) --program-budget-grid
 
 arc-agi-induction-smoke: $(ARC_AGI)
-	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 12 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 11
+	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 14 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 13
 
 arc-agi-induction-public: $(ARC_AGI)
 	$(PYTHON) scripts/arc_induction_parity.py --arc-agi ./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS)
@@ -691,9 +724,9 @@ rejected-candidate-seed-audit: $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH) $(DEL
 
 hypothesis-library-promotion: $(ARC_AGI)
 	mkdir -p $(HYPOTHESIS_LIBRARY_DIR)
-	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 12 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 11 > $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_raw.jsonl
+	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 14 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 13 > $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_raw.jsonl
 	$(PYTHON) scripts/certified_hypothesis_library.py --input $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_raw.jsonl --output-dir $(HYPOTHESIS_LIBRARY_DIR) --min-support-tasks 2
-	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 12 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 11 --hypothesis-library-prior $(HYPOTHESIS_LIBRARY_DIR)/library_prior.tsv > $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_library_prior_raw.jsonl
+	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 14 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 13 --hypothesis-library-prior $(HYPOTHESIS_LIBRARY_DIR)/library_prior.tsv > $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_library_prior_raw.jsonl
 	$(PYTHON) scripts/certified_hypothesis_library.py --input $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_raw.jsonl --output-dir $(HYPOTHESIS_LIBRARY_DIR) --min-support-tasks 2 --feedback-input $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_library_prior_raw.jsonl
 
 hypothesis-library-ablation: $(ARC_AGI)
@@ -717,8 +750,30 @@ hypothesis-library-ablation: $(ARC_AGI)
 hypothesis-library-split-sweep: $(ARC_AGI)
 	$(PYTHON) scripts/hypothesis_library_split_sweep.py --arc-agi ./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --output-dir $(HYPOTHESIS_LIBRARY_SPLIT_SWEEP_DIR)
 
+hypothesis-library-feedback-loop: $(ARC_AGI)
+	$(PYTHON) scripts/hypothesis_library_feedback_loop.py --arc-agi ./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --generated-siblings-per-family 2 --max-feedback-tasks 3 --stress-no-prior --output-dir $(HYPOTHESIS_LIBRARY_FEEDBACK_LOOP_DIR)
+
 hypothesis-library-public: $(ARC_AGI)
 	$(PYTHON) scripts/hypothesis_library_split_sweep.py --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --output-dir $(HYPOTHESIS_LIBRARY_PUBLIC_DIR) --public-train-max-tasks $(HYPOTHESIS_LIBRARY_PUBLIC_TRAIN_MAX_TASKS) --public-eval-max-tasks $(HYPOTHESIS_LIBRARY_PUBLIC_EVAL_MAX_TASKS)
+
+hypothesis-library-public-filter: $(ARC_AGI)
+	$(PYTHON) scripts/arc_public_hard_subset.py --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --output-dir $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR) --source-max-tasks $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_SOURCE_MAX_TASKS) --heldout-max-tasks $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_HELDOUT_MAX_TASKS) --source-count $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_SOURCE_COUNT) --heldout-count $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_HELDOUT_COUNT) $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_EXTRA)
+
+hypothesis-library-public-report: hypothesis-library-public-filter
+	$(PYTHON) scripts/arc_public_diagnostics_report.py --diagnostics $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR)/diagnostics.jsonl --output-dir $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR) --top-k $(HYPOTHESIS_LIBRARY_PUBLIC_REPORT_TOP_K)
+
+hypothesis-library-public-triage: hypothesis-library-public-report
+	$(PYTHON) scripts/arc_public_coverage_triage.py --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --diagnostics $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR)/diagnostics.jsonl --buckets $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR)/arc_public_diagnostics_buckets.jsonl --output-dir $(HYPOTHESIS_LIBRARY_PUBLIC_TRIAGE_DIR) --top-k $(HYPOTHESIS_LIBRARY_PUBLIC_REPORT_TOP_K)
+
+hypothesis-library-neural-discovery: $(ARC_AGI) hypothesis-library-public-triage
+	$(PYTHON) scripts/arc_neural_discovery.py --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --diagnostics $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR)/diagnostics.jsonl --output-dir $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR) --clusters $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_CLUSTERS) --top-k $(HYPOTHESIS_LIBRARY_PUBLIC_REPORT_TOP_K) --verify-representatives $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_VERIFY) --mutations-per-cluster $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_MUTATIONS_PER_CLUSTER) --mutation-representatives $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_MUTATION_VERIFY)
+
+hypothesis-library-neural-failure-proof: $(ARC_AGI) hypothesis-library-neural-discovery
+	$(PYTHON) scripts/arc_neural_failure_proof.py --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --mutation-verification $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR)/mutation_verification.jsonl --candidate-sketches $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR)/candidate_sketches.jsonl --triage $(HYPOTHESIS_LIBRARY_PUBLIC_TRIAGE_DIR)/coverage_triage.jsonl --output-dir $(HYPOTHESIS_LIBRARY_NEURAL_FAILURE_PROOF_DIR)
+
+.PHONY: neural-grammar-discovery
+neural-grammar-discovery: hypothesis-library-neural-failure-proof haiku-word-lm-smoke haiku-understanding-smoke program-synthesis-sketch-source grid-path-trace signal-mining-smoke
+	$(PYTHON) scripts/neural_grammar_discovery.py --domains $(NEURAL_GRAMMAR_DISCOVERY_DOMAINS) --arc-failure-proof $(NEURAL_GRAMMAR_DISCOVERY_ARC_PROOF) --haiku-word-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_WORD_TRACE) --haiku-understanding-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_UNDERSTANDING_TRACE) --program-synthesis-trace $(NEURAL_GRAMMAR_DISCOVERY_PROGRAM_SYNTHESIS_TRACE) --grid-path-trace $(NEURAL_GRAMMAR_DISCOVERY_GRID_TRACE) --signal-mining-trace $(NEURAL_GRAMMAR_DISCOVERY_SIGNAL_MINING_TRACE) --output-dir $(NEURAL_GRAMMAR_DISCOVERY_DIR)
 
 paper-grade-evidence-core: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit multitask-adapter-heads experiment-matrix
 	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR)
@@ -803,9 +858,17 @@ signal-shadow-replay-audit:
 experiment-matrix: paper-support
 	$(PYTHON) scripts/experiment_matrix.py
 
-results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(ARC_AGI)
+results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH)
 	$(PYTHON) scripts/environment_manifest.py --output $(RESULTS_DIR)/environment.json >/dev/null
-	$(PYTHON) scripts/capture_results.py --output-dir $(RESULTS_DIR) --real $(REAL) --arc-agi-task-dir "$(ARC_AGI_TASK_DIR)" --arc-agi-max-tasks $(ARC_AGI_MAX_TASKS)
+	$(PYTHON) scripts/capture_results.py --output-dir $(RESULTS_DIR) --real $(REAL)
+	$(PYTHON) scripts/canonicalize_results.py --input $(RESULTS_DIR)/comparison.jsonl --output $(RESULTS_DIR)/comparison.canonical.jsonl
+	$(MAKE) trace-determinism-compare RESULTS_DIR=$(RESULTS_DIR)
+	$(MAKE) prime-gate-seed-audit
+	cp $(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl $(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl
+
+experimental-results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(PROGRAM_SYNTHESIS) $(MULTITASK_DOMAIN)
+	$(PYTHON) scripts/environment_manifest.py --output $(RESULTS_DIR)/environment.json >/dev/null
+	$(PYTHON) scripts/capture_results.py --output-dir $(RESULTS_DIR) --real $(REAL) --include-experimental --arc-agi-task-dir "$(ARC_AGI_TASK_DIR)" --arc-agi-max-tasks $(ARC_AGI_MAX_TASKS)
 	$(PYTHON) scripts/canonicalize_results.py --input $(RESULTS_DIR)/comparison.jsonl --output $(RESULTS_DIR)/comparison.canonical.jsonl
 	$(MAKE) trace-determinism-compare RESULTS_DIR=$(RESULTS_DIR)
 	$(MAKE) prime-gate-seed-audit
@@ -820,13 +883,23 @@ paper-data:
 paper-claims:
 	$(PYTHON) scripts/derive_paper_claims.py
 
+paper-agent-propose: paper-claims
+	PAPER_AGENT_MODEL="$(PAPER_AGENT_MODEL)" PAPER_AGENT_LLM_CMD="$(PAPER_AGENT_LLM_CMD)" $(PYTHON) scripts/paper_agent_propose.py --prompt-output "$(PAPER_AGENT_PROMPT)" --output "$(PAPER_AGENT_OUTPUT)"
+	@if [ -n "$(PAPER_AGENT_LLM_CMD)" ]; then $(MAKE) paper-claims; fi
+
+paper-pre-commit:
+	$(PYTHON) scripts/pre_commit_paper_claims.py
+
+install-hooks:
+	git config core.hooksPath .githooks
+
 paper-support: trace-determinism-compare
 	$(PYTHON) scripts/derive_paper_claims.py --support-check
 
 editorial-pr-check:
 	$(PYTHON) scripts/check_editorial_pr.py
 
-paper-ci: editorial-pr-check paper-pdf
+paper-ci: paper-support editorial-pr-check paper-pdf
 
 neurosymbolic-tune: all
 	$(PYTHON) scripts/neurosymbolic_tuning.py --output-dir $(TUNING_DIR) --real $(REAL) --skip-build
@@ -840,8 +913,10 @@ test: $(TEST_RUNNER)
 sanitize: $(SANITIZE_TEST_RUNNER)
 	./$(SANITIZE_TEST_RUNNER)
 
-check: python-check trace-determinism-compare paper-support test sanitize action-score symbolic-domains program-synthesis modular-gate-search-smoke arc-agi arc-agi-induction-smoke delayed-claim-self-test delayed-claim-eval grid-path-eval prime-rule-search-smoke prime-gap-eval haiku-word-lm-smoke haiku-understanding-smoke
+check: python-check trace-determinism-compare paper-support test sanitize action-score symbolic-domains modular-gate-search-smoke delayed-claim-self-test delayed-claim-eval grid-path-eval prime-rule-search-smoke prime-gap-eval
 	$(MAKE) test REAL=double
+
+experimental-check: program-synthesis program-synthesis-baselines arc-agi arc-agi-induction-smoke multitask-domain haiku-word-lm-smoke haiku-understanding-smoke
 
 clean:
 	rm -rf $(BUILD_DIR)

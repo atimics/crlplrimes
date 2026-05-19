@@ -152,8 +152,8 @@
         "secondary_sources": [],
         "source": "results/latest/comparison.canonical.jsonl",
         "source_command": "make results",
-        "source_row_count": 601,
-        "source_sha256": "2f8238c6688ff9d9fa186d7169907a46b28f651aa4a73e5fcce8dc6b6af19ff0"
+        "source_row_count": 523,
+        "source_sha256": "ba17042d834b7794ae45fdacec28493fa88a5596ce3737d3e2f5beb4afae848d"
       },
       "required_for_submission": true,
       "residual": [],
@@ -341,7 +341,6 @@
           "closed_loop_hidden": null,
           "expanded_exact": 1.97903333,
           "expanded_saved_pct": 72.49470705,
-          "false_rejections": 0,
           "label": "candidate:neural_structural",
           "present": true,
           "selection_strategy": "neural_structural",
@@ -352,7 +351,6 @@
           "closed_loop_hidden": null,
           "expanded_exact": 1.97903333,
           "expanded_saved_pct": 72.49470705,
-          "false_rejections": 0,
           "label": "candidate:best_neural",
           "present": true,
           "selection_strategy": "neural_structural",
@@ -363,7 +361,6 @@
           "closed_loop_hidden": null,
           "expanded_exact": 1.92653333,
           "expanded_saved_pct": 73.22437029,
-          "false_rejections": 0,
           "label": "candidate:grammar_order",
           "present": true,
           "selection_strategy": "grammar_order",
@@ -374,7 +371,6 @@
           "closed_loop_hidden": null,
           "expanded_exact": 1.92653333,
           "expanded_saved_pct": 73.22437029,
-          "false_rejections": 0,
           "label": "candidate:structural_heuristic",
           "present": true,
           "selection_strategy": "structural_heuristic",
@@ -385,7 +381,6 @@
           "closed_loop_hidden": null,
           "expanded_exact": 7.04063333,
           "expanded_saved_pct": 2.14683141,
-          "false_rejections": 0,
           "label": "conditional_gap:neural_structural",
           "present": true,
           "selection_strategy": "neural_structural",
@@ -396,7 +391,6 @@
           "closed_loop_hidden": "64x32",
           "expanded_exact": 3.15306667,
           "expanded_saved_pct": 56.17758382,
-          "false_rejections": 0,
           "label": "conditional_gap:best_neural",
           "present": true,
           "selection_strategy": "closed_loop_neural",
@@ -407,7 +401,6 @@
           "closed_loop_hidden": null,
           "expanded_exact": 3.19676667,
           "expanded_saved_pct": 55.57022603,
-          "false_rejections": 0,
           "label": "conditional_gap:grammar_order",
           "present": true,
           "selection_strategy": "grammar_order",
@@ -418,7 +411,6 @@
           "closed_loop_hidden": null,
           "expanded_exact": 3.19676667,
           "expanded_saved_pct": 55.57022603,
-          "false_rejections": 0,
           "label": "conditional_gap:structural_heuristic",
           "present": true,
           "selection_strategy": "structural_heuristic",
@@ -491,8 +483,8 @@
         "secondary_sources": [],
         "source": "results/latest/comparison.canonical.jsonl",
         "source_command": "make results",
-        "source_row_count": 601,
-        "source_sha256": "2f8238c6688ff9d9fa186d7169907a46b28f651aa4a73e5fcce8dc6b6af19ff0"
+        "source_row_count": 523,
+        "source_sha256": "ba17042d834b7794ae45fdacec28493fa88a5596ce3737d3e2f5beb4afae848d"
       },
       "required_for_submission": false,
       "residual": [
@@ -3523,7 +3515,7 @@
     ],
     "schema": "crlp.paper_claim_experiment_map.v1"
   },
-  "generated_at": "2026-05-19T07:23:19.769350+00:00",
+  "generated_at": "2026-05-19T14:00:31.928194+00:00",
   "limitations": [
     {
       "claim_id": "C2.prime_proposer_fixed_budget",
@@ -3577,6 +3569,33 @@
       "title": "Tiny-net architecture claims are gated by plateau audits"
     }
   ],
+  "paper_agent_trace": {
+    "candidate_type_counts": {
+      "agent_brief": 14,
+      "audit_summary": 16,
+      "claim_sentence": 18,
+      "limitation_candidate": 3
+    },
+    "external_row_count": 2,
+    "external_verifier_status_counts": {
+      "accepted": 1,
+      "rejected": 1
+    },
+    "path": "paper/generated/paper_agent_trace.jsonl",
+    "proposer_kind_counts": {
+      "claim_compiler": 19,
+      "claim_registry": 30,
+      "llm": 2
+    },
+    "report": "paper/generated/paper_agent_trace.md",
+    "row_count": 51,
+    "schema": "crlp.paper_agent_candidate.v1",
+    "trace_version": 1,
+    "verifier_status_counts": {
+      "accepted": 47,
+      "rejected": 4
+    }
+  },
   "registry": "paper/claims.yaml",
   "roadmap_audit": {
     "linked_count": 0,
@@ -3723,6 +3742,13 @@
       "sha256": "a643884573ea161686a685fb86f9f11208b8914931d58583e4a7cd9b257cfb96",
       "size_bytes": 4233
     },
+    "results/2026-05-17-signal-flight/shadow_frames.jsonl": {
+      "exists": true,
+      "modified_utc": "2026-05-18T08:27:46.788133+00:00",
+      "row_count": 74,
+      "sha256": "268b6604d5df4a5fad824d34f5c721a1cf44f5943d429f6426d638b43ca19416",
+      "size_bytes": 66292
+    },
     "results/2026-05-17-signal-flight/shadow_replay_audit.jsonl": {
       "exists": true,
       "modified_utc": "2026-05-18T08:27:46.788093+00:00",
@@ -3809,21 +3835,28 @@
     },
     "results/latest/comparison.canonical.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:46:16.444245+00:00",
-      "row_count": 601,
-      "sha256": "2f8238c6688ff9d9fa186d7169907a46b28f651aa4a73e5fcce8dc6b6af19ff0",
-      "size_bytes": 618220
+      "modified_utc": "2026-05-19T08:07:18.413924+00:00",
+      "row_count": 523,
+      "sha256": "ba17042d834b7794ae45fdacec28493fa88a5596ce3737d3e2f5beb4afae848d",
+      "size_bytes": 588060
+    },
+    "results/latest/prime_gap_trace.semantic.jsonl": {
+      "exists": true,
+      "modified_utc": "2026-05-19T13:01:58.203336+00:00",
+      "row_count": 1000,
+      "sha256": "257c89bfcca16d09622ee0c7e163f7aa42083414be8152f71aac38930ed176dc",
+      "size_bytes": 844842
     },
     "results/latest/prime_gate_delta_seed_interval.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-19T07:03:14.195412+00:00",
+      "modified_utc": "2026-05-19T08:07:42.510725+00:00",
       "row_count": 6,
       "sha256": "9215f2f630cdcedeb467fc4f5c50ae5681dc3e227dd59fdac0e3efc832ac4edb",
       "size_bytes": 5905
     },
     "results/latest/trace_determinism.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-19T07:23:19.693023+00:00",
+      "modified_utc": "2026-05-19T13:01:58.195995+00:00",
       "row_count": 3,
       "sha256": "476f76325fea0cec2327485185b09a8c7bb55e16aefa8aca676fb50121318cd9",
       "size_bytes": 2201
@@ -3839,6 +3872,8 @@
   "support": {
     "limitation_count": 3,
     "ok": true,
+    "paper_agent_external_rejections": 1,
+    "paper_agent_external_rows": 2,
     "required_failures": [],
     "roadmap_missing_links": 0,
     "roadmap_unregistered_claim_refs": 0,
