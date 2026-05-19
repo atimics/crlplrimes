@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import itertools
-import json
-import math
-import subprocess
 import sys
 from pathlib import Path
+
+from crlp.cli import parse_seeds
+from crlp.io import write_csv, write_jsonl
+from crlp.run import run_json_command, shell_label
+from crlp.stats import fmt_pct, mean, sample_stdev
 
 
 TASK_SPECS = [
@@ -40,46 +41,6 @@ def build_task_sets() -> list[tuple[str, str, set[str]]]:
             else:
                 task_sets.append(("+".join(labels), ",".join(args), domains))
     return task_sets
-
-
-def parse_seeds(text: str) -> list[int]:
-    seeds = []
-    for part in text.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        seeds.append(int(part, 10))
-    if not seeds:
-        raise argparse.ArgumentTypeError("expected at least one seed")
-    return seeds
-
-
-def mean(values: list[float]) -> float:
-    return sum(values) / len(values) if values else float("nan")
-
-
-def sample_stdev(values: list[float]) -> float:
-    if len(values) < 2:
-        return 0.0
-    avg = mean(values)
-    return math.sqrt(sum((value - avg) ** 2 for value in values) / (len(values) - 1))
-
-
-def run_command(command: list[str], cwd: Path) -> list[dict[str, object]]:
-    proc = subprocess.run(command, cwd=cwd, text=True, capture_output=True)
-    if proc.returncode != 0:
-        sys.stdout.write(proc.stdout)
-        sys.stderr.write(proc.stderr)
-        raise subprocess.CalledProcessError(proc.returncode, command)
-
-    rows = []
-    for line in proc.stdout.splitlines():
-        if not line.startswith("{"):
-            continue
-        row = json.loads(line)
-        if row.get("schema") == "crlp.multitask.summary.v1":
-            rows.append(row)
-    return rows
 
 
 def summarize(rows: list[dict[str, object]], trained_only: bool) -> list[dict[str, object]]:
@@ -116,29 +77,19 @@ def summarize(rows: list[dict[str, object]], trained_only: bool) -> list[dict[st
     return summary
 
 
-def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
-    fields = [
-        "variant",
-        "training_set",
-        "domain",
-        "seeds",
-        "top1_mean",
-        "top1_stdev",
-        "nll_mean",
-        "nll_stdev",
-        "ece_mean",
-        "ece_stdev",
-        "train_updates_mean",
-    ]
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
-
-
-def fmt_pct(value: float) -> str:
-    return "-" if math.isnan(value) else f"{100.0 * value:.2f}%"
+SUMMARY_FIELDS = [
+    "variant",
+    "training_set",
+    "domain",
+    "seeds",
+    "top1_mean",
+    "top1_stdev",
+    "nll_mean",
+    "nll_stdev",
+    "ece_mean",
+    "ece_stdev",
+    "train_updates_mean",
+]
 
 
 def write_summary(
@@ -237,23 +188,26 @@ def main(argv: list[str]) -> int:
                     *variant_flags,
                 ]
                 print(f"running {variant} {run_label} seed={seed}", flush=True)
-                commands.append(" ".join(command))
-                for row in run_command(command, repo):
+                commands.append(shell_label(command))
+                for row in run_json_command(
+                    command,
+                    cwd=repo,
+                    schema="crlp.multitask.summary.v1",
+                    echo=False,
+                ):
                     row["variant"] = variant
                     row["run_label"] = run_label
                     row["trained_domain"] = row["domain"] in trained_domains
                     rows.append(row)
 
     raw_path = output_dir / "raw.jsonl"
-    with raw_path.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, sort_keys=True) + "\n")
+    write_jsonl(raw_path, rows)
     (output_dir / "commands.txt").write_text("\n".join(commands) + "\n", encoding="utf-8")
 
     trained_summary = summarize(rows, trained_only=True)
     heldout_summary = summarize(rows, trained_only=False)
-    write_csv(output_dir / "trained_summary.csv", trained_summary)
-    write_csv(output_dir / "heldout_summary.csv", heldout_summary)
+    write_csv(output_dir / "trained_summary.csv", trained_summary, fieldnames=SUMMARY_FIELDS)
+    write_csv(output_dir / "heldout_summary.csv", heldout_summary, fieldnames=SUMMARY_FIELDS)
     write_summary(output_dir / "summary.md", trained_summary, heldout_summary)
     print(f"wrote {output_dir / 'summary.md'}")
     return 0

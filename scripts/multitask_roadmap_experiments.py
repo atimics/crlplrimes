@@ -4,69 +4,16 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import json
-import math
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
+from crlp.cli import parse_seeds
+from crlp.io import write_csv, write_jsonl
+from crlp.run import run_json_command, shell_label
+from crlp.stats import fmt_float, fmt_pct, mean, sample_stdev
+
 
 DEFAULT_SEEDS = "20240516,20240517,20240518"
-
-
-def parse_seeds(text: str) -> list[int]:
-    seeds: list[int] = []
-    for part in text.split(","):
-        part = part.strip()
-        if part:
-            seeds.append(int(part, 10))
-    if not seeds:
-        raise argparse.ArgumentTypeError("expected at least one seed")
-    return seeds
-
-
-def mean(values: list[float]) -> float:
-    return sum(values) / len(values) if values else float("nan")
-
-
-def sample_stdev(values: list[float]) -> float:
-    if len(values) < 2:
-        return 0.0
-    avg = mean(values)
-    return math.sqrt(sum((value - avg) ** 2 for value in values) / (len(values) - 1))
-
-
-def fmt_pct(value: float) -> str:
-    return "-" if math.isnan(value) else f"{100.0 * value:.2f}%"
-
-
-def fmt_float(value: float) -> str:
-    return "-" if math.isnan(value) else f"{value:.4f}"
-
-
-def command_label(command: list[str]) -> str:
-    return " ".join(command)
-
-
-def run_command(command: list[str], cwd: Path, log_path: Path) -> list[dict[str, Any]]:
-    print(f"running {' '.join(command)}", flush=True)
-    proc = subprocess.run(command, cwd=cwd, text=True, capture_output=True)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(proc.stdout + proc.stderr, encoding="utf-8")
-    if proc.returncode != 0:
-        sys.stdout.write(proc.stdout)
-        sys.stderr.write(proc.stderr)
-        raise subprocess.CalledProcessError(proc.returncode, command)
-
-    rows: list[dict[str, Any]] = []
-    for line in proc.stdout.splitlines():
-        if not line.startswith("{"):
-            continue
-        row = json.loads(line)
-        rows.append(row)
-    return rows
 
 
 def summarize_rows(rows: list[dict[str, Any]], keys: list[str]) -> list[dict[str, Any]]:
@@ -97,21 +44,6 @@ def summarize_rows(rows: list[dict[str, Any]], keys: list[str]) -> list[dict[str
         )
         summary.append(out)
     return summary
-
-
-def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    if not rows:
-        return
-    fields: list[str] = []
-    for row in rows:
-        for key in row:
-            if key not in fields:
-                fields.append(key)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
 
 
 def write_summary(
@@ -253,8 +185,12 @@ def main(argv: list[str] | None = None) -> int:
                 "all",
                 *common,
             ]
-            commands.append(command_label(command))
-            for row in run_command(command, repo, log_dir / f"rmt1_seed_{seed}.log"):
+            commands.append(shell_label(command))
+            for row in run_json_command(
+                command,
+                cwd=repo,
+                log_path=log_dir / f"rmt1_seed_{seed}.log",
+            ):
                 row["roadmap_item"] = "R-MT.1"
                 row["arc_ood_breakdown"] = False
                 rows.append(row)
@@ -271,16 +207,18 @@ def main(argv: list[str] | None = None) -> int:
                 "--arc-ood-task-breakdown",
                 *common,
             ]
-            commands.append(command_label(command))
-            for row in run_command(command, repo, log_dir / f"rmt2_seed_{seed}.log"):
+            commands.append(shell_label(command))
+            for row in run_json_command(
+                command,
+                cwd=repo,
+                log_path=log_dir / f"rmt2_seed_{seed}.log",
+            ):
                 row["roadmap_item"] = "R-MT.2"
                 row["arc_ood_breakdown"] = row.get("arc_eval_task") not in (None, "all")
                 rows.append(row)
 
     raw_path = output_dir / "raw.jsonl"
-    with raw_path.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
+    write_jsonl(raw_path, rows, compact=True)
     (output_dir / "commands.txt").write_text("\n".join(commands) + "\n", encoding="utf-8")
 
     rmt1_rows = [

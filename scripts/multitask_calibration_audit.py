@@ -4,25 +4,11 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import json
-import math
 from pathlib import Path
 from typing import Any
 
-
-def read_jsonl(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-    return rows
-
-
-def mean(values: list[float]) -> float:
-    return sum(values) / len(values) if values else float("nan")
+from crlp.io import read_jsonl, write_csv
+from crlp.stats import fmt_float, fmt_pct, mean, sample_stdev
 
 
 def weighted_mean(pairs: list[tuple[float, float]]) -> float:
@@ -30,21 +16,6 @@ def weighted_mean(pairs: list[tuple[float, float]]) -> float:
     if weight <= 0.0:
         return float("nan")
     return sum(v * w for v, w in pairs) / weight
-
-
-def sample_stdev(values: list[float]) -> float:
-    if len(values) < 2:
-        return 0.0
-    avg = mean(values)
-    return math.sqrt(sum((value - avg) ** 2 for value in values) / (len(values) - 1))
-
-
-def fmt_pct(value: float) -> str:
-    return "-" if math.isnan(value) else f"{100.0 * value:.2f}%"
-
-
-def fmt_float(value: float) -> str:
-    return "-" if math.isnan(value) else f"{value:.4f}"
 
 
 def row_eval_name(row: dict[str, Any]) -> str:
@@ -161,21 +132,6 @@ def attach_pooled_ece(summary: list[dict[str, Any]], bins: list[dict[str, Any]])
     for row in summary:
         key = (str(row["scope"]), str(row["eval_name"]), str(row["model_kind"]))
         row["pooled_ece"] = sum(float(bin_row["ece_contribution"]) for bin_row in bins_by_key.get(key, []))
-
-
-def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    if not rows:
-        return
-    fields: list[str] = []
-    for row in rows:
-        for key in row:
-            if key not in fields:
-                fields.append(key)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
 
 
 def row_index(rows: list[dict[str, Any]], scope: str) -> dict[tuple[str, str], dict[str, Any]]:

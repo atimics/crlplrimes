@@ -4,90 +4,20 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import json
-import math
-import subprocess
-import sys
 from datetime import date
 from pathlib import Path
 from typing import Any
+
+from crlp.cli import parse_seeds
+from crlp.io import write_csv, write_jsonl
+from crlp.run import run_json_command
+from crlp.stats import fmt_delta, fmt_float, fmt_pct, mean, sample_stdev
 
 
 DEFAULT_SEEDS = "20240516,20240517,20240518"
 DOMAINS = ["prime_gap", "grid_path", "delayed_claim", "arc_agi"]
 MODEL_ORDER = ["shared", "shared_task_heads", "single_task"]
 EVAL_SUITES = (("fixed", "0520fde7"), ("ood", "ood"))
-
-
-def parse_seeds(text: str) -> list[int]:
-    seeds = [int(part.strip(), 10) for part in text.split(",") if part.strip()]
-    if not seeds:
-        raise argparse.ArgumentTypeError("expected at least one seed")
-    return seeds
-
-
-def mean(values: list[float]) -> float:
-    return sum(values) / len(values) if values else float("nan")
-
-
-def sample_stdev(values: list[float]) -> float:
-    if len(values) < 2:
-        return 0.0
-    avg = mean(values)
-    return math.sqrt(sum((value - avg) ** 2 for value in values) / (len(values) - 1))
-
-
-def fmt_pct(value: float) -> str:
-    return "-" if math.isnan(value) else f"{100.0 * value:.2f}%"
-
-
-def fmt_delta(value: float) -> str:
-    return "-" if math.isnan(value) else f"{100.0 * value:+.2f}pp"
-
-
-def fmt_float(value: float) -> str:
-    return "-" if math.isnan(value) else f"{value:.4f}"
-
-
-def run_command(command: list[str], cwd: Path, log_path: Path) -> list[dict[str, Any]]:
-    print(f"running {' '.join(command)}", flush=True)
-    proc = subprocess.run(command, cwd=cwd, text=True, capture_output=True)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(proc.stdout + proc.stderr, encoding="utf-8")
-    if proc.returncode != 0:
-        sys.stdout.write(proc.stdout)
-        sys.stderr.write(proc.stderr)
-        raise subprocess.CalledProcessError(proc.returncode, command)
-
-    rows: list[dict[str, Any]] = []
-    for line in proc.stdout.splitlines():
-        if line.startswith("{"):
-            rows.append(json.loads(line))
-    return rows
-
-
-def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    if not rows:
-        path.write_text("", encoding="utf-8")
-        return
-    fields: list[str] = []
-    for row in rows:
-        for key in row:
-            if key not in fields:
-                fields.append(key)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
-
-
-def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.write_text(
-        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + ("\n" if rows else ""),
-        encoding="utf-8",
-    )
 
 
 def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -402,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
                 command.append("--no-task-baselines")
             commands.append(" ".join(command))
             log_name = f"rmt4_task_heads_{eval_suite}_seed_{seed}.log"
-            for row in run_command(command, repo, log_dir / log_name):
+            for row in run_json_command(command, cwd=repo, log_path=log_dir / log_name):
                 row["roadmap_item"] = "R-MT.4"
                 row["adapter_eval_suite"] = eval_suite
                 rows.append(row)
@@ -417,8 +347,8 @@ def main(argv: list[str] | None = None) -> int:
     summary = summarize(rows)
     deltas = attach_deltas(summary)
     decisions = decision_rows(deltas, args.transfer_regression_margin)
-    write_csv(output_dir / "rmt4_adapter_heads_summary.csv", summary)
-    write_csv(output_dir / "rmt4_adapter_heads_deltas.csv", deltas)
+    write_csv(output_dir / "rmt4_adapter_heads_summary.csv", summary, empty_text=True)
+    write_csv(output_dir / "rmt4_adapter_heads_deltas.csv", deltas, empty_text=True)
     write_jsonl(output_dir / "rmt4_adapter_heads_decision.jsonl", decisions)
     write_report(
         output_dir / "rmt4_adapter_heads.md",
