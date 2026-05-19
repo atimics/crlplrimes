@@ -5,8 +5,10 @@
 #include "nn_experiment.h"
 #include "nn_program.h"
 #include "nn_hypothesis.h"
+#include "nn_json.h"
 #include "nn_symbolic.h"
 #include "nn_protocol.h"
 #include "nn_train.h"
+#include "nn_text.h"
 
 #endif

@@ -1,4 +1,5 @@
 #include "nn_protocol.h"
+#include "nn_text.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -28,36 +29,7 @@ static const char *nn_protocol_rule_kind_name(NNRuleKind kind)
 
 static void nn_protocol_json_string(FILE *fp, const char *value)
 {
-    fputc('"', fp);
-    if (value != NULL) {
-        for (const unsigned char *p = (const unsigned char *)value; *p != '\0'; ++p) {
-            switch (*p) {
-            case '"':
-                fputs("\\\"", fp);
-                break;
-            case '\\':
-                fputs("\\\\", fp);
-                break;
-            case '\n':
-                fputs("\\n", fp);
-                break;
-            case '\r':
-                fputs("\\r", fp);
-                break;
-            case '\t':
-                fputs("\\t", fp);
-                break;
-            default:
-                if (*p < 0x20u) {
-                    fprintf(fp, "\\u%04x", (unsigned int)*p);
-                } else {
-                    fputc((int)*p, fp);
-                }
-                break;
-            }
-        }
-    }
-    fputc('"', fp);
+    (void)nn_write_json_string(fp, value);
 }
 
 static int nn_protocol_json_get_size(const char *line, const char *key, size_t *out_value)

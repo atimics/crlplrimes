@@ -38,7 +38,7 @@
     {
       "id": "C8",
       "role": "framework_claim",
-      "title": "The paper compiler enforces code-to-PDF claim support"
+      "title": "The claim compiler enforces artifact-backed claim support"
     },
     {
       "id": "C9",
@@ -49,7 +49,7 @@
   "claims": [
     {
       "chart": {},
-      "claim_text": "On prime_gap, the certified learned rule gate improves top-1 over both the raw scorer and the hand-wheel gate while preserving zero false rejections.",
+      "claim_text": "On the audited next-prime filter (`prime_gap` trace id), the certified learned rule gate improves top-1 over both the raw scorer and the hand-wheel gate while preserving zero false rejections.",
       "claim_type": "gate_effect",
       "decision_rule": {
         "supported_if": [
@@ -109,6 +109,7 @@
       ],
       "experiments": [],
       "id": "C1.prime_gate_delta",
+      "limitation_when_not_supported": "The audited next-prime learned-gate delta is not currently supported by the canonical comparison rows, so the 9.13% -> 45.12% -> 68.87% progression cannot be used as a headline claim.",
       "metrics": {
         "false_rejections": 0,
         "hand_delta_pp": 35.993333,
@@ -161,16 +162,17 @@
         "R-E1.4"
       ],
       "status": "supported",
-      "summary": "learned gate 68.87% vs hand-wheel 45.12% vs raw 9.13%; false rejections=0.",
-      "title": "Prime learned gate improves top-1 over raw and hand-wheel gates"
+      "summary": "the verified learned filter raises top-1 ranking to 68.87% from 45.12% for the hand-coded wheel and 9.13% raw, with 0 verifier-counted true-answer deletions.",
+      "title": "Audited next-prime filter improves top-1 over raw and hand-wheel gates"
     },
     {
       "chart": {},
-      "claim_text": "On prime_gap, the certified learned rule gate improves top-1 over raw and hand-wheel gates across a multi-seed audit while preserving zero false rejections.",
+      "claim_text": "On the audited next-prime filter (`prime_gap` trace id), the certified learned rule gate improves top-1 over raw and hand-wheel gates across a multi-seed audit while preserving zero false rejections.",
       "claim_type": "gate_effect_interval",
       "decision_rule": {
+        "minimum_seed_count": 5,
         "supported_if": [
-          "seed_count >= 3",
+          "seed_count >= 5",
           "min(hand_top1 - raw_top1) > 0",
           "min(learned_top1 - hand_top1) > 0",
           "min(learned_top10) >= 0.999",
@@ -215,10 +217,35 @@
           "raw_top1": 0.0913,
           "sample_count": 30000,
           "seed": 20240513
+        },
+        {
+          "false_rejections": 0,
+          "hand_top1": 0.45123333,
+          "label": "20240514",
+          "learned_top1": 0.68866667,
+          "learned_top10": 1.0,
+          "learned_vs_hand_delta_pp": 23.743334000000004,
+          "present": true,
+          "raw_top1": 0.0913,
+          "sample_count": 30000,
+          "seed": 20240514
+        },
+        {
+          "false_rejections": 0,
+          "hand_top1": 0.45123333,
+          "label": "20240515",
+          "learned_top1": 0.68866667,
+          "learned_top10": 1.0,
+          "learned_vs_hand_delta_pp": 23.743334000000004,
+          "present": true,
+          "raw_top1": 0.0913,
+          "sample_count": 30000,
+          "seed": 20240515
         }
       ],
       "experiments": [],
       "id": "C1.prime_gate_delta_ci",
+      "limitation_when_not_supported": "The audited next-prime learned-gate headline lacks a supported multi-seed interval, so the 9.13% -> 45.12% -> 68.87% progression should be treated as a single artifact snapshot.",
       "metrics": {
         "false_rejections_max": 0,
         "hand_top1_max": 0.45123333,
@@ -235,13 +262,14 @@
         "learned_vs_hand_delta_pp_mean": 23.743334000000004,
         "learned_vs_hand_delta_pp_min": 23.743334000000004,
         "learned_vs_hand_delta_pp_std": 0.0,
+        "minimum_seed_count": 5,
         "raw_top1_max": 0.0913,
         "raw_top1_mean": 0.0913,
         "raw_top1_min": 0.0913,
         "raw_top1_std_pp": 0.0,
         "sample_count_min": 30000,
-        "seed_count": 3,
-        "seed_end": 20240513,
+        "seed_count": 5,
+        "seed_end": 20240515,
         "seed_start": 20240511
       },
       "paper_explanation": "",
@@ -263,6 +291,12 @@
           },
           {
             "seed": 20240513
+          },
+          {
+            "seed": 20240514
+          },
+          {
+            "seed": 20240515
           }
         ],
         "schemas": [
@@ -271,8 +305,8 @@
         "secondary_sources": [],
         "source": "results/latest/prime_gate_delta_seed_interval.jsonl",
         "source_command": "make prime-gate-seed-audit",
-        "source_row_count": 4,
-        "source_sha256": "989d5f1ff671ed24f3ad1d9dff1bb1f4324707dadb26345b2a81f5a8bc2a7057"
+        "source_row_count": 6,
+        "source_sha256": "9215f2f630cdcedeb467fc4f5c50ae5681dc3e227dd59fdac0e3efc832ac4edb"
       },
       "required_for_submission": true,
       "residual": [],
@@ -281,12 +315,12 @@
         "R-E1.4"
       ],
       "status": "supported",
-      "summary": "3 seeds: learned 68.87% +/- 0.00pp vs hand 45.12% +/- 0.00pp and raw 9.13% +/- 0.00pp; min learned-vs-hand delta +23.74pp, learned top-10 min 100.00%, false rejections max=0.",
-      "title": "Prime learned-gate headline is stable across seeds"
+      "summary": "across 5 seeds, the learned filter stays at 68.87% +/- 0.00pp, versus 45.12% +/- 0.00pp for the hand wheel and 9.13% +/- 0.00pp raw; the worst learned-vs-hand gain is +23.74pp, learned top-10 never falls below 100.00%, and false rejections never exceed 0; promotion requires 5 seeds.",
+      "title": "Audited next-prime filter headline is stable across seeds"
     },
     {
       "chart": {},
-      "claim_text": "On prime_gap, the neural rule proposer is useful at fixed verifier budget relative to grammar-order and structural baselines.",
+      "claim_text": "On the audited next-prime filter (`prime_gap` trace id), the neural rule proposer is useful at fixed verifier budget relative to grammar-order and structural baselines.",
       "claim_type": "proposer_usefulness",
       "decision_rule": {
         "contradicted_if": [
@@ -393,6 +427,7 @@
       ],
       "experiments": [],
       "id": "C2.prime_proposer_fixed_budget",
+      "limitation_when_not_supported": "The current fixed-budget next-prime proposer evidence is negative for static neural proposer superiority; Axis 2 remains a falsifiable baseline failure until R-E2.1/R-E2.2/R-E2.3 close the gap.",
       "metrics": {
         "candidate": {
           "baseline_best_saved_pct": 73.22437029,
@@ -471,8 +506,8 @@
         "R-E2.3"
       ],
       "status": "contradicted",
-      "summary": "static neural proposer trails deterministic baselines on at least one grammar; candidate static=72.49 saved vs grammar=73.22, conditional static=2.15 saved vs grammar=55.57.",
-      "title": "Prime neural proposer beats fixed-budget symbolic baselines"
+      "summary": "the static neural proposer loses to deterministic ordering in at least one grammar: candidate static saves 72.49 vs grammar 73.22, and conditional static saves 2.15 vs grammar 55.57.",
+      "title": "Next-prime neural proposer beats fixed-budget symbolic baselines"
     },
     {
       "chart": {
@@ -491,6 +526,7 @@
       "claim_text": "When trained on the fixed ARC task but evaluated on held-out same-envelope ARC variants, the shared multitask scorer beats the single-task ARC scorer.",
       "claim_type": "multitask_transfer",
       "decision_rule": {
+        "minimum_seed_count": 3,
         "supported_if": [
           "shared.top1_mean > single_task.top1_mean",
           "shared.nll_mean < single_task.nll_mean",
@@ -526,8 +562,10 @@
       ],
       "experiments": [],
       "id": "C4.arc_ood_shared_vs_single",
+      "limitation_when_not_supported": "The ARC same-envelope OOD transfer claim is not supported, so shared scoring should be treated as a substrate ablation rather than a positive transfer result.",
       "metrics": {
         "ece_delta": -0.03387266666666666,
+        "minimum_seed_count": 3,
         "nll_delta": -1.7444806199999991,
         "shared_ece": 0.4481071366666667,
         "shared_nll": 2.627844876666667,
@@ -643,6 +681,7 @@
       ],
       "experiments": [],
       "id": "C1.arc_gate_scorer_invariance",
+      "limitation_when_not_supported": "The public ARC gate/proposer rows are not invariant to scorer context labels, so they cannot cleanly separate gate correctness from scorer transfer.",
       "metrics": {
         "eval_certified_tasks": 4,
         "eval_correct_cells": 187,
@@ -717,7 +756,7 @@
         "unit": "correct cells",
         "y_label": "evaluation correct cells"
       },
-      "claim_text": "The paper reports public ARC train/eval certified-task and covered-cell counts as a measured evidence surface rather than as a broad ARC-performance claim.",
+      "claim_text": "The generated evidence reports public ARC train/eval certified-task and covered-cell counts as a measured surface rather than as a broad ARC-performance claim.",
       "claim_type": "public_arc_parity",
       "decision_rule": {
         "supported_if": [
@@ -775,6 +814,7 @@
       ],
       "experiments": [],
       "id": "C1.arc_public_evidence_surface",
+      "limitation_when_not_supported": "The public ARC evidence surface is missing or regressed, so the claim set should not include a committed public-corpus parity row.",
       "metrics": {
         "current_eval_cell_accuracy": 0.01072933,
         "current_eval_certified_tasks": 7,
@@ -826,7 +866,7 @@
         "R-X5"
       ],
       "status": "supported",
-      "summary": "public ARC evidence surface improves from v10 eval 4 tasks/187 cells to v15_measured eval 7 tasks/1057 cells; v15_measured train remains 24 tasks/1187 cells.",
+      "summary": "the ARC row measures coverage, not competence: public eval coverage moves from v10 4 tasks/187 cells to v15_measured 7 tasks/1057 cells, while train coverage is 24 tasks/1187 cells.",
       "title": "Public ARC corpus parity row is measured and scoped"
     },
     {
@@ -850,6 +890,7 @@
       "claim_text": "On ARC, the shared scorer improves log loss but worsens fixed-task ECE, while improving both log loss and ECE on same-envelope OOD evaluation.",
       "claim_type": "calibration_tradeoff",
       "decision_rule": {
+        "minimum_seed_count": 3,
         "supported_if": [
           "fixed_task.shared.nll_mean < fixed_task.single_task.nll_mean",
           "fixed_task.shared.ece_mean > fixed_task.single_task.ece_mean",
@@ -906,12 +947,14 @@
       ],
       "experiments": [],
       "id": "C3.arc_ood_calibration_tradeoff",
+      "limitation_when_not_supported": "The ARC calibration tradeoff is not supported, so the claim set should avoid saying shared scoring improves calibration and should report only the raw NLL/ECE table.",
       "metrics": {
         "fixed_ece_delta_shared_minus_single": 0.14058685999999998,
         "fixed_ece_improvement_pp": -14.058685999999998,
         "fixed_nll_delta_shared_minus_single": -4.192744733333334,
         "fixed_nll_improvement": 4.192744733333334,
         "fixed_seeds": 3,
+        "minimum_seed_count": 3,
         "ood_ece_delta_shared_minus_single": -0.03387266666666666,
         "ood_ece_improvement_pp": 3.387266666666666,
         "ood_nll_delta_shared_minus_single": -1.7444806199999991,
@@ -1004,6 +1047,7 @@
       "claim_text": "Delayed_claim benefits from shared training at matched updates, but the sibling effect is specific rather than universal.",
       "claim_type": "multitask_transfer",
       "decision_rule": {
+        "minimum_seed_count": 3,
         "supported_if": [
           "all.top1_mean > claim_only.top1_mean",
           "no_grid_path.top1_mean < all.top1_mean",
@@ -1063,10 +1107,12 @@
       ],
       "experiments": [],
       "id": "C4.delayed_claim_sibling_transfer",
+      "limitation_when_not_supported": "The delayed_claim leave-one-out rows do not support positive sibling transfer, so delayed_claim should not be used as a positive multitask example.",
       "metrics": {
         "all_top1": 0.98,
         "all_vs_claim_only_delta_pp": 1.4000000000000123,
         "claim_only_top1": 0.9659999999999999,
+        "minimum_seed_count": 3,
         "no_arc_agi_top1": 0.985,
         "no_arc_agi_vs_all_delta_pp": 0.5000000000000004,
         "no_grid_path_top1": 0.972,
@@ -1155,6 +1201,7 @@
       "claim_text": "A four-capacity sweep changes the fixed ARC shared-vs-single gap but does not monotonically close it, while delayed_claim remains non-negative across capacities.",
       "claim_type": "capacity_boundary",
       "decision_rule": {
+        "minimum_seed_count": 3,
         "supported_if": [
           "all ARC capacity rows have seeds >= 3",
           "max ARC shared-minus-single top1 delta < 0",
@@ -1258,6 +1305,7 @@
       ],
       "experiments": [],
       "id": "C4.multitask_capacity_tradeoff",
+      "limitation_when_not_supported": "The capacity sweep no longer rules out a simple width explanation, so adapters or ordering should not be treated as the next architectural bottleneck without a new plateau audit.",
       "metrics": {
         "arc_delta_max_pp": -1.2333333333333418,
         "arc_delta_min_pp": -16.633333333333333,
@@ -1268,6 +1316,7 @@
         "capacity_count": 4,
         "claim_delta_max_pp": 0.4333333333333522,
         "claim_delta_min_pp": 0.10000000000000009,
+        "minimum_seed_count": 3,
         "seeds": 3
       },
       "paper_explanation": "This keeps the architecture roadmap disciplined: capacity changes the ARC gap, but does not monotonically close it, so adapters or ordering should not be claimed until the tiny-net plateau check is done.",
@@ -1318,7 +1367,7 @@
         "R-F.5"
       ],
       "status": "supported",
-      "summary": "capacity sweep rules out a simple wider-is-better ARC story: best fixed-ARC shared row is 32x16 at 39.20%, but every shared ARC row trails single-task; delayed_claim deltas remain +0.10pp to +0.43pp.",
+      "summary": "making the shared model wider does not simply fix ARC: the best fixed-ARC shared row is 32x16 at 39.20%, but every shared ARC row trails single-task; delayed_claim deltas remain +0.10pp to +0.43pp.",
       "title": "Capacity sweep does not explain away the ARC fixed-task gap"
     },
     {
@@ -1351,6 +1400,7 @@
         "diagnostic_if": [
           "task heads help fixed ARC but hurt OOD or delayed-claim transfer"
         ],
+        "minimum_seed_count": 3,
         "supported_if": [
           "shared_task_heads fixed ARC top1 > flat_shared fixed ARC top1",
           "shared_task_heads delayed_claim top1 is no worse than flat_shared by more than 0.5pp",
@@ -1431,6 +1481,7 @@
       ],
       "experiments": [],
       "id": "C4.adapter_heads_shared_trunk",
+      "limitation_when_not_supported": "The shared-trunk/domain-head architecture has not passed all promotion gates, so it should be presented as architecture evidence rather than the default model recipe.",
       "metrics": {
         "arc_ood_gate": true,
         "arc_ood_nll_delta_heads_minus_single_task": -1.1835613033333323,
@@ -1445,6 +1496,7 @@
         "headed_forward_flops_fixed_arc": 16545.0,
         "headed_parameters_fixed_arc": 8420.0,
         "headed_train_updates_fixed_arc": 47954.333333333336,
+        "minimum_seed_count": 3,
         "promote_shared_trunk_heads": false,
         "seeds": 3
       },
@@ -1516,7 +1568,7 @@
         "R-F.5"
       ],
       "status": "contradicted",
-      "summary": "adapter-head audit: fixed ARC heads-flat delta +2.40pp; delayed_claim heads-flat -0.97pp; grid_path heads-flat +0.07pp; ARC OOD heads-single +4.67pp top-1 and -1.1836 NLL.",
+      "summary": "task-specific heads help some rows and hurt others: fixed ARC heads-flat delta +2.40pp; delayed_claim heads-flat -0.97pp; grid_path heads-flat +0.07pp; ARC OOD heads-single +4.67pp top-1 and -1.1836 NLL.",
       "title": "Shared trunk plus domain heads is gated as architecture evidence"
     },
     {
@@ -1551,9 +1603,10 @@
         "unit": "validation utility",
         "y_label": "budget-8 validation utility"
       },
-      "claim_text": "Verifier rejection reasons can be fed back into the proposer so that reason-aware and trained-residual ranking avoid unsafe rows and improve budgeted validation utility on the prime/modular gate family.",
+      "claim_text": "Verifier rejection reasons can be fed back into the proposer so that reason-aware and trained-residual ranking avoid unsafe rows and improve budgeted validation utility on the arithmetic-sequence/modular gate family.",
       "claim_type": "substrate_feedback",
       "decision_rule": {
+        "minimum_seed_count": 3,
         "supported_if": [
           "model_score picks unsafe rows and produces validation false rejections at budget 8",
           "reason_prior and trained_residual have zero unsafe rows and zero validation false rejections at budget 8",
@@ -1635,8 +1688,10 @@
       ],
       "experiments": [],
       "id": "C5.rejected_candidate_reason_learning",
+      "limitation_when_not_supported": "Rejected-candidate reason learning is not yet a supported proposer repair, so Axis 2 should remain only the fixed-budget negative result.",
       "metrics": {
         "delayed_mixed_rows": 0,
+        "minimum_seed_count": 3,
         "model_score_unsafe_rules": 7,
         "model_score_validation_false_rejections": 172,
         "modular_split_count": 4,
@@ -1663,7 +1718,7 @@
         "trained_residual_validation_false_rejections": 0,
         "trained_residual_validation_utility": 245.0
       },
-      "paper_explanation": "This is the first substrate-level self-authoring loop: rejected verifier rows are converted into reasons, then those reasons improve the next proposer pass. The claim is scoped to the prime/modular sweeps; delayed_claim remains a stress case. Seed-interval and reason-family artifacts are reported when present so the paper can distinguish stable proposer repair from a single favorable trace.",
+      "paper_explanation": "This is the first feedback loop: rejected verifier rows become reason labels, and those labels improve the next proposal pass. The claim is scoped to the arithmetic-sequence/modular sweeps; delayed_claim remains a stress case. Seed-interval and reason-family artifacts are reported when present so the reporting can distinguish stable proposer repair from a single favorable trace.",
       "paper_surfaces": [
         "substrate",
         "claim_support_chart",
@@ -1722,8 +1777,8 @@
         "R-F.4"
       ],
       "status": "supported",
-      "summary": "reason learning repairs the prime proposer failure at budget 8: model_score selects 7 unsafe rows and causes 172 validation false rejections, while reason_prior reaches 6 accepted rules/216.0 utility and trained_residual reaches 7 accepted rules/245.0 utility with zero false rejections; prime/modular split sweeps pass, but delayed_claim has 0 mixed split rows.",
-      "title": "Rejected-candidate reasons repair proposer ranking on prime/modular gates"
+      "summary": "logging why the verifier rejected a guess repairs the next-prime proposer at budget 8: the unguided model chooses 7 unsafe rows and causes 172 validation false rejections, while the reason prior reaches 6 accepted rules/216.0 utility and the trained repair reaches 7 accepted rules/245.0 utility with zero false rejections; arithmetic-sequence/modular split sweeps pass, but the delayed-claim stress case has 0 mixed split rows.",
+      "title": "Rejected-candidate reasons repair proposer ranking on arithmetic/modular gates"
     },
     {
       "chart": {
@@ -1821,6 +1876,7 @@
       ],
       "experiments": [],
       "id": "C5.hypothesis_library_promotion",
+      "limitation_when_not_supported": "The certified hypothesis library does not yet produce a supported feedback gain, so it should remain substrate machinery only.",
       "metrics": {
         "certified_at_1_delta": 2,
         "heldout_primary_pass_rows": 12,
@@ -1902,7 +1958,7 @@
         "R-F.4"
       ],
       "status": "supported",
-      "summary": "certified-library promotion supports fixture-level feedback: promoted move_to_anchor from 2 tasks/78 covered events with zero false rejections; slot priors raise learned certified@1 from 2 to 4 and utility@8 from 0.2119 to 0.5169. Held-out split feedback rows: 30.",
+      "summary": "saving repeatedly safe rules helps future tasks: promoted move_to_anchor from 2 tasks/78 covered events with zero false rejections; slot priors raise first-choice certifications from 2 to 4 and budget-8 utility from 0.2119 to 0.5169. Held-out split feedback rows: 30.",
       "title": "Certified hypothesis libraries feed back into proposal ranking"
     },
     {
@@ -1997,7 +2053,7 @@
         "unit": "top-1",
         "y_label": "best ARC top-1"
       },
-      "claim_text": "Before increasing neural capacity, the paper reports a same-ladder tiny-net audit with learning curves, restart variance, best checkpoint, plateau detection, parameter count, FLOPs, and width-help verdicts for each core task.",
+      "claim_text": "Before increasing neural capacity, the generated evidence reports a same-ladder tiny-net audit with learning curves, restart variance, best checkpoint, plateau detection, parameter count, FLOPs, and width-help verdicts for each core task.",
       "claim_type": "method_claim",
       "decision_rule": {
         "supported_if": [
@@ -2066,6 +2122,7 @@
       ],
       "experiments": [],
       "id": "C7.tiny_net_plateau_stop_rule",
+      "limitation_when_not_supported": "The tiny networks have not yet been audited as fully trained, so larger architectures should remain a hypothesis rather than a supported claim.",
       "metrics": {
         "arc_larger_width_helped": true,
         "arc_shared_best_hidden": "16x8",
@@ -2105,7 +2162,7 @@
         "same_ladder": true,
         "width_rows": 12
       },
-      "paper_explanation": "This turns the width discussion into an audit: the paper can distinguish undertraining from representation limits using learning curves, restarts, best checkpoints, parameter counts, FLOPs, plateau flags, width-help rows, and per-domain/variant audit verdicts.",
+      "paper_explanation": "This turns the width discussion into an audit: the claim layer can distinguish undertraining from representation limits using learning curves, restarts, best checkpoints, parameter counts, FLOPs, plateau flags, width-help rows, and per-domain/variant audit verdicts.",
       "paper_surfaces": [
         "architecture",
         "limitations",
@@ -2237,6 +2294,7 @@
       ],
       "experiments": [],
       "id": "C8.trace_determinism_audit",
+      "limitation_when_not_supported": "The trace determinism audit is missing or contradicted, so L9 must remain an open reproducibility limitation.",
       "metrics": {
         "all_semantic_hashes_equal": true,
         "audit_count": 2,
@@ -2287,7 +2345,7 @@
         "R-P.5"
       ],
       "status": "supported",
-      "summary": "trace determinism audit covers 2 traces and 2000 rows; invalid_rows=0, rank_fp_sensitive_rows=0, logged_mismatches=0, semantic_hashes_equal=True.",
+      "summary": "the trace audit checks whether replay meaning survives numeric/runtime changes: 2 traces and 2000 rows, 0 invalid rows, 0 rank-sensitive rows, 0 logged mismatches, same semantic hash: yes.",
       "title": "Trace replay semantics are deterministic across float and double runs"
     },
     {
@@ -2422,6 +2480,7 @@
       ],
       "experiments": [],
       "id": "C9.signal_flight_replay_control",
+      "limitation_when_not_supported": "Signal does not yet provide a supported replay-control vignette, so Signal should be removed from the abstract and kept only in the roadmap.",
       "metrics": {
         "baseline_damage_rate": 0.023809524,
         "baseline_death_rate": 0.0,
@@ -2494,7 +2553,7 @@
         "R-SIG.3"
       ],
       "status": "supported",
-      "summary": "Signal offline replay ranker top-1 79.76% vs baseline 67.86% (+11.90pp), utility 0.1432 vs 0.1359, regret 0.0073 vs 0.0146, damage 2.38% vs 2.38%, deaths 0.00% vs 0.00%; live shadow frames=74. Closed-loop rollout neural_guarded utility 0.3564 vs baseline -1.4642, reach 12.50% vs 8.33%.",
+      "summary": "in offline Signal replay, the model ranks recorded WASD choices at top-1 79.76% vs baseline 67.86% (+11.90pp), utility 0.1432 vs 0.1359, regret 0.0073 vs 0.0146, damage 2.38% vs 2.38%, deaths 0.00% vs 0.00%; live shadow frames=74. Closed-loop rollout neural_guarded utility 0.3564 vs baseline -1.4642, reach 12.50% vs 8.33%.",
       "title": "Signal replay-certified WASD ranker improves held-out control utility"
     },
     {
@@ -2588,6 +2647,7 @@
       ],
       "experiments": [],
       "id": "C9.signal_live_neural_active",
+      "limitation_when_not_supported": "The live Signal pilot is not supported as neural-active by the current live-brain artifact, so only offline replay and shadow evidence should be reported.",
       "metrics": {
         "active_frame_rows": 74,
         "active_rows": 74,
@@ -2650,7 +2710,7 @@
         "R-SIG.3"
       ],
       "status": "supported",
-      "summary": "Signal live neural-active pilot executed 74 recent neural-source rows from checkpoint f12b644ed9fa with p95 inference 0.089 ms, 74 replay-ready rows, protocol-compatible rows=74, safety-gate rows=74, damage events=2, deaths=0; no baseline comparison is claimed.",
+      "summary": "the live Signal pilot did run checkpoint-ranked neural actions, but only behind guards: 74 recent neural-source rows from checkpoint f12b644ed9fa, p95 inference 0.089 ms, 74 replay-ready rows, protocol-compatible rows=74, safety-gate rows=74, damage events=2, deaths=0; no baseline comparison is claimed.",
       "title": "Signal guarded neural-active pilot executes live checkpoint-ranked actions"
     }
   ],
@@ -2694,7 +2754,7 @@
       {
         "id": "C8",
         "role": "framework_claim",
-        "title": "The paper compiler enforces code-to-PDF claim support"
+        "title": "The claim compiler enforces artifact-backed claim support"
       },
       {
         "id": "C9",
@@ -2738,7 +2798,7 @@
             "required_for_submission": true,
             "residual": [],
             "status": "supported",
-            "summary": "Signal offline replay ranker top-1 79.76% vs baseline 67.86% (+11.90pp), utility 0.1432 vs 0.1359, regret 0.0073 vs 0.0146, damage 2.38% vs 2.38%, deaths 0.00% vs 0.00%; live shadow frames=74. Closed-loop rollout neural_guarded utility 0.3564 vs baseline -1.4642, reach 12.50% vs 8.33%.",
+            "summary": "in offline Signal replay, the model ranks recorded WASD choices at top-1 79.76% vs baseline 67.86% (+11.90pp), utility 0.1432 vs 0.1359, regret 0.0073 vs 0.0146, damage 2.38% vs 2.38%, deaths 0.00% vs 0.00%; live shadow frames=74. Closed-loop rollout neural_guarded utility 0.3564 vs baseline -1.4642, reach 12.50% vs 8.33%.",
             "title": "Signal replay-certified WASD ranker improves held-out control utility"
           }
         ],
@@ -2844,7 +2904,7 @@
             "required_for_submission": true,
             "residual": [],
             "status": "supported",
-            "summary": "public ARC evidence surface improves from v10 eval 4 tasks/187 cells to v15_measured eval 7 tasks/1057 cells; v15_measured train remains 24 tasks/1187 cells.",
+            "summary": "the ARC row measures coverage, not competence: public eval coverage moves from v10 4 tasks/187 cells to v15_measured 7 tasks/1057 cells, while train coverage is 24 tasks/1187 cells.",
             "title": "Public ARC corpus parity row is measured and scoped"
           }
         ],
@@ -2860,14 +2920,14 @@
         ],
         "role": "claim_support",
         "success_criteria": [
-          "The paper can state public train/eval certified-task and covered-cell counts from generated claim variables.",
+          "The generated claim variables support public train/eval certified-task and covered-cell counts.",
           "Residual ARC categories stay visible as roadmap input."
         ],
         "title": "Public ARC training/evaluation evidence surface"
       },
       {
         "agent_instructions": [
-          "Strengthen or falsify the prime learned-gate claim without changing the claim compiler contract."
+          "Strengthen or falsify the audited next-prime filter claim without changing the claim compiler contract."
         ],
         "artifacts": [
           "results/latest/comparison.canonical.jsonl",
@@ -2895,8 +2955,8 @@
             "required_for_submission": true,
             "residual": [],
             "status": "supported",
-            "summary": "learned gate 68.87% vs hand-wheel 45.12% vs raw 9.13%; false rejections=0.",
-            "title": "Prime learned gate improves top-1 over raw and hand-wheel gates"
+            "summary": "the verified learned filter raises top-1 ranking to 68.87% from 45.12% for the hand-coded wheel and 9.13% raw, with 0 verifier-counted true-answer deletions.",
+            "title": "Audited next-prime filter improves top-1 over raw and hand-wheel gates"
           }
         ],
         "commands": [
@@ -2913,9 +2973,9 @@
         "role": "claim_support",
         "success_criteria": [
           "Required claim C1.prime_gate_delta remains supported.",
-          "Seed/CIs or calibration tradeoff evidence can be added as derived claims without rewriting paper prose by hand."
+          "Seed/CIs or calibration tradeoff evidence can be added as derived claims without rewriting prose by hand."
         ],
-        "title": "Prime learned-gate delta support"
+        "title": "Next-prime filter learned-gate delta support"
       },
       {
         "agent_instructions": [
@@ -2951,8 +3011,8 @@
               "Run R-E2.2/R-E2.3 only if the richer grammar creates non-saturated cases where learned ordering can matter."
             ],
             "status": "contradicted",
-            "summary": "static neural proposer trails deterministic baselines on at least one grammar; candidate static=72.49 saved vs grammar=73.22, conditional static=2.15 saved vs grammar=55.57.",
-            "title": "Prime neural proposer beats fixed-budget symbolic baselines"
+            "summary": "the static neural proposer loses to deterministic ordering in at least one grammar: candidate static saves 72.49 vs grammar 73.22, and conditional static saves 2.15 vs grammar 55.57.",
+            "title": "Next-prime neural proposer beats fixed-budget symbolic baselines"
           }
         ],
         "commands": [
@@ -3061,7 +3121,7 @@
               "Use the flat shared scorer as the interference control until the gates pass."
             ],
             "status": "contradicted",
-            "summary": "adapter-head audit: fixed ARC heads-flat delta +2.40pp; delayed_claim heads-flat -0.97pp; grid_path heads-flat +0.07pp; ARC OOD heads-single +4.67pp top-1 and -1.1836 NLL.",
+            "summary": "task-specific heads help some rows and hurt others: fixed ARC heads-flat delta +2.40pp; delayed_claim heads-flat -0.97pp; grid_path heads-flat +0.07pp; ARC OOD heads-single +4.67pp top-1 and -1.1836 NLL.",
             "title": "Shared trunk plus domain heads is gated as architecture evidence"
           }
         ],
@@ -3216,7 +3276,7 @@
             "required_for_submission": true,
             "residual": [],
             "status": "supported",
-            "summary": "capacity sweep rules out a simple wider-is-better ARC story: best fixed-ARC shared row is 32x16 at 39.20%, but every shared ARC row trails single-task; delayed_claim deltas remain +0.10pp to +0.43pp.",
+            "summary": "making the shared model wider does not simply fix ARC: the best fixed-ARC shared row is 32x16 at 39.20%, but every shared ARC row trails single-task; delayed_claim deltas remain +0.10pp to +0.43pp.",
             "title": "Capacity sweep does not explain away the ARC fixed-task gap"
           }
         ],
@@ -3312,7 +3372,7 @@
           {
             "id": "C8",
             "role": "framework_claim",
-            "title": "The paper compiler enforces code-to-PDF claim support"
+            "title": "The claim compiler enforces artifact-backed claim support"
           }
         ],
         "claims": [
@@ -3327,7 +3387,7 @@
             "required_for_submission": true,
             "residual": [],
             "status": "supported",
-            "summary": "trace determinism audit covers 2 traces and 2000 rows; invalid_rows=0, rank_fp_sensitive_rows=0, logged_mismatches=0, semantic_hashes_equal=True.",
+            "summary": "the trace audit checks whether replay meaning survives numeric/runtime changes: 2 traces and 2000 rows, 0 invalid rows, 0 rank-sensitive rows, 0 logged mismatches, same semantic hash: yes.",
             "title": "Trace replay semantics are deterministic across float and double runs"
           }
         ],
@@ -3380,7 +3440,7 @@
             "required_for_submission": true,
             "residual": [],
             "status": "supported",
-            "summary": "certified-library promotion supports fixture-level feedback: promoted move_to_anchor from 2 tasks/78 covered events with zero false rejections; slot priors raise learned certified@1 from 2 to 4 and utility@8 from 0.2119 to 0.5169. Held-out split feedback rows: 30.",
+            "summary": "saving repeatedly safe rules helps future tasks: promoted move_to_anchor from 2 tasks/78 covered events with zero false rejections; slot priors raise first-choice certifications from 2 to 4 and budget-8 utility from 0.2119 to 0.5169. Held-out split feedback rows: 30.",
             "title": "Certified hypothesis libraries feed back into proposal ranking"
           }
         ],
@@ -3437,8 +3497,8 @@
             "required_for_submission": true,
             "residual": [],
             "status": "supported",
-            "summary": "reason learning repairs the prime proposer failure at budget 8: model_score selects 7 unsafe rows and causes 172 validation false rejections, while reason_prior reaches 6 accepted rules/216.0 utility and trained_residual reaches 7 accepted rules/245.0 utility with zero false rejections; prime/modular split sweeps pass, but delayed_claim has 0 mixed split rows.",
-            "title": "Rejected-candidate reasons repair proposer ranking on prime/modular gates"
+            "summary": "logging why the verifier rejected a guess repairs the next-prime proposer at budget 8: the unguided model chooses 7 unsafe rows and causes 172 validation false rejections, while the reason prior reaches 6 accepted rules/216.0 utility and the trained repair reaches 7 accepted rules/245.0 utility with zero false rejections; arithmetic-sequence/modular split sweeps pass, but the delayed-claim stress case has 0 mixed split rows.",
+            "title": "Rejected-candidate reasons repair proposer ranking on arithmetic/modular gates"
           }
         ],
         "commands": [
@@ -3463,7 +3523,7 @@
     ],
     "schema": "crlp.paper_claim_experiment_map.v1"
   },
-  "generated_at": "2026-05-19T06:04:37.372351+00:00",
+  "generated_at": "2026-05-19T07:23:19.769350+00:00",
   "limitations": [
     {
       "claim_id": "C2.prime_proposer_fixed_budget",
@@ -3479,8 +3539,8 @@
       ],
       "severity": "scope",
       "status": "contradicted",
-      "text": "static neural proposer trails deterministic baselines on at least one grammar; candidate static=72.49 saved vs grammar=73.22, conditional static=2.15 saved vs grammar=55.57.",
-      "title": "Prime neural proposer beats fixed-budget symbolic baselines"
+      "text": "The current fixed-budget next-prime proposer evidence is negative for static neural proposer superiority; Axis 2 remains a falsifiable baseline failure until R-E2.1/R-E2.2/R-E2.3 close the gap.",
+      "title": "Next-prime neural proposer beats fixed-budget symbolic baselines"
     },
     {
       "claim_id": "C4.adapter_heads_shared_trunk",
@@ -3496,7 +3556,7 @@
       ],
       "severity": "scope",
       "status": "contradicted",
-      "text": "adapter-head audit: fixed ARC heads-flat delta +2.40pp; delayed_claim heads-flat -0.97pp; grid_path heads-flat +0.07pp; ARC OOD heads-single +4.67pp top-1 and -1.1836 NLL.",
+      "text": "The shared-trunk/domain-head architecture has not passed all promotion gates, so it should be presented as architecture evidence rather than the default model recipe.",
       "title": "Shared trunk plus domain heads is gated as architecture evidence"
     },
     {
@@ -3513,7 +3573,7 @@
       ],
       "severity": "scope",
       "status": "underpowered",
-      "text": "tiny-net plateau audit covers 4 capacities, 4 domains, and variants shared, shared_task_heads, single_task; 15/48 required rows meet the plateau threshold and 1/12 domain/variant verdicts are audit-ready.",
+      "text": "The tiny networks have not yet been audited as fully trained, so larger architectures should remain a hypothesis rather than a supported claim.",
       "title": "Tiny-net architecture claims are gated by plateau audits"
     }
   ],
@@ -3756,14 +3816,14 @@
     },
     "results/latest/prime_gate_delta_seed_interval.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-19T06:04:12.754615+00:00",
-      "row_count": 4,
-      "sha256": "989d5f1ff671ed24f3ad1d9dff1bb1f4324707dadb26345b2a81f5a8bc2a7057",
-      "size_bytes": 3863
+      "modified_utc": "2026-05-19T07:03:14.195412+00:00",
+      "row_count": 6,
+      "sha256": "9215f2f630cdcedeb467fc4f5c50ae5681dc3e227dd59fdac0e3efc832ac4edb",
+      "size_bytes": 5905
     },
     "results/latest/trace_determinism.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-19T06:04:37.291778+00:00",
+      "modified_utc": "2026-05-19T07:23:19.693023+00:00",
       "row_count": 3,
       "sha256": "476f76325fea0cec2327485185b09a8c7bb55e16aefa8aca676fb50121318cd9",
       "size_bytes": 2201
@@ -3781,6 +3841,46 @@
     "ok": true,
     "required_failures": [],
     "roadmap_missing_links": 0,
-    "roadmap_unregistered_claim_refs": 0
+    "roadmap_unregistered_claim_refs": 0,
+    "surfaced_unsupported_audit": [
+      {
+        "has_limitation_surface": true,
+        "has_limitation_text": true,
+        "id": "C2.prime_proposer_fixed_budget",
+        "missing_guards": [],
+        "promoted_surfaces": [
+          "axis_2_table"
+        ],
+        "status": "contradicted",
+        "summary": "the static neural proposer loses to deterministic ordering in at least one grammar: candidate static saves 72.49 vs grammar 73.22, and conditional static saves 2.15 vs grammar 55.57.",
+        "title": "Next-prime neural proposer beats fixed-budget symbolic baselines"
+      },
+      {
+        "has_limitation_surface": true,
+        "has_limitation_text": true,
+        "id": "C4.adapter_heads_shared_trunk",
+        "missing_guards": [],
+        "promoted_surfaces": [
+          "architecture",
+          "multitask_capacity"
+        ],
+        "status": "contradicted",
+        "summary": "task-specific heads help some rows and hurt others: fixed ARC heads-flat delta +2.40pp; delayed_claim heads-flat -0.97pp; grid_path heads-flat +0.07pp; ARC OOD heads-single +4.67pp top-1 and -1.1836 NLL.",
+        "title": "Shared trunk plus domain heads is gated as architecture evidence"
+      },
+      {
+        "has_limitation_surface": true,
+        "has_limitation_text": true,
+        "id": "C7.tiny_net_plateau_stop_rule",
+        "missing_guards": [],
+        "promoted_surfaces": [
+          "architecture"
+        ],
+        "status": "underpowered",
+        "summary": "tiny-net plateau audit covers 4 capacities, 4 domains, and variants shared, shared_task_heads, single_task; 15/48 required rows meet the plateau threshold and 1/12 domain/variant verdicts are audit-ready.",
+        "title": "Tiny-net architecture claims are gated by plateau audits"
+      }
+    ],
+    "surfaced_unsupported_failures": []
   }
 }

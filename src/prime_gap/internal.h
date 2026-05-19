@@ -12,6 +12,12 @@
 #include <string.h>
 #include <time.h>
 
+#if defined(NN_ENABLE_TEST_API)
+#define PRIME_GAP_TEST_API
+#else
+#define PRIME_GAP_TEST_API static
+#endif
+
 #ifndef NN_PRIME_GAP_G_MAX
 #define NN_PRIME_GAP_G_MAX 256
 #endif
@@ -259,6 +265,22 @@ typedef struct {
 } RuleSearchMetrics;
 
 typedef struct {
+    nn_real values[RULE_SEARCH_FEATURE_COUNT];
+} RuleProposerInputs;
+
+typedef struct {
+    size_t train_rejects;
+    size_t train_false_rejections;
+    double train_marginal_utility;
+    nn_real marginal_target;
+} RuleProposerTargets;
+
+typedef struct {
+    RuleProposerInputs inputs;
+    RuleProposerTargets targets;
+} RuleProposerSample;
+
+typedef struct {
     size_t candidates;
     size_t base_primes;
     size_t marks;
@@ -305,6 +327,21 @@ typedef struct {
     double scorer_seconds;
     double verifier_seconds;
 } EvalMetrics;
+
+typedef struct {
+    uint32_t p;
+    uint32_t target_action_id;
+    double log_scale;
+} ReplaySample;
+
+typedef struct {
+    ReplaySample *items;
+    size_t count;
+    size_t capacity;
+    char parent_hash[65];
+    char rule_hash[65];
+    char feature_set[32];
+} ReplayTrace;
 
 typedef struct {
     size_t train_limit_arg;
@@ -677,5 +714,69 @@ int run_linear_scorer_baseline(const NNConfig *config,
                                EvalMetrics *metrics_out,
                                EvalMetrics *temp_metrics_out,
                                double *temperature_out);
+
+#if defined(NN_ENABLE_TEST_API)
+RuleSearchConfig default_rule_search_config(void);
+const char *rule_proposer_feature_set_name(RuleProposerMode mode);
+const char *rule_proposer_target_name(RuleProposerMode mode);
+size_t rule_search_effective_hidden1(const RuleSearchConfig *config);
+size_t rule_search_effective_hidden2(const RuleSearchConfig *config);
+void rule_search_closed_loop_hidden_json(const RuleSearchConfig *config,
+                                         char *buffer,
+                                         size_t buffer_size);
+void rule_search_unified_hidden_json(const RuleSearchConfig *config,
+                                     char *buffer,
+                                     size_t buffer_size);
+int parse_rule_search_config(int argc, char **argv, RuleSearchConfig *config);
+void free_rule_search_grammar(RuleSearchGrammar *grammar);
+int build_rule_search_grammar(const RuleSearchConfig *config,
+                              RuleSearchGrammar *grammar);
+int build_expanded_rules(const RuleSearchGrammar *grammar, ExpandedRuleSet *rules);
+void accumulate_expanded_rule_stats(ExpandedRuleSet *rules,
+                                    const RuleSearchConfig *config,
+                                    const RuleSearchGrammar *grammar,
+                                    const GapDataset *dataset,
+                                    size_t max_states,
+                                    int validation);
+size_t rule_search_marginal_state_limit(const RuleSearchConfig *config);
+int compute_marginal_rule_utilities(ExpandedRuleSet *rules,
+                                    const RuleSearchConfig *config,
+                                    const RuleSearchGrammar *grammar,
+                                    const GapDataset *dataset,
+                                    size_t max_states,
+                                    int validation,
+                                    size_t *samples_out,
+                                    size_t *events_out);
+void fill_symbolic_rule_features(const SymbolicRejectRule *rule, nn_real *features);
+void fill_expanded_rule_features(const ExpandedRule *rule,
+                                 uint32_t max_modulus,
+                                 nn_real *features);
+void fill_rule_proposer_sample(const ExpandedRule *rule,
+                               uint32_t max_modulus,
+                               double target_scale,
+                               RuleProposerSample *sample);
+void set_expanded_rule_utilities(ExpandedRuleSet *rules);
+int select_expanded_rules_closed_loop(ExpandedRuleSet *rules,
+                                      const RuleSearchConfig *config,
+                                      const RuleSearchGrammar *grammar,
+                                      const GapDataset *dataset,
+                                      size_t max_states,
+                                      ExpandedRuleSet *accepted,
+                                      RuleSearchMetrics *metrics);
+int select_expanded_rules_unified(ExpandedRuleSet *rules,
+                                  const RuleSearchConfig *config,
+                                  const RuleSearchGrammar *grammar,
+                                  const GapDataset *dataset,
+                                  size_t max_states,
+                                  ExpandedRuleSet *accepted,
+                                  RuleSearchMetrics *metrics);
+int save_expanded_rule_checkpoint(const ExpandedRuleSet *rules,
+                                  const RuleSearchConfig *config,
+                                  const RuleSearchMetrics *metrics,
+                                  const char *path,
+                                  char out_hash[65]);
+void free_replay_trace(ReplayTrace *trace);
+int load_replay_trace(const char *path, ReplayTrace *trace);
+#endif
 
 #endif

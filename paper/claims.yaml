@@ -57,7 +57,7 @@
     },
     {
       "id": "C8",
-      "title": "The paper compiler enforces code-to-PDF claim support",
+      "title": "The claim compiler enforces artifact-backed claim support",
       "role": "framework_claim"
     },
     {
@@ -69,7 +69,7 @@
   "experiment_tracks": [
     {
       "id": "axis1-prime-gate-delta",
-      "title": "Prime learned-gate delta support",
+      "title": "Next-prime filter learned-gate delta support",
       "role": "claim_support",
       "claim_ids": [
         "C1.prime_gate_delta"
@@ -83,10 +83,10 @@
         "results/latest/comparison.canonical.jsonl",
         "paper/generated/gap_report.md"
       ],
-      "agent_instruction": "Strengthen or falsify the prime learned-gate claim without changing the claim compiler contract.",
+      "agent_instruction": "Strengthen or falsify the audited next-prime filter claim without changing the claim compiler contract.",
       "success_criteria": [
         "Required claim C1.prime_gate_delta remains supported.",
-        "Seed/CIs or calibration tradeoff evidence can be added as derived claims without rewriting paper prose by hand."
+        "Seed/CIs or calibration tradeoff evidence can be added as derived claims without rewriting prose by hand."
       ],
       "failure_modes": [
         "If learned gate no longer beats hand-wheel or raw, move the headline gate claim to generated limitations."
@@ -186,7 +186,7 @@
       ],
       "agent_instruction": "Treat public ARC coverage as a measured evidence surface, not as a broad ARC-solved claim.",
       "success_criteria": [
-        "The paper can state public train/eval certified-task and covered-cell counts from generated claim variables.",
+        "The generated claim variables support public train/eval certified-task and covered-cell counts.",
         "Residual ARC categories stay visible as roadmap input."
       ],
       "failure_modes": [
@@ -434,9 +434,9 @@
   "claims": [
     {
       "id": "C1.prime_gate_delta",
-      "title": "Prime learned gate improves top-1 over raw and hand-wheel gates",
+      "title": "Audited next-prime filter improves top-1 over raw and hand-wheel gates",
       "claim_type": "gate_effect",
-      "claim_text": "On prime_gap, the certified learned rule gate improves top-1 over both the raw scorer and the hand-wheel gate while preserving zero false rejections.",
+      "claim_text": "On the audited next-prime filter (`prime_gap` trace id), the certified learned rule gate improves top-1 over both the raw scorer and the hand-wheel gate while preserving zero false rejections.",
       "builtin_evaluator": "prime_gate_delta",
       "required_for_submission": true,
       "paper_surfaces": [
@@ -486,7 +486,7 @@
         "Re-run make results and inspect prime_gap compare rows.",
         "If top-1 ordering regressed, move the learned-gate claim to limitations and reopen R-E1.3/R-E1.4."
       ],
-      "limitation_when_not_supported": "The prime learned-gate delta is not currently supported by the canonical comparison rows, so the paper cannot use the 9.13% -> 45.12% -> 68.87% progression as a headline claim.",
+      "limitation_when_not_supported": "The audited next-prime learned-gate delta is not currently supported by the canonical comparison rows, so the 9.13% -> 45.12% -> 68.87% progression cannot be used as a headline claim.",
       "derived_claims": [
         "C1.prime_gate_delta_ci",
         "C1.learned_gate_calibration_tradeoff"
@@ -494,9 +494,9 @@
     },
     {
       "id": "C1.prime_gate_delta_ci",
-      "title": "Prime learned-gate headline is stable across seeds",
+      "title": "Audited next-prime filter headline is stable across seeds",
       "claim_type": "gate_effect_interval",
-      "claim_text": "On prime_gap, the certified learned rule gate improves top-1 over raw and hand-wheel gates across a multi-seed audit while preserving zero false rejections.",
+      "claim_text": "On the audited next-prime filter (`prime_gap` trace id), the certified learned rule gate improves top-1 over raw and hand-wheel gates across a multi-seed audit while preserving zero false rejections.",
       "builtin_evaluator": "prime_gate_delta_ci",
       "required_for_submission": true,
       "paper_surfaces": [
@@ -526,12 +526,19 @@
           },
           {
             "seed": 20240513
+          },
+          {
+            "seed": 20240514
+          },
+          {
+            "seed": 20240515
           }
         ]
       },
       "decision_rule": {
+        "minimum_seed_count": 5,
         "supported_if": [
-          "seed_count >= 3",
+          "seed_count >= 5",
           "min(hand_top1 - raw_top1) > 0",
           "min(learned_top1 - hand_top1) > 0",
           "min(learned_top10) >= 0.999",
@@ -541,15 +548,15 @@
       },
       "residual_when_not_supported": [
         "Run make prime-gate-seed-audit and copy the generated seed interval artifact into results/latest.",
-        "If the interval contradicts the headline, move the prime-gate headline from the abstract into limitations."
+        "If the interval contradicts the headline, move the next-prime filter headline from the abstract into limitations."
       ],
-      "limitation_when_not_supported": "The prime learned-gate headline lacks a supported multi-seed interval, so the paper should treat the 9.13% -> 45.12% -> 68.87% progression as a single artifact snapshot."
+      "limitation_when_not_supported": "The audited next-prime learned-gate headline lacks a supported multi-seed interval, so the 9.13% -> 45.12% -> 68.87% progression should be treated as a single artifact snapshot."
     },
     {
       "id": "C2.prime_proposer_fixed_budget",
-      "title": "Prime neural proposer beats fixed-budget symbolic baselines",
+      "title": "Next-prime neural proposer beats fixed-budget symbolic baselines",
       "claim_type": "proposer_usefulness",
-      "claim_text": "On prime_gap, the neural rule proposer is useful at fixed verifier budget relative to grammar-order and structural baselines.",
+      "claim_text": "On the audited next-prime filter (`prime_gap` trace id), the neural rule proposer is useful at fixed verifier budget relative to grammar-order and structural baselines.",
       "builtin_evaluator": "prime_proposer_fixed_budget",
       "required_for_submission": false,
       "paper_surfaces": [
@@ -613,7 +620,7 @@
         "Run R-E2.1 for 5+ seeds and budget grids.",
         "Run R-E2.2/R-E2.3 only if the richer grammar creates non-saturated cases where learned ordering can matter."
       ],
-      "limitation_when_not_supported": "The current fixed-budget prime proposer evidence is negative for static neural proposer superiority; the paper should frame Axis 2 as a falsifiable baseline failure until R-E2.1/R-E2.2/R-E2.3 close the gap.",
+      "limitation_when_not_supported": "The current fixed-budget next-prime proposer evidence is negative for static neural proposer superiority; Axis 2 remains a falsifiable baseline failure until R-E2.1/R-E2.2/R-E2.3 close the gap.",
       "derived_claims": [
         "C2.closed_loop_residual_scope",
         "C2.conjunctive_grammar_needed"
@@ -656,6 +663,7 @@
         ]
       },
       "decision_rule": {
+        "minimum_seed_count": 3,
         "supported_if": [
           "shared.top1_mean > single_task.top1_mean",
           "shared.nll_mean < single_task.nll_mean",
@@ -667,7 +675,7 @@
         "Move the ARC OOD transfer claim to limitations.",
         "Run R-F.1/R-F.2 plateau checks and R-MT.8 ordering ablations before trying adapter heads."
       ],
-      "limitation_when_not_supported": "The ARC same-envelope OOD transfer claim is not supported, so the paper should treat shared scoring as a substrate ablation rather than a positive transfer result.",
+      "limitation_when_not_supported": "The ARC same-envelope OOD transfer claim is not supported, so shared scoring should be treated as a substrate ablation rather than a positive transfer result.",
       "derived_claims": [
         "C4.arc_ood_family_breakdown",
         "C4.adapter_heads_preserve_ood_gain"
@@ -726,7 +734,7 @@
         "Separate scorer-coupled ARC results from scorer-independent gate/proposer rows.",
         "If mismatches appear, explain which measurement path now consumes scorer state."
       ],
-      "limitation_when_not_supported": "The public ARC gate/proposer rows are not invariant to scorer context labels, so the paper cannot use them to cleanly separate gate correctness from scorer transfer.",
+      "limitation_when_not_supported": "The public ARC gate/proposer rows are not invariant to scorer context labels, so they cannot cleanly separate gate correctness from scorer transfer.",
       "derived_claims": [
         "C1.arc_gate_scorer_coupled_search"
       ]
@@ -735,7 +743,7 @@
       "id": "C1.arc_public_evidence_surface",
       "title": "Public ARC corpus parity row is measured and scoped",
       "claim_type": "public_arc_parity",
-      "claim_text": "The paper reports public ARC train/eval certified-task and covered-cell counts as a measured evidence surface rather than as a broad ARC-performance claim.",
+      "claim_text": "The generated evidence reports public ARC train/eval certified-task and covered-cell counts as a measured surface rather than as a broad ARC-performance claim.",
       "builtin_evaluator": "arc_public_evidence_surface",
       "required_for_submission": true,
       "paper_surfaces": [
@@ -783,7 +791,7 @@
         "Re-run the ARC evidence-surface capture and inspect versioned public-corpus rows.",
         "If public coverage regresses, keep ARC public-corpus claims in limitations."
       ],
-      "limitation_when_not_supported": "The public ARC evidence surface is missing or regressed, so the paper should not claim a committed public-corpus parity row.",
+      "limitation_when_not_supported": "The public ARC evidence surface is missing or regressed, so the claim set should not include a committed public-corpus parity row.",
       "derived_claims": [
         "C1.arc_eval_miss_taxonomy",
         "C1.arc_budget_curve"
@@ -838,6 +846,7 @@
         ]
       },
       "decision_rule": {
+        "minimum_seed_count": 3,
         "supported_if": [
           "fixed_task.shared.nll_mean < fixed_task.single_task.nll_mean",
           "fixed_task.shared.ece_mean > fixed_task.single_task.ece_mean",
@@ -850,7 +859,7 @@
         "Rewrite the ARC calibration paragraph from the generated claim summary.",
         "Run R-X5 before generalizing the ECE story beyond the current ARC evidence surface."
       ],
-      "limitation_when_not_supported": "The ARC calibration tradeoff is not supported, so the paper should avoid claiming shared scoring improves calibration and should report only the raw NLL/ECE table.",
+      "limitation_when_not_supported": "The ARC calibration tradeoff is not supported, so the claim set should avoid saying shared scoring improves calibration and should report only the raw NLL/ECE table.",
       "derived_claims": [
         "C3.arc_reliability_diagram",
         "C3.arc_ece_task_distribution"
@@ -897,6 +906,7 @@
         ]
       },
       "decision_rule": {
+        "minimum_seed_count": 3,
         "supported_if": [
           "all.top1_mean > claim_only.top1_mean",
           "no_grid_path.top1_mean < all.top1_mean",
@@ -908,7 +918,7 @@
         "Remove delayed_claim positive transfer wording from the main body.",
         "Run R-MT.8 to distinguish sibling effect from task-ordering and sampling-rate effects."
       ],
-      "limitation_when_not_supported": "The delayed_claim leave-one-out rows do not support positive sibling transfer, so the paper should not use delayed_claim as a positive multitask example.",
+      "limitation_when_not_supported": "The delayed_claim leave-one-out rows do not support positive sibling transfer, so delayed_claim should not be used as a positive multitask example.",
       "derived_claims": [
         "C4.delayed_claim_task_ordering",
         "C4.delayed_claim_grid_path_mechanism"
@@ -963,6 +973,7 @@
         ]
       },
       "decision_rule": {
+        "minimum_seed_count": 3,
         "supported_if": [
           "all ARC capacity rows have seeds >= 3",
           "max ARC shared-minus-single top1 delta < 0",
@@ -974,7 +985,7 @@
         "If wider trunks close the fixed ARC gap, prioritize R-F.1/R-F.5 plateau checks before adapter heads.",
         "If delayed_claim turns negative at any capacity, narrow or remove the delayed-claim multitask support claim."
       ],
-      "limitation_when_not_supported": "The capacity sweep no longer rules out a simple width explanation, so the paper should not treat adapters or ordering as the next architectural bottleneck without a new plateau audit.",
+      "limitation_when_not_supported": "The capacity sweep no longer rules out a simple width explanation, so adapters or ordering should not be treated as the next architectural bottleneck without a new plateau audit.",
       "derived_claims": [
         "C7.tiny_net_plateau_stop_rule",
         "C4.adapter_head_priority"
@@ -1046,6 +1057,7 @@
         ]
       },
       "decision_rule": {
+        "minimum_seed_count": 3,
         "supported_if": [
           "shared_task_heads fixed ARC top1 > flat_shared fixed ARC top1",
           "shared_task_heads delayed_claim top1 is no worse than flat_shared by more than 0.5pp",
@@ -1067,9 +1079,9 @@
     },
     {
       "id": "C5.rejected_candidate_reason_learning",
-      "title": "Rejected-candidate reasons repair proposer ranking on prime/modular gates",
+      "title": "Rejected-candidate reasons repair proposer ranking on arithmetic/modular gates",
       "claim_type": "substrate_feedback",
-      "claim_text": "Verifier rejection reasons can be fed back into the proposer so that reason-aware and trained-residual ranking avoid unsafe rows and improve budgeted validation utility on the prime/modular gate family.",
+      "claim_text": "Verifier rejection reasons can be fed back into the proposer so that reason-aware and trained-residual ranking avoid unsafe rows and improve budgeted validation utility on the arithmetic-sequence/modular gate family.",
       "builtin_evaluator": "rejected_candidate_reason_learning",
       "required_for_submission": true,
       "paper_surfaces": [
@@ -1126,6 +1138,7 @@
         ]
       },
       "decision_rule": {
+        "minimum_seed_count": 3,
         "supported_if": [
           "model_score picks unsafe rows and produces validation false rejections at budget 8",
           "reason_prior and trained_residual have zero unsafe rows and zero validation false rejections at budget 8",
@@ -1137,7 +1150,7 @@
         "Keep R-S.0 as a prototype and do not present reason learning as an Axis 2 repair.",
         "Inspect whether split-sweep failures come from unsafe rows, no-support rows, or duplicate certificates."
       ],
-      "limitation_when_not_supported": "Rejected-candidate reason learning is not yet a supported proposer repair, so the paper should keep Axis 2 as only the fixed-budget negative result.",
+      "limitation_when_not_supported": "Rejected-candidate reason learning is not yet a supported proposer repair, so Axis 2 should remain only the fixed-budget negative result.",
       "derived_claims": [
         "C2.reason_aware_fixed_budget_baselines",
         "C5.reason_codes_as_training_data",
@@ -1223,7 +1236,7 @@
         "Keep R-S.1a as fixture-only infrastructure until a promoted prior improves budgeted proposal utility.",
         "Do not start R-S.1b/R-S.1c until promotion rows have stable zero-false-rejection semantics."
       ],
-      "limitation_when_not_supported": "The certified hypothesis library does not yet produce a supported feedback gain, so the paper should describe it as substrate machinery only.",
+      "limitation_when_not_supported": "The certified hypothesis library does not yet produce a supported feedback gain, so it should remain substrate machinery only.",
       "derived_claims": [
         "C5.held_out_library_feedback",
         "C5.public_arc_library_promotion",
@@ -1234,7 +1247,7 @@
       "id": "C7.tiny_net_plateau_stop_rule",
       "title": "Tiny-net architecture claims are gated by plateau audits",
       "claim_type": "method_claim",
-      "claim_text": "Before increasing neural capacity, the paper reports a same-ladder tiny-net audit with learning curves, restart variance, best checkpoint, plateau detection, parameter count, FLOPs, and width-help verdicts for each core task.",
+      "claim_text": "Before increasing neural capacity, the generated evidence reports a same-ladder tiny-net audit with learning curves, restart variance, best checkpoint, plateau detection, parameter count, FLOPs, and width-help verdicts for each core task.",
       "builtin_evaluator": "tiny_net_plateau_audit",
       "required_for_submission": false,
       "paper_surfaces": [
@@ -1286,7 +1299,7 @@
         "Keep architecture conclusions under limitations if task-head plateau rows are incomplete.",
         "Run make tiny-net-plateau-audit and inspect the width-help verdicts before increasing default hidden sizes."
       ],
-      "limitation_when_not_supported": "The tiny networks have not yet been audited as fully trained, so larger architectures should remain a hypothesis rather than a paper claim."
+      "limitation_when_not_supported": "The tiny networks have not yet been audited as fully trained, so larger architectures should remain a hypothesis rather than a supported claim."
     },
     {
       "id": "C8.trace_determinism_audit",
@@ -1341,7 +1354,7 @@
         "If semantic hashes diverge, inspect first_mismatch and keep L9 open.",
         "If only raw score margins differ, keep the claim semantic rather than bit-exact."
       ],
-      "limitation_when_not_supported": "The trace determinism audit is missing or contradicted, so the paper must keep L9 as an open reproducibility limitation.",
+      "limitation_when_not_supported": "The trace determinism audit is missing or contradicted, so L9 must remain an open reproducibility limitation.",
       "derived_claims": [
         "C8.cross_machine_trace_double_blind",
         "C8.semantic_trace_ci_gate"
@@ -1405,7 +1418,7 @@
         "Keep Signal as a design proposal rather than a result.",
         "Do not cite live-control reach until offline replay ranking is stable against the no-safety baseline."
       ],
-      "limitation_when_not_supported": "Signal does not yet provide a supported replay-control vignette, so the paper should remove Signal from the abstract and keep it only in the roadmap.",
+      "limitation_when_not_supported": "Signal does not yet provide a supported replay-control vignette, so Signal should be removed from the abstract and kept only in the roadmap.",
       "derived_claims": [
         "C9.signal_shadow_inference",
         "C9.signal_active_control_comparison",
@@ -1475,7 +1488,7 @@
         "Keep live neural-active wording out of the body if the latest active_source is not neural, the checkpoint is missing, runtime protocol-compatible rows are absent, or replay-ready rows are absent.",
         "Do not upgrade this to a performance claim without active neural versus heuristic utility/regret/damage/death evidence."
       ],
-      "limitation_when_not_supported": "The live Signal pilot is not supported as neural-active by the current live-brain artifact, so the paper should mention only offline replay and shadow evidence.",
+      "limitation_when_not_supported": "The live Signal pilot is not supported as neural-active by the current live-brain artifact, so only offline replay and shadow evidence should be reported.",
       "derived_claims": [
         "C9.signal_active_episode_summary",
         "C9.signal_active_vs_heuristic_baseline",

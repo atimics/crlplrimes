@@ -1,4 +1,5 @@
 #include "nn.h"
+#include "nn_json.h"
 
 #include <ctype.h>
 #include <dirent.h>
@@ -249,8 +250,15 @@ static const NNExperimentSpec ARC_AGI_EXPERIMENT_SPEC = {
         "flattened input grid, output coordinate, geometry constants, candidate color, and action one-hot",
     .leakage_policy = NN_LEAKAGE_FORBIDDEN,
     .neural_scorer = "MLP scores one output-cell/color row and softmax ranks candidate colors",
+    .grounding_authority = NN_GROUNDING_EXACT_CHECK,
+    .grounding_operator = "held-out ARC output grid for the fixed compiled task",
     .exact_verifier = "held-out output grid supplies the exact color for the requested cell",
     .verifier_feedback = "target color, top-k correctness, NLL, calibration bins, and proposal rank",
+    .candidate_grammar = "ten output-color actions plus transform hypotheses certified on train pairs",
+    .outcome_row_schema = "crlp.arc_transform.summary.v1 and fixed-cell trace rows",
+    .claim_scope = "fixed-task output-cell scoring and grammar-consistent transform rows for ARC task 0520fde7",
+    .known_non_claims =
+        "does not claim public ARC-AGI leaderboard generality from the fixed-task exact-cell smoke",
     .rule_grammar =
         "copy_left, copy_right, mask_intersection, mask_union, object_select_overlap, "
         "layer_overlap, layer_union, layer_xor, layer_left_only, layer_right_only, "
@@ -818,66 +826,6 @@ static size_t arc_induce_bbox_panel_selection_hypotheses(const ARCHypothesisTemp
                                                          size_t proposal_count,
                                                          ARCHypothesisSelectionStats *stats,
                                                          size_t template_index);
-
-static int parse_size_text(const char *text, size_t *out_value)
-{
-    if (text == NULL || text[0] == '\0' || text[0] == '-' || text[0] == '+') {
-        return 0;
-    }
-    errno = 0;
-    char *end = NULL;
-    unsigned long value = strtoul(text, &end, 10);
-    if (end == text || *end != '\0' || errno == ERANGE || value == 0) {
-        return 0;
-    }
-    *out_value = (size_t)value;
-    return 1;
-}
-
-static int parse_u64_text(const char *text, uint64_t *out_value)
-{
-    if (text == NULL || text[0] == '\0' || text[0] == '-' || text[0] == '+') {
-        return 0;
-    }
-    errno = 0;
-    char *end = NULL;
-    unsigned long long value = strtoull(text, &end, 10);
-    if (end == text || *end != '\0' || errno == ERANGE) {
-        return 0;
-    }
-    *out_value = (uint64_t)value;
-    return 1;
-}
-
-static int parse_i64_text(const char *text, int64_t *out_value)
-{
-    if (text == NULL || text[0] == '\0') {
-        return 0;
-    }
-    errno = 0;
-    char *end = NULL;
-    long long value = strtoll(text, &end, 10);
-    if (end == text || *end != '\0' || errno == ERANGE) {
-        return 0;
-    }
-    *out_value = (int64_t)value;
-    return 1;
-}
-
-static int parse_real_text(const char *text, nn_real *out_value)
-{
-    if (text == NULL || text[0] == '\0') {
-        return 0;
-    }
-    errno = 0;
-    char *end = NULL;
-    double value = strtod(text, &end);
-    if (end == text || *end != '\0' || errno == ERANGE || !isfinite(value) || value <= 0.0) {
-        return 0;
-    }
-    *out_value = (nn_real)value;
-    return 1;
-}
 
 static double safe_probability(double probability)
 {
@@ -5208,11 +5156,11 @@ static int arc_program_learned_load_hypothesis_library_prior(
         size_t proposal_count = 0;
         size_t certified_count = 0;
         NNHypothesisSlotType slot_type = NN_HYPOTHESIS_SLOT_CUSTOM;
-        if (!parse_size_text(fields[1], &template_id_size) ||
+        if (!nn_parse_size_text(fields[1], &template_id_size) ||
             !arc_hypothesis_slot_type_from_name(fields[5], &slot_type) ||
-            !parse_i64_text(fields[7], &slot_integer) ||
-            !parse_size_text(fields[8], &proposal_count) ||
-            !parse_size_text(fields[9], &certified_count)) {
+            !nn_parse_i64_text(fields[7], &slot_integer) ||
+            !nn_parse_size_text(fields[8], &proposal_count) ||
+            !nn_parse_size_text(fields[9], &certified_count)) {
             fprintf(stderr,
                     "invalid hypothesis library prior fields at %s:%zu\n",
                     path,
@@ -10989,193 +10937,46 @@ static ARCMetrics evaluate_arc_model(NeuralNet *net, size_t samples)
 static int save_arc_checkpoint(NeuralNet *net, const char *path, char out_hash[65])
 {
     NNCheckpointMeta meta;
-    memset(&meta, 0, sizeof(meta));
-    meta.checkpoint_version = 1;
-    meta.feature_encoder_version = 1;
-    strcpy(meta.parent_model_hash, "unknown");
-    strcpy(meta.training_trace_root, "arc_agi_0520fde7");
-    strcpy(meta.notes, "fixed ARC-AGI-1 0520fde7 cell-color scorer");
-    strcpy(meta.feature_set, "arc-cell-color-v1");
+    nn_checkpoint_meta_init(&meta, 1u);
+    if (!nn_checkpoint_meta_set_parent_model_hash(&meta, "unknown") ||
+        !nn_checkpoint_meta_set_training_trace_root(&meta, "arc_agi_0520fde7") ||
+        !nn_checkpoint_meta_set_notes(&meta, "fixed ARC-AGI-1 0520fde7 cell-color scorer") ||
+        !nn_checkpoint_meta_set_feature_set(&meta, "arc-cell-color-v1")) {
+        return 0;
+    }
     return nn_save_checkpoint(net, path, &meta) && nn_hash_checkpoint_hex(path, out_hash);
 }
 
-typedef struct {
-    const char *cursor;
-    const char *end;
-} ARCJsonParser;
+typedef NNJsonCursor ARCJsonParser;
 
 static void print_json_string(const char *text)
 {
-    fputc('"', stdout);
-    if (text != NULL) {
-        for (const unsigned char *p = (const unsigned char *)text; *p != '\0'; ++p) {
-            switch (*p) {
-            case '"':
-                fputs("\\\"", stdout);
-                break;
-            case '\\':
-                fputs("\\\\", stdout);
-                break;
-            case '\b':
-                fputs("\\b", stdout);
-                break;
-            case '\f':
-                fputs("\\f", stdout);
-                break;
-            case '\n':
-                fputs("\\n", stdout);
-                break;
-            case '\r':
-                fputs("\\r", stdout);
-                break;
-            case '\t':
-                fputs("\\t", stdout);
-                break;
-            default:
-                if (*p < 0x20u) {
-                    printf("\\u%04x", (unsigned)*p);
-                } else {
-                    fputc((int)*p, stdout);
-                }
-                break;
-            }
-        }
-    }
-    fputc('"', stdout);
+    (void)nn_write_json_string(stdout, text);
 }
 
 static void arc_json_skip_ws(ARCJsonParser *parser)
 {
-    while (parser->cursor < parser->end &&
-           isspace((unsigned char)*parser->cursor)) {
-        ++parser->cursor;
-    }
+    nn_json_skip_ws(parser);
 }
 
 static int arc_json_expect(ARCJsonParser *parser, char expected)
 {
-    arc_json_skip_ws(parser);
-    if (parser->cursor >= parser->end || *parser->cursor != expected) {
-        return 0;
-    }
-    ++parser->cursor;
-    return 1;
+    return nn_json_expect(parser, expected);
 }
 
 static int arc_json_parse_string(ARCJsonParser *parser, char *out, size_t out_size)
 {
-    arc_json_skip_ws(parser);
-    if (parser->cursor >= parser->end || *parser->cursor != '"') {
-        return 0;
-    }
-    ++parser->cursor;
-    size_t used = 0;
-    while (parser->cursor < parser->end && *parser->cursor != '"') {
-        unsigned char ch = (unsigned char)*parser->cursor++;
-        if (ch == '\\') {
-            if (parser->cursor >= parser->end) {
-                return 0;
-            }
-            ch = (unsigned char)*parser->cursor++;
-            if (ch == 'u') {
-                for (size_t i = 0; i < 4; ++i) {
-                    if (parser->cursor >= parser->end ||
-                        !isxdigit((unsigned char)*parser->cursor)) {
-                        return 0;
-                    }
-                    ++parser->cursor;
-                }
-                ch = '?';
-            }
-        }
-        if (used + 1u < out_size) {
-            out[used++] = (char)ch;
-        }
-    }
-    if (parser->cursor >= parser->end || *parser->cursor != '"') {
-        return 0;
-    }
-    ++parser->cursor;
-    if (out_size > 0) {
-        out[used] = '\0';
-    }
-    return 1;
-}
-
-static int arc_json_skip_value(ARCJsonParser *parser);
-
-static int arc_json_skip_array_or_object(ARCJsonParser *parser, char open, char close)
-{
-    if (!arc_json_expect(parser, open)) {
-        return 0;
-    }
-    arc_json_skip_ws(parser);
-    if (parser->cursor < parser->end && *parser->cursor == close) {
-        ++parser->cursor;
-        return 1;
-    }
-    for (;;) {
-        if (open == '{') {
-            char key[64];
-            if (!arc_json_parse_string(parser, key, sizeof(key)) ||
-                !arc_json_expect(parser, ':') ||
-                !arc_json_skip_value(parser)) {
-                return 0;
-            }
-        } else if (!arc_json_skip_value(parser)) {
-            return 0;
-        }
-        arc_json_skip_ws(parser);
-        if (parser->cursor < parser->end && *parser->cursor == ',') {
-            ++parser->cursor;
-            continue;
-        }
-        if (parser->cursor < parser->end && *parser->cursor == close) {
-            ++parser->cursor;
-            return 1;
-        }
-        return 0;
-    }
+    return nn_json_parse_string(parser, out, out_size);
 }
 
 static int arc_json_skip_value(ARCJsonParser *parser)
 {
-    arc_json_skip_ws(parser);
-    if (parser->cursor >= parser->end) {
-        return 0;
-    }
-    if (*parser->cursor == '"') {
-        char scratch[1];
-        return arc_json_parse_string(parser, scratch, sizeof(scratch));
-    }
-    if (*parser->cursor == '[') {
-        return arc_json_skip_array_or_object(parser, '[', ']');
-    }
-    if (*parser->cursor == '{') {
-        return arc_json_skip_array_or_object(parser, '{', '}');
-    }
-    while (parser->cursor < parser->end &&
-           strchr(",]}\r\n\t ", *parser->cursor) == NULL) {
-        ++parser->cursor;
-    }
-    return 1;
+    return nn_json_skip_value(parser);
 }
 
 static int arc_json_parse_uint(ARCJsonParser *parser, unsigned long *out_value)
 {
-    arc_json_skip_ws(parser);
-    if (parser->cursor >= parser->end || !isdigit((unsigned char)*parser->cursor)) {
-        return 0;
-    }
-    errno = 0;
-    char *end = NULL;
-    unsigned long value = strtoul(parser->cursor, &end, 10);
-    if (end == parser->cursor || errno == ERANGE || end > parser->end) {
-        return 0;
-    }
-    parser->cursor = end;
-    *out_value = value;
-    return 1;
+    return nn_json_parse_uint(parser, out_value);
 }
 
 static int arc_json_parse_grid(ARCJsonParser *parser, ARCGrid *grid)
@@ -12070,23 +11871,23 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
         if (strcmp(argv[i], "--schema") == 0) {
             *schema_only = 1;
         } else if (strcmp(argv[i], "--epochs") == 0 && i + 1 < argc) {
-            if (!parse_size_text(argv[++i], &config->epochs)) {
+            if (!nn_parse_size_text(argv[++i], &config->epochs)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--steps-per-epoch") == 0 && i + 1 < argc) {
-            if (!parse_size_text(argv[++i], &config->steps_per_epoch)) {
+            if (!nn_parse_size_text(argv[++i], &config->steps_per_epoch)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--test-samples") == 0 && i + 1 < argc) {
-            if (!parse_size_text(argv[++i], &config->test_samples)) {
+            if (!nn_parse_size_text(argv[++i], &config->test_samples)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--learning-rate") == 0 && i + 1 < argc) {
-            if (!parse_real_text(argv[++i], &config->learning_rate)) {
+            if (!nn_parse_real_positive_text(argv[++i], &config->learning_rate)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
-            if (!parse_u64_text(argv[++i], &config->seed)) {
+            if (!nn_parse_u64_text(argv[++i], &config->seed)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) {
@@ -12097,11 +11898,11 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
                 return 0;
             }
         } else if (strcmp(argv[i], "--max-tasks") == 0 && i + 1 < argc) {
-            if (!parse_size_text(argv[++i], &config->max_tasks)) {
+            if (!nn_parse_size_text(argv[++i], &config->max_tasks)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--program-budget") == 0 && i + 1 < argc) {
-            if (!parse_size_text(argv[++i], &config->program_budget)) {
+            if (!nn_parse_size_text(argv[++i], &config->program_budget)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--program-budget-grid") == 0) {
@@ -12114,11 +11915,11 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
                 return 0;
             }
         } else if (strcmp(argv[i], "--program-train-max-tasks") == 0 && i + 1 < argc) {
-            if (!parse_size_text(argv[++i], &config->program_train_max_tasks)) {
+            if (!nn_parse_size_text(argv[++i], &config->program_train_max_tasks)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--program-learning-rate") == 0 && i + 1 < argc) {
-            if (!parse_real_text(argv[++i], &config->program_learning_rate)) {
+            if (!nn_parse_real_positive_text(argv[++i], &config->program_learning_rate)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--hypothesis-library-prior") == 0 && i + 1 < argc) {
@@ -12140,11 +11941,11 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             const char *value = argv[++i];
             if (strcmp(value, "0") == 0) {
                 config->hypothesis_prior_hidden = 0;
-            } else if (!parse_size_text(value, &config->hypothesis_prior_hidden)) {
+            } else if (!nn_parse_size_text(value, &config->hypothesis_prior_hidden)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--hypothesis-top-k") == 0 && i + 1 < argc) {
-            if (!parse_size_text(argv[++i], &config->hypothesis_top_k)) {
+            if (!nn_parse_size_text(argv[++i], &config->hypothesis_top_k)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--disable-hypothesis-neural-prior") == 0) {
@@ -12167,7 +11968,7 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             const char *value = argv[++i];
             if (strcmp(value, "0") == 0) {
                 config->min_induction_evidence = 0;
-            } else if (!parse_size_text(value, &config->min_induction_evidence)) {
+            } else if (!nn_parse_size_text(value, &config->min_induction_evidence)) {
                 return 0;
             }
         } else {

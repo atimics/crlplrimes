@@ -1,4 +1,5 @@
 #include "nn_program.h"
+#include "nn_text.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -531,24 +532,7 @@ int nn_program_coverage_add_program_to_residual(const NNProgramCoverage *coverag
 
 static void nn_program_json_string(FILE *fp, const char *value)
 {
-    fputc('"', fp);
-    if (value != NULL) {
-        for (const unsigned char *p = (const unsigned char *)value; *p != '\0'; ++p) {
-            if (*p == '"' || *p == '\\') {
-                fputc('\\', fp);
-                fputc((int)*p, fp);
-            } else if (*p == '\n') {
-                fputs("\\n", fp);
-            } else if (*p == '\r') {
-                fputs("\\r", fp);
-            } else if (*p == '\t') {
-                fputs("\\t", fp);
-            } else {
-                fputc((int)*p, fp);
-            }
-        }
-    }
-    fputc('"', fp);
+    (void)nn_write_json_string(fp, value);
 }
 
 int nn_program_write_proposer_summary_json(FILE *fp,

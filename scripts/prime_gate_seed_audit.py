@@ -281,7 +281,7 @@ def main() -> int:
     parser.add_argument("--prime-replay", type=Path, required=True)
     parser.add_argument("--prime-compare", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--seeds", default="20240511:20240513")
+    parser.add_argument("--seeds", default="20240511:20240515")
     parser.add_argument("--trace-train-limit", type=int, default=100000)
     parser.add_argument("--trace-test-limit", type=int, default=200000)
     parser.add_argument("--supervised-epochs", type=int, default=1)

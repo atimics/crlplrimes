@@ -81,8 +81,8 @@ static int symbolic_rule_has_structural_certificate(const SymbolicRejectRule *ru
     return gcd_u32(rule->modulus, rule->residue) > 1u;
 }
 
-static void fill_symbolic_rule_features(const SymbolicRejectRule *rule,
-                                        nn_real *features)
+PRIME_GAP_TEST_API void fill_symbolic_rule_features(const SymbolicRejectRule *rule,
+                                                    nn_real *features)
 {
     double modulus = (double)rule->modulus;
     double residue = (double)rule->residue;

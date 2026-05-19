@@ -69,7 +69,7 @@ enum {
     UNIFIED_TRANSFER_RULE_UPDATES_PER_BUDGET = 8,
 };
 
-static RuleSearchConfig default_rule_search_config(void)
+PRIME_GAP_TEST_API RuleSearchConfig default_rule_search_config(void)
 {
     RuleSearchConfig config;
     memset(&config, 0, sizeof(config));
@@ -97,12 +97,12 @@ static RuleSearchConfig default_rule_search_config(void)
     return config;
 }
 
-static size_t rule_search_effective_hidden1(const RuleSearchConfig *config)
+PRIME_GAP_TEST_API size_t rule_search_effective_hidden1(const RuleSearchConfig *config)
 {
     return config != NULL && config->rule_hidden1 != 0 ? config->rule_hidden1 : 32u;
 }
 
-static size_t rule_search_effective_hidden2(const RuleSearchConfig *config)
+PRIME_GAP_TEST_API size_t rule_search_effective_hidden2(const RuleSearchConfig *config)
 {
     return config != NULL && config->rule_hidden2 != 0 ? config->rule_hidden2 : 16u;
 }
@@ -117,9 +117,9 @@ static size_t rule_search_effective_unified_hidden2(const RuleSearchConfig *conf
     return config != NULL && config->unified_hidden2 != 0 ? config->unified_hidden2 : 32u;
 }
 
-static void rule_search_closed_loop_hidden_json(const RuleSearchConfig *config,
-                                                char *buffer,
-                                                size_t buffer_size)
+PRIME_GAP_TEST_API void rule_search_closed_loop_hidden_json(const RuleSearchConfig *config,
+                                                            char *buffer,
+                                                            size_t buffer_size)
 {
     if (buffer == NULL || buffer_size == 0) {
         return;
@@ -135,9 +135,9 @@ static void rule_search_closed_loop_hidden_json(const RuleSearchConfig *config,
     }
 }
 
-static void rule_search_unified_hidden_json(const RuleSearchConfig *config,
-                                            char *buffer,
-                                            size_t buffer_size)
+PRIME_GAP_TEST_API void rule_search_unified_hidden_json(const RuleSearchConfig *config,
+                                                        char *buffer,
+                                                        size_t buffer_size)
 {
     if (buffer == NULL || buffer_size == 0) {
         return;
@@ -174,7 +174,7 @@ static const char *rule_proposer_mode_name(RuleProposerMode mode)
     return "unknown";
 }
 
-static const char *rule_proposer_feature_set_name(RuleProposerMode mode)
+PRIME_GAP_TEST_API const char *rule_proposer_feature_set_name(RuleProposerMode mode)
 {
     switch (mode) {
     case RULE_PROPOSER_NEURAL:
@@ -194,7 +194,7 @@ static const char *rule_proposer_feature_set_name(RuleProposerMode mode)
     return "unknown";
 }
 
-static const char *rule_proposer_target_name(RuleProposerMode mode)
+PRIME_GAP_TEST_API const char *rule_proposer_target_name(RuleProposerMode mode)
 {
     switch (mode) {
     case RULE_PROPOSER_NEURAL:
@@ -386,7 +386,7 @@ static int parse_rule_hidden_text(const char *text, size_t *hidden1, size_t *hid
     return 1;
 }
 
-static int parse_rule_search_config(int argc, char **argv, RuleSearchConfig *config)
+PRIME_GAP_TEST_API int parse_rule_search_config(int argc, char **argv, RuleSearchConfig *config)
 {
     *config = default_rule_search_config();
     for (int i = 1; i < argc; ++i) {
@@ -565,7 +565,7 @@ static void print_expanded_rule_text(FILE *fp, const ExpandedRule *rule)
     }
 }
 
-static void free_rule_search_grammar(RuleSearchGrammar *grammar)
+PRIME_GAP_TEST_API void free_rule_search_grammar(RuleSearchGrammar *grammar)
 {
     free(grammar->state_atoms);
     free(grammar->filter_atoms);
@@ -575,8 +575,8 @@ static void free_rule_search_grammar(RuleSearchGrammar *grammar)
     memset(grammar, 0, sizeof(*grammar));
 }
 
-static int build_rule_search_grammar(const RuleSearchConfig *config,
-                                     RuleSearchGrammar *grammar)
+PRIME_GAP_TEST_API int build_rule_search_grammar(const RuleSearchConfig *config,
+                                                 RuleSearchGrammar *grammar)
 {
     memset(grammar, 0, sizeof(*grammar));
     size_t residue_sum = 0;
@@ -644,7 +644,8 @@ static int build_rule_search_grammar(const RuleSearchConfig *config,
     return state_index == grammar->state_count && filter_index == grammar->filter_count;
 }
 
-static int build_expanded_rules(const RuleSearchGrammar *grammar, ExpandedRuleSet *rules)
+PRIME_GAP_TEST_API int build_expanded_rules(const RuleSearchGrammar *grammar,
+                                            ExpandedRuleSet *rules)
 {
     memset(rules, 0, sizeof(*rules));
     rules->count = grammar->state_count * grammar->filter_count;
@@ -723,12 +724,12 @@ static void increment_matching_expanded_rules(ExpandedRule *rules,
     }
 }
 
-static void accumulate_expanded_rule_stats(ExpandedRuleSet *rules,
-                                           const RuleSearchConfig *config,
-                                           const RuleSearchGrammar *grammar,
-                                           const GapDataset *dataset,
-                                           size_t max_states,
-                                           int validation)
+PRIME_GAP_TEST_API void accumulate_expanded_rule_stats(ExpandedRuleSet *rules,
+                                                       const RuleSearchConfig *config,
+                                                       const RuleSearchGrammar *grammar,
+                                                       const GapDataset *dataset,
+                                                       size_t max_states,
+                                                       int validation)
 {
     size_t samples = dataset->count;
     if (max_states != 0 && max_states < samples) {
@@ -767,7 +768,7 @@ static size_t rule_search_sample_count(const GapDataset *dataset, size_t max_sta
     return samples;
 }
 
-static size_t rule_search_marginal_state_limit(const RuleSearchConfig *config)
+PRIME_GAP_TEST_API size_t rule_search_marginal_state_limit(const RuleSearchConfig *config)
 {
     if (config->max_train_states != 0 &&
         config->max_train_states < config->max_marginal_states) {
@@ -1093,14 +1094,14 @@ static int rule_is_marginal_candidate(const ExpandedRule *rule, int validation)
     return rule->train_false_rejections == 0 && rule->train_rejects != 0;
 }
 
-static int compute_marginal_rule_utilities(ExpandedRuleSet *rules,
-                                           const RuleSearchConfig *config,
-                                           const RuleSearchGrammar *grammar,
-                                           const GapDataset *dataset,
-                                           size_t max_states,
-                                           int validation,
-                                           size_t *samples_out,
-                                           size_t *events_out)
+PRIME_GAP_TEST_API int compute_marginal_rule_utilities(ExpandedRuleSet *rules,
+                                                       const RuleSearchConfig *config,
+                                                       const RuleSearchGrammar *grammar,
+                                                       const GapDataset *dataset,
+                                                       size_t max_states,
+                                                       int validation,
+                                                       size_t *samples_out,
+                                                       size_t *events_out)
 {
     NNRuleCoverage coverage;
     size_t samples = 0;
@@ -1167,9 +1168,9 @@ static int compute_marginal_rule_utilities(ExpandedRuleSet *rules,
     return 1;
 }
 
-static void fill_expanded_rule_features(const ExpandedRule *rule,
-                                        uint32_t max_modulus,
-                                        nn_real *features)
+PRIME_GAP_TEST_API void fill_expanded_rule_features(const ExpandedRule *rule,
+                                                    uint32_t max_modulus,
+                                                    nn_real *features)
 {
     double max_mod = max_modulus == 0 ? 1.0 : (double)max_modulus;
     uint32_t state_common = expanded_rule_is_conditional(rule)
@@ -1209,7 +1210,7 @@ static void fill_expanded_rule_features(const ExpandedRule *rule,
                        : (nn_real)0;
 }
 
-static void set_expanded_rule_utilities(ExpandedRuleSet *rules)
+PRIME_GAP_TEST_API void set_expanded_rule_utilities(ExpandedRuleSet *rules)
 {
     for (size_t i = 0; i < rules->count; ++i) {
         ExpandedRule *rule = &rules->items[i];
@@ -1219,26 +1220,10 @@ static void set_expanded_rule_utilities(ExpandedRuleSet *rules)
     }
 }
 
-typedef struct {
-    nn_real values[RULE_SEARCH_FEATURE_COUNT];
-} RuleProposerInputs;
-
-typedef struct {
-    size_t train_rejects;
-    size_t train_false_rejections;
-    double train_marginal_utility;
-    nn_real marginal_target;
-} RuleProposerTargets;
-
-typedef struct {
-    RuleProposerInputs inputs;
-    RuleProposerTargets targets;
-} RuleProposerSample;
-
-static void fill_rule_proposer_sample(const ExpandedRule *rule,
-                                      uint32_t max_modulus,
-                                      double target_scale,
-                                      RuleProposerSample *sample)
+PRIME_GAP_TEST_API void fill_rule_proposer_sample(const ExpandedRule *rule,
+                                                  uint32_t max_modulus,
+                                                  double target_scale,
+                                                  RuleProposerSample *sample)
 {
     memset(sample, 0, sizeof(*sample));
     fill_expanded_rule_features(rule, max_modulus, sample->inputs.values);
@@ -2672,13 +2657,13 @@ static int unified_train_shared_action_rule_scorer(NeuralNet *net,
     return action_done == action_updates && rule_done == rule_updates;
 }
 
-static int select_expanded_rules_closed_loop(ExpandedRuleSet *rules,
-                                             const RuleSearchConfig *config,
-                                             const RuleSearchGrammar *grammar,
-                                             const GapDataset *dataset,
-                                             size_t max_states,
-                                             ExpandedRuleSet *accepted,
-                                             RuleSearchMetrics *metrics)
+PRIME_GAP_TEST_API int select_expanded_rules_closed_loop(ExpandedRuleSet *rules,
+                                                         const RuleSearchConfig *config,
+                                                         const RuleSearchGrammar *grammar,
+                                                         const GapDataset *dataset,
+                                                         size_t max_states,
+                                                         ExpandedRuleSet *accepted,
+                                                         RuleSearchMetrics *metrics)
 {
     memset(accepted, 0, sizeof(*accepted));
     accepted->items = calloc(config->max_rules, sizeof(*accepted->items));
@@ -2793,13 +2778,13 @@ static int select_expanded_rules_closed_loop(ExpandedRuleSet *rules,
     return 1;
 }
 
-static int select_expanded_rules_unified(ExpandedRuleSet *rules,
-                                         const RuleSearchConfig *config,
-                                         const RuleSearchGrammar *grammar,
-                                         const GapDataset *dataset,
-                                         size_t max_states,
-                                         ExpandedRuleSet *accepted,
-                                         RuleSearchMetrics *metrics)
+PRIME_GAP_TEST_API int select_expanded_rules_unified(ExpandedRuleSet *rules,
+                                                     const RuleSearchConfig *config,
+                                                     const RuleSearchGrammar *grammar,
+                                                     const GapDataset *dataset,
+                                                     size_t max_states,
+                                                     ExpandedRuleSet *accepted,
+                                                     RuleSearchMetrics *metrics)
 {
     memset(accepted, 0, sizeof(*accepted));
     accepted->items = calloc(config->max_rules, sizeof(*accepted->items));
@@ -3105,11 +3090,11 @@ RuleSearchMetrics evaluate_expanded_rules(const Sieve *sieve,
     return metrics;
 }
 
-static int save_expanded_rule_checkpoint(const ExpandedRuleSet *rules,
-                                         const RuleSearchConfig *config,
-                                         const RuleSearchMetrics *metrics,
-                                         const char *path,
-                                         char out_hash[65])
+PRIME_GAP_TEST_API int save_expanded_rule_checkpoint(const ExpandedRuleSet *rules,
+                                                     const RuleSearchConfig *config,
+                                                     const RuleSearchMetrics *metrics,
+                                                     const char *path,
+                                                     char out_hash[65])
 {
     FILE *fp = fopen(path, "w");
     if (fp == NULL) {

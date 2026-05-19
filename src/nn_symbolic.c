@@ -1,4 +1,5 @@
 #include "nn_symbolic.h"
+#include "nn_text.h"
 #include "nn_train.h"
 
 #include <math.h>
@@ -24,36 +25,7 @@ static int nn_text_is_present(const char *text)
 
 static void nn_symbolic_json_string(FILE *fp, const char *value)
 {
-    fputc('"', fp);
-    if (value != NULL) {
-        for (const unsigned char *p = (const unsigned char *)value; *p != '\0'; ++p) {
-            switch (*p) {
-            case '"':
-                fputs("\\\"", fp);
-                break;
-            case '\\':
-                fputs("\\\\", fp);
-                break;
-            case '\n':
-                fputs("\\n", fp);
-                break;
-            case '\r':
-                fputs("\\r", fp);
-                break;
-            case '\t':
-                fputs("\\t", fp);
-                break;
-            default:
-                if (*p < 0x20u) {
-                    fprintf(fp, "\\u%04x", (unsigned int)*p);
-                } else {
-                    fputc((int)*p, fp);
-                }
-                break;
-            }
-        }
-    }
-    fputc('"', fp);
+    (void)nn_write_json_string(fp, value);
 }
 
 static void nn_rule_summary_field_prefix(FILE *fp, int *first, const char *name)

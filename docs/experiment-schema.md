@@ -61,10 +61,13 @@ The machine-readable form is emitted as `crlp.experiment_schema.v1`:
 make experiment-schemas
 ```
 
-The current C schema keeps the historical field names `exact_verifier` and
-`verifier_feedback` for compatibility. In this document, "grounding operator" is
-the broader contract term for exact checkers, deterministic replay, corpus
-proxies, and review gates that populate those verifier-named outcome fields.
+The current C schema emits both the historical verifier fields
+(`exact_verifier`, `verifier_feedback`) and explicit grounding fields:
+`grounding_authority`, `grounding_operator`, `candidate_grammar`,
+`outcome_row_schema`, `claim_scope`, and `known_non_claims`. In this document,
+"grounding operator" is the broader contract term for exact checkers,
+deterministic replay, corpus proxies, and review gates that populate those
+verifier-named outcome fields.
 
 The task-schema C API lives in `include/nn_experiment.h`; the implementation is
 `src/nn_experiment.c`. The shared symbolic-domain API lives in
@@ -120,6 +123,10 @@ The schema is not limited to strings. Each task also declares:
 
 - `NNFeatureSchema[]`: one row per scorer input feature, with a typed
   `NNFeatureProvenance`.
+- `NNGroundingAuthority`: `exact_check`, `deterministic_replay`,
+  `corpus_proxy`, or `human_review`.
+- Grounding scope text: `grounding_operator`, `candidate_grammar`,
+  `outcome_row_schema`, `claim_scope`, and `known_non_claims`.
 - `NNLeakagePolicy`: `forbidden`, `priors_allowed`, `legacy`, or the
   proposer-only `gate_allowed`.
 - `NNProposerMode`: `selection` or `discovery`.
@@ -138,8 +145,9 @@ NN_FEATURE_DERIVED_FROM_GATE
 scorer. `NN_LEAKAGE_PRIORS_ALLOWED` allows enabled structural priors but still
 forbids verifier-derived and gate-derived scorer inputs. `NN_LEAKAGE_LEGACY`
 marks runs that are not directly comparable to clean rows.
-`NN_LEAKAGE_GATE_ALLOWED` is for proposer/gate surfaces such as closed-loop
-residual-set features; experiment scorer schemas deliberately cannot use it.
+`NN_LEAKAGE_GATE_ALLOWED` is for explicitly declared proposer/gate surfaces such
+as closed-loop residual-set features; it permits gate-derived features but still
+forbids verifier-derived scorer inputs.
 
 The schema writer refuses to emit a task whose enabled scorer features violate
 its declared leakage policy. The same reusable audit helper is used by

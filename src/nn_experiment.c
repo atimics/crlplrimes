@@ -23,6 +23,14 @@ int nn_leakage_policy_is_valid(NNLeakagePolicy policy)
            policy == NN_LEAKAGE_GATE_ALLOWED;
 }
 
+int nn_grounding_authority_is_valid(NNGroundingAuthority authority)
+{
+    return authority == NN_GROUNDING_EXACT_CHECK ||
+           authority == NN_GROUNDING_DETERMINISTIC_REPLAY ||
+           authority == NN_GROUNDING_CORPUS_PROXY ||
+           authority == NN_GROUNDING_HUMAN_REVIEW;
+}
+
 int nn_feature_schema_is_valid(const NNFeatureSchema *features, size_t feature_count)
 {
     if (feature_count == 0) {
@@ -80,6 +88,22 @@ const char *nn_proposer_mode_name(NNProposerMode mode)
         return "selection";
     case NN_PROPOSER_DISCOVERY:
         return "discovery";
+    default:
+        return "unknown";
+    }
+}
+
+const char *nn_grounding_authority_name(NNGroundingAuthority authority)
+{
+    switch (authority) {
+    case NN_GROUNDING_EXACT_CHECK:
+        return "exact_check";
+    case NN_GROUNDING_DETERMINISTIC_REPLAY:
+        return "deterministic_replay";
+    case NN_GROUNDING_CORPUS_PROXY:
+        return "corpus_proxy";
+    case NN_GROUNDING_HUMAN_REVIEW:
+        return "human_review";
     default:
         return "unknown";
     }
@@ -180,7 +204,8 @@ static int experiment_leakage_policy_is_valid(NNLeakagePolicy policy)
 {
     return policy == NN_LEAKAGE_FORBIDDEN ||
            policy == NN_LEAKAGE_PRIORS_ALLOWED ||
-           policy == NN_LEAKAGE_LEGACY;
+           policy == NN_LEAKAGE_LEGACY ||
+           policy == NN_LEAKAGE_GATE_ALLOWED;
 }
 
 int nn_experiment_spec_is_valid(const NNExperimentSpec *spec)
@@ -193,8 +218,14 @@ int nn_experiment_spec_is_valid(const NNExperimentSpec *spec)
            text_is_present(spec->observable_features) &&
            experiment_leakage_policy_is_valid(spec->leakage_policy) &&
            text_is_present(spec->neural_scorer) &&
+           nn_grounding_authority_is_valid(spec->grounding_authority) &&
+           text_is_present(spec->grounding_operator) &&
            text_is_present(spec->exact_verifier) &&
-           text_is_present(spec->verifier_feedback) && text_is_present(spec->rule_grammar) &&
+           text_is_present(spec->verifier_feedback) &&
+           text_is_present(spec->candidate_grammar) &&
+           text_is_present(spec->outcome_row_schema) &&
+           text_is_present(spec->claim_scope) &&
+           text_is_present(spec->known_non_claims) && text_is_present(spec->rule_grammar) &&
            text_is_present(spec->certificate_checker) &&
            text_is_present(spec->gate_executor) && text_is_present(spec->proposer_inputs) &&
            text_is_present(spec->proposer_targets) &&
@@ -407,8 +438,17 @@ int nn_experiment_write_schema_json(FILE *fp, const NNExperimentSpec *spec)
                           nn_leakage_policy_name(spec->leakage_policy),
                           &first) ||
         !write_json_field(fp, "neural_scorer", spec->neural_scorer, &first) ||
+        !write_json_field(fp,
+                          "grounding_authority",
+                          nn_grounding_authority_name(spec->grounding_authority),
+                          &first) ||
+        !write_json_field(fp, "grounding_operator", spec->grounding_operator, &first) ||
         !write_json_field(fp, "exact_verifier", spec->exact_verifier, &first) ||
         !write_json_field(fp, "verifier_feedback", spec->verifier_feedback, &first) ||
+        !write_json_field(fp, "candidate_grammar", spec->candidate_grammar, &first) ||
+        !write_json_field(fp, "outcome_row_schema", spec->outcome_row_schema, &first) ||
+        !write_json_field(fp, "claim_scope", spec->claim_scope, &first) ||
+        !write_json_field(fp, "known_non_claims", spec->known_non_claims, &first) ||
         !write_json_field(fp, "rule_grammar", spec->rule_grammar, &first) ||
         !write_json_field(fp, "certificate_checker", spec->certificate_checker, &first) ||
         !write_json_field(fp, "gate_executor", spec->gate_executor, &first) ||

@@ -121,11 +121,14 @@ real haiku vs corrupted haiku
 ```
 
 The corruption families are line shuffle, line splice from another poem,
-syllable-budget break, repetition, and frequent-word salad. The candidate
-features include syllable errors, line balance, repetition, stopword/nature/
-season/abstract word ratios, word-frequency priors, and train-split adjacency
-coverage. The trace schema is `crlp.haiku_understanding.trace.v1`; the summary
-schema is `crlp.haiku_understanding.summary.v1`. This benchmark measures
+syllable-budget break, repetition, frequent-word salad, topic splice, and
+same-season splice. The candidate features include syllable errors, line
+balance, repetition, stopword/nature/season/abstract word ratios,
+word-frequency priors, train-split adjacency coverage, line-to-line topic
+similarity, poem topic tightness, per-line topic coverage, and cross-line
+content reuse. The trace schema is `crlp.haiku_understanding.trace.v1`; the
+summary schema is `crlp.haiku_understanding.summary.v1` and includes
+`coherence_top1` over the topic-splice families. This benchmark measures
 whether the engine can reject near-miss poems, not whether generated poems are
 good.
 
@@ -134,7 +137,8 @@ Next architecture gates before calling this an LLM:
 - token embeddings
 - sequence windows as first-class training examples
 - recurrent or transformer state
-- poem-level topic or image embeddings for line-splice and word-salad detection
+- learned poem-level topic or image embeddings beyond the current lexical topic
+  proxy
 - residual blocks and normalization
 - AdamW or another adaptive optimizer
 - held-out perplexity reporting across larger corpora

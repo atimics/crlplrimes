@@ -2200,6 +2200,67 @@ static size_t checkpoint_metadata_size(void)
     return checkpoint_metadata_v1_size() + 32u;
 }
 
+static int checkpoint_meta_copy_text(char *dst, size_t dst_size, const char *value)
+{
+    if (dst == NULL || dst_size == 0) {
+        return 0;
+    }
+    const char *src = value == NULL ? "" : value;
+    size_t len = strlen(src);
+    if (len >= dst_size) {
+        dst[0] = '\0';
+        return 0;
+    }
+    memcpy(dst, src, len + 1u);
+    return 1;
+}
+
+void nn_checkpoint_meta_init(NNCheckpointMeta *meta, uint32_t feature_encoder_version)
+{
+    if (meta == NULL) {
+        return;
+    }
+    memset(meta, 0, sizeof(*meta));
+    meta->checkpoint_version = NN_CHECKPOINT_VERSION;
+    meta->feature_encoder_version = feature_encoder_version;
+}
+
+int nn_checkpoint_meta_set_parent_model_hash(NNCheckpointMeta *meta, const char *value)
+{
+    return meta != NULL &&
+           checkpoint_meta_copy_text(meta->parent_model_hash,
+                                     sizeof(meta->parent_model_hash),
+                                     value);
+}
+
+int nn_checkpoint_meta_set_training_trace_root(NNCheckpointMeta *meta, const char *value)
+{
+    return meta != NULL &&
+           checkpoint_meta_copy_text(meta->training_trace_root,
+                                     sizeof(meta->training_trace_root),
+                                     value);
+}
+
+int nn_checkpoint_meta_set_benchmark_report_hash(NNCheckpointMeta *meta, const char *value)
+{
+    return meta != NULL &&
+           checkpoint_meta_copy_text(meta->benchmark_report_hash,
+                                     sizeof(meta->benchmark_report_hash),
+                                     value);
+}
+
+int nn_checkpoint_meta_set_notes(NNCheckpointMeta *meta, const char *value)
+{
+    return meta != NULL &&
+           checkpoint_meta_copy_text(meta->notes, sizeof(meta->notes), value);
+}
+
+int nn_checkpoint_meta_set_feature_set(NNCheckpointMeta *meta, const char *value)
+{
+    return meta != NULL &&
+           checkpoint_meta_copy_text(meta->feature_set, sizeof(meta->feature_set), value);
+}
+
 static int write_checkpoint_metadata(FILE *fp, const NNCheckpointMeta *meta)
 {
     NNCheckpointMeta local;
@@ -2611,52 +2672,7 @@ int nn_hash_checkpoint_hex(const char *path, char out_hex[65])
 
 static int trace_write_json_string(FILE *fp, const char *text)
 {
-    if (fputc('"', fp) == EOF) {
-        return 0;
-    }
-
-    if (text != NULL) {
-        for (const unsigned char *p = (const unsigned char *)text; *p != '\0'; ++p) {
-            switch (*p) {
-            case '"':
-                if (fputs("\\\"", fp) == EOF) {
-                    return 0;
-                }
-                break;
-            case '\\':
-                if (fputs("\\\\", fp) == EOF) {
-                    return 0;
-                }
-                break;
-            case '\n':
-                if (fputs("\\n", fp) == EOF) {
-                    return 0;
-                }
-                break;
-            case '\r':
-                if (fputs("\\r", fp) == EOF) {
-                    return 0;
-                }
-                break;
-            case '\t':
-                if (fputs("\\t", fp) == EOF) {
-                    return 0;
-                }
-                break;
-            default:
-                if (*p < 0x20u) {
-                    if (fprintf(fp, "\\u%04x", (unsigned int)*p) < 0) {
-                        return 0;
-                    }
-                } else if (fputc(*p, fp) == EOF) {
-                    return 0;
-                }
-                break;
-            }
-        }
-    }
-
-    return fputc('"', fp) != EOF;
+    return nn_write_json_string(fp, text);
 }
 
 static int trace_write_real_array(FILE *fp, const nn_real *values, size_t count)

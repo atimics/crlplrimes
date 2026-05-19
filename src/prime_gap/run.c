@@ -34,8 +34,15 @@ static const NNExperimentSpec PRIME_GAP_EXPERIMENT_SPEC = {
         "minimal default [log(p), normalized_gap, overflow_flag]; residue flags are disabled leakage ablations",
     .leakage_policy = NN_LEAKAGE_FORBIDDEN,
     .neural_scorer = "shared MLP scores one state/action row and softmax ranks surviving candidates",
+    .grounding_authority = NN_GROUNDING_EXACT_CHECK,
+    .grounding_operator = "segmented sieve next-prime-gap oracle",
     .exact_verifier = "segmented sieve returns the true next-prime gap and exact verifier work",
     .verifier_feedback = "target gap, top-k correctness, ranking loss, exact probes, calibration bins",
+    .candidate_grammar = "even gap actions 2..256 plus overflow; gate rules reject impossible gaps",
+    .outcome_row_schema = "crlp.trace.v1 and crlp.compare.v1 rows keyed by stable action ids",
+    .claim_scope = "certified next-prime action ranking and gate/proposer rows for configured split ranges",
+    .known_non_claims =
+        "does not claim primality proof beyond the sieve oracle or extrapolation outside configured limits",
     .rule_grammar = "modular rejection predicates over candidate residues and optional state-conditioned residues",
     .certificate_checker =
         "algebraic certificate such as gcd(modulus, residue) > 1 proves rejected candidate is composite",

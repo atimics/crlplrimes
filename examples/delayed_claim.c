@@ -51,8 +51,15 @@ static const NNExperimentSpec DELAYED_CLAIM_EXPERIMENT_SPEC = {
         "observable claim features plus action one-hot; hidden outcome and utilities are excluded",
     .leakage_policy = NN_LEAKAGE_FORBIDDEN,
     .neural_scorer = "shared MLP scores one claim/action row and softmax ranks actions",
+    .grounding_authority = NN_GROUNDING_DETERMINISTIC_REPLAY,
+    .grounding_operator = "deterministic hidden-rule simulator replay",
     .exact_verifier = "deterministic hidden rule computes action utilities and the best action",
     .verifier_feedback = "target action, utility, proposal steps, calibration bins, replay loss",
+    .candidate_grammar = "four fixed claim actions with threshold and risk-margin rejection predicates",
+    .outcome_row_schema = "crlp.trace.v1 replay rows plus delayed-claim evaluation summaries",
+    .claim_scope = "finite generated delayed-feedback action ranking under declared seed bands",
+    .known_non_claims =
+        "does not claim behavior for real-world claim adjudication or unobserved hidden-rule families",
     .rule_grammar =
         "threshold predicates plus direct utility-margin and indirect risk-margin predicates over trust/request actions",
     .certificate_checker =
@@ -180,57 +187,6 @@ static uint32_t dc_rng_next(uint32_t *state)
 static nn_real dc_rng_unit(uint32_t *state)
 {
     return (nn_real)((double)dc_rng_next(state) / (double)UINT32_MAX);
-}
-
-static int parse_size_text(const char *text, size_t *out_value)
-{
-    if (text == NULL || text[0] == '\0' || text[0] == '-' || text[0] == '+') {
-        return 0;
-    }
-
-    errno = 0;
-    char *end = NULL;
-    unsigned long value = strtoul(text, &end, 10);
-    if (end == text || *end != '\0' || errno == ERANGE || value == 0) {
-        return 0;
-    }
-
-    *out_value = (size_t)value;
-    return 1;
-}
-
-static int parse_u64_text(const char *text, uint64_t *out_value)
-{
-    if (text == NULL || text[0] == '\0' || text[0] == '-' || text[0] == '+') {
-        return 0;
-    }
-
-    errno = 0;
-    char *end = NULL;
-    unsigned long long value = strtoull(text, &end, 10);
-    if (end == text || *end != '\0' || errno == ERANGE) {
-        return 0;
-    }
-
-    *out_value = (uint64_t)value;
-    return 1;
-}
-
-static int parse_real_text(const char *text, nn_real *out_value)
-{
-    if (text == NULL || text[0] == '\0') {
-        return 0;
-    }
-
-    errno = 0;
-    char *end = NULL;
-    double value = strtod(text, &end);
-    if (end == text || *end != '\0' || errno == ERANGE || !isfinite(value) || value < 0.0) {
-        return 0;
-    }
-
-    *out_value = (nn_real)value;
-    return 1;
 }
 
 static double dc_safe_probability(double probability)
@@ -1006,13 +962,14 @@ static int save_claim_checkpoint(NeuralNet *net,
                                  char out_hash[65])
 {
     NNCheckpointMeta meta;
-    memset(&meta, 0, sizeof(meta));
-    meta.checkpoint_version = 1;
-    meta.feature_encoder_version = 1;
-    strcpy(meta.parent_model_hash, parent_hash == NULL ? "unknown" : parent_hash);
-    strcpy(meta.training_trace_root, "delayed_claim");
-    strcpy(meta.notes, notes);
-    strcpy(meta.feature_set, "claim-state-action-v1");
+    nn_checkpoint_meta_init(&meta, 1);
+    if (!nn_checkpoint_meta_set_parent_model_hash(&meta,
+                                                  parent_hash == NULL ? "unknown" : parent_hash) ||
+        !nn_checkpoint_meta_set_training_trace_root(&meta, "delayed_claim") ||
+        !nn_checkpoint_meta_set_notes(&meta, notes) ||
+        !nn_checkpoint_meta_set_feature_set(&meta, "claim-state-action-v1")) {
+        return 0;
+    }
     return nn_save_checkpoint(net, path, &meta) && nn_hash_checkpoint_hex(path, out_hash);
 }
 
@@ -2265,23 +2222,23 @@ int main(int argc, char **argv)
             if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
                 replay_config.out_path = argv[++i];
             } else if (strcmp(argv[i], "--epochs") == 0 && i + 1 < argc) {
-                if (!parse_size_text(argv[++i], &replay_config.epochs)) {
+                if (!nn_parse_size_text(argv[++i], &replay_config.epochs)) {
                     print_usage(stderr);
                     return EXIT_FAILURE;
                 }
             } else if (strcmp(argv[i], "--learning-rate") == 0 && i + 1 < argc) {
-                if (!parse_real_text(argv[++i], &replay_config.learning_rate) ||
+                if (!nn_parse_real_nonnegative_text(argv[++i], &replay_config.learning_rate) ||
                     replay_config.learning_rate <= (nn_real)0) {
                     print_usage(stderr);
                     return EXIT_FAILURE;
                 }
             } else if (strcmp(argv[i], "--hard-weight") == 0 && i + 1 < argc) {
-                if (!parse_real_text(argv[++i], &replay_config.hard_weight)) {
+                if (!nn_parse_real_nonnegative_text(argv[++i], &replay_config.hard_weight)) {
                     print_usage(stderr);
                     return EXIT_FAILURE;
                 }
             } else if (strcmp(argv[i], "--soft-weight") == 0 && i + 1 < argc) {
-                if (!parse_real_text(argv[++i], &replay_config.soft_weight)) {
+                if (!nn_parse_real_nonnegative_text(argv[++i], &replay_config.soft_weight)) {
                     print_usage(stderr);
                     return EXIT_FAILURE;
                 }
@@ -2319,7 +2276,7 @@ int main(int argc, char **argv)
         uint64_t proposer_seed = UINT64_C(20240511);
         for (int i = 3; i < argc; ++i) {
             if (strcmp(argv[i], "--max-rules") == 0 && i + 1 < argc) {
-                if (!parse_size_text(argv[++i], &max_rules)) {
+                if (!nn_parse_size_text(argv[++i], &max_rules)) {
                     print_usage(stderr);
                     return EXIT_FAILURE;
                 }
@@ -2331,7 +2288,7 @@ int main(int argc, char **argv)
                     return EXIT_FAILURE;
                 }
             } else if (strcmp(argv[i], "--proposer-seed") == 0 && i + 1 < argc) {
-                if (!parse_u64_text(argv[++i], &proposer_seed)) {
+                if (!nn_parse_u64_text(argv[++i], &proposer_seed)) {
                     print_usage(stderr);
                     return EXIT_FAILURE;
                 }
@@ -2365,12 +2322,12 @@ int main(int argc, char **argv)
             trace_seed_start = DC_TRAIN_SEED_START;
             trace_samples = DC_TRAIN_SAMPLES;
         } else if (strcmp(argv[i], "--trace-seed") == 0 && i + 1 < argc) {
-            if (!parse_u64_text(argv[++i], &trace_seed_start)) {
+            if (!nn_parse_u64_text(argv[++i], &trace_seed_start)) {
                 print_usage(stderr);
                 return EXIT_FAILURE;
             }
         } else if (strcmp(argv[i], "--trace-samples") == 0 && i + 1 < argc) {
-            if (!parse_size_text(argv[++i], &trace_samples)) {
+            if (!nn_parse_size_text(argv[++i], &trace_samples)) {
                 print_usage(stderr);
                 return EXIT_FAILURE;
             }

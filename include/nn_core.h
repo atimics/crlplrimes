@@ -196,6 +196,12 @@ int nn_rank_action_scores_with_ids(const nn_real *scores,
                                    nn_real score_epsilon);
 nn_real nn_action_score_margin(const nn_real *scores, size_t count, size_t selected_index);
 
+void nn_checkpoint_meta_init(NNCheckpointMeta *meta, uint32_t feature_encoder_version);
+int nn_checkpoint_meta_set_parent_model_hash(NNCheckpointMeta *meta, const char *value);
+int nn_checkpoint_meta_set_training_trace_root(NNCheckpointMeta *meta, const char *value);
+int nn_checkpoint_meta_set_benchmark_report_hash(NNCheckpointMeta *meta, const char *value);
+int nn_checkpoint_meta_set_notes(NNCheckpointMeta *meta, const char *value);
+int nn_checkpoint_meta_set_feature_set(NNCheckpointMeta *meta, const char *value);
 int nn_save_checkpoint(const NeuralNet *net,
                        const char *path,
                        const NNCheckpointMeta *meta);

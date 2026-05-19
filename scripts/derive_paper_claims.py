@@ -26,6 +26,7 @@ from typing import Any
 
 STATUS_ORDER = ("supported", "contradicted", "underpowered", "missing", "stale")
 FAIL_STATUSES = {"contradicted", "underpowered", "missing", "stale"}
+UNSUPPORTED_SAFE_SURFACES = {"limitations", "roadmap", "paper_support"}
 ROADMAP_ROW_RE = re.compile(
     r"^\s*\[(R-[A-Z0-9]+(?:-[A-Z0-9]+)?(?:\.\d+[a-z]?)?)"
     r"(?: \*(?:done|prototype|audit)\*)?\], \[(.*?)\], \[(.*?)\], \[(.*?)\],"
@@ -230,6 +231,7 @@ def base_result(claim: dict[str, Any]) -> dict[str, Any]:
         "roadmap_items": list(claim.get("roadmap_items", [])),
         "experiments": list(claim.get("experiments", [])),
         "decision_rule": claim.get("decision_rule", {}),
+        "limitation_when_not_supported": claim.get("limitation_when_not_supported", ""),
         "derived_claims": list(claim.get("derived_claims", [])),
         "provenance": {},
         "residual": [],
@@ -240,6 +242,16 @@ def base_result(claim: dict[str, Any]) -> dict[str, Any]:
         "status": "missing",
         "summary": "",
     }
+
+
+def claim_min_seed_count(claim: dict[str, Any], default: int = 3) -> int:
+    decision_rule = claim.get("decision_rule", {})
+    raw_value = claim.get("minimum_seed_count", decision_rule.get("minimum_seed_count", default))
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 def attach_provenance(result: dict[str, Any], claim: dict[str, Any], sources: dict[str, Any]) -> None:
@@ -326,8 +338,9 @@ def evaluate_prime_gate_delta(claim: dict[str, Any], repo: Path) -> dict[str, An
     if result["status"] != "supported":
         result["residual"] = claim.get("residual_when_not_supported", [])
     result["summary"] = (
-        f"learned gate {pct(learned_top1)} vs hand-wheel {pct(hand_top1)} "
-        f"vs raw {pct(raw_top1)}; false rejections={false_rejections}."
+        f"the verified learned filter raises top-1 ranking to {pct(learned_top1)} "
+        f"from {pct(hand_top1)} for the hand-coded wheel and {pct(raw_top1)} raw, "
+        f"with {false_rejections} verifier-counted true-answer deletions."
     )
     return result
 
@@ -345,6 +358,7 @@ def _sample_stdev(values: list[float]) -> float:
 
 def evaluate_prime_gate_delta_ci(claim: dict[str, Any], repo: Path) -> dict[str, Any]:
     result = base_result(claim)
+    minimum_seed_count = claim_min_seed_count(claim, default=5)
     source = repo / claim["evidence"]["source"]
     rows = read_jsonl(source)
     seed_rows = [
@@ -374,7 +388,7 @@ def evaluate_prime_gate_delta_ci(claim: dict[str, Any], repo: Path) -> dict[str,
     if not seed_rows:
         result["status"] = "missing"
         result["residual"] = claim.get("residual_when_not_supported", [])
-        result["summary"] = "Missing prime-gate seed-interval rows."
+        result["summary"] = "Missing next-prime filter seed-interval rows."
         return result
 
     def values(key: str) -> list[float]:
@@ -392,6 +406,7 @@ def evaluate_prime_gate_delta_ci(claim: dict[str, Any], repo: Path) -> dict[str,
 
     result["metrics"] = {
         "seed_count": len(seed_rows),
+        "minimum_seed_count": minimum_seed_count,
         "seed_start": min(seed_values),
         "seed_end": max(seed_values),
         "raw_top1_mean": _mean(raw),
@@ -416,7 +431,7 @@ def evaluate_prime_gate_delta_ci(claim: dict[str, Any], repo: Path) -> dict[str,
         "sample_count_min": min(sample_counts),
     }
 
-    if len(seed_rows) < 3 or min(sample_counts) < 30000:
+    if len(seed_rows) < minimum_seed_count or min(sample_counts) < 30000:
         result["status"] = "underpowered"
     elif (
         min(hand_delta) > 0.0
@@ -430,12 +445,13 @@ def evaluate_prime_gate_delta_ci(claim: dict[str, Any], repo: Path) -> dict[str,
     if result["status"] != "supported":
         result["residual"] = claim.get("residual_when_not_supported", [])
     result["summary"] = (
-        f"{len(seed_rows)} seeds: learned {pct(_mean(learned))} +/- "
-        f"{100.0 * _sample_stdev(learned):.2f}pp vs hand {pct(_mean(hand))} +/- "
-        f"{100.0 * _sample_stdev(hand):.2f}pp and raw {pct(_mean(raw))} +/- "
-        f"{100.0 * _sample_stdev(raw):.2f}pp; min learned-vs-hand delta "
-        f"{min(learned_delta):+.2f}pp, learned top-10 min {pct(min(top10))}, "
-        f"false rejections max={max(false_rejections)}."
+        f"across {len(seed_rows)} seeds, the learned filter stays at {pct(_mean(learned))} "
+        f"+/- {100.0 * _sample_stdev(learned):.2f}pp, versus "
+        f"{pct(_mean(hand))} +/- {100.0 * _sample_stdev(hand):.2f}pp for the hand wheel "
+        f"and {pct(_mean(raw))} +/- {100.0 * _sample_stdev(raw):.2f}pp raw; "
+        f"the worst learned-vs-hand gain is {min(learned_delta):+.2f}pp, learned top-10 "
+        f"never falls below {pct(min(top10))}, and false rejections never exceed "
+        f"{max(false_rejections)}; promotion requires {minimum_seed_count} seeds."
     )
     return result
 
@@ -550,15 +566,15 @@ def evaluate_prime_proposer_fixed_budget(claim: dict[str, Any], repo: Path) -> d
         result["summary"] = "Missing one or more fixed-budget proposer baseline rows."
     elif any_static_trails:
         result["summary"] = (
-            "static neural proposer trails deterministic baselines on at least one grammar; "
-            f"candidate static={num(cand.get('static_neural_saved_pct'), 2)} saved vs "
-            f"grammar={num(cand.get('grammar_order_saved_pct'), 2)}, "
-            f"conditional static={num(cond.get('static_neural_saved_pct'), 2)} saved vs "
-            f"grammar={num(cond.get('grammar_order_saved_pct'), 2)}."
+            "the static neural proposer loses to deterministic ordering in at least one "
+            f"grammar: candidate static saves {num(cand.get('static_neural_saved_pct'), 2)} "
+            f"vs grammar {num(cand.get('grammar_order_saved_pct'), 2)}, and conditional "
+            f"static saves {num(cond.get('static_neural_saved_pct'), 2)} vs grammar "
+            f"{num(cond.get('grammar_order_saved_pct'), 2)}."
         )
     elif all_best_neural_win:
         result["summary"] = (
-            "best neural proposer matches or beats deterministic baselines for every "
+            "the best neural proposer matches or beats deterministic ordering for every "
             "reported grammar."
         )
     else:
@@ -571,6 +587,7 @@ def evaluate_prime_proposer_fixed_budget(claim: dict[str, Any], repo: Path) -> d
 
 def evaluate_arc_ood_shared_vs_single(claim: dict[str, Any], repo: Path) -> dict[str, Any]:
     result = base_result(claim)
+    minimum_seed_count = claim_min_seed_count(claim, default=3)
     source = repo / claim["evidence"]["source"]
     rows = read_csv(source)
     shared = find_first(rows, model_kind="shared")
@@ -605,8 +622,9 @@ def evaluate_arc_ood_shared_vs_single(claim: dict[str, Any], repo: Path) -> dict
         "ece_delta": shared_ece - single_ece,
         "shared_seeds": shared_seeds,
         "single_seeds": single_seeds,
+        "minimum_seed_count": minimum_seed_count,
     }
-    if shared_seeds < 3 or single_seeds < 3:
+    if shared_seeds < minimum_seed_count or single_seeds < minimum_seed_count:
         result["status"] = "underpowered"
     elif shared_top1 > single_top1 and shared_nll < single_nll:
         result["status"] = "supported"
@@ -794,9 +812,9 @@ def evaluate_arc_public_evidence_surface(claim: dict[str, Any], repo: Path) -> d
     if result["status"] != "supported":
         result["residual"] = claim.get("residual_when_not_supported", [])
     result["summary"] = (
-        f"public ARC evidence surface improves from v10 eval {v10_eval_tasks} tasks/"
-        f"{v10_eval_cells} cells to {current_version} eval {current_eval_tasks} tasks/"
-        f"{current_eval_cells} cells; {current_version} train remains "
+        f"the ARC row measures coverage, not competence: public eval coverage moves from "
+        f"v10 {v10_eval_tasks} tasks/{v10_eval_cells} cells to {current_version} "
+        f"{current_eval_tasks} tasks/{current_eval_cells} cells, while train coverage is "
         f"{current_train_tasks} tasks/{current_train_cells} cells."
     )
     result["paper_explanation"] = (
@@ -819,6 +837,7 @@ def evaluate_arc_public_evidence_surface(claim: dict[str, Any], repo: Path) -> d
 
 def evaluate_arc_ood_calibration_tradeoff(claim: dict[str, Any], repo: Path) -> dict[str, Any]:
     result = base_result(claim)
+    minimum_seed_count = claim_min_seed_count(claim, default=3)
     source = repo / claim["evidence"]["source"]
     rows = read_csv(source)
     fixed_shared = find_first(rows, scope="fixed_task", eval_name="arc_agi", model_kind="shared")
@@ -854,8 +873,9 @@ def evaluate_arc_ood_calibration_tradeoff(claim: dict[str, Any], repo: Path) -> 
         "ood_nll_improvement": -ood_nll_delta,
         "fixed_seeds": fixed_seeds,
         "ood_seeds": ood_seeds,
+        "minimum_seed_count": minimum_seed_count,
     }
-    if fixed_seeds < 3 or ood_seeds < 3:
+    if fixed_seeds < minimum_seed_count or ood_seeds < minimum_seed_count:
         result["status"] = "underpowered"
     elif fixed_nll_delta < 0 and fixed_ece_delta > 0 and ood_nll_delta < 0 and ood_ece_delta < 0:
         result["status"] = "supported"
@@ -889,6 +909,7 @@ def evaluate_arc_ood_calibration_tradeoff(claim: dict[str, Any], repo: Path) -> 
 
 def evaluate_delayed_claim_leave_one_out(claim: dict[str, Any], repo: Path) -> dict[str, Any]:
     result = base_result(claim)
+    minimum_seed_count = claim_min_seed_count(claim, default=3)
     source = repo / claim["evidence"]["source"]
     rows = read_csv(source)
     all_row = find_first(rows, training_set="all")
@@ -921,8 +942,9 @@ def evaluate_delayed_claim_leave_one_out(claim: dict[str, Any], repo: Path) -> d
         "no_grid_path_vs_all_delta_pp": 100.0 * (no_grid_top1 - all_top1),
         "no_arc_agi_vs_all_delta_pp": 100.0 * (no_arc_top1 - all_top1),
         "seeds": seeds,
+        "minimum_seed_count": minimum_seed_count,
     }
-    if seeds < 3:
+    if seeds < minimum_seed_count:
         result["status"] = "underpowered"
     elif all_top1 > claim_only_top1 and no_grid_top1 < all_top1:
         result["status"] = "supported"
@@ -958,6 +980,7 @@ def evaluate_delayed_claim_leave_one_out(claim: dict[str, Any], repo: Path) -> d
 
 def evaluate_multitask_capacity_sweep(claim: dict[str, Any], repo: Path) -> dict[str, Any]:
     result = base_result(claim)
+    minimum_seed_count = claim_min_seed_count(claim, default=3)
     source = repo / claim["evidence"]["source"]
     rows = read_csv(source)
     arc_rows = [row for row in rows if row.get("domain") == "arc_agi"]
@@ -1017,8 +1040,9 @@ def evaluate_multitask_capacity_sweep(claim: dict[str, Any], repo: Path) -> dict
         "claim_delta_min_pp": 100.0 * min(claim_deltas),
         "claim_delta_max_pp": 100.0 * max(claim_deltas),
         "arc_delta_monotone_non_decreasing": is_monotone_non_decreasing(arc_deltas),
+        "minimum_seed_count": minimum_seed_count,
     }
-    if seeds < 3:
+    if seeds < minimum_seed_count:
         result["status"] = "underpowered"
     elif max(arc_deltas) < 0 and min(claim_deltas) >= 0 and not is_monotone_non_decreasing(arc_deltas):
         result["status"] = "supported"
@@ -1027,8 +1051,8 @@ def evaluate_multitask_capacity_sweep(claim: dict[str, Any], repo: Path) -> dict
     if result["status"] != "supported":
         result["residual"] = claim.get("residual_when_not_supported", [])
     result["summary"] = (
-        "capacity sweep rules out a simple wider-is-better ARC story: best fixed-ARC shared row is "
-        f"{best_arc_row.get('hidden')} at {pct(as_float(best_arc_row, 'shared_top1_mean'))}, "
+        "making the shared model wider does not simply fix ARC: the best fixed-ARC shared "
+        f"row is {best_arc_row.get('hidden')} at {pct(as_float(best_arc_row, 'shared_top1_mean'))}, "
         f"but every shared ARC row trails single-task; delayed_claim deltas remain "
         f"{100.0 * min(claim_deltas):+.2f}pp to {100.0 * max(claim_deltas):+.2f}pp."
     )
@@ -1183,7 +1207,7 @@ def evaluate_tiny_net_plateau_audit(claim: dict[str, Any], repo: Path) -> dict[s
         f"{audit_ready_count}/{len(required_pairs)} domain/variant verdicts are audit-ready."
     )
     result["paper_explanation"] = (
-        "This turns the width discussion into an audit: the paper can distinguish "
+        "This turns the width discussion into an audit: the claim layer can distinguish "
         "undertraining from representation limits using learning curves, restarts, "
         "best checkpoints, parameter counts, FLOPs, plateau flags, width-help rows, "
         "and per-domain/variant audit verdicts."
@@ -1209,6 +1233,7 @@ def evaluate_tiny_net_plateau_audit(claim: dict[str, Any], repo: Path) -> dict[s
 
 def evaluate_adapter_heads_shared_trunk(claim: dict[str, Any], repo: Path) -> dict[str, Any]:
     result = base_result(claim)
+    minimum_seed_count = claim_min_seed_count(claim, default=3)
     source = repo / claim["evidence"]["source"]
     deltas = read_csv(source)
     summary_source = None
@@ -1261,9 +1286,16 @@ def evaluate_adapter_heads_shared_trunk(claim: dict[str, Any], repo: Path) -> di
     grid_gate = grid_delta >= -transfer_margin
     ood_gate = ood_arc_top1_delta >= 0.0 and ood_arc_nll_delta <= 0.0
     decision = decision_rows[0] if decision_rows else {}
-    promote = fixed_arc_gate and delayed_gate and grid_gate and ood_gate and seeds >= 3
+    promote = (
+        fixed_arc_gate
+        and delayed_gate
+        and grid_gate
+        and ood_gate
+        and seeds >= minimum_seed_count
+    )
     result["metrics"] = {
         "seeds": seeds,
+        "minimum_seed_count": minimum_seed_count,
         "fixed_arc_top1_delta_heads_minus_flat_shared_pp": 100.0 * fixed_arc_delta,
         "delayed_claim_top1_delta_heads_minus_flat_shared_pp": 100.0 * delayed_delta,
         "grid_path_top1_delta_heads_minus_flat_shared_pp": 100.0 * grid_delta,
@@ -1279,7 +1311,7 @@ def evaluate_adapter_heads_shared_trunk(claim: dict[str, Any], repo: Path) -> di
         "headed_forward_flops_fixed_arc": as_float(fixed_arc, "headed_forward_flops_mean"),
         "headed_train_updates_fixed_arc": as_float(fixed_arc, "headed_train_updates_mean"),
     }
-    if seeds < 3:
+    if seeds < minimum_seed_count:
         result["status"] = "underpowered"
     elif promote:
         result["status"] = "supported"
@@ -1288,7 +1320,7 @@ def evaluate_adapter_heads_shared_trunk(claim: dict[str, Any], repo: Path) -> di
     if result["status"] != "supported":
         result["residual"] = claim.get("residual_when_not_supported", [])
     result["summary"] = (
-        "adapter-head audit: fixed ARC heads-flat delta "
+        "task-specific heads help some rows and hurt others: fixed ARC heads-flat delta "
         f"{100.0 * fixed_arc_delta:+.2f}pp; delayed_claim heads-flat "
         f"{100.0 * delayed_delta:+.2f}pp; grid_path heads-flat "
         f"{100.0 * grid_delta:+.2f}pp; ARC OOD heads-single "
@@ -1316,6 +1348,7 @@ def evaluate_adapter_heads_shared_trunk(claim: dict[str, Any], repo: Path) -> di
 
 def evaluate_rejected_candidate_reason_learning(claim: dict[str, Any], repo: Path) -> dict[str, Any]:
     result = base_result(claim)
+    minimum_seed_count = claim_min_seed_count(claim, default=3)
     source = repo / claim["evidence"]["source"]
     rows = [
         row
@@ -1370,7 +1403,7 @@ def evaluate_rejected_candidate_reason_learning(claim: dict[str, Any], repo: Pat
     if model is None or prior is None or aware is None or residual is None or not prime_splits or not modular_splits:
         result["status"] = "missing"
         result["residual"] = claim.get("residual_when_not_supported", [])
-        result["summary"] = "Missing rejected-candidate reason-learning rows for prime_gap or modular split sweeps."
+        result["summary"] = "Missing rejected-candidate reason-learning rows for next-prime or modular split sweeps."
         return result
 
     model_unsafe = as_int(model, "unsafe_rules")
@@ -1429,6 +1462,7 @@ def evaluate_rejected_candidate_reason_learning(claim: dict[str, Any], repo: Pat
         "reason_family_rows": len(family_rows),
         "seed_interval_rows": len(seed_rows),
         "seed_interval_count": as_int(seed_residual, "seed_count", 0),
+        "minimum_seed_count": minimum_seed_count,
         "seed_interval_model_unsafe_mean": interval_mean(seed_model, "unsafe_rules"),
         "seed_interval_model_false_mean": interval_mean(seed_model, "validation_false_rejections"),
         "seed_interval_prior_false_mean": interval_mean(seed_prior, "validation_false_rejections"),
@@ -1447,6 +1481,7 @@ def evaluate_rejected_candidate_reason_learning(claim: dict[str, Any], repo: Pat
         and residual_utility > prior_utility
         and prime_split_pass
         and modular_split_pass
+        and as_int(seed_residual, "seed_count", 0) >= minimum_seed_count
     ):
         result["status"] = "supported"
     else:
@@ -1454,20 +1489,21 @@ def evaluate_rejected_candidate_reason_learning(claim: dict[str, Any], repo: Pat
         result["residual"] = claim.get("residual_when_not_supported", [])
 
     result["summary"] = (
-        f"reason learning repairs the prime proposer failure at budget 8: model_score selects "
-        f"{model_unsafe} unsafe rows and causes {model_false} validation false rejections, "
-        f"while reason_prior reaches {as_int(prior, 'accepted_rules')} accepted rules/"
-        f"{num(prior_utility, 1)} utility and trained_residual reaches "
+        f"logging why the verifier rejected a guess repairs the next-prime proposer at budget 8: "
+        f"the unguided model chooses {model_unsafe} unsafe rows and causes {model_false} "
+        f"validation false rejections, while the reason prior reaches "
+        f"{as_int(prior, 'accepted_rules')} accepted rules/{num(prior_utility, 1)} utility "
+        f"and the trained repair reaches "
         f"{as_int(residual, 'accepted_rules')} accepted rules/{num(residual_utility, 1)} "
-        f"utility with zero false rejections; prime/modular split sweeps pass, but "
-        f"delayed_claim has {len(delayed_mixed_rows)} mixed split rows."
+        f"utility with zero false rejections; arithmetic-sequence/modular split sweeps pass, but "
+        f"the delayed-claim stress case has {len(delayed_mixed_rows)} mixed split rows."
     )
     result["paper_explanation"] = (
-        "This is the first substrate-level self-authoring loop: rejected verifier rows are "
-        "converted into reasons, then those reasons improve the next proposer pass. The "
-        "claim is scoped to the prime/modular sweeps; delayed_claim remains a stress case. "
-        "Seed-interval and reason-family artifacts are reported when present so the paper "
-        "can distinguish stable proposer repair from a single favorable trace."
+        "This is the first feedback loop: rejected verifier rows become reason labels, and "
+        "those labels improve the next proposal pass. The claim is scoped to the "
+        "arithmetic-sequence/modular sweeps; delayed_claim remains a stress case. Seed-interval and "
+        "reason-family artifacts are reported when present so the reporting can distinguish "
+        "stable proposer repair from a single favorable trace."
     )
     result["chart"] = {
         "kind": "coverage_bar",
@@ -1583,11 +1619,11 @@ def evaluate_hypothesis_library_promotion(claim: dict[str, Any], repo: Path) -> 
         result["residual"] = claim.get("residual_when_not_supported", [])
 
     result["summary"] = (
-        f"certified-library promotion supports fixture-level feedback: promoted "
+        f"saving repeatedly safe rules helps future tasks: promoted "
         f"{promoted.get('template_name')} from {as_int(promoted, 'support_tasks')} tasks/"
         f"{as_int(promoted, 'covered_events')} covered events with zero false rejections; "
-        f"slot priors raise learned certified@1 from {no_cert_1} to {slot_cert_1} and "
-        f"utility@8 from {num(no_utility_8)} to {num(slot_utility_8)}. "
+        f"slot priors raise first-choice certifications from {no_cert_1} to {slot_cert_1} "
+        f"and budget-8 utility from {num(no_utility_8)} to {num(slot_utility_8)}. "
         f"Held-out split feedback rows: {len(heldout_rows)}."
     )
     result["paper_explanation"] = (
@@ -1785,12 +1821,12 @@ def evaluate_signal_flight_replay_control(claim: dict[str, Any], repo: Path) -> 
         )
 
     result["summary"] = (
-        f"Signal offline replay ranker top-1 {pct(top1)} vs baseline {pct(baseline_top1)} "
-        f"({100.0 * (top1 - baseline_top1):+.2f}pp), utility {num(selected_utility)} vs "
-        f"{num(baseline_utility)}, regret {num(regret)} vs {num(baseline_regret)}, "
-        f"damage {pct(damage)} vs {pct(baseline_damage)}, deaths {pct(death)} vs {pct(baseline_death)}; "
-        f"live shadow frames={as_int(shadow, 'shadow_frames', 0)}."
-        f"{rollout_summary}"
+        f"in offline Signal replay, the model ranks recorded WASD choices at top-1 "
+        f"{pct(top1)} vs baseline {pct(baseline_top1)} ({100.0 * (top1 - baseline_top1):+.2f}pp), "
+        f"utility {num(selected_utility)} vs {num(baseline_utility)}, regret {num(regret)} "
+        f"vs {num(baseline_regret)}, damage {pct(damage)} vs {pct(baseline_damage)}, "
+        f"deaths {pct(death)} vs {pct(baseline_death)}; live shadow frames="
+        f"{as_int(shadow, 'shadow_frames', 0)}.{rollout_summary}"
     )
     result["paper_explanation"] = (
         "This is an application vignette, not a live-control claim: Signal contributes a "
@@ -1940,12 +1976,12 @@ def evaluate_signal_live_neural_active(claim: dict[str, Any], repo: Path) -> dic
         result["residual"] = claim.get("residual_when_not_supported", [])
 
     result["summary"] = (
-        "Signal live neural-active pilot executed "
-        f"{window_active_rows} recent neural-source rows from checkpoint "
-        f"{checkpoint_hash[:12] or 'missing'} with p95 inference {num(inference_p95, 3)} ms, "
+        "the live Signal pilot did run checkpoint-ranked neural actions, but only behind "
+        f"guards: {window_active_rows} recent neural-source rows from checkpoint "
+        f"{checkpoint_hash[:12] or 'missing'}, p95 inference {num(inference_p95, 3)} ms, "
         f"{replay_ready_rows} replay-ready rows, protocol-compatible rows={protocol_compatible_rows}, "
-        f"safety-gate rows={safety_gate_rows}, "
-        f"damage events={damage_events}, deaths={death_events}; no baseline comparison is claimed."
+        f"safety-gate rows={safety_gate_rows}, damage events={damage_events}, "
+        f"deaths={death_events}; no baseline comparison is claimed."
     )
     result["paper_explanation"] = (
         "This supports only the existence of guarded live neural-active execution: "
@@ -2047,11 +2083,12 @@ def evaluate_trace_determinism_audit(claim: dict[str, Any], repo: Path) -> dict[
         result["status"] = "supported"
     if result["status"] != "supported":
         result["residual"] = claim.get("residual_when_not_supported", [])
+    same_hash = "yes" if compare.get("all_semantic_hashes_equal") else "no"
     result["summary"] = (
-        f"trace determinism audit covers {len(audits)} traces and {row_count} rows; "
-        f"invalid_rows={invalid_rows}, rank_fp_sensitive_rows={sensitive_rows}, "
-        f"logged_mismatches={mismatch_rows}, semantic_hashes_equal="
-        f"{bool(compare.get('all_semantic_hashes_equal'))}."
+        f"the trace audit checks whether replay meaning survives numeric/runtime changes: "
+        f"{len(audits)} traces and {row_count} rows, {invalid_rows} invalid rows, "
+        f"{sensitive_rows} rank-sensitive rows, {mismatch_rows} logged mismatches, "
+        f"same semantic hash: {same_hash}."
     )
     result["paper_explanation"] = (
         "The reproducibility claim is semantic rather than bit-exact: float and double "
@@ -2140,6 +2177,45 @@ def required_failures(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
         }
         for claim in claims
         if claim.get("required_for_submission") and claim.get("status") in FAIL_STATUSES
+    ]
+
+
+def unsupported_promoted_surface_audit(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for claim in claims:
+        if claim.get("status") == "supported":
+            continue
+        surfaces = list(claim.get("paper_surfaces", []))
+        promoted_surfaces = sorted(
+            surface for surface in surfaces if surface not in UNSUPPORTED_SAFE_SURFACES
+        )
+        if not promoted_surfaces:
+            continue
+        missing_guards: list[str] = []
+        if "limitations" not in surfaces:
+            missing_guards.append("limitations surface")
+        if not claim.get("limitation_when_not_supported"):
+            missing_guards.append("limitation_when_not_supported")
+        rows.append(
+            {
+                "id": claim["id"],
+                "status": claim["status"],
+                "title": claim["title"],
+                "promoted_surfaces": promoted_surfaces,
+                "has_limitation_surface": "limitations" in surfaces,
+                "has_limitation_text": bool(claim.get("limitation_when_not_supported")),
+                "missing_guards": missing_guards,
+                "summary": claim["summary"],
+            }
+        )
+    return rows
+
+
+def unsupported_promoted_surface_failures(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in unsupported_promoted_surface_audit(claims)
+        if row.get("missing_guards")
     ]
 
 
@@ -2337,6 +2413,8 @@ def write_claims_typ(
     counts: dict[str, int],
     sources: dict[str, Any],
     failures: list[dict[str, Any]],
+    surfaced_failures: list[dict[str, Any]],
+    surfaced_audit: list[dict[str, Any]],
     limitations: list[dict[str, Any]],
     roadmap: dict[str, Any],
 ) -> None:
@@ -2364,8 +2442,10 @@ def write_claims_typ(
         "// Do not edit by hand; rerun `make paper-claims` after results change.",
         "",
         f"#let paper_claim_status_counts = {typ_value(counts)}",
-        f"#let paper_claim_support_ok = {typ_value(len(failures) == 0)}",
+        f"#let paper_claim_support_ok = {typ_value(len(failures) == 0 and len(surfaced_failures) == 0)}",
         f"#let paper_claim_required_failures = {typ_value(failures)}",
+        f"#let paper_claim_surfaced_unsupported_failures = {typ_value(surfaced_failures)}",
+        f"#let paper_claim_surfaced_unsupported_audit = {typ_value(surfaced_audit)}",
         f"#let paper_claim_sources = {typ_value(source_rows)}",
         f"#let paper_claim_limitations = {typ_value(limitations)}",
         f"#let paper_claim_roadmap_audit = {typ_value(roadmap)}",
@@ -2613,6 +2693,8 @@ def write_agent_instructions(path: Path, experiment_map: dict[str, Any]) -> None
 def write_support_report(
     path: Path,
     failures: list[dict[str, Any]],
+    surfaced_failures: list[dict[str, Any]],
+    surfaced_audit: list[dict[str, Any]],
     limitations: list[dict[str, Any]],
     roadmap: dict[str, Any],
     experiment_map: dict[str, Any],
@@ -2623,6 +2705,8 @@ def write_support_report(
         "Generated by `make paper-support`.",
         "",
         f"- Required-claim failures: {len(failures)}",
+        f"- Unsupported promoted-surface failures: {len(surfaced_failures)}",
+        f"- Unsupported promoted-surface claims with limitation guards: {len(surfaced_audit) - len(surfaced_failures)}",
         f"- Generated limitation candidates: {len(limitations)}",
         f"- Roadmap rows without claim-family tags: {roadmap.get('missing_count', 0)}",
         f"- Roadmap rows with unregistered claim-family tags: {roadmap.get('unregistered_count', 0)}",
@@ -2633,6 +2717,24 @@ def write_support_report(
         lines.extend(["## Required Failures", ""])
         for failure in failures:
             lines.append(f"- `{failure['id']}` is `{failure['status']}`: {failure['summary']}")
+        lines.append("")
+    if surfaced_failures:
+        lines.extend(["## Unsupported Promoted-Surface Failures", ""])
+        for failure in surfaced_failures:
+            missing = ", ".join(failure.get("missing_guards", []))
+            surfaces = ", ".join(f"`{surface}`" for surface in failure.get("promoted_surfaces", []))
+            lines.append(
+                f"- `{failure['id']}` is `{failure['status']}` on {surfaces}; missing {missing}."
+            )
+        lines.append("")
+    guarded = [row for row in surfaced_audit if not row.get("missing_guards")]
+    if guarded:
+        lines.extend(["## Unsupported Claims Kept Behind Limitations", ""])
+        for row in guarded:
+            surfaces = ", ".join(f"`{surface}`" for surface in row.get("promoted_surfaces", []))
+            lines.append(
+                f"- `{row['id']}` is `{row['status']}` on {surfaces}; guarded by generated limitations."
+            )
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -2672,6 +2774,8 @@ def main(argv: list[str] | None = None) -> int:
 
     counts = status_counts(claims)
     failures = required_failures(claims)
+    surfaced_audit = unsupported_promoted_surface_audit(claims)
+    surfaced_failures = unsupported_promoted_surface_failures(claims)
     limitations = limitation_candidates(claims)
     family_ids = [
         row["id"]
@@ -2688,8 +2792,10 @@ def main(argv: list[str] | None = None) -> int:
         "status_counts": counts,
         "sources": sources,
         "support": {
-            "ok": len(failures) == 0,
+            "ok": len(failures) == 0 and len(surfaced_failures) == 0,
             "required_failures": failures,
+            "surfaced_unsupported_failures": surfaced_failures,
+            "surfaced_unsupported_audit": surfaced_audit,
             "limitation_count": len(limitations),
             "roadmap_missing_links": roadmap.get("missing_count", 0),
             "roadmap_unregistered_claim_refs": roadmap.get("unregistered_count", 0),
@@ -2703,20 +2809,39 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    write_claims_typ(output_dir / "claims.typ", claims, counts, sources, failures, limitations, roadmap)
+    write_claims_typ(
+        output_dir / "claims.typ",
+        claims,
+        counts,
+        sources,
+        failures,
+        surfaced_failures,
+        surfaced_audit,
+        limitations,
+        roadmap,
+    )
     write_gap_report(output_dir / "gap_report.md", claims, counts, sources)
     write_limitations_report(output_dir / "limitations.md", limitations)
     write_roadmap_report(output_dir / "roadmap_links.md", roadmap)
     write_agent_instructions(output_dir / "agent_instructions.md", experiment_map)
-    write_support_report(output_dir / "support_report.md", failures, limitations, roadmap, experiment_map)
+    write_support_report(
+        output_dir / "support_report.md",
+        failures,
+        surfaced_failures,
+        surfaced_audit,
+        limitations,
+        roadmap,
+        experiment_map,
+    )
 
     print(
         "paper claims: "
         + ", ".join(f"{status}={counts.get(status, 0)}" for status in STATUS_ORDER)
     )
     print(
-        f"paper support: {'ok' if not failures else 'failed'}; "
+        f"paper support: {'ok' if not failures and not surfaced_failures else 'failed'}; "
         f"limitations={len(limitations)}; "
+        f"surfaced_unsupported_failures={len(surfaced_failures)}; "
         f"roadmap_unlinked={roadmap.get('missing_count', 0)}; "
         f"roadmap_unregistered={roadmap.get('unregistered_count', 0)}"
     )
@@ -2726,6 +2851,13 @@ def main(argv: list[str] | None = None) -> int:
         for failure in failures:
             print(
                 f"required claim not supported: {failure['id']} ({failure['status']})",
+                file=sys.stderr,
+            )
+        return 1
+    if args.support_check and surfaced_failures:
+        for failure in surfaced_failures:
+            print(
+                f"unsupported claim on promoted paper surface lacks guards: {failure['id']}",
                 file=sys.stderr,
             )
         return 1
