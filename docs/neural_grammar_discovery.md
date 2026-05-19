@@ -183,9 +183,10 @@ The first ARC/haiku promotion paths are intentionally narrow:
 - Held-out ARC candidate rows now carry pre-enumeration `op_hints`. Python
   computes a shape-conditioned structure proposal from source accepted ops,
   public task shape/color/separator features, and the promoted family, then
-  writes `arc_sketch_program_heldout_structure_proposals.jsonl`. The C exporter
-  uses those hints only to choose which generic visual-algebra miners to run;
-  every emitted prior row still has to be exact on all train pairs before it can
+  writes `arc_sketch_program_heldout_structure_proposals.jsonl`. By default the
+  top three proposed ops per held-out task are passed to the C exporter, which
+  uses those hints only to choose which generic visual-algebra miners to run.
+  Every emitted prior row still has to be exact on all train pairs before it can
   enter `arc_sketch_program_heldout_prior.tsv`.
 - ARC probe sources include per-family rejection summaries for unsupported
   shapes, train mismatches, duplicates, and cap hits. These are diagnostic gap

@@ -3792,7 +3792,7 @@ def main() -> None:
     parser.add_argument(
         "--arc-heldout-op-hints-per-task",
         type=int,
-        default=4,
+        default=3,
         help=(
             "Number of pre-enumeration ARC sketch ops to propose per held-out "
             "candidate task; use -1 to allow all family ops."

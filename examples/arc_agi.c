@@ -15186,11 +15186,23 @@ static void arc_visual_pipeline_attempts_link_contrasts(
     ARCVisualPipelineAttempt *attempts,
     size_t attempt_count)
 {
+    size_t *accepted_indices = NULL;
+    size_t accepted_count = 0;
     for (size_t i = 0; i < attempt_count; ++i) {
         attempts[i].has_contrast_accepted = 0;
         attempts[i].contrast_accepted_log_index = 0;
         attempts[i].contrast_slot_distance = 0;
         attempts[i].contrast_rejected_sibling_count = 0;
+    }
+    accepted_indices = malloc(attempt_count == 0 ? sizeof(*accepted_indices)
+                                                 : attempt_count * sizeof(*accepted_indices));
+    if (accepted_indices == NULL) {
+        return;
+    }
+    for (size_t i = 0; i < attempt_count; ++i) {
+        if (attempts[i].accepted) {
+            accepted_indices[accepted_count++] = i;
+        }
     }
     for (size_t rejected_index = 0; rejected_index < attempt_count; ++rejected_index) {
         ARCVisualPipelineAttempt *rejected = &attempts[rejected_index];
@@ -15201,11 +15213,11 @@ static void arc_visual_pipeline_attempts_link_contrasts(
              rejected->reason != ARC_SKETCH_PROBE_REASON_NO_TRAIN_MATCH)) {
             continue;
         }
-        for (size_t accepted_index = 0; accepted_index < attempt_count; ++accepted_index) {
+        for (size_t accepted_cursor = 0; accepted_cursor < accepted_count; ++accepted_cursor) {
+            size_t accepted_index = accepted_indices[accepted_cursor];
             ARCVisualPipelineAttempt *accepted = &attempts[accepted_index];
             size_t distance;
-            if (!accepted->accepted ||
-                strcmp(accepted->family, rejected->family) != 0 ||
+            if (strcmp(accepted->family, rejected->family) != 0 ||
                 strcmp(accepted->task_id, rejected->task_id) != 0 ||
                 strcmp(accepted->split, rejected->split) != 0 ||
                 accepted->pipeline.kind != rejected->pipeline.kind ||
@@ -15231,6 +15243,7 @@ static void arc_visual_pipeline_attempts_link_contrasts(
             ++attempts[best_index].contrast_rejected_sibling_count;
         }
     }
+    free(accepted_indices);
 }
 
 static void arc_visual_pipeline_attempt_fill_task_features(
