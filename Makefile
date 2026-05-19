@@ -55,6 +55,9 @@ ARC_AGI := $(BUILD_DIR)/arc_agi
 SIGNAL_FLIGHT := $(BUILD_DIR)/signal_flight
 SIGNAL_FLIGHT_ROLLOUT := $(BUILD_DIR)/signal_flight_rollout
 SIGNAL_MINING := $(BUILD_DIR)/signal_mining
+HAIKU_LM := $(BUILD_DIR)/haiku_lm
+HAIKU_WORD_LM := $(BUILD_DIR)/haiku_word_lm
+HAIKU_UNDERSTANDING := $(BUILD_DIR)/haiku_understanding
 BENCHMARK := $(BUILD_DIR)/benchmark
 TEST_RUNNER := $(BUILD_DIR)/test_nn
 SANITIZE_TEST_RUNNER := $(BUILD_DIR)/test_nn_sanitize
@@ -81,7 +84,7 @@ TRACE_DETERMINISM_COMPARE ?= $(RESULTS_DIR)/trace_determinism.jsonl
 TRACE_DETERMINISM_CI ?= $(RESULTS_DIR)/trace_determinism_ci.jsonl
 TRACE_DETERMINISM_RESULTS_CANONICAL ?= $(RESULTS_DIR)/prime_gap_trace.semantic.jsonl
 HYPOTHESIS_LIBRARY_PROMOTION_TASK_IDS ?= move_to_anchor,move_to_anchor_x
-HYPOTHESIS_LIBRARY_HELDOUT_TASK_IDS ?= connect_aligned,extend_aligned_sequence,fill_enclosed,move_to_anchor_both_positive,move_to_anchor_y,object_extract,recolor_by_reference,translate
+HYPOTHESIS_LIBRARY_HELDOUT_TASK_IDS ?= bbox_panel_selection,connect_aligned,extend_aligned_sequence,fill_enclosed,move_to_anchor_both_positive,move_to_anchor_y,object_extract,panel_selection,recolor_by_reference,translate
 HYPOTHESIS_LIBRARY_ABLATION_BASE_FLAGS ?= --task-dir tests/fixtures/arc_hypothesis --task-ids $(HYPOTHESIS_LIBRARY_HELDOUT_TASK_IDS) --max-tasks 10 --program-budget-tight-grid --loader-summary-only --induction --min-induction-evidence 8 --hypothesis-top-k 1 --disable-hypothesis-coverage-selection --disable-hypothesis-structural-score --disable-hypothesis-train-filter
 HYPOTHESIS_LIBRARY_SPLIT_SWEEP_DIR ?= $(BUILD_DIR)/hypothesis_library_split_sweep
 HYPOTHESIS_LIBRARY_PUBLIC_DIR ?= $(BUILD_DIR)/hypothesis_library_public
@@ -157,6 +160,46 @@ SIGNAL_MINING_HORIZON_TICKS ?= 1200
 SIGNAL_MINING_EPOCHS ?= 4
 SIGNAL_MINING_SEED ?= 5252
 SIGNAL_MINING_LEARNING_RATE ?= 0.004
+HAIKU_LM_CORPUS ?= data/haiku_tiny.txt
+HAIKU_LM_DIR ?= $(BUILD_DIR)/haiku_lm_artifacts
+HAIKU_LM_EPOCHS ?= 8
+HAIKU_LM_LEARNING_RATE ?= 0.006
+HAIKU_LM_SEED ?= 20240518
+HAIKU_LM_WORD_LIST ?=
+HAIKU_LM_LEXICON_WORD_LIST ?= data/wordlists/enable2k.txt
+HAIKU_LM_LEXICON_GATE ?= 1
+HAIKU_LM_WORD_LIST_ARG = $(if $(strip $(HAIKU_LM_WORD_LIST)),--word-list "$(HAIKU_LM_WORD_LIST)" --lexicon-gate $(HAIKU_LM_LEXICON_GATE),)
+HAIKU_CORPUS_SYNTHETIC ?= data/haiku_synthetic_5000.txt
+HAIKU_CORPUS_COUNT ?= 5000
+HAIKU_CORPUS_SEED ?= 20240518
+HAIKU_CORPUS_SUMMARY ?= $(BUILD_DIR)/haiku_corpus_synthetic/summary.json
+HAIKU_CORPUS_VOCAB ?= data/wordlists/haiku_synthetic_vocab.txt
+HAIKU_LM_SYNTHETIC_EPOCHS ?= 3
+HAIKU_HF_RAW ?= data/haiku_open/raw/huggingface
+HAIKU_HF_CLEAN ?= data/haiku_open/clean/hf_haiku_clean.txt
+HAIKU_HF_VOCAB ?= data/haiku_open/clean/hf_vocab.txt
+HAIKU_HF_MANIFEST ?= data/haiku_open/clean/hf_manifest.json
+HAIKU_HF_MAX_POEMS ?= 8000
+HAIKU_HF_FILTER_WORD_LIST ?= 0
+HAIKU_HF_DICTIONARY_CLEAN ?= data/haiku_open/clean/hf_dictionary_clean.txt
+HAIKU_HF_DICTIONARY_VOCAB ?= data/haiku_open/clean/hf_dictionary_vocab.txt
+HAIKU_HF_DICTIONARY_MANIFEST ?= data/haiku_open/clean/hf_dictionary_manifest.json
+HAIKU_LM_HF_EPOCHS ?= 2
+HAIKU_WORD_LM_DIR ?= $(BUILD_DIR)/haiku_word_lm_artifacts
+HAIKU_WORD_LM_EPOCHS ?= 4
+HAIKU_WORD_LM_HF_EPOCHS ?= 2
+HAIKU_WORD_LM_SYNTHETIC_EPOCHS ?= 3
+HAIKU_WORD_LM_LEARNING_RATE ?= 0.006
+HAIKU_WORD_LM_MAX_CANDIDATES ?= 128
+HAIKU_WORD_LM_WORD_LIST ?=
+HAIKU_WORD_LM_STRICT_ADJACENCY ?= 1
+HAIKU_WORD_LM_WORD_LIST_ARG = $(if $(strip $(HAIKU_WORD_LM_WORD_LIST)),--word-list "$(HAIKU_WORD_LM_WORD_LIST)",)
+HAIKU_UNDERSTANDING_DIR ?= $(BUILD_DIR)/haiku_understanding_artifacts
+HAIKU_UNDERSTANDING_EPOCHS ?= 8
+HAIKU_UNDERSTANDING_HF_EPOCHS ?= 4
+HAIKU_UNDERSTANDING_SYNTHETIC_EPOCHS ?= 4
+HAIKU_UNDERSTANDING_LEARNING_RATE ?= 0.006
+HAIKU_UNDERSTANDING_TRACE_LIMIT ?= 2000
 
 SIGNAL_FLIGHT_INCLUDE_FLAGS := \
 	-I$(SIGNAL_FLIGHT_SIGNAL_DIR)/server \
@@ -211,9 +254,9 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-public paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke signal-live-brain signal-live-brain-smoke signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit experiment-matrix results paper-pdf paper-data paper-claims paper-support editorial-pr-check paper-ci neurosymbolic-tune benchmark test sanitize check clean
+.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-public paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit experiment-matrix results paper-pdf paper-data paper-claims paper-support editorial-pr-check paper-ci neurosymbolic-tune benchmark test sanitize check clean
 
-all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(BENCHMARK)
+all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(BENCHMARK)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -282,6 +325,15 @@ $(XOR_EXAMPLE): examples/xor.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 $(ACTION_SCORE_EXAMPLE): examples/action_score.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/action_score.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
+$(HAIKU_LM): examples/haiku_lm.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_lm.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(HAIKU_WORD_LM): examples/haiku_word_lm.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_word_lm.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(HAIKU_UNDERSTANDING): examples/haiku_understanding.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_understanding.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
 $(PRIME_GAP_EXAMPLE): examples/prime_gap.c $(NN_OBJS) $(PRIME_GAP_TASK_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_gap.c $(NN_OBJS) $(PRIME_GAP_TASK_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
@@ -338,6 +390,76 @@ run: $(XOR_EXAMPLE)
 
 action-score: $(ACTION_SCORE_EXAMPLE)
 	./$(ACTION_SCORE_EXAMPLE)
+
+haiku-corpus-synthetic:
+	mkdir -p $(dir $(HAIKU_CORPUS_SUMMARY))
+	$(PYTHON) scripts/generate_haiku_corpus.py --word-list $(HAIKU_LM_LEXICON_WORD_LIST) --output $(HAIKU_CORPUS_SYNTHETIC) --count $(HAIKU_CORPUS_COUNT) --seed $(HAIKU_CORPUS_SEED) --summary $(HAIKU_CORPUS_SUMMARY) --vocab-output $(HAIKU_CORPUS_VOCAB)
+
+haiku-corpus-hf:
+	$(PYTHON) scripts/clean_haiku_hf_corpus.py --input $(HAIKU_HF_RAW) --output $(HAIKU_HF_CLEAN) --vocab-output $(HAIKU_HF_VOCAB) --manifest $(HAIKU_HF_MANIFEST) --word-list $(HAIKU_LM_LEXICON_WORD_LIST) --filter-word-list $(HAIKU_HF_FILTER_WORD_LIST) --max-poems $(HAIKU_HF_MAX_POEMS)
+
+haiku-corpus-hf-dictionary:
+	$(PYTHON) scripts/clean_haiku_hf_corpus.py --input $(HAIKU_HF_RAW) --output $(HAIKU_HF_DICTIONARY_CLEAN) --vocab-output $(HAIKU_HF_DICTIONARY_VOCAB) --manifest $(HAIKU_HF_DICTIONARY_MANIFEST) --word-list $(HAIKU_LM_LEXICON_WORD_LIST) --filter-word-list 1 --max-poems $(HAIKU_HF_MAX_POEMS)
+
+haiku-lm: $(HAIKU_LM)
+	mkdir -p $(HAIKU_LM_DIR)
+	./$(HAIKU_LM) --corpus $(HAIKU_LM_CORPUS) --epochs $(HAIKU_LM_EPOCHS) --lr $(HAIKU_LM_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --trace $(HAIKU_LM_DIR)/trace.jsonl --save $(HAIKU_LM_DIR)/haiku.nnckpt $(HAIKU_LM_WORD_LIST_ARG)
+
+haiku-lm-lexicon: $(HAIKU_LM)
+	mkdir -p $(HAIKU_LM_DIR)
+	./$(HAIKU_LM) --corpus $(HAIKU_LM_CORPUS) --epochs $(HAIKU_LM_EPOCHS) --lr $(HAIKU_LM_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --trace $(HAIKU_LM_DIR)/trace.lexicon.jsonl --save $(HAIKU_LM_DIR)/haiku.lexicon.nnckpt --word-list "$(HAIKU_LM_LEXICON_WORD_LIST)" --lexicon-gate 1
+
+haiku-lm-smoke: $(HAIKU_LM)
+	mkdir -p $(HAIKU_LM_DIR)
+	./$(HAIKU_LM) --corpus $(HAIKU_LM_CORPUS) --epochs 2 --max-updates 1600 --samples 1 --sample 0 --trace $(HAIKU_LM_DIR)/smoke_trace.jsonl --save $(HAIKU_LM_DIR)/smoke.nnckpt $(HAIKU_LM_WORD_LIST_ARG)
+
+haiku-lm-synthetic: $(HAIKU_LM) haiku-corpus-synthetic
+	mkdir -p $(HAIKU_LM_DIR)
+	./$(HAIKU_LM) --corpus $(HAIKU_CORPUS_SYNTHETIC) --epochs $(HAIKU_LM_SYNTHETIC_EPOCHS) --lr $(HAIKU_LM_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --trace $(HAIKU_LM_DIR)/trace.synthetic.jsonl --save $(HAIKU_LM_DIR)/haiku.synthetic.nnckpt --word-list "$(HAIKU_CORPUS_VOCAB)" --lexicon-gate 1
+
+haiku-lm-hf: $(HAIKU_LM) haiku-corpus-hf
+	mkdir -p $(HAIKU_LM_DIR)
+	./$(HAIKU_LM) --corpus $(HAIKU_HF_CLEAN) --epochs $(HAIKU_LM_HF_EPOCHS) --lr $(HAIKU_LM_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --trace $(HAIKU_LM_DIR)/trace.hf.jsonl --save $(HAIKU_LM_DIR)/haiku.hf.nnckpt --word-list "$(HAIKU_HF_VOCAB)" --lexicon-gate 1
+
+haiku-word-lm: $(HAIKU_WORD_LM)
+	mkdir -p $(HAIKU_WORD_LM_DIR)
+	./$(HAIKU_WORD_LM) --corpus $(HAIKU_LM_CORPUS) --epochs $(HAIKU_WORD_LM_EPOCHS) --lr $(HAIKU_WORD_LM_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --max-candidates $(HAIKU_WORD_LM_MAX_CANDIDATES) --strict-adjacency $(HAIKU_WORD_LM_STRICT_ADJACENCY) --trace $(HAIKU_WORD_LM_DIR)/trace.jsonl --save $(HAIKU_WORD_LM_DIR)/haiku_word.nnckpt $(HAIKU_WORD_LM_WORD_LIST_ARG)
+
+haiku-word-lm-smoke: $(HAIKU_WORD_LM)
+	mkdir -p $(HAIKU_WORD_LM_DIR)
+	./$(HAIKU_WORD_LM) --corpus $(HAIKU_LM_CORPUS) --epochs 2 --max-updates 1600 --samples 1 --sample 0 --max-candidates 64 --strict-adjacency $(HAIKU_WORD_LM_STRICT_ADJACENCY) --trace $(HAIKU_WORD_LM_DIR)/smoke_trace.jsonl --save $(HAIKU_WORD_LM_DIR)/smoke.nnckpt $(HAIKU_WORD_LM_WORD_LIST_ARG)
+
+haiku-word-lm-synthetic: $(HAIKU_WORD_LM) haiku-corpus-synthetic
+	mkdir -p $(HAIKU_WORD_LM_DIR)
+	./$(HAIKU_WORD_LM) --corpus $(HAIKU_CORPUS_SYNTHETIC) --word-list "$(HAIKU_CORPUS_VOCAB)" --epochs $(HAIKU_WORD_LM_SYNTHETIC_EPOCHS) --lr $(HAIKU_WORD_LM_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --max-candidates $(HAIKU_WORD_LM_MAX_CANDIDATES) --strict-adjacency $(HAIKU_WORD_LM_STRICT_ADJACENCY) --trace $(HAIKU_WORD_LM_DIR)/trace.synthetic.jsonl --save $(HAIKU_WORD_LM_DIR)/haiku_word.synthetic.nnckpt
+
+haiku-word-lm-hf: $(HAIKU_WORD_LM) haiku-corpus-hf
+	mkdir -p $(HAIKU_WORD_LM_DIR)
+	./$(HAIKU_WORD_LM) --corpus $(HAIKU_HF_CLEAN) --word-list "$(HAIKU_HF_VOCAB)" --epochs $(HAIKU_WORD_LM_HF_EPOCHS) --lr $(HAIKU_WORD_LM_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --max-candidates $(HAIKU_WORD_LM_MAX_CANDIDATES) --strict-adjacency $(HAIKU_WORD_LM_STRICT_ADJACENCY) --trace $(HAIKU_WORD_LM_DIR)/trace.hf.jsonl --save $(HAIKU_WORD_LM_DIR)/haiku_word.hf.nnckpt
+
+haiku-word-lm-hf-dictionary: $(HAIKU_WORD_LM) haiku-corpus-hf-dictionary
+	mkdir -p $(HAIKU_WORD_LM_DIR)
+	./$(HAIKU_WORD_LM) --corpus $(HAIKU_HF_DICTIONARY_CLEAN) --word-list "$(HAIKU_HF_DICTIONARY_VOCAB)" --epochs $(HAIKU_WORD_LM_HF_EPOCHS) --lr $(HAIKU_WORD_LM_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --max-candidates $(HAIKU_WORD_LM_MAX_CANDIDATES) --strict-adjacency $(HAIKU_WORD_LM_STRICT_ADJACENCY) --trace $(HAIKU_WORD_LM_DIR)/trace.hf.dictionary.jsonl --save $(HAIKU_WORD_LM_DIR)/haiku_word.hf.dictionary.nnckpt
+
+haiku-understanding: $(HAIKU_UNDERSTANDING)
+	mkdir -p $(HAIKU_UNDERSTANDING_DIR)
+	./$(HAIKU_UNDERSTANDING) --corpus $(HAIKU_LM_CORPUS) --epochs $(HAIKU_UNDERSTANDING_EPOCHS) --lr $(HAIKU_UNDERSTANDING_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --trace-limit $(HAIKU_UNDERSTANDING_TRACE_LIMIT) --trace $(HAIKU_UNDERSTANDING_DIR)/trace.jsonl --save $(HAIKU_UNDERSTANDING_DIR)/haiku_understanding.nnckpt
+
+haiku-understanding-smoke: $(HAIKU_UNDERSTANDING)
+	mkdir -p $(HAIKU_UNDERSTANDING_DIR)
+	./$(HAIKU_UNDERSTANDING) --corpus $(HAIKU_LM_CORPUS) --epochs 4 --lr $(HAIKU_UNDERSTANDING_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --trace-limit 200 --trace $(HAIKU_UNDERSTANDING_DIR)/smoke_trace.jsonl --save $(HAIKU_UNDERSTANDING_DIR)/smoke.nnckpt
+
+haiku-understanding-synthetic: $(HAIKU_UNDERSTANDING) haiku-corpus-synthetic
+	mkdir -p $(HAIKU_UNDERSTANDING_DIR)
+	./$(HAIKU_UNDERSTANDING) --corpus $(HAIKU_CORPUS_SYNTHETIC) --epochs $(HAIKU_UNDERSTANDING_SYNTHETIC_EPOCHS) --lr $(HAIKU_UNDERSTANDING_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --trace-limit $(HAIKU_UNDERSTANDING_TRACE_LIMIT) --trace $(HAIKU_UNDERSTANDING_DIR)/trace.synthetic.jsonl --save $(HAIKU_UNDERSTANDING_DIR)/haiku_understanding.synthetic.nnckpt
+
+haiku-understanding-hf: $(HAIKU_UNDERSTANDING) haiku-corpus-hf
+	mkdir -p $(HAIKU_UNDERSTANDING_DIR)
+	./$(HAIKU_UNDERSTANDING) --corpus $(HAIKU_HF_CLEAN) --epochs $(HAIKU_UNDERSTANDING_HF_EPOCHS) --lr $(HAIKU_UNDERSTANDING_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --trace-limit $(HAIKU_UNDERSTANDING_TRACE_LIMIT) --trace $(HAIKU_UNDERSTANDING_DIR)/trace.hf.jsonl --save $(HAIKU_UNDERSTANDING_DIR)/haiku_understanding.hf.nnckpt
+
+haiku-understanding-hf-dictionary: $(HAIKU_UNDERSTANDING) haiku-corpus-hf-dictionary
+	mkdir -p $(HAIKU_UNDERSTANDING_DIR)
+	./$(HAIKU_UNDERSTANDING) --corpus $(HAIKU_HF_DICTIONARY_CLEAN) --epochs $(HAIKU_UNDERSTANDING_HF_EPOCHS) --lr $(HAIKU_UNDERSTANDING_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --trace-limit $(HAIKU_UNDERSTANDING_TRACE_LIMIT) --trace $(HAIKU_UNDERSTANDING_DIR)/trace.hf.dictionary.jsonl --save $(HAIKU_UNDERSTANDING_DIR)/haiku_understanding.hf.dictionary.nnckpt
 
 experiment-schemas: $(PRIME_GAP_EXAMPLE) $(GRID_PATH) $(DELAYED_CLAIM) $(PROGRAM_SYNTHESIS) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING)
 	./$(PRIME_GAP_EXAMPLE) --schema
@@ -506,7 +628,7 @@ arc-agi-loader: $(ARC_AGI)
 	./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS) --program-budget-grid
 
 arc-agi-induction-smoke: $(ARC_AGI)
-	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 10 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 10
+	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 12 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 11
 
 arc-agi-induction-public: $(ARC_AGI)
 	$(PYTHON) scripts/arc_induction_parity.py --arc-agi ./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS)
@@ -525,9 +647,9 @@ rejected-candidate-seed-audit: $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH) $(DEL
 
 hypothesis-library-promotion: $(ARC_AGI)
 	mkdir -p $(HYPOTHESIS_LIBRARY_DIR)
-	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 10 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 10 > $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_raw.jsonl
+	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 12 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 11 > $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_raw.jsonl
 	$(PYTHON) scripts/certified_hypothesis_library.py --input $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_raw.jsonl --output-dir $(HYPOTHESIS_LIBRARY_DIR) --min-support-tasks 2
-	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 10 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 10 --hypothesis-library-prior $(HYPOTHESIS_LIBRARY_DIR)/library_prior.tsv > $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_library_prior_raw.jsonl
+	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 12 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 11 --hypothesis-library-prior $(HYPOTHESIS_LIBRARY_DIR)/library_prior.tsv > $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_library_prior_raw.jsonl
 	$(PYTHON) scripts/certified_hypothesis_library.py --input $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_raw.jsonl --output-dir $(HYPOTHESIS_LIBRARY_DIR) --min-support-tasks 2 --feedback-input $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_library_prior_raw.jsonl
 
 hypothesis-library-ablation: $(ARC_AGI)

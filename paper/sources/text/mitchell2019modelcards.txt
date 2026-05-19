@@ -1,0 +1,641 @@
+                                                                                      Model Cards for Model Reporting
+                                                        Margaret Mitchell, Simone Wu, Andrew Zaldivar, Parker Barnes, Lucy Vasserman, Ben
+                                                                  Hutchinson, Elena Spitzer, Inioluwa Deborah Raji, Timnit Gebru
+                                                    {mmitchellai,simonewu,andrewzaldivar,parkerbarnes,lucyvasserman,benhutch,espitzer,tgebru}@google.com
+                                                                                        deborah.raji@mail.utoronto.ca
+                                         ABSTRACT                                                                                      KEYWORDS
+                                         Trained machine learning models are increasingly used to perform                              datasheets, model cards, documentation, disaggregated evaluation,
+                                         high-impact tasks in areas such as law enforcement, medicine, edu-                            fairness evaluation, ML model evaluation, ethical considerations
+                                         cation, and employment. In order to clarify the intended use cases                            ACM Reference Format:
+arXiv:1810.03993v2 [cs.LG] 14 Jan 2019
+
+
+
+
+                                         of machine learning models and minimize their usage in contexts                               Margaret Mitchell, Simone Wu, Andrew Zaldivar, Parker Barnes, Lucy
+                                         for which they are not well suited, we recommend that released                                Vasserman, Ben Hutchinson, Elena Spitzer, Inioluwa Deborah Raji, Timnit
+                                         models be accompanied by documentation detailing their perfor-                                Gebru. 2019. Model Cards for Model Reporting. In FAT* ’19: Conference on
+                                         mance characteristics. In this paper, we propose a framework that                             Fairness, Accountability, and Transparency, January 29–31, 2019, Atlanta, GA,
+                                         we call model cards, to encourage such transparent model reporting.                           USA. ACM, New York, NY, USA, 10 pages. https://doi.org/10.1145/3287560.
+                                         Model cards are short documents accompanying trained machine                                  3287596
+                                         learning models that provide benchmarked evaluation in a variety
+                                         of conditions, such as across different cultural, demographic, or phe-                        1    INTRODUCTION
+                                         notypic groups (e.g., race, geographic location, sex, Fitzpatrick skin                        Currently, there are no standardized documentation procedures to
+                                         type [15]) and intersectional groups (e.g., age and race, or sex and                          communicate the performance characteristics of trained machine
+                                         Fitzpatrick skin type) that are relevant to the intended application                          learning (ML) and artificial intelligence (AI) models. This lack of
+                                         domains. Model cards also disclose the context in which models                                documentation is especially problematic when models are used in
+                                         are intended to be used, details of the performance evaluation pro-                           applications that have serious impacts on people’s lives, such as in
+                                         cedures, and other relevant information. While we focus primarily                             health care [14, 42, 44], employment [1, 13, 29], education [23, 45]
+                                         on human-centered machine learning models in the application                                  and law enforcement [2, 7, 20, 34].
+                                         fields of computer vision and natural language processing, this                                  Researchers have discovered systematic biases in commercial ma-
+                                         framework can be used to document any trained machine learning                                chine learning models used for face detection and tracking [4, 9, 49],
+                                         model. To solidify the concept, we provide cards for two super-                               attribute detection [5], criminal justice [10], toxic comment detec-
+                                         vised models: One trained to detect smiling faces in images, and                              tion [11], and other applications. However, these systematic errors
+                                         one trained to detect toxic comments in text. We propose model                                were only exposed after models were put into use, and negatively
+                                         cards as a step towards the responsible democratization of machine                            affected users reported their experiences. For example, after MIT
+                                         learning and related artificial intelligence technology, increasing                           Media Lab graduate student Joy Buolamwini found that commercial
+                                         transparency into how well artificial intelligence technology works.                          face recognition systems failed to detect her face [4], she collabo-
+                                         We hope this work encourages those releasing trained machine                                  rated with other researchers to demonstrate the disproportionate
+                                         learning models to accompany model releases with similar detailed                             errors of computer vision systems on historically marginalized
+                                         evaluation numbers and other relevant documentation.                                          groups in the United States, such as darker-skinned women [5, 41].
+                                                                                                                                       In spite of the potential negative effects of such reported biases,
+                                                                                                                                       documentation accompanying trained machine learning models (if
+                                         CCS CONCEPTS                                                                                  supplied) provide very little information regarding model perfor-
+                                         • General and reference → Evaluation; • Social and profes-                                    mance characteristics, intended use cases, potential pitfalls, or other
+                                         sional topics → User characteristics; • Software and its engi-                                information to help users evaluate the suitability of these systems
+                                         neering → Use cases; Documentation; Software evolution; • Human-                              to their context. This highlights the need to have detailed documen-
+                                         centered computing → Walkthrough evaluations;                                                 tation accompanying trained machine learning models, including
+                                                                                                                                       metrics that capture bias, fairness and inclusion considerations.
+                                                                                                                                          As a step towards this goal, we propose that released machine
+                                                                                                                                       learning models be accompanied by short (one to two page) records
+                                         Permission to make digital or hard copies of all or part of this work for personal or         we call model cards. Model cards (for model reporting) are com-
+                                         classroom use is granted without fee provided that copies are not made or distributed         plements to “Datasheets for Datasets” [21] and similar recently
+                                         for profit or commercial advantage and that copies bear this notice and the full citation     proposed documentation paradigms [3, 28] that report details of
+                                         on the first page. Copyrights for components of this work owned by others than ACM
+                                         must be honored. Abstracting with credit is permitted. To copy otherwise, or republish,       the datasets used to train and test machine learning models. Model
+                                         to post on servers or to redistribute to lists, requires prior specific permission and/or a   cards are also similar to the tripod statement proposal in medicine
+                                         fee. Request permissions from permissions@acm.org.
+                                                                                                                                       [25]. We provide two example model cards in Section 5: A smiling
+                                         FAT* ’19, January 29–31, 2019, Atlanta, GA, USA
+                                         © 2019 Association for Computing Machinery.                                                   detection model trained on the CelebA dataset [36] (Figure 2), and
+                                         ACM ISBN 978-1-4503-6125-5/19/01.                                                             a public toxicity detection model [32] (Figure 3). Where Datasheets
+                                         https://doi.org/10.1145/3287560.3287596                                                       highlight characteristics of the data feeding into the model, we
+Margaret Mitchell, Simone Wu, Andrew Zaldivar, Parker Barnes, Lucy Vasserman, Ben Hutchinson, Elena Spitzer, Inioluwa Deborah Raji,
+FAT* ’19, January 29–31, 2019, Atlanta, GA, USA                                                                       Timnit Gebru
+
+focus on trained model characteristics such as the type of model,         General Motors in 1976, claiming that the company’s hiring prac-
+intended use cases, information about attributes for which model          tices discriminated against Black women. In their court opinion,
+performance may vary, and measures of model performance.                  the judges noted that since General Motors hired many women for
+   We advocate for measures of model performance that contain             secretarial positions, and many Black people for factory roles, they
+quantitative evaluation results to be broken down by individual           could not have discriminated against Black women. However, what
+cultural, demographic, or phenotypic groups, domain-relevant con-         the courts failed to see was that only White women were hired into
+ditions, and intersectional analysis combining two (or more) groups       secretarial positions and only Black men were hired into factory
+and conditions. In addition to model evaluation results, model            roles. Thus, Black women like Emma DeGraffenreid had no chance
+cards should detail the motivation behind chosen performance              of being employed at General Motors. This example highlights the
+metrics, group definitions, and other relevant factors. Each model        importance of intersectional analyses: empirical analyses that em-
+card could be accompanied with Datasheets [21], Nutrition Labels          phasize the interaction between various demographic categories
+[28], Data Statements [3], or Factsheets [27], describing datasets        including race, gender, and age.
+that the model was trained and evaluated on. Model cards provide a           Before further discussing the details of the model card, it is impor-
+way to inform users about what machine learning systems can and           tant to note that at least two of the three characteristics discussed
+cannot do, the types of errors they make, and additional steps that       so far, race and gender, are socially sensitive. Although analyzing
+could create more fair and inclusive outcomes with the technology.        models by race and gender may follow from intersectionality the-
+                                                                          ory, how “ground truth” race or gender categories should be labeled
+                                                                          in a dataset, and whether or not datasets should be labeled with
+2   BACKGROUND
+                                                                          these categories at all, is not always clear. This issue is further
+Many mature industries have developed standardized methods of             confounded by the complex relationship between gender and sex.
+benchmarking various systems under different conditions. For ex-          When using cultural identity categories such as race and gender to
+ample, as noted in [21], the electronic hardware industry provides        subdivide analyses, and depending on the context, we recommend
+datasheets with detailed characterizations of components’ perfor-         either using datasets with self-identified labels or with labels clearly
+mances under different test conditions. By contrast, despite the          designated as perceived (rather than self-identified). When this is
+broad reach and impact of machine learning models, there are no           not possible, datasets of public figures with known public identity
+standard stress tests that are performed on machine learning based        labels may be useful. Further research is necessary to expand how
+systems, nor standardized formats to report the results of these          groups may be defined, for example, by automatically discovering
+tests. Recently, researchers have proposed standardized forms of          groups with similarities in the evaluation datasets.
+communicating characteristics of datasets used in machine learn-
+ing [3, 21, 28] to help users understand the context in which the
+                                                                          3    MOTIVATION
+datasets should be used. We focus on the complementary task for
+machine learning models, proposing a standardized method to eval-         As the use of machine learning technology has rapidly increased,
+uate the performance of human-centric models: Disaggregated by            so too have reports of errors and failures. Despite the potentially
+unitary and intersectional groups such as cultural, demographic,          serious repercussions of these errors, those looking to use trained
+or phenotypic population groups. A framework that we refer to             machine learning models in a particular context have no way of
+as “Model Cards” can present such evaluation supplemented with            understanding the systematic impacts of these models before de-
+additional considerations such as intended use.                           ploying them.
+   Outside of machine learning, the need for population-based re-            The proposal of “Model Cards” specifically aims to standardize
+porting of outcomes as suggested here has become increasingly evi-        ethical practice and reporting - allowing stakeholders to compare
+dent. For example, in vehicular crash tests, dummies with prototyp-       candidate models for deployment across not only traditional evalu-
+ical female characteristics were only introduced after researchers        ation metrics but also along the axes of ethical, inclusive, and fair
+discovered that women were more likely than men to suffer seri-           considerations. This goes further than current solutions to aid stake-
+ous head injuries in real-world side impacts [18]. Similarly, drugs       holders in different contexts. For example, to aid policy makers and
+developed based on results of clinical trials with exclusively male       regulators on questions to ask of a model, and known benchmarks
+participants have led to overdosing in women [17, 50]. In 1998, the       around the suitability of a model in a given setting.
+U.S. Food and Drug Administration mandated that clinical trial re-           Model reporting will hold different meaning to those involved
+sults be disaggregated by groups such as age, race and gender [16].       in different aspects of model development, deployment, and use.
+   While population-based analyses of errors and successes can be         Below, we outline a few use cases for different stakeholders:
+provided for unitary groups such as “men”, “women”, and “non-                 • ML and AI practitioners can better understand how well
+binary” gender groups, they should also be provided intersection-               the model might work for the intended use cases and track
+ally, looking at two or more characteristics such as gender and age             its performance over time.
+simultaneously. Intersectional analyses are linked to intersection-           • Model developers can compare the model’s results to other
+ality theory, which describes how discrete experiences associated               models in the same space, and make decisions about training
+with characteristics like race or gender in isolation do not accurately         their own system.
+reflect their interaction [8]. Kimberlé Crenshaw, who pioneered               • Software developers working on products that use the
+intersectional research in critical race theory, discusses the story            model’s predictions can inform their design and implemen-
+of Emma DeGraffenreid, who was part of a failed lawsuit against                 tation decisions.
+Model Cards for Model Reporting                                                          FAT* ’19, January 29–31, 2019, Atlanta, GA, USA
+
+
+    • Policymakers can understand how a machine learning sys-
+      tem may fail or succeed in ways that impact people.                                        Model Card
+    • Organizations can inform decisions about adopting tech-             • Model Details. Basic information about the model.
+      nology that incorporates machine learning.                            – Person or organization developing model
+    • ML-knowledgeable individuals can be informed on differ-               – Model date
+      ent options for fine-tuning, model combination, or additional         – Model version
+      rules and constraints to help curate models for intended use          – Model type
+      cases without requiring technical expertise.                          – Information about training algorithms, parameters, fair-
+    • Impacted individuals who may experience effects from a                   ness constraints or other applied approaches, and features
+      model can better understand how it works or use information           – Paper or other resource for more information
+      in the card to pursue remedies.                                       – Citation details
+                                                                            – License
+   Not only does this practice improve model understanding and
+                                                                            – Where to send questions or comments about the model
+help to standardize decision making processes for invested stake-
+                                                                          • Intended Use. Use cases that were envisioned during de-
+holders, but it also encourages forward-looking model analysis
+                                                                            velopment.
+techniques. For example, slicing the evaluation across groups func-
+                                                                            – Primary intended uses
+tions to highlight errors that may fall disproportionately on some
+                                                                            – Primary intended users
+groups of people, and accords with many recent notions of math-
+                                                                            – Out-of-scope use cases
+ematical fairness (discussed further in the example model card in
+                                                                          • Factors. Factors could include demographic or phenotypic
+Figure 2). Including group analysis as part of the reporting pro-
+                                                                            groups, environmental conditions, technical attributes, or
+cedure prepares stakeholders to begin to gauge the fairness and
+                                                                            others listed in Section 4.3.
+inclusion of future outcomes of the machine learning system. Thus,
+                                                                            – Relevant factors
+in addition to supporting decision-making processes for determin-
+                                                                            – Evaluation factors
+ing the suitability of a given machine learning model in a particular
+                                                                          • Metrics. Metrics should be chosen to reflect potential real-
+context, model reporting is an approach for responsible transparent
+                                                                            world impacts of the model.
+and accountable practices in machine learning.
+                                                                            – Model performance measures
+   People and organizations releasing models may be additionally
+                                                                            – Decision thresholds
+incentivized to provide model card details because it helps potential
+                                                                            – Variation approaches
+users of the models to be better informed on which models are
+                                                                          • Evaluation Data. Details on the dataset(s) used for the
+best for their specific purposes. If model card reporting becomes
+                                                                            quantitative analyses in the card.
+standard, potential users can compare and contrast different models
+                                                                            – Datasets
+in a well-informed way. Results on several different evaluation
+                                                                            – Motivation
+datasets will additionally aid potential users, although evaluation
+                                                                            – Preprocessing
+datasets suitable for disaggregated evaluation are not yet common.
+                                                                          • Training Data. May not be possible to provide in practice.
+Future research could include creating robust evaluation datasets
+                                                                            When possible, this section should mirror Evaluation Data.
+and protocols for the types of disaggregated evaluation we advocate
+                                                                            If such detail is not possible, minimal allowable information
+for in this work, for example, by including differential privacy
+                                                                            should be provided here, such as details of the distribution
+mechanisms [12] so that individuals in the testing set cannot be
+                                                                            over various factors in the training datasets.
+uniquely identified by their characteristics.
+                                                                          • Quantitative Analyses
+                                                                            – Unitary results
+4   MODEL CARD SECTIONS                                                     – Intersectional results
+Model cards serve to disclose information about a trained machine         • Ethical Considerations
+learning model. This includes how it was built, what assumptions          • Caveats and Recommendations
+were made during its development, what type of model behavior
+different cultural, demographic, or phenotypic population groups        Figure 1: Summary of model card sections and suggested
+may experience, and an evaluation of how well the model performs        prompts for each.
+with respect to those groups. Here, we propose a set of sections
+that a model card should have, and details that can inform the          psychological, and other factors concerning what is as a good ex-
+stakeholders discussed in Section 3. A summary of all suggested         planation in different contexts [22]); and privacy approaches used
+sections is provided in Figure 1.                                       in model training and serving.
+   The proposed set of sections below are intended to provide rel-
+evant details to consider, but are not intended to be complete or       4.1   Model Details
+exhaustive, and may be tailored depending on the model, context,        This section of the model card should serve to answer basic ques-
+and stakeholders. Additional details may include, for example, in-      tions regarding the model version, type and other details.
+terpretability approaches, such as saliency maps, TCAV [33], and        Person or organization developing model: What person or or-
+Path-Integrated Gradients [38, 43]); stakeholder-relevant explana-      ganization developed the model? This can be used by all stakehold-
+tions (e.g., informed by a careful consideration of philosophical,      ers to infer details pertaining to model development and potential
+Margaret Mitchell, Simone Wu, Andrew Zaldivar, Parker Barnes, Lucy Vasserman, Ben Hutchinson, Elena Spitzer, Inioluwa Deborah Raji,
+FAT* ’19, January 29–31, 2019, Atlanta, GA, USA                                                                       Timnit Gebru
+
+
+conflicts of interest.                                                    tokens” or “for use on black-and-white images only; please consider
+Model date: When was the model developed? This is useful for all          our research group’s full-color-image classifier for color images.”
+stakeholders to become further informed on what techniques and
+data sources were likely to be available during model development.        4.3    Factors
+Model version: Which version of the model is it, and how does             Model cards ideally provide a summary of model performance
+it differ from previous versions? This is useful for all stakeholders     across a variety of relevant factors including groups, instrumentation,
+to track whether the model is the latest version, associate known         and environments. We briefly describe each of these factors and their
+bugs to the correct model versions, and aid in model comparisons.         relevance followed by the corresponding prompts in the model card.
+Model type: What type of model is it? This includes basic model
+architecture details, such as whether it is a Naive Bayes classifier, a   4.3.1 Groups. “Groups” refers to distinct categories with similar
+Convolutional Neural Network, etc. This is likely to be particularly      characteristics that are present in the evaluation data instances. For
+relevant for software and model developers, as well as individuals        human-centric machine learning models, “groups” are people who
+knowledgeable about machine learning, to highlight what kinds of          share one or multiple characteristics. Intersectional model analysis
+assumptions are encoded in the system.                                    for human-centric models is inspired by the sociological concept of
+Paper or other resource for more information: Where can re-               intersectionality, which explores how an individual’s identity and
+sources for more information be found?                                    experiences are shaped not just by unitary personal characteristics
+Citation details: How should the model be cited?                          – such as race, gender, sexual orientation or health – but instead
+License: License information can be provided.                             by a complex combination of many factors. These characteristics,
+Feedback on the model: E.g., what is an email address that people         which include but are not limited to cultural, demographic and
+may write to for further information?                                     phenotypic categories, are important to consider when evaluating
+                                                                          machine learning models. Determining which groups to include
+   There are cases where some of this information may be sensitive.       in an intersectional analysis requires examining the intended use
+For example, the amount of detail corporations choose to disclose         of the model and the context under which it may be deployed.
+might be different from academic research groups. This section            Depending on the situation, certain groups may be more vulnerable
+should not be seen as a requirement to compromise private infor-          than others to unjust or prejudicial treatment.
+mation or reveal proprietary training techniques; rather, a place to         For human-centric computer vision models, the visual presenta-
+disclose basic decisions and facts about the model that the orga-         tion of age, gender, and Fitzpatrick skin type [15] may be relevant.
+nization can share with the broader community in order to better          However, this must be balanced with the goal of preserving the
+inform on what the model represents.                                      privacy of individuals. As such, collaboration with policy, privacy,
+                                                                          and legal experts is necessary in order to ascertain which groups
+                                                                          may be responsibly inferred, and how that information should be
+4.2    Intended Use                                                       stored and accessed (for example, using differential privacy [12]).
+                                                                             Details pertaining to groups, including who annotated the train-
+This section should allow readers to quickly grasp what the model
+                                                                          ing and evaluation datasets, instructions and compensation given
+should and should not be used for, and why it was created. It can
+                                                                          to annotators, and inter-annotator agreement, should be provided
+also help frame the statistical analysis presented in the rest of the
+                                                                          as part of the data documentation made available with the dataset.
+card, including a short description of the user(s), use-case(s), and
+                                                                          See [3, 21, 28] for more details.
+context(s) for which the model was originally developed. Possible
+information includes:                                                     4.3.2 Instrumentation. In addition to groups, the performance of
+Primary intended uses: This section details whether the model             a model can vary depending on what instruments were used to
+was developed with general or specific tasks in mind (e.g., plant         capture the input to the model. For example, a face detection model
+recognition worldwide or in the Pacific Northwest). The use cases         may perform differently depending on the camera’s hardware and
+may be as broadly or narrowly defined as the developers intend.           software, including lens, image stabilization, high dynamic range
+For example, if the model was built simply to label images, then          techniques, and background blurring for portrait mode. Perfor-
+this task should be indicated as the primary intended use case.           mance may also vary across real or simulated traditional camera
+Primary intended users: For example, was the model developed              settings such as aperture, shutter speed and ISO. Similarly, video
+for entertainment purposes, for hobbyists, or enterprise solutions?       and audio input will be dependent on the choice of recording in-
+This helps users gain insight into how robust the model may be to         struments and their settings.
+different kinds of inputs.
+Out-of-scope uses: Here, the model card should highlight tech-            4.3.3 Environment. A further factor affecting model performance
+nology that the model might easily be confused with, or related           is the environment in which it is deployed. For example, face detec-
+contexts that users could try to apply the model to. This section         tion systems are often less accurate under low lighting conditions or
+may provide an opportunity to recommend a related or similar              when the air is humid [51]. Specifications across different lighting
+model that was designed to better meet that particular need, where        and moisture conditions would help users understand the impacts
+possible. This section is inspired by warning labels on food and          of these environmental factors on model performance.
+toys, and similar disclaimers presented in electronic datasheets.
+                                                                          4.3.4 Card Prompts. We propose that the Factors section of model
+Examples include “not for use on text examples shorter than 100
+                                                                          cards expands on two prompts:
+Model Cards for Model Reporting                                                               FAT* ’19, January 29–31, 2019, Atlanta, GA, USA
+
+
+Relevant factors: What are foreseeable salient factors for which            necessary to make more informed decisions about model devel-
+model performance may vary, and how were these determined?                  opment. A model card could even extend beyond these summary
+Evaluation factors: Which factors are being reported, and why               statistics to reveal other measures of differences between distribu-
+were these chosen? If the relevant factors and evaluation factors are       tions such as cross entropy, perplexity, KL divergence and pinned
+different, why? For example, while Fitzpatrick skin type is a relevant      area under the curve (pinned AUC) [11].
+factor for face detection, an evaluation dataset annotated by skin             There are a number of applications that do not appear to be
+type might not be available until reporting model performance               score-based at first glance, but can be considered as such for the
+across groups becomes standard practice.                                    purposes of intersectional analysis. For instance, a model card for a
+                                                                            translation system could compare BLEU scores [40] across demo-
+4.4    Metrics                                                              graphic groups, and a model card for a speech recognition system
+                                                                            could compare word-error rates. Although the primary outputs of
+The appropriate metrics to feature in a model card depend on the
+                                                                            these systems are not scores, looking at the score differences be-
+type of model that is being tested. For example, classification sys-
+                                                                            tween populations may yield meaningful insights since comparing
+tems in which the primary output is a class label differ significantly
+                                                                            raw inputs quickly grows too complex.
+from systems whose primary output is a score. In all cases, the
+reported metrics should be determined based on the model’s struc-
+ture and intended use. Details for this section include:
+                                                                            4.4.3 Confidence. Performance metrics that are disaggregated by
+Model performance measures: What measures of model perfor-
+                                                                            various combinations of instrumentation, environments and groups
+mance are being reported, and why were they selected over other
+                                                                            makes it especially important to understand the confidence inter-
+measures of model performance?
+                                                                            vals for the reported metrics. Confidence intervals for metrics de-
+Decision thresholds: If decision thresholds are used, what are
+                                                                            rived from confusion matrices can be calculated by treating the
+they, and why were those decision thresholds chosen? When the
+                                                                            matrices as probabilistic models of system performance [24].
+model card is presented in a digital format, a threshold slider should
+ideally be available to view performance parameters across various
+decision thresholds.
+Approaches to uncertainty and variability: How are the mea-                 4.5    Evaluation Data
+surements and estimations of these metrics calculated? For ex-              All referenced datasets would ideally point to any set of documents
+ample, this may include standard deviation, variance, confidence            that provide visibility into the source and composition of the dataset.
+intervals, or KL divergence. Details of how these values are ap-            Evaluation datasets should include datasets that are publicly avail-
+proximated should also be included (e.g., average of 5 runs, 10-fold        able for third-party use. These could be existing datasets or new
+cross-validation).                                                          ones provided alongside the model card analyses to enable further
+                                                                            benchmarking. Potential details include:
+4.4.1 Classification systems. For classification systems, the error         Datasets: What datasets were used to evaluate the model?
+types that can be derived from a confusion matrix are false positive        Motivation: Why were these datasets chosen?
+rate, false negative rate, false discovery rate, and false omission rate.   Preprocessing: How was the data preprocessed for evaluation
+We note that the relative importance of each of these metrics is            (e.g., tokenization of sentences, cropping of images, any filtering
+system, product and context dependent.                                      such as dropping images without faces)?
+   For example, in a surveillance scenario, surveillors may value a
+low false negative rate (or the rate at which the surveillance system          To ensure that model cards are statistically accurate and veri-
+fails to detect a person or an object when it should have). On the          fiable, the evaluation datasets should not only be representative
+other hand, those being surveilled may value a low false positive           of the model’s typical use cases but also anticipated test scenar-
+rate (or the rate at which the surveillance system detects a person         ios and challenging cases. For instance, if a model is intended for
+or an object when it should not have). We recommend listing all             use in a workplace that is phenotypically and demographically
+values and providing context about which were prioritized during            homogeneous, and trained on a dataset that is representative of
+development and why.                                                        the expected use case, it may be valuable to evaluate that model
+   Equality between some of the different confusion matrix metrics          on two evaluation sets: one that matches the workplace’s popula-
+is equivalent to some definitions of fairness. For example, equal           tion, and another set that contains individuals that might be more
+false negative rates across groups is equivalent to fulfilling Equality     challenging for the model (such as children, the elderly, and people
+of Opportunity, and equal false negative and false positive rates           from outside the typical workplace population). This methodology
+across groups is equivalent to fulfilling Equality of Odds [26].            can highlight pathological issues that may not be evident in more
+                                                                            routine testing.
+4.4.2 Score-based analyses. For score-based systems such as pric-
+                                                                               It is often difficult to find datasets that represent populations
+ing models and risk assessment algorithms, describing differences
+                                                                            outside of the initial domain used in training. In some of these situa-
+in the distribution of measured metrics across groups may be help-
+                                                                            tions, synthetically generated datasets may provide representation
+ful. For example, reporting measures of central tendency such as
+                                                                            for use cases that would otherwise go unevaluated [35]. Section
+the mode, median and mean, as well as measures of dispersion or
+                                                                            5.2 provides an example of including synthetic data in the model
+variation such as the range, quartiles, absolute deviation, variance
+                                                                            evaluation dataset.
+and standard deviation could facilitate the statistical commentary
+Margaret Mitchell, Simone Wu, Andrew Zaldivar, Parker Barnes, Lucy Vasserman, Ben Hutchinson, Elena Spitzer, Inioluwa Deborah Raji,
+FAT* ’19, January 29–31, 2019, Atlanta, GA, USA                                                                       Timnit Gebru
+
+
+4.6    Training Data                                                      represented in the evaluation dataset? Are there additional recom-
+Ideally, the model card would contain as much information about           mendations for model use? What are the ideal characteristics of an
+the training data as the evaluation data. However, there might            evaluation dataset for this model?
+be cases where it is not feasible to provide this level of detailed
+information about the training data. For example, the data may be         5     EXAMPLES
+proprietary, or require a non-disclosure agreement. In these cases,       We present worked examples of model cards for two models: an
+we advocate for basic details about the distributions over groups in      image-based classification system and a text-based scoring system.
+the data, as well as any other details that could inform stakeholders
+on the kinds of biases the model may have encoded.                        5.1    Smiling Classifier
+                                                                          To show an example of a model card for an image classification
+4.7    Quantitative Analyses                                              problem, we use the public CelebA dataset [36] to examine the
+Quantitative analyses should be disaggregated, that is, broken down       performance of a trained “smiling” classifier across both age and
+by the chosen factors. Quantitative analyses should provide the           gender categories. Figure 2 shows our prototype.
+results of evaluating the model according to the chosen metrics,             These results demonstrate a few potential issues. For example,
+providing confidence interval values when possible. Parity on the         the false discovery rate on older men is much higher than that for
+different metrics across disaggregated population subgroups cor-          other groups. This means that many predictions incorrectly classify
+responds to how fairness is often defined [37, 48]. Quantitative          older men as smiling when they are not. On the other hand, men
+analyses should demonstrate the metric variation (e.g., with error        (in aggregate) have a higher false negative rate, meaning that many
+bars), as discussed in Section 4.4 and visualized in Figure 2.            of the men that are in fact smiling in the photos are incorrectly
+The disaggregated evaluation includes:                                    classified as not smiling.
+Unitary results: How did the model perform with respect to each              The results of these analyses give insight into contexts the model
+factor?                                                                   might not be best suited for. For example, it may not be advisable
+Intersectional results: How did the model perform with respect            to apply the model on a diverse group of audiences, and it may
+to the intersection of evaluated factors?                                 be the most useful when detecting the presence of a smile is more
+                                                                          important than detecting its absence (for example, in an application
+4.8    Ethical Considerations                                             that automatically finds ‘fun moments’ in images). Additional fine-
+This section is intended to demonstrate the ethical considerations        tuning, for example, with images of older men, may help create a
+that went into model development, surfacing ethical challenges            more balanced performance across groups.
+and solutions to stakeholders. Ethical analysis does not always lead
+to precise solutions, but the process of ethical contemplation is         5.2    Toxicity Scoring
+worthwhile to inform on responsible practices and next steps in           Our second example provides a model card for Perspective API’s
+future work.                                                              TOXICITY classifier built to detect ‘toxicity’ in text [32], and is pre-
+   While there are many frameworks for ethical decision-making            sented in Figure 3. To evaluate the model, we use an intersectional
+in technology that can be adapted here [19, 30, 46], the following        version of the open source, synthetically created Identity Phrase
+are specific questions you may want to explore in this section:           Templates test set published in [11]. We show two versions of the
+Data: Does the model use any sensitive data (e.g., protected classes)?    quantitative analysis: one for TOXICITY v. 1, the initial version of
+Human life: Is the model intended to inform decisions about mat-          the this model, and one for TOXICITY v. 5, the latest version.
+ters central to human life or flourishing – e.g., health or safety? Or       This model card highlights the drastic ways that models can
+could it be used in such a way?                                           change over time, and the importance of having a model card that
+Mitigations: What risk mitigation strategies were used during             is updated with each new model release. TOXICITY v. 1 has low
+model development?                                                        performance for several terms, especially “lesbian”, “gay”, and “ho-
+Risks and harms: What risks may be present in model usage? Try            mosexual”. This is consistent with what some users of the initial
+to identify the potential recipients, likelihood, and magnitude of        TOXICITY model found, as reported by the team behind Perspective
+harms. If these cannot be determined, note that they were consid-         API in [47]. Also in [47], the Perspective API team shares the bias
+ered but remain unknown.                                                  mitigation techniques they applied to the TOXICITY v. 1 model, in
+Use cases: Are there any known model use cases that are especially        order to create the more equitable performance in TOXICITY v. 5.
+fraught? This may connect directly to the intended use section of         By making model cards a standard part of API launches, teams like
+the model card.                                                           the Perspective API team may be able to find and mitigate some of
+   If possible, this section should also include any additional ethical   these biases earlier.
+considerations that went into model development, for example,
+review by an external board, or testing with a specific community.        6     DISCUSSION & FUTURE WORK
+                                                                          We have proposed frameworks called model cards for reporting in-
+4.9    Caveats and Recommendations                                        formation about what a trained machine learning model is and how
+This section should list additional concerns that were not covered        well it works. Model cards include information about the context
+in the previous sections. For example, did the results suggest any        of the model, as well as model performance results disaggregated
+further testing? Were there any relevant groups that were not             by different unitary and intersectional population groups. Model
+Model Cards for Model Reporting                                                            FAT* ’19, January 29–31, 2019, Atlanta, GA, USA
+
+
+
+                                        Model Card - Smiling Detection in Images
+
+  Model Details                                                                        Quantitative Analyses
+  • Developed by researchers at Google and the University of Toronto, 2018, v1.
+  • Convolutional Neural Net.
+  • Pretrained for face recognition then fine-tuned with cross-entropy loss for binary
+    smiling classification.
+  Intended Use
+  • Intended to be used for fun applications, such as creating cartoon smiles on real
+    images; augmentative applications, such as providing details for people who are
+    blind; or assisting applications such as automatically finding smiling photos.
+  • Particularly intended for younger audiences.
+  • Not suitable for emotion detection or determining affect; smiles were annotated
+    based on physical appearance, and not underlying emotions.
+  Factors
+  • Based on known problems with computer vision face technology, potential rel-
+    evant factors include groups for gender, age, race, and Fitzpatrick skin type;
+    hardware factors of camera type and lens type; and environmental factors of
+    lighting and humidity.
+  • Evaluation factors are gender and age group, as annotated in the publicly available
+    dataset CelebA [36]. Further possible factors not currently available in a public
+    smiling dataset. Gender and age determined by third-party annotators based
+    on visual presentation, following a set of examples of male/female gender and
+    young/old age. Further details available in [36].
+  Metrics
+  • Evaluation metrics include False Positive Rate and False Negative Rate to
+    measure disproportionate model performance errors across subgroups. False
+    Discovery Rate and False Omission Rate, which measure the fraction of nega-
+    tive (not smiling) and positive (smiling) predictions that are incorrectly predicted
+    to be positive and negative, respectively, are also reported. [48]
+  • Together, these four metrics provide values for different errors that can be calcu-
+    lated from the confusion matrix for binary classification systems.
+  • These also correspond to metrics in recent definitions of “fairness” in machine
+    learning (cf. [6, 26]), where parity across subgroups for different metrics corre-
+    spond to different fairness criteria.
+  • 95% confidence intervals calculated with bootstrap resampling.
+  • All metrics reported at the .5 decision threshold, where all error types (FPR, FNR,
+    FDR, FOR) are within the same range (0.04 - 0.14).
+  Training Data                           Evaluation Data
+  • CelebA [36], training data split.     • CelebA [36], test data split.
+                                          • Chosen as a basic proof-of-concept.
+  Ethical Considerations
+  • Faces and annotations based on public figures (celebrities). No new information
+    is inferred or annotated.
+  Caveats and Recommendations
+  • Does not capture race or skin type, which has been reported as a source of disproportionate errors [5].
+  • Given gender classes are binary (male/not male), which we include as male/female. Further work needed to evaluate across a
+    spectrum of genders.
+  • An ideal evaluation dataset would additionally include annotations for Fitzpatrick skin type, camera details, and environment
+    (lighting/humidity) details.
+
+                Figure 2: Example Model Card for a smile detector trained and evaluated on the CelebA dataset.
+Margaret Mitchell, Simone Wu, Andrew Zaldivar, Parker Barnes, Lucy Vasserman, Ben Hutchinson, Elena Spitzer, Inioluwa Deborah Raji,
+FAT* ’19, January 29–31, 2019, Atlanta, GA, USA                                                                       Timnit Gebru
+
+
+
+                                                Model Card - Toxicity in Text
+
+  Model Details                                                    Training Data
+  • The TOXICITY classifier provided by Perspective API [32],      • Proprietary from Perspective API. Following details in [11]
+    trained to predict the likelihood that a comment will be         and [32], this includes comments from a online forums such
+    perceived as toxic.                                              as Wikipedia and New York Times, with crowdsourced
+  • Convolutional Neural Network.                                    labels of whether the comment is “toxic”.
+  • Developed by Jigsaw in 2017.                                   • “Toxic” is defined as “a rude, disrespectful, or unreasonable
+  Intended Use                                                       comment that is likely to make you leave a discussion.”
+  • Intended to be used for a wide range of use cases such as      Evaluation Data
+    supporting human moderation and providing feedback to          • A synthetic test set generated using a template-based ap-
+    comment authors.                                                 proach, as suggested in [11], where identity terms are
+  • Not intended for fully automated moderation.                     swapped into a variety of template sentences.
+  • Not intended to make judgments about specific individuals.     • Synthetic data is valuable here because [11] shows that
+  Factors                                                            real data often has disproportionate amounts of toxicity
+  • Identity terms referencing frequently attacked groups, fo-       directed at specific groups. Synthetic data ensures that we
+    cusing on sexual orientation, gender identity, and race.         evaluate on data that represents both toxic and non-toxic
+                                                                     statements referencing a variety of groups.
+  Metrics
+                                                                   Caveats and Recommendations
+  • Pinned AUC, as presented in [11], which measures
+    threshold-agnostic separability of toxic and non-toxic com-    • Synthetic test data covers only a small set of very specific
+    ments for each group, within the context of a background         comments. While these are designed to be representative of
+    distribution of other groups.                                    common use cases and concerns, it is not comprehensive.
+  Ethical Considerations
+  • Following [31], the Perspective API uses a set of values
+    to guide their work. These values are Community, Trans-
+    parency, Inclusivity, Privacy, and Topic-neutrality. Because
+    of privacy considerations, the model does not take into ac-
+    count user history when making judgments about toxicity.
+
+
+
+  Quantitative Analyses
+
+
+
+
+                     Figure 3: Example Model Card for two versions of Perspective API’s toxicity detector.
+Model Cards for Model Reporting                                                                                 FAT* ’19, January 29–31, 2019, Atlanta, GA, USA
+
+
+cards are intended to accompany a model after careful review has                           [7] Federal Trade Commission. 2016. Big Data: A Tool for Inclusion or Ex-
+determined that the foreseeable benefits outweigh the foreseeable                              clusion? Understanding the Issues. (2016). https://www.ftc.gov/reports/
+                                                                                               big-data-tool-inclusion-or-exclusion-understanding-issues-ftc-report
+risks in the model’s use or release.                                                       [8] Kimberle Crenshaw. 1989. Demarginalizing the intersection of race and sex:
+   To demonstrate the use of model cards in practice, we have pro-                             A black feminist critique of antidiscrimination doctrine, feminist theory and
+                                                                                               antiracist politics. U. Chi. Legal F. (1989), 139.
+vided two examples: A model card for a smiling classifier tested                           [9] Black Desi. 2009. HP computers are racist. (2009). https://www.youtube.com/
+on the CelebA dataset, and a model card for a public toxicity de-                              watch?v=t4DT3tQqgRM
+tector tested on the Identity Phrase Templates dataset. We report                         [10] William Dieterich, Christina Mendoza, and Tim Brennan. 2016.
+                                                                                               COMPAS Risk Scales: Demonstrating Accuracy Equity and Predic-
+confusion matrix metrics for the smile classifier and Pinned AUC                               tive Parity.          (2016).        https://www.documentcloud.org/documents/
+for the toxicity detector, along with model details, intended use,                             2998391-ProPublica-Commentary-Final-070616.html
+pointers to information about training and evaluation data, ethical                       [11] Lucas Dixon, John Li, Jeffrey Sorensen, Nithum Thain, and Lucy Vasserman. 2018.
+                                                                                               Measuring and Mitigating Unintended Bias in Text Classification. Proceedings of
+considerations, and further caveats and recommendations.                                       the AAAI/ACM Conference on AI, Ethics, and Society (2018).
+   The framework presented here is intended to be general enough                          [12] Cynthia Dwork. 2008. Differential Privacy: A Survey of Results. In Theory and
+                                                                                               Applications of Models of Computation, Manindra Agrawal, Dingzhu Du, Zhenhua
+to be applicable across different institutions, contexts, and stake-                           Duan, and Angsheng Li (Eds.). Springer Berlin Heidelberg, Berlin, Heidelberg,
+holders. It also is suitable for recently proposed requirements for                            1–19.
+analysis of algorithmic decision systems in critical social institu-                      [13] Entelo. 2018. Recruitment Software | Entelo. (2018). https://www.entelo.com/
+                                                                                          [14] Daniel Faggella. 2018. Follow the Data: Deep Learning Leads the Transformation
+tions, for example, for models used in determining government                                  of Enterprise - A Conversation with Naveen Rao. (2018).
+benefits, employment evaluations, criminal risk assessment, and                           [15] Thomas B Fitzpatrick. 1988. The validity and practicality of sun-reactive skin
+criminal DNA analysis [39].                                                                    types I through VI. Archives of dermatology 124, 6 (1988), 869–871.
+                                                                                          [16] Food and Drug Administration. 1989. Guidance for the Study of Drugs Likely to
+   Model cards are just one approach to increasing transparency                                Be Used in the Elderly. (1989).
+between developers, users, and stakeholders of machine learning                           [17] U.S. Food and Drug Administration. 2013. FDA Drug Safety Communication: Risk
+                                                                                               of next-morning impairment after use of insomnia drugs; FDA requires lower
+models and systems. They are designed to be flexible in both scope                             recommended doses for certain drugs containing zolpidem (Ambien, Ambien
+and specificity in order to accommodate the wide variety of ma-                                CR, Edluar, and Zolpimist). (2013). https://web.archive.org/web/20170428150213/
+chine learning model types and potential use cases. Therefore the                              https://www.fda.gov/drugs/drugsafety/ucm352085.htm
+                                                                                          [18] IIHS (Insurance Institute for Highway Safety: Highway Loss Data Institute). 2003.
+usefulness and accuracy of a model card relies on the integrity of                             Special Issue: Side Impact Crashworthiness. Status Report 38, 7 (2003).
+the creator(s) of the card itself. It seems unlikely, at least in the near                [19] Institute for the Future, Omidyar Network’s Tech, and Society Solutions Lab.
+term, that model cards could be standardized or formalized to a                                2018. Ethical OS. (2018). https://ethicalos.org/
+                                                                                          [20] Clare Garvie, Alvaro Bedoya, and Jonathan Frankle. 2016. The Perpetual Line-Up.
+degree needed to prevent misleading representations of model re-                               (2016). https://www.perpetuallineup.org/
+sults (whether intended or unintended). It is therefore important to                      [21] Timnit Gebru, Jamie Morgenstern, Briana Vecchione, Jennifer Wortman Vaughan,
+                                                                                               Hanna M. Wallach, Hal Daumé III, and Kate Crawford. 2018. Datasheets for
+consider model cards as one transparency tool among many, which                                Datasets. CoRR abs/1803.09010 (2018). http://arxiv.org/abs/1803.09010
+could include, for example, algorithmic auditing by third-parties                         [22] Google. 2018. Responsible AI Practices. (2018). https://ai.google/education/
+(both quantitative and qualitative), “adversarial testing” by techni-                          responsible-ai-practices
+                                                                                          [23] Gooru. 2018. Navigator for Teachers. (2018). http://gooru.org/about/teachers
+cal and non-technical analysts, and more inclusive user feedback                          [24] Cyril Goutte and Eric Gaussier. 2005. A probabilistic interpretation of precision,
+mechanisms. Future work will aim to refine the methodology of                                  recall and F-score, with implication for evaluation. In European Conference on
+creating model cards by studying how model information is inter-                               Information Retrieval. Springer, 345–359.
+                                                                                          [25] Collins GS, Reitsma JB, Altman DG, and Moons KM. 2015. Transparent reporting
+preted and used by different stakeholders. Researchers should also                             of a multivariable prediction model for individual prognosis or diagnosis (tripod):
+explore how model cards can strengthen and complement other                                    The tripod statement. Annals of Internal Medicine 162, 1 (2015), 55–63. DOI:
+                                                                                               http://dx.doi.org/10.7326/M14-0697
+transparency methods                                                                      [26] Moritz Hardt, Eric Price, , and Nati Srebro. 2016. Equality of Opportu-
+                                                                                               nity in Supervised Learning. In Advances in Neural Information Processing
+                                                                                               Systems 29, D. D. Lee, M. Sugiyama, U. V. Luxburg, I. Guyon, and R. Gar-
+7    ACKNOWLEDGEMENTS                                                                          nett (Eds.). Curran Associates, Inc., 3315–3323. http://papers.nips.cc/paper/
+                                                                                               6374-equality-of-opportunity-in-supervised-learning.pdf
+Thank you to Joy Buolamwini, Shalini Ananda and Shira Mitchell                            [27] Michael Hind, Sameep Mehta, Aleksandra Mojsilovic, Ravi Nair,
+for invaluable conversations and insight.                                                      Karthikeyan Natesan Ramamurthy, Alexandra Olteanu, and Kush R. Varshney.
+                                                                                               2018. Increasing Trust in AI Services through Supplier’s Declarations of
+                                                                                               Conformity. CoRR abs/1808.07261 (2018).
+REFERENCES                                                                                [28] Sarah Holland, Ahmed Hosny, Sarah Newman, Joshua Joseph, and Kasia Chmielin-
+                                                                                               ski. 2018. The Dataset Nutrition Label: A Framework To Drive Higher Data
+ [1] Avrio AI. 2018. Avrio AI: AI Talent Platform. (2018). https://www.goavrio.com/            Quality Standards. CoRR abs/1805.03677 (2018). http://arxiv.org/abs/1805.03677
+ [2] Julia Angwin, Jeff Larson, Surya Mattu, and Lauren Kirchner.                         [29] Ideal. 2018. AI For Recruiting Software | Talent Intelligence for High-Volume
+     2016.       Machine Bias.        (2016).     https://www.propublica.org/article/          Hiring. (2018). https://ideal.com/
+     machine-bias-risk-assessments-in-criminal-sentencing                                 [30] DrivenData Inc. 2018. An Ethics Checklist for Data Scientists. (2018). http:
+ [3] Emily M. Bender and Batya Friedman. 2018. “Data Statements for NLP: Toward                //deon.drivendata.org/
+     Mitigating System Bias and Enabling Better Science”. Transactions of the ACL         [31] Jigsaw. 2017. Conversation AI Research. (2017). https://conversationai.github.io/
+     (TACL) (2018).                                                                       [32] Jigsaw. 2017. Perspective API. (2017). https://www.perspectiveapi.com/
+ [4] Joy Buolamwini. 2016. How I’m fighting Bias in Algorithms. (2016).                   [33] B. Kim, Wattenberg M., J. Gilmer, Cai C., Wexler J., , F. Viegas, and R. Sayres.
+     https://www.ted.com/talks/joy_buolamwini_how_i_m_fighting_bias_in_                        2018. Interpretability Beyond Feature Attribution: Quantitative Testing with
+     algorithms#t-63664                                                                        Concept Activation Vectors (TCAV) . ICML (2018).
+ [5] Joy Buolamwini and Timnit Gebru. 2018. Gender Shades: Intersectional Accuracy        [34] Brendan F. Klare, Mark J. Burge, Joshua C. Klontz, Richard W. Vorder Bruegge,
+     Disparities in Commercial Gender Classification. In Proceedings of the 1st Confer-        and Anil K. Jain. 2012. Face recognition performance: Role of demographic
+     ence on Fairness, Accountability and Transparency (Proceedings of Machine Learn-          information. IEEE Transactions on Information Forensics and Security 7, 6 (2012),
+     ing Research), Sorelle A. Friedler and Christo Wilson (Eds.), Vol. 81. PMLR, New          1789–1801. DOI:http://dx.doi.org/10.1109/TIFS.2012.2214212
+     York, NY, USA, 77–91. http://proceedings.mlr.press/v81/buolamwini18a.html            [35] Der-Chiang Li, Susan C Hu, Liang-Sian Lin, and Chun-Wu Yeh. 2017. Detect-
+ [6] Alexandra Chouldechova. 2017. Fair prediction with disparate impact: A study              ing representative data and generating synthetic samples to improve learning
+     of bias in recidivism prediction instruments. Big data 5, 2 (2017), 153–163.              accuracy with imbalanced data sets. PloS one 12, 8 (2017), e0181853.
+Margaret Mitchell, Simone Wu, Andrew Zaldivar, Parker Barnes, Lucy Vasserman, Ben Hutchinson, Elena Spitzer, Inioluwa Deborah Raji,
+FAT* ’19, January 29–31, 2019, Atlanta, GA, USA                                                                       Timnit Gebru
+
+
+[36] Ziwei Liu, Ping Luo, Xiaogang Wang, and Xiaoou Tang. 2015. Deep Learning Face
+     Attributes in the Wild. In Proceedings of International Conference on Computer
+     Vision (ICCV).
+[37] Shira Mitchell, Eric Potash, and Solon Barocas. 2018. Prediction-Based De-
+     cisions and Fairness: A Catalogue of Choices, Assumptions, and Definitions.
+     arXiv:1811.07867 (2018).
+[38] Pramod Kaushik Mudrakarta, Ankur Taly, Mukund Sundararajan, and Kedar
+     Dhamdhere. 2018. Did the Model Understand the Question? Proceedings of the
+     Association for Computational Linguistics (2018).
+[39] AI Now. 2018. Litigating Algorithms: Challenging Government Use Of Algorith-
+     mic Decision Systems. AI Now Institute.
+[40] Kishore Papineni, Salim Roukos, Todd Ward, and Wei-Jing Zhu. 2002. BLEU: a
+     method for automatic evaluation of machine translation. In Proceedings of the
+     40th annual meeting on association for computational linguistics. Association for
+     Computational Linguistics, 311–318.
+[41] Inioluwa Raji. 2018. Black Panther Face Scorecard: Wakandans Under the Coded
+     Gaze of AI. (2018).
+[42] Microsoft Research. 2018. Project InnerEye - Medical Imaging AI to Em-
+     power Clinicians. (2018). https://www.microsoft.com/en-us/research/project/
+     medical-image-analysis/
+[43] Mukund Sundararajan, Ankur Taly, and Qiqi Yan. 2017. In Proceedings of the 34th
+     International Conference on Machine Learning, Vol. 70. PMLR, Sydney, Australia.
+[44] Digital Reasoning Systems. 2018. AI-Enabled Cancer Software | Healthcare AI :
+     Digital Reasoning. (2018). https://digitalreasoning.com/solutions/healthcare/
+[45] Turnitin. 2018. Revision Assistant. (2018). http://turnitin.com/en_us/
+     what-we-offer/revision-assistant
+[46] Shannon Vallor, Brian Green, and Irina Raicu. 2018. Ethics in Technology Practice:
+     An Overview. (22 6 2018). https://www.scu.edu/ethics-in-technology-practice/
+     overview-of-ethics-in-tech-practice/
+[47] Lucy Vasserman, John Li, CJ Adams, and Lucas Dixon.
+     2018.          Unintended bias and names of frequently targeted
+     groups.         Medium (2018).           https://medium.com/the-false-positive/
+     unintended-bias-and-names-of-frequently-targeted-groups-8e0b81f80a23
+[48] Sahil Verma and Julia Rubin. 2018. Fairness Definitions Explained. (2018).
+[49] Joz Wang. 2010. Flickr Image. (2010). https://www.flickr.com/photos/jozjozjoz/
+     3529106844
+[50] Amy Westervelt. 2018. The medical research gender gap: how excluding women
+     from clinical trials is hurting our health. (2018).
+[51] Mingyuan Zhou, Haiting Lin, S Susan Young, and Jingyi Yu. 2018. Hybrid sens-
+     ing face detection and registration for low-light and unconstrained conditions.
+     Applied optics 57, 1 (2018), 69–78.
+

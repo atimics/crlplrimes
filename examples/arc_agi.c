@@ -46,8 +46,8 @@ enum {
     ARC_HYPOTHESIS_LOG_ODDS_WEIGHT = 12,
     ARC_HYPOTHESIS_NEURAL_WEIGHT = 24,
     ARC_HYPOTHESIS_COLD_START_WEIGHT = 8,
-    ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY = 8,
-    ARC_HYPOTHESIS_TEMPLATE_BUCKETS = 8,
+    ARC_HYPOTHESIS_TEMPLATE_REGISTRY_CAPACITY = 10,
+    ARC_HYPOTHESIS_TEMPLATE_BUCKETS = 10,
     ARC_HYPOTHESIS_SLOT_TYPE_BUCKETS = 9,
     ARC_HYPOTHESIS_SLOT_VALUE_BUCKETS = 32,
     ARC_HYPOTHESIS_PRIOR_MIN_PROPOSALS = 3,
@@ -662,6 +662,8 @@ static const NNHypothesisTemplate *arc_hypothesis_template_fill_enclosed(void);
 static const NNHypothesisTemplate *arc_hypothesis_template_object_extract(void);
 static const NNHypothesisTemplate *arc_hypothesis_template_extend_aligned_sequence(void);
 static const NNHypothesisTemplate *arc_hypothesis_template_tile_motif_repeat(void);
+static const NNHypothesisTemplate *arc_hypothesis_template_panel_selection(void);
+static const NNHypothesisTemplate *arc_hypothesis_template_bbox_panel_selection(void);
 static const ARCHypothesisTemplateBinding *arc_hypothesis_template_registry(size_t *count);
 static const ARCHypothesisTemplateBinding *arc_hypothesis_binding_for_template_id(uint32_t template_id);
 static int arc_hypothesis_from_candidate(const ARCTransformCandidate *candidate,
@@ -682,6 +684,10 @@ static int arc_candidate_from_sequence_hypothesis(const NNHypothesis *hypothesis
                                                   ARCTransformCandidate *candidate);
 static int arc_candidate_from_tile_motif_hypothesis(const NNHypothesis *hypothesis,
                                                     ARCTransformCandidate *candidate);
+static int arc_candidate_from_panel_selection_hypothesis(const NNHypothesis *hypothesis,
+                                                         ARCTransformCandidate *candidate);
+static int arc_candidate_from_bbox_panel_selection_hypothesis(const NNHypothesis *hypothesis,
+                                                              ARCTransformCandidate *candidate);
 static int arc_apply_translate_hypothesis(const NNHypothesis *hypothesis,
                                           const ARCGrid *input,
                                           ARCGrid *output);
@@ -706,6 +712,12 @@ static int arc_apply_sequence_hypothesis(const NNHypothesis *hypothesis,
 static int arc_apply_tile_motif_hypothesis(const NNHypothesis *hypothesis,
                                            const ARCGrid *input,
                                            ARCGrid *output);
+static int arc_apply_panel_selection_hypothesis(const NNHypothesis *hypothesis,
+                                                const ARCGrid *input,
+                                                ARCGrid *output);
+static int arc_apply_bbox_panel_selection_hypothesis(const NNHypothesis *hypothesis,
+                                                     const ARCGrid *input,
+                                                     ARCGrid *output);
 static size_t arc_induce_translate_hypotheses(const ARCHypothesisTemplateBinding *binding,
                                               const ARCTask *task,
                                               ARCProgramLearnedState *learned,
@@ -786,6 +798,26 @@ static size_t arc_induce_tile_motif_hypotheses(const ARCHypothesisTemplateBindin
                                                size_t proposal_count,
                                                ARCHypothesisSelectionStats *stats,
                                                size_t template_index);
+static size_t arc_induce_panel_selection_hypotheses(const ARCHypothesisTemplateBinding *binding,
+                                                    const ARCTask *task,
+                                                    ARCProgramLearnedState *learned,
+                                                    const ARCTransformCandidate *existing_candidates,
+                                                    size_t existing_count,
+                                                    ARCHypothesisProposal *proposals,
+                                                    size_t proposal_capacity,
+                                                    size_t proposal_count,
+                                                    ARCHypothesisSelectionStats *stats,
+                                                    size_t template_index);
+static size_t arc_induce_bbox_panel_selection_hypotheses(const ARCHypothesisTemplateBinding *binding,
+                                                         const ARCTask *task,
+                                                         ARCProgramLearnedState *learned,
+                                                         const ARCTransformCandidate *existing_candidates,
+                                                         size_t existing_count,
+                                                         ARCHypothesisProposal *proposals,
+                                                         size_t proposal_capacity,
+                                                         size_t proposal_count,
+                                                         ARCHypothesisSelectionStats *stats,
+                                                         size_t template_index);
 
 static int parse_size_text(const char *text, size_t *out_value)
 {
@@ -4989,6 +5021,10 @@ static size_t arc_hypothesis_template_bucket(uint32_t template_id)
         return 6;
     case 1031:
         return 7;
+    case 1032:
+        return 8;
+    case 1033:
+        return 9;
     default:
         return (size_t)(template_id % ARC_HYPOTHESIS_TEMPLATE_BUCKETS);
     }
@@ -7163,6 +7199,459 @@ static size_t arc_induce_tile_motif_hypotheses(const ARCHypothesisTemplateBindin
                                                 &candidate,
                                                 NULL,
                                                 NULL);
+        }
+    }
+    return proposal_count;
+}
+
+static const char *arc_panel_anchor_short_name(int mode)
+{
+    switch (mode) {
+    case 0:
+        return "start";
+    case 1:
+        return "center";
+    case 2:
+        return "end";
+    }
+    return "unknown";
+}
+
+static int arc_panel_origin(size_t input_extent,
+                            size_t panel_extent,
+                            int anchor_mode,
+                            int offset,
+                            size_t *origin_out)
+{
+    if (panel_extent == 0 || panel_extent > input_extent ||
+        anchor_mode < 0 || anchor_mode > 2 || origin_out == NULL) {
+        return 0;
+    }
+    size_t span = input_extent - panel_extent;
+    int64_t base = 0;
+    if (anchor_mode == 1) {
+        base = (int64_t)(span / 2u);
+    } else if (anchor_mode == 2) {
+        base = (int64_t)span;
+    }
+    int64_t origin = base + (int64_t)offset;
+    if (origin < 0 ||
+        origin + (int64_t)panel_extent > (int64_t)input_extent) {
+        return 0;
+    }
+    *origin_out = (size_t)origin;
+    return 1;
+}
+
+static int arc_grid_crop_matches(const ARCGrid *input,
+                                 const ARCGrid *output,
+                                 size_t origin_x,
+                                 size_t origin_y)
+{
+    if (input == NULL || output == NULL ||
+        output->width == 0 || output->height == 0 ||
+        origin_x + output->width > input->width ||
+        origin_y + output->height > input->height) {
+        return 0;
+    }
+    for (size_t y = 0; y < output->height; ++y) {
+        for (size_t x = 0; x < output->width; ++x) {
+            size_t input_cell = (origin_y + y) * input->width + origin_x + x;
+            size_t output_cell = y * output->width + x;
+            if (input->cells[input_cell] != output->cells[output_cell]) {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+static int arc_grid_non_background_bbox(const ARCGrid *grid,
+                                        uint8_t background,
+                                        size_t *min_x_out,
+                                        size_t *min_y_out,
+                                        size_t *max_x_out,
+                                        size_t *max_y_out)
+{
+    if (grid == NULL || grid->width == 0 || grid->height == 0) {
+        return 0;
+    }
+    int found = 0;
+    size_t min_x = grid->width;
+    size_t min_y = grid->height;
+    size_t max_x = 0;
+    size_t max_y = 0;
+    for (size_t y = 0; y < grid->height; ++y) {
+        for (size_t x = 0; x < grid->width; ++x) {
+            uint8_t color = grid->cells[y * grid->width + x];
+            if (color == background) {
+                continue;
+            }
+            if (!found || x < min_x) {
+                min_x = x;
+            }
+            if (!found || y < min_y) {
+                min_y = y;
+            }
+            if (!found || x > max_x) {
+                max_x = x;
+            }
+            if (!found || y > max_y) {
+                max_y = y;
+            }
+            found = 1;
+        }
+    }
+    if (!found) {
+        return 0;
+    }
+    if (min_x_out != NULL) {
+        *min_x_out = min_x;
+    }
+    if (min_y_out != NULL) {
+        *min_y_out = min_y;
+    }
+    if (max_x_out != NULL) {
+        *max_x_out = max_x;
+    }
+    if (max_y_out != NULL) {
+        *max_y_out = max_y;
+    }
+    return 1;
+}
+
+static int arc_bbox_panel_origin(const ARCGrid *input,
+                                 uint8_t background,
+                                 size_t panel_width,
+                                 size_t panel_height,
+                                 int x_anchor,
+                                 int y_anchor,
+                                 int x_offset,
+                                 int y_offset,
+                                 size_t *origin_x_out,
+                                 size_t *origin_y_out)
+{
+    size_t min_x = 0;
+    size_t min_y = 0;
+    size_t max_x = 0;
+    size_t max_y = 0;
+    if (input == NULL || origin_x_out == NULL || origin_y_out == NULL ||
+        panel_width == 0 || panel_height == 0 ||
+        x_anchor < 0 || x_anchor > 2 ||
+        y_anchor < 0 || y_anchor > 2 ||
+        !arc_grid_non_background_bbox(input,
+                                      background,
+                                      &min_x,
+                                      &min_y,
+                                      &max_x,
+                                      &max_y)) {
+        return 0;
+    }
+    size_t bbox_width = max_x - min_x + 1u;
+    size_t bbox_height = max_y - min_y + 1u;
+    if (panel_width > bbox_width || panel_height > bbox_height) {
+        return 0;
+    }
+    size_t x_span = bbox_width - panel_width;
+    size_t y_span = bbox_height - panel_height;
+    int64_t x_base = (int64_t)min_x;
+    int64_t y_base = (int64_t)min_y;
+    if (x_anchor == 1) {
+        x_base += (int64_t)(x_span / 2u);
+    } else if (x_anchor == 2) {
+        x_base += (int64_t)x_span;
+    }
+    if (y_anchor == 1) {
+        y_base += (int64_t)(y_span / 2u);
+    } else if (y_anchor == 2) {
+        y_base += (int64_t)y_span;
+    }
+    int64_t origin_x = x_base + (int64_t)x_offset;
+    int64_t origin_y = y_base + (int64_t)y_offset;
+    if (origin_x < 0 || origin_y < 0 ||
+        origin_x + (int64_t)panel_width > (int64_t)input->width ||
+        origin_y + (int64_t)panel_height > (int64_t)input->height) {
+        return 0;
+    }
+    *origin_x_out = (size_t)origin_x;
+    *origin_y_out = (size_t)origin_y;
+    return 1;
+}
+
+static size_t arc_induce_panel_selection_hypotheses(const ARCHypothesisTemplateBinding *binding,
+                                                    const ARCTask *task,
+                                                    ARCProgramLearnedState *learned,
+                                                    const ARCTransformCandidate *existing_candidates,
+                                                    size_t existing_count,
+                                                    ARCHypothesisProposal *proposals,
+                                                    size_t proposal_capacity,
+                                                    size_t proposal_count,
+                                                    ARCHypothesisSelectionStats *stats,
+                                                    size_t template_index)
+{
+    if (binding == NULL || binding->template_fn == NULL ||
+        binding->to_candidate == NULL ||
+        task == NULL || task->train_count == 0 ||
+        existing_candidates == NULL || proposals == NULL ||
+        proposal_capacity == 0 ||
+        !task->train[0].has_output) {
+        return proposal_count;
+    }
+
+    const ARCGrid *first_input = &task->train[0].input;
+    const ARCGrid *first_output = &task->train[0].output;
+    if (first_output->width == 0 || first_output->height == 0 ||
+        first_output->width > first_input->width ||
+        first_output->height > first_input->height ||
+        (first_output->width == first_input->width &&
+         first_output->height == first_input->height)) {
+        return proposal_count;
+    }
+    for (size_t pair = 1; pair < task->train_count; ++pair) {
+        const ARCGrid *input = &task->train[pair].input;
+        const ARCGrid *output = &task->train[pair].output;
+        if (!task->train[pair].has_output ||
+            output->width != first_output->width ||
+            output->height != first_output->height ||
+            output->width > input->width ||
+            output->height > input->height) {
+            return proposal_count;
+        }
+    }
+
+    ARCProgramTaskFeatures task_features;
+    arc_program_task_features(task, &task_features);
+    uint8_t background = arc_grid_dominant_color(first_input);
+    for (size_t origin_y = 0;
+         origin_y + first_output->height <= first_input->height;
+         ++origin_y) {
+        for (size_t origin_x = 0;
+             origin_x + first_output->width <= first_input->width;
+             ++origin_x) {
+            if (!arc_grid_crop_matches(first_input,
+                                       first_output,
+                                       origin_x,
+                                       origin_y)) {
+                continue;
+            }
+            for (int x_mode = 0; x_mode <= 2; ++x_mode) {
+                size_t x_span = first_input->width - first_output->width;
+                int64_t x_base = x_mode == 0 ? 0
+                                 : x_mode == 1 ? (int64_t)(x_span / 2u)
+                                               : (int64_t)x_span;
+                int x_offset = (int)((int64_t)origin_x - x_base);
+                for (int y_mode = 0; y_mode <= 2; ++y_mode) {
+                    size_t y_span = first_input->height - first_output->height;
+                    int64_t y_base = y_mode == 0 ? 0
+                                     : y_mode == 1 ? (int64_t)(y_span / 2u)
+                                                   : (int64_t)y_span;
+                    int y_offset = (int)((int64_t)origin_y - y_base);
+
+                    NNHypothesis hypothesis;
+                    ARCTransformCandidate candidate;
+                    if (!nn_hypothesis_init(&hypothesis, binding->template_fn())) {
+                        continue;
+                    }
+                    int ok = nn_hypothesis_bind(&hypothesis,
+                                                "panel.background",
+                                                (double)background,
+                                                background);
+                    ok = ok && nn_hypothesis_bind(&hypothesis,
+                                                  "panel.x_anchor",
+                                                  (double)x_mode,
+                                                  x_mode);
+                    ok = ok && nn_hypothesis_bind(&hypothesis,
+                                                  "panel.y_anchor",
+                                                  (double)y_mode,
+                                                  y_mode);
+                    ok = ok && nn_hypothesis_bind(&hypothesis,
+                                                  "panel.x_offset",
+                                                  (double)x_offset,
+                                                  x_offset);
+                    ok = ok && nn_hypothesis_bind(&hypothesis,
+                                                  "panel.y_offset",
+                                                  (double)y_offset,
+                                                  y_offset);
+                    ok = ok && nn_hypothesis_bind(&hypothesis,
+                                                  "panel.width",
+                                                  (double)first_output->width,
+                                                  (int64_t)first_output->width);
+                    ok = ok && nn_hypothesis_bind(&hypothesis,
+                                                  "panel.height",
+                                                  (double)first_output->height,
+                                                  (int64_t)first_output->height);
+                    if (!ok || !binding->to_candidate(&hypothesis, &candidate)) {
+                        continue;
+                    }
+                    proposal_count =
+                        arc_try_add_hypothesis_proposal(learned,
+                                                        task,
+                                                        existing_candidates,
+                                                        existing_count,
+                                                        proposals,
+                                                        proposal_capacity,
+                                                        proposal_count,
+                                                        stats,
+                                                        template_index,
+                                                        &task_features,
+                                                        &hypothesis,
+                                                        &candidate,
+                                                        NULL,
+                                                        NULL);
+                }
+            }
+        }
+    }
+    return proposal_count;
+}
+
+static size_t arc_induce_bbox_panel_selection_hypotheses(const ARCHypothesisTemplateBinding *binding,
+                                                         const ARCTask *task,
+                                                         ARCProgramLearnedState *learned,
+                                                         const ARCTransformCandidate *existing_candidates,
+                                                         size_t existing_count,
+                                                         ARCHypothesisProposal *proposals,
+                                                         size_t proposal_capacity,
+                                                         size_t proposal_count,
+                                                         ARCHypothesisSelectionStats *stats,
+                                                         size_t template_index)
+{
+    if (binding == NULL || binding->template_fn == NULL ||
+        binding->to_candidate == NULL ||
+        task == NULL || task->train_count == 0 ||
+        existing_candidates == NULL || proposals == NULL ||
+        proposal_capacity == 0 ||
+        !task->train[0].has_output) {
+        return proposal_count;
+    }
+
+    const ARCGrid *first_input = &task->train[0].input;
+    const ARCGrid *first_output = &task->train[0].output;
+    if (first_output->width == 0 || first_output->height == 0 ||
+        first_output->width > first_input->width ||
+        first_output->height > first_input->height ||
+        (first_output->width == first_input->width &&
+         first_output->height == first_input->height)) {
+        return proposal_count;
+    }
+    for (size_t pair = 1; pair < task->train_count; ++pair) {
+        const ARCGrid *input = &task->train[pair].input;
+        const ARCGrid *output = &task->train[pair].output;
+        if (!task->train[pair].has_output ||
+            output->width != first_output->width ||
+            output->height != first_output->height ||
+            output->width > input->width ||
+            output->height > input->height) {
+            return proposal_count;
+        }
+    }
+
+    uint8_t background = arc_grid_dominant_color(first_input);
+    size_t bbox_min_x = 0;
+    size_t bbox_min_y = 0;
+    size_t bbox_max_x = 0;
+    size_t bbox_max_y = 0;
+    if (!arc_grid_non_background_bbox(first_input,
+                                      background,
+                                      &bbox_min_x,
+                                      &bbox_min_y,
+                                      &bbox_max_x,
+                                      &bbox_max_y)) {
+        return proposal_count;
+    }
+    size_t bbox_width = bbox_max_x - bbox_min_x + 1u;
+    size_t bbox_height = bbox_max_y - bbox_min_y + 1u;
+    if (first_output->width > bbox_width ||
+        first_output->height > bbox_height) {
+        return proposal_count;
+    }
+
+    ARCProgramTaskFeatures task_features;
+    arc_program_task_features(task, &task_features);
+    for (size_t origin_y = 0;
+         origin_y + first_output->height <= first_input->height;
+         ++origin_y) {
+        for (size_t origin_x = 0;
+             origin_x + first_output->width <= first_input->width;
+             ++origin_x) {
+            if (!arc_grid_crop_matches(first_input,
+                                       first_output,
+                                       origin_x,
+                                       origin_y)) {
+                continue;
+            }
+            for (int x_mode = 0; x_mode <= 2; ++x_mode) {
+                size_t x_span = bbox_width - first_output->width;
+                int64_t x_base = (int64_t)bbox_min_x;
+                if (x_mode == 1) {
+                    x_base += (int64_t)(x_span / 2u);
+                } else if (x_mode == 2) {
+                    x_base += (int64_t)x_span;
+                }
+                int x_offset = (int)((int64_t)origin_x - x_base);
+                for (int y_mode = 0; y_mode <= 2; ++y_mode) {
+                    size_t y_span = bbox_height - first_output->height;
+                    int64_t y_base = (int64_t)bbox_min_y;
+                    if (y_mode == 1) {
+                        y_base += (int64_t)(y_span / 2u);
+                    } else if (y_mode == 2) {
+                        y_base += (int64_t)y_span;
+                    }
+                    int y_offset = (int)((int64_t)origin_y - y_base);
+
+                    NNHypothesis hypothesis;
+                    ARCTransformCandidate candidate;
+                    if (!nn_hypothesis_init(&hypothesis, binding->template_fn())) {
+                        continue;
+                    }
+                    int ok = nn_hypothesis_bind(&hypothesis,
+                                                "panel.background",
+                                                (double)background,
+                                                background);
+                    ok = ok && nn_hypothesis_bind(&hypothesis,
+                                                  "panel.x_anchor",
+                                                  (double)x_mode,
+                                                  x_mode);
+                    ok = ok && nn_hypothesis_bind(&hypothesis,
+                                                  "panel.y_anchor",
+                                                  (double)y_mode,
+                                                  y_mode);
+                    ok = ok && nn_hypothesis_bind(&hypothesis,
+                                                  "panel.x_offset",
+                                                  (double)x_offset,
+                                                  x_offset);
+                    ok = ok && nn_hypothesis_bind(&hypothesis,
+                                                  "panel.y_offset",
+                                                  (double)y_offset,
+                                                  y_offset);
+                    ok = ok && nn_hypothesis_bind(&hypothesis,
+                                                  "panel.width",
+                                                  (double)first_output->width,
+                                                  (int64_t)first_output->width);
+                    ok = ok && nn_hypothesis_bind(&hypothesis,
+                                                  "panel.height",
+                                                  (double)first_output->height,
+                                                  (int64_t)first_output->height);
+                    if (!ok || !binding->to_candidate(&hypothesis, &candidate)) {
+                        continue;
+                    }
+                    proposal_count =
+                        arc_try_add_hypothesis_proposal(learned,
+                                                        task,
+                                                        existing_candidates,
+                                                        existing_count,
+                                                        proposals,
+                                                        proposal_capacity,
+                                                        proposal_count,
+                                                        stats,
+                                                        template_index,
+                                                        &task_features,
+                                                        &hypothesis,
+                                                        &candidate,
+                                                        NULL,
+                                                        NULL);
+                }
+            }
         }
     }
     return proposal_count;
@@ -9562,6 +10051,364 @@ static int arc_apply_tile_motif_hypothesis(const NNHypothesis *hypothesis,
     return arc_apply_tile_motif_parity_repeat_candidate(&candidate, input, output);
 }
 
+static const NNHypothesisTemplate *arc_hypothesis_template_panel_selection(void)
+{
+    static NNHypothesisTemplate template_ref;
+    static int initialized = 0;
+    if (initialized) {
+        return &template_ref;
+    }
+    nn_hypothesis_template_init(&template_ref,
+                                "arc_agi",
+                                "projection_panel_selection",
+                                1032,
+                                NN_PROGRAM_VALUE_GRID,
+                                NN_PROGRAM_VALUE_GRID);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "partition_panels",
+                                     NN_PROGRAM_KIND_TRANSFORM,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     NN_PROGRAM_VALUE_OBJECT_SET,
+                                     180);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "select_panel",
+                                     NN_PROGRAM_KIND_SELECTOR,
+                                     NN_PROGRAM_VALUE_OBJECT_SET,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     181);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "render_panel",
+                                     NN_PROGRAM_KIND_TRANSFORM,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     182);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "panel.background",
+                                    NN_HYPOTHESIS_SLOT_COLOR,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "panel.x_anchor",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "panel.y_anchor",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "panel.x_offset",
+                                    NN_HYPOTHESIS_SLOT_OFFSET,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "panel.y_offset",
+                                    NN_HYPOTHESIS_SLOT_OFFSET,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "panel.width",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "panel.height",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    initialized = 1;
+    return &template_ref;
+}
+
+static const NNHypothesisTemplate *arc_hypothesis_template_bbox_panel_selection(void)
+{
+    static NNHypothesisTemplate template_ref;
+    static int initialized = 0;
+    if (initialized) {
+        return &template_ref;
+    }
+    nn_hypothesis_template_init(&template_ref,
+                                "arc_agi",
+                                "projection_bbox_panel_selection",
+                                1033,
+                                NN_PROGRAM_VALUE_GRID,
+                                NN_PROGRAM_VALUE_GRID);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "detect_content_bbox",
+                                     NN_PROGRAM_KIND_SELECTOR,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     NN_PROGRAM_VALUE_OBJECT_SET,
+                                     183);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "select_bbox_panel",
+                                     NN_PROGRAM_KIND_SELECTOR,
+                                     NN_PROGRAM_VALUE_OBJECT_SET,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     184);
+    nn_hypothesis_template_add_stage(&template_ref,
+                                     "render_panel",
+                                     NN_PROGRAM_KIND_TRANSFORM,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     NN_PROGRAM_VALUE_GRID,
+                                     185);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "panel.background",
+                                    NN_HYPOTHESIS_SLOT_COLOR,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "panel.x_anchor",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "panel.y_anchor",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "panel.x_offset",
+                                    NN_HYPOTHESIS_SLOT_OFFSET,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "panel.y_offset",
+                                    NN_HYPOTHESIS_SLOT_OFFSET,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "panel.width",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    nn_hypothesis_template_add_slot(&template_ref,
+                                    "panel.height",
+                                    NN_HYPOTHESIS_SLOT_INTEGER,
+                                    1, 0.0, 0);
+    initialized = 1;
+    return &template_ref;
+}
+
+typedef struct {
+    uint8_t background;
+    int x_anchor;
+    int y_anchor;
+    int x_offset;
+    int y_offset;
+    size_t width;
+    size_t height;
+} ARCPanelSelectionHypothesisSpec;
+
+static int arc_panel_selection_spec_from_hypothesis(const NNHypothesis *hypothesis,
+                                                    ARCPanelSelectionHypothesisSpec *spec)
+{
+    if (hypothesis == NULL || spec == NULL ||
+        hypothesis->template_ref != arc_hypothesis_template_panel_selection() ||
+        !nn_hypothesis_is_fully_bound(hypothesis)) {
+        return 0;
+    }
+    int64_t background = 0;
+    int64_t x_anchor = 0;
+    int64_t y_anchor = 0;
+    int64_t x_offset = 0;
+    int64_t y_offset = 0;
+    int64_t width = 0;
+    int64_t height = 0;
+    if (!nn_hypothesis_get(hypothesis,
+                           "panel.background",
+                           NULL,
+                           &background) ||
+        !nn_hypothesis_get(hypothesis, "panel.x_anchor", NULL, &x_anchor) ||
+        !nn_hypothesis_get(hypothesis, "panel.y_anchor", NULL, &y_anchor) ||
+        !nn_hypothesis_get(hypothesis, "panel.x_offset", NULL, &x_offset) ||
+        !nn_hypothesis_get(hypothesis, "panel.y_offset", NULL, &y_offset) ||
+        !nn_hypothesis_get(hypothesis, "panel.width", NULL, &width) ||
+        !nn_hypothesis_get(hypothesis, "panel.height", NULL, &height)) {
+        return 0;
+    }
+    if (background < 0 || background >= ARC_COLOR_COUNT ||
+        x_anchor < 0 || x_anchor > 2 ||
+        y_anchor < 0 || y_anchor > 2 ||
+        x_offset < -ARC_MAX_GRID_WIDTH ||
+        x_offset > ARC_MAX_GRID_WIDTH ||
+        y_offset < -ARC_MAX_GRID_HEIGHT ||
+        y_offset > ARC_MAX_GRID_HEIGHT ||
+        width <= 0 || width > ARC_MAX_GRID_WIDTH ||
+        height <= 0 || height > ARC_MAX_GRID_HEIGHT) {
+        return 0;
+    }
+    spec->background = (uint8_t)background;
+    spec->x_anchor = (int)x_anchor;
+    spec->y_anchor = (int)y_anchor;
+    spec->x_offset = (int)x_offset;
+    spec->y_offset = (int)y_offset;
+    spec->width = (size_t)width;
+    spec->height = (size_t)height;
+    return 1;
+}
+
+static int arc_bbox_panel_selection_spec_from_hypothesis(const NNHypothesis *hypothesis,
+                                                         ARCPanelSelectionHypothesisSpec *spec)
+{
+    if (hypothesis == NULL || spec == NULL ||
+        hypothesis->template_ref != arc_hypothesis_template_bbox_panel_selection() ||
+        !nn_hypothesis_is_fully_bound(hypothesis)) {
+        return 0;
+    }
+    int64_t background = 0;
+    int64_t x_anchor = 0;
+    int64_t y_anchor = 0;
+    int64_t x_offset = 0;
+    int64_t y_offset = 0;
+    int64_t width = 0;
+    int64_t height = 0;
+    if (!nn_hypothesis_get(hypothesis,
+                           "panel.background",
+                           NULL,
+                           &background) ||
+        !nn_hypothesis_get(hypothesis, "panel.x_anchor", NULL, &x_anchor) ||
+        !nn_hypothesis_get(hypothesis, "panel.y_anchor", NULL, &y_anchor) ||
+        !nn_hypothesis_get(hypothesis, "panel.x_offset", NULL, &x_offset) ||
+        !nn_hypothesis_get(hypothesis, "panel.y_offset", NULL, &y_offset) ||
+        !nn_hypothesis_get(hypothesis, "panel.width", NULL, &width) ||
+        !nn_hypothesis_get(hypothesis, "panel.height", NULL, &height)) {
+        return 0;
+    }
+    if (background < 0 || background >= ARC_COLOR_COUNT ||
+        x_anchor < 0 || x_anchor > 2 ||
+        y_anchor < 0 || y_anchor > 2 ||
+        x_offset < -ARC_MAX_GRID_WIDTH ||
+        x_offset > ARC_MAX_GRID_WIDTH ||
+        y_offset < -ARC_MAX_GRID_HEIGHT ||
+        y_offset > ARC_MAX_GRID_HEIGHT ||
+        width <= 0 || width > ARC_MAX_GRID_WIDTH ||
+        height <= 0 || height > ARC_MAX_GRID_HEIGHT) {
+        return 0;
+    }
+    spec->background = (uint8_t)background;
+    spec->x_anchor = (int)x_anchor;
+    spec->y_anchor = (int)y_anchor;
+    spec->x_offset = (int)x_offset;
+    spec->y_offset = (int)y_offset;
+    spec->width = (size_t)width;
+    spec->height = (size_t)height;
+    return 1;
+}
+
+static int arc_candidate_from_panel_selection_hypothesis(const NNHypothesis *hypothesis,
+                                                         ARCTransformCandidate *candidate)
+{
+    ARCPanelSelectionHypothesisSpec spec;
+    if (candidate == NULL ||
+        !arc_panel_selection_spec_from_hypothesis(hypothesis, &spec)) {
+        return 0;
+    }
+    arc_init_candidate(candidate, ARC_RULE_HYPOTHESIS_APPLIED, "");
+    candidate->background_color = spec.background;
+    candidate->selector_kind = ARC_OBJECT_SELECTOR_ALL_COLOR;
+    candidate->output_selector_kind = ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
+    candidate->dx = spec.x_offset;
+    candidate->dy = spec.y_offset;
+    candidate->scale = spec.width;
+    if (!arc_store_hypothesis_candidate(candidate, hypothesis)) {
+        return 0;
+    }
+    snprintf(candidate->name,
+             sizeof(candidate->name),
+             "hypothesis_%s_%s_%+d_%s_%+d_%zux%zu_bg_%u",
+             hypothesis->template_ref->name,
+             arc_panel_anchor_short_name(spec.x_anchor),
+             spec.x_offset,
+             arc_panel_anchor_short_name(spec.y_anchor),
+             spec.y_offset,
+             spec.width,
+             spec.height,
+             (unsigned)spec.background);
+    return 1;
+}
+
+static int arc_candidate_from_bbox_panel_selection_hypothesis(const NNHypothesis *hypothesis,
+                                                              ARCTransformCandidate *candidate)
+{
+    ARCPanelSelectionHypothesisSpec spec;
+    if (candidate == NULL ||
+        !arc_bbox_panel_selection_spec_from_hypothesis(hypothesis, &spec)) {
+        return 0;
+    }
+    arc_init_candidate(candidate, ARC_RULE_HYPOTHESIS_APPLIED, "");
+    candidate->background_color = spec.background;
+    candidate->selector_kind = ARC_OBJECT_SELECTOR_ALL_COLOR;
+    candidate->output_selector_kind = ARC_OBJECT_SELECTOR_UNIQUE_COLOR;
+    candidate->dx = spec.x_offset;
+    candidate->dy = spec.y_offset;
+    candidate->scale = spec.width;
+    if (!arc_store_hypothesis_candidate(candidate, hypothesis)) {
+        return 0;
+    }
+    snprintf(candidate->name,
+             sizeof(candidate->name),
+             "hypothesis_%s_bbox_%s_%+d_%s_%+d_%zux%zu_bg_%u",
+             hypothesis->template_ref->name,
+             arc_panel_anchor_short_name(spec.x_anchor),
+             spec.x_offset,
+             arc_panel_anchor_short_name(spec.y_anchor),
+             spec.y_offset,
+             spec.width,
+             spec.height,
+             (unsigned)spec.background);
+    return 1;
+}
+
+static int arc_apply_panel_selection_hypothesis(const NNHypothesis *hypothesis,
+                                                const ARCGrid *input,
+                                                ARCGrid *output)
+{
+    ARCPanelSelectionHypothesisSpec spec;
+    size_t origin_x = 0;
+    size_t origin_y = 0;
+    if (!arc_panel_selection_spec_from_hypothesis(hypothesis, &spec) ||
+        input == NULL || output == NULL ||
+        !arc_panel_origin(input->width,
+                          spec.width,
+                          spec.x_anchor,
+                          spec.x_offset,
+                          &origin_x) ||
+        !arc_panel_origin(input->height,
+                          spec.height,
+                          spec.y_anchor,
+                          spec.y_offset,
+                          &origin_y)) {
+        return 0;
+    }
+    arc_init_grid(output, spec.width, spec.height);
+    for (size_t y = 0; y < spec.height; ++y) {
+        for (size_t x = 0; x < spec.width; ++x) {
+            size_t input_cell = (origin_y + y) * input->width + origin_x + x;
+            output->cells[y * output->width + x] = input->cells[input_cell];
+        }
+    }
+    return 1;
+}
+
+static int arc_apply_bbox_panel_selection_hypothesis(const NNHypothesis *hypothesis,
+                                                     const ARCGrid *input,
+                                                     ARCGrid *output)
+{
+    ARCPanelSelectionHypothesisSpec spec;
+    size_t origin_x = 0;
+    size_t origin_y = 0;
+    if (!arc_bbox_panel_selection_spec_from_hypothesis(hypothesis, &spec) ||
+        input == NULL || output == NULL ||
+        !arc_bbox_panel_origin(input,
+                               spec.background,
+                               spec.width,
+                               spec.height,
+                               spec.x_anchor,
+                               spec.y_anchor,
+                               spec.x_offset,
+                               spec.y_offset,
+                               &origin_x,
+                               &origin_y)) {
+        return 0;
+    }
+    arc_init_grid(output, spec.width, spec.height);
+    for (size_t y = 0; y < spec.height; ++y) {
+        for (size_t x = 0; x < spec.width; ++x) {
+            size_t input_cell = (origin_y + y) * input->width + origin_x + x;
+            output->cells[y * output->width + x] = input->cells[input_cell];
+        }
+    }
+    return 1;
+}
+
 static const ARCHypothesisTemplateBinding *arc_hypothesis_template_registry(size_t *count)
 {
     static const ARCHypothesisTemplateBinding bindings[] = {
@@ -9628,6 +10475,22 @@ static const ARCHypothesisTemplateBinding *arc_hypothesis_template_registry(size
             arc_induce_tile_motif_hypotheses,
             arc_candidate_from_tile_motif_hypothesis,
             arc_apply_tile_motif_hypothesis,
+        },
+        {
+            "projection_panel_selection",
+            1032,
+            arc_hypothesis_template_panel_selection,
+            arc_induce_panel_selection_hypotheses,
+            arc_candidate_from_panel_selection_hypothesis,
+            arc_apply_panel_selection_hypothesis,
+        },
+        {
+            "projection_bbox_panel_selection",
+            1033,
+            arc_hypothesis_template_bbox_panel_selection,
+            arc_induce_bbox_panel_selection_hypotheses,
+            arc_candidate_from_bbox_panel_selection_hypothesis,
+            arc_apply_bbox_panel_selection_hypothesis,
         },
     };
     if (count != NULL) {

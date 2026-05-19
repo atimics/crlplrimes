@@ -1203,6 +1203,204 @@
     },
     {
       "chart": {
+        "kind": "delta_bar",
+        "rows": [
+          {
+            "label": "fixed ARC vs flat",
+            "value": 2.400000000000002
+          },
+          {
+            "label": "delayed vs flat",
+            "value": -0.9666666666666601
+          },
+          {
+            "label": "grid vs flat",
+            "value": 0.06666666666665932
+          },
+          {
+            "label": "ARC OOD vs single",
+            "value": 4.666666666666675
+          }
+        ],
+        "unit": "pp",
+        "y_label": "task-head top-1 delta"
+      },
+      "claim_text": "A single compact shared trunk with small domain-specific heads is considered the promoted architecture only if it improves fixed ARC versus the flat shared scorer while preserving delayed-claim transfer, grid-path performance, and ARC OOD relative to single-task.",
+      "claim_type": "architecture_boundary",
+      "decision_rule": {
+        "diagnostic_if": [
+          "task heads help fixed ARC but hurt OOD or delayed-claim transfer"
+        ],
+        "supported_if": [
+          "shared_task_heads fixed ARC top1 > flat_shared fixed ARC top1",
+          "shared_task_heads delayed_claim top1 is no worse than flat_shared by more than 0.5pp",
+          "shared_task_heads grid_path top1 is no worse than flat_shared by more than 0.5pp",
+          "shared_task_heads ARC OOD top1 >= single_task ARC OOD top1",
+          "shared_task_heads ARC OOD NLL <= single_task ARC OOD NLL",
+          "all rows have seeds >= 3"
+        ]
+      },
+      "derived_claims": [],
+      "evidence_rows": [
+        {
+          "domain": "arc_agi",
+          "ece_delta_headed_minus_shared": -0.011544539999999937,
+          "eval_suite": "fixed",
+          "headed_top1_mean": 0.2856666666666667,
+          "label": "adapter_fixed_arc",
+          "nll_delta_headed_minus_shared": 0.7679245366666665,
+          "present": true,
+          "seeds": 3,
+          "shared_top1_mean": 0.26166666666666666,
+          "single_top1_mean": 0.428,
+          "top1_delta_headed_minus_shared": 0.02400000000000002
+        },
+        {
+          "domain": "arc_agi",
+          "ece_delta_headed_minus_single": -0.01673735000000004,
+          "eval_suite": "ood",
+          "headed_top1_mean": 0.47500000000000003,
+          "label": "adapter_ood_arc",
+          "nll_delta_headed_minus_single": -1.1835613033333323,
+          "present": true,
+          "seeds": 3,
+          "shared_top1_mean": 0.484,
+          "single_top1_mean": 0.4283333333333333,
+          "top1_delta_headed_minus_single": 0.046666666666666745
+        },
+        {
+          "domain": "delayed_claim",
+          "eval_suite": "fixed",
+          "headed_top1_mean": 0.9703333333333334,
+          "label": "adapter_delayed_claim",
+          "present": true,
+          "seeds": 3,
+          "shared_top1_mean": 0.98,
+          "top1_delta_headed_minus_shared": -0.009666666666666601
+        },
+        {
+          "domain": "grid_path",
+          "eval_suite": "fixed",
+          "headed_top1_mean": 0.9096666666666667,
+          "label": "adapter_grid_path",
+          "present": true,
+          "seeds": 3,
+          "shared_top1_mean": 0.9090000000000001,
+          "top1_delta_headed_minus_shared": 0.0006666666666665932
+        },
+        {
+          "domain": "prime_gap",
+          "eval_suite": "fixed",
+          "headed_top1_mean": 0.122,
+          "label": "adapter_prime_gap",
+          "present": true,
+          "seeds": 3,
+          "shared_top1_mean": 0.14066666666666666,
+          "top1_delta_headed_minus_shared": -0.018666666666666665
+        },
+        {
+          "label": "adapter_summary_rows",
+          "present": true,
+          "rows": 15
+        },
+        {
+          "label": "adapter_decision_rows",
+          "present": true,
+          "rows": 1
+        }
+      ],
+      "experiments": [],
+      "id": "C4.adapter_heads_shared_trunk",
+      "metrics": {
+        "arc_ood_gate": true,
+        "arc_ood_nll_delta_heads_minus_single_task": -1.1835613033333323,
+        "arc_ood_top1_delta_heads_minus_single_task_pp": 4.666666666666675,
+        "decision_row": "diagnostic_only",
+        "delayed_claim_gate": false,
+        "delayed_claim_top1_delta_heads_minus_flat_shared_pp": -0.9666666666666601,
+        "fixed_arc_gate": true,
+        "fixed_arc_top1_delta_heads_minus_flat_shared_pp": 2.400000000000002,
+        "grid_path_gate": true,
+        "grid_path_top1_delta_heads_minus_flat_shared_pp": 0.06666666666665932,
+        "headed_forward_flops_fixed_arc": 16545.0,
+        "headed_parameters_fixed_arc": 8420.0,
+        "headed_train_updates_fixed_arc": 47954.333333333336,
+        "promote_shared_trunk_heads": false,
+        "seeds": 3
+      },
+      "paper_explanation": "The adapter-head result is treated as an architecture gate, not a broad one-model claim. A shared trunk plus domain heads is promoted only if it helps fixed ARC without erasing delayed-claim transfer, materially regressing grid_path, or losing same-envelope ARC OOD against the matched single-task baseline.",
+      "paper_surfaces": [
+        "architecture",
+        "multitask_capacity",
+        "limitations",
+        "roadmap"
+      ],
+      "provenance": {
+        "filters": {
+          "domains": [
+            "prime_gap",
+            "grid_path",
+            "delayed_claim",
+            "arc_agi"
+          ],
+          "model_kinds": [
+            "shared",
+            "shared_task_heads",
+            "single_task"
+          ]
+        },
+        "required_rows": [
+          {
+            "domain": "arc_agi",
+            "eval_suite": "fixed"
+          },
+          {
+            "domain": "arc_agi",
+            "eval_suite": "ood"
+          },
+          {
+            "domain": "delayed_claim",
+            "eval_suite": "fixed"
+          },
+          {
+            "domain": "grid_path",
+            "eval_suite": "fixed"
+          },
+          {
+            "domain": "prime_gap",
+            "eval_suite": "fixed"
+          }
+        ],
+        "schemas": [
+          "crlp.multitask.summary.v1",
+          "crlp.multitask.adapter_heads_decision.v1"
+        ],
+        "secondary_sources": [
+          "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_summary.csv",
+          "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_decision.jsonl"
+        ],
+        "source": "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_deltas.csv",
+        "source_command": "python3 scripts/multitask_adapter_heads.py",
+        "source_row_count": 5,
+        "source_sha256": "fd3d765f3374dbd6129e12640842d8e2a6b53c681f1d0cce5fb64c7ec146a044"
+      },
+      "required_for_submission": false,
+      "residual": [
+        "Keep shared trunk plus domain heads as a diagnostic architecture rather than the default.",
+        "Avoid broad all-task competence language; report the fixed ARC, OOD, delayed-claim, grid, and prime rows separately.",
+        "Use the flat shared scorer as the interference control until the gates pass."
+      ],
+      "roadmap_items": [
+        "R-MT.4",
+        "R-F.1",
+        "R-F.5"
+      ],
+      "status": "contradicted",
+      "summary": "adapter-head audit: fixed ARC heads-flat delta +2.40pp; delayed_claim heads-flat -0.97pp; grid_path heads-flat +0.07pp; ARC OOD heads-single +4.67pp top-1 and -1.1836 NLL.",
+      "title": "Shared trunk plus domain heads is gated as architecture evidence"
+    },
+    {
+      "chart": {
         "kind": "coverage_bar",
         "rows": [
           {
@@ -1394,7 +1592,7 @@
         "source": "results/2026-05-17-substrate-extensions/rejected_candidate_reason_learning.jsonl",
         "source_command": "python3 scripts/rejected_candidate_reason_learning.py",
         "source_row_count": 48,
-        "source_sha256": "e952694c69becb69cafe49bbf18a76674e81c47651c8b56051793de51a15d7b3"
+        "source_sha256": "590fac670303618001f0266f3d4eb10a73f69a93ceb5bfccb79480a8708b71a0"
       },
       "required_for_submission": true,
       "residual": [],
@@ -1593,39 +1791,100 @@
         "rows": [
           {
             "domain": "arc_agi",
-            "label": "16x8",
+            "label": "shared 16x8",
+            "model_kind": "shared",
             "plateau_detected": false,
             "value": 41.63333333333334
           },
           {
             "domain": "arc_agi",
-            "label": "32x16",
+            "label": "shared_task_heads 16x8",
+            "model_kind": "shared_task_heads",
+            "plateau_detected": false,
+            "value": 40.46666666666667
+          },
+          {
+            "domain": "arc_agi",
+            "label": "single_task 16x8",
+            "model_kind": "single_task",
+            "plateau_detected": true,
+            "value": 42.8
+          },
+          {
+            "domain": "arc_agi",
+            "label": "shared 32x16",
+            "model_kind": "shared",
             "plateau_detected": false,
             "value": 39.199999999999996
           },
           {
             "domain": "arc_agi",
-            "label": "64x32",
-            "plateau_detected": true,
+            "label": "shared_task_heads 32x16",
+            "model_kind": "shared_task_heads",
+            "plateau_detected": false,
+            "value": 28.566666666666666
+          },
+          {
+            "domain": "arc_agi",
+            "label": "single_task 32x16",
+            "model_kind": "single_task",
+            "plateau_detected": false,
+            "value": 42.83333333333333
+          },
+          {
+            "domain": "arc_agi",
+            "label": "shared 64x32",
+            "model_kind": "shared",
+            "plateau_detected": false,
             "value": 26.166666666666664
           },
           {
             "domain": "arc_agi",
-            "label": "8x4",
+            "label": "shared_task_heads 64x32",
+            "model_kind": "shared_task_heads",
+            "plateau_detected": false,
+            "value": 36.9
+          },
+          {
+            "domain": "arc_agi",
+            "label": "single_task 64x32",
+            "model_kind": "single_task",
+            "plateau_detected": true,
+            "value": 42.8
+          },
+          {
+            "domain": "arc_agi",
+            "label": "shared 8x4",
+            "model_kind": "shared",
             "plateau_detected": false,
             "value": 39.233333333333334
+          },
+          {
+            "domain": "arc_agi",
+            "label": "shared_task_heads 8x4",
+            "model_kind": "shared_task_heads",
+            "plateau_detected": false,
+            "value": 39.266666666666666
+          },
+          {
+            "domain": "arc_agi",
+            "label": "single_task 8x4",
+            "model_kind": "single_task",
+            "plateau_detected": false,
+            "value": 40.43333333333334
           }
         ],
         "unit": "top-1",
-        "y_label": "best shared top-1"
+        "y_label": "best ARC top-1"
       },
       "claim_text": "Before increasing neural capacity, the paper reports a same-ladder tiny-net audit with learning curves, restart variance, best checkpoint, plateau detection, parameter count, FLOPs, and width-help verdicts for each core task.",
       "claim_type": "method_claim",
       "decision_rule": {
         "supported_if": [
-          "all core domains have the same four-capacity shared tiny-net ladder",
-          "every shared row has plateau_detected == true",
-          "width-help rows exist for each core domain"
+          "all core domains have the same four-capacity ladder for shared, shared_task_heads, and single_task",
+          "every required domain/variant row has plateau_detected == true",
+          "width-help rows exist for each core domain and required variant",
+          "audit-verdict rows exist and audit_ready == true for each core domain and required variant"
         ]
       },
       "derived_claims": [],
@@ -1633,30 +1892,53 @@
         {
           "label": "tiny_net_plateau_rows",
           "present": true,
-          "rows": 32
+          "rows": 48
+        },
+        {
+          "label": "tiny_net_required_plateau_rows",
+          "present": true,
+          "rows": 48
         },
         {
           "label": "tiny_net_width_rows",
           "present": true,
-          "rows": 8
+          "rows": 12
+        },
+        {
+          "label": "tiny_net_required_width_rows",
+          "present": true,
+          "rows": 12
         },
         {
           "label": "tiny_net_audit_verdict_rows",
-          "present": false,
-          "rows": 0
+          "present": true,
+          "rows": 12
+        },
+        {
+          "label": "tiny_net_required_audit_verdict_rows",
+          "present": true,
+          "rows": 12
         },
         {
           "best_hidden": "16x8",
           "best_top1_mean": 0.4163333333333334,
-          "label": "arc_width_help",
+          "label": "arc_width_help_shared",
           "larger_width_helped": true,
           "largest_minus_smallest_top1": -0.1306666666666667,
           "present": true
         },
         {
+          "best_hidden": "16x8",
+          "best_top1_mean": 0.4046666666666667,
+          "label": "arc_width_help_task_heads",
+          "larger_width_helped": true,
+          "largest_minus_smallest_top1": -0.02366666666666667,
+          "present": true
+        },
+        {
           "best_hidden": "32x16",
           "best_top1_mean": 0.9860000000000001,
-          "label": "delayed_width_help",
+          "label": "delayed_width_help_shared",
           "larger_width_helped": true,
           "largest_minus_smallest_top1": -0.0013333333333334085,
           "present": true
@@ -1665,30 +1947,45 @@
       "experiments": [],
       "id": "C7.tiny_net_plateau_stop_rule",
       "metrics": {
-        "arc_best_hidden": "16x8",
         "arc_larger_width_helped": true,
-        "audit_verdict_rows": 0,
+        "arc_shared_best_hidden": "16x8",
+        "arc_task_head_best_hidden": "16x8",
+        "audit_ready_count": 1,
+        "audit_verdict_rows": 12,
         "capacities": [
           "16x8",
           "32x16",
           "64x32",
           "8x4"
         ],
+        "complete_pair_count": 12,
         "domains": [
           "arc_agi",
           "delayed_claim",
           "grid_path",
           "prime_gap"
         ],
-        "min_capacities_per_core_domain": 4,
-        "plateau_rows": 32,
-        "shared_audit_ready_count": 0,
-        "shared_plateau_count": 10,
-        "shared_plateau_rate": 0.625,
-        "shared_rows": 16,
-        "width_rows": 8
+        "model_kinds": [
+          "shared",
+          "shared_task_heads",
+          "single_task"
+        ],
+        "plateau_count": 15,
+        "plateau_rate": 0.3125,
+        "plateau_rows": 48,
+        "required_audit_verdict_rows": 12,
+        "required_model_kinds": [
+          "shared",
+          "shared_task_heads",
+          "single_task"
+        ],
+        "required_pair_count": 12,
+        "required_plateau_rows": 48,
+        "required_width_rows": 12,
+        "same_ladder": true,
+        "width_rows": 12
       },
-      "paper_explanation": "This turns the width discussion into an audit: the paper can distinguish undertraining from representation limits using learning curves, restarts, best checkpoints, parameter counts, FLOPs, plateau flags, and width-help rows.",
+      "paper_explanation": "This turns the width discussion into an audit: the paper can distinguish undertraining from representation limits using learning curves, restarts, best checkpoints, parameter counts, FLOPs, plateau flags, width-help rows, and per-domain/variant audit verdicts.",
       "paper_surfaces": [
         "architecture",
         "limitations",
@@ -1702,24 +1999,31 @@
             "delayed_claim",
             "arc_agi"
           ],
-          "model_kind": "shared"
+          "model_kinds": [
+            "shared",
+            "shared_task_heads",
+            "single_task"
+          ]
         },
         "required_rows": [],
         "schemas": [
           "crlp.multitask.tiny_net_plateau.v1",
-          "crlp.multitask.tiny_net_width_help.v1"
+          "crlp.multitask.tiny_net_width_help.v1",
+          "crlp.multitask.tiny_net_audit_verdict.v1"
         ],
         "secondary_sources": [
-          "results/2026-05-17-multitask-roadmap/tiny_net_width_help.jsonl"
+          "results/2026-05-17-multitask-roadmap/tiny_net_width_help.jsonl",
+          "results/2026-05-17-multitask-roadmap/tiny_net_audit_verdict.jsonl"
         ],
         "source": "results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl",
         "source_command": "make tiny-net-plateau-audit",
-        "source_row_count": 32,
-        "source_sha256": "1a35c10ba271df23ea158cfd03f653b0d0383582fe8ac8a36fc4e7c7772299a1"
+        "source_row_count": 48,
+        "source_sha256": "25d8de5ed5c9c5aec4a3a3c440738a2dbbcf7c57d257e3fe68d6e7975230b4ea"
       },
       "required_for_submission": false,
       "residual": [
         "Do not explain ARC or learned-wheel failures as capacity limits until this audit is present.",
+        "Keep architecture conclusions under limitations if task-head plateau rows are incomplete.",
         "Run make tiny-net-plateau-audit and inspect the width-help verdicts before increasing default hidden sizes."
       ],
       "roadmap_items": [
@@ -1728,7 +2032,7 @@
         "R-F.5"
       ],
       "status": "underpowered",
-      "summary": "tiny-net plateau audit covers 4 capacities across 4 domains; 10/16 shared rows meet the plateau threshold, and ARC shared width verdict picks 16x8 as best hidden.",
+      "summary": "tiny-net plateau audit covers 4 capacities, 4 domains, and variants shared, shared_task_heads, single_task; 15/48 required rows meet the plateau threshold and 1/12 domain/variant verdicts are audit-ready.",
       "title": "Tiny-net architecture claims are gated by plateau audits"
     },
     {
@@ -2115,7 +2419,7 @@
           "window_active_rows >= 50",
           "candidate_score_rows >= 50 and candidate_score_min_count >= 9",
           "safety_gate_rows >= 50",
-          "protocol_checked_rows >= 50 and protocol_compatible_rows >= 50",
+          "protocol_checked_rows >= 50 and protocol_compatible_rows >= 50 from runtime PROTOCOL_INFO frames",
           "replay_ready_rows >= 50",
           "inference_ms_p95 <= 5.0",
           "stale_within_log == false"
@@ -2603,6 +2907,65 @@
       },
       {
         "agent_instructions": [
+          "Treat shared trunk plus domain heads as an architecture gate: promote it only if fixed ARC improves without losing delayed-claim transfer, grid-path performance, or same-envelope ARC OOD."
+        ],
+        "artifacts": [
+          "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_summary.csv",
+          "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_deltas.csv",
+          "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_decision.jsonl"
+        ],
+        "claim_families": [
+          "C4"
+        ],
+        "claim_family_details": [
+          {
+            "id": "C4",
+            "role": "paper_axis",
+            "title": "Shared scoring should improve residual generalization"
+          }
+        ],
+        "claims": [
+          {
+            "family": "C4",
+            "id": "C4.adapter_heads_shared_trunk",
+            "paper_surfaces": [
+              "architecture",
+              "multitask_capacity",
+              "limitations",
+              "roadmap"
+            ],
+            "required_for_submission": false,
+            "residual": [
+              "Keep shared trunk plus domain heads as a diagnostic architecture rather than the default.",
+              "Avoid broad all-task competence language; report the fixed ARC, OOD, delayed-claim, grid, and prime rows separately.",
+              "Use the flat shared scorer as the interference control until the gates pass."
+            ],
+            "status": "contradicted",
+            "summary": "adapter-head audit: fixed ARC heads-flat delta +2.40pp; delayed_claim heads-flat -0.97pp; grid_path heads-flat +0.07pp; ARC OOD heads-single +4.67pp top-1 and -1.1836 NLL.",
+            "title": "Shared trunk plus domain heads is gated as architecture evidence"
+          }
+        ],
+        "commands": [
+          "python3 scripts/multitask_adapter_heads.py"
+        ],
+        "failure_modes": [
+          "If task heads help fixed ARC but hurt OOD or transfer, keep the architecture as diagnostic evidence."
+        ],
+        "id": "axis4-adapter-heads-shared-trunk",
+        "roadmap_items": [
+          "R-F.1",
+          "R-F.5",
+          "R-MT.4"
+        ],
+        "role": "claim_boundary",
+        "success_criteria": [
+          "The artifact includes fixed ARC, ARC OOD, delayed_claim, grid_path, and prime_gap rows for shared, shared_task_heads, and single_task.",
+          "The generated decision row says promote_shared_trunk_heads only when every gate passes."
+        ],
+        "title": "Shared trunk plus domain-head architecture gate"
+      },
+      {
+        "agent_instructions": [
           "Preserve the distinction between fixed-task ARC negative transfer and same-envelope OOD positive transfer."
         ],
         "artifacts": [
@@ -2762,7 +3125,8 @@
         ],
         "artifacts": [
           "results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl",
-          "results/2026-05-17-multitask-roadmap/tiny_net_width_help.jsonl"
+          "results/2026-05-17-multitask-roadmap/tiny_net_width_help.jsonl",
+          "results/2026-05-17-multitask-roadmap/tiny_net_audit_verdict.jsonl"
         ],
         "claim_families": [
           "C7"
@@ -2786,10 +3150,11 @@
             "required_for_submission": false,
             "residual": [
               "Do not explain ARC or learned-wheel failures as capacity limits until this audit is present.",
+              "Keep architecture conclusions under limitations if task-head plateau rows are incomplete.",
               "Run make tiny-net-plateau-audit and inspect the width-help verdicts before increasing default hidden sizes."
             ],
             "status": "underpowered",
-            "summary": "tiny-net plateau audit covers 4 capacities across 4 domains; 10/16 shared rows meet the plateau threshold, and ARC shared width verdict picks 16x8 as best hidden.",
+            "summary": "tiny-net plateau audit covers 4 capacities, 4 domains, and variants shared, shared_task_heads, single_task; 15/48 required rows meet the plateau threshold and 1/12 domain/variant verdicts are audit-ready.",
             "title": "Tiny-net architecture claims are gated by plateau audits"
           }
         ],
@@ -2978,7 +3343,7 @@
     ],
     "schema": "crlp.paper_claim_experiment_map.v1"
   },
-  "generated_at": "2026-05-18T08:28:40.561976+00:00",
+  "generated_at": "2026-05-19T03:17:28.286265+00:00",
   "limitations": [
     {
       "claim_id": "C2.prime_proposer_fixed_budget",
@@ -2998,9 +3363,27 @@
       "title": "Prime neural proposer beats fixed-budget symbolic baselines"
     },
     {
+      "claim_id": "C4.adapter_heads_shared_trunk",
+      "residual": [
+        "Keep shared trunk plus domain heads as a diagnostic architecture rather than the default.",
+        "Avoid broad all-task competence language; report the fixed ARC, OOD, delayed-claim, grid, and prime rows separately.",
+        "Use the flat shared scorer as the interference control until the gates pass."
+      ],
+      "roadmap_items": [
+        "R-MT.4",
+        "R-F.1",
+        "R-F.5"
+      ],
+      "severity": "scope",
+      "status": "contradicted",
+      "text": "adapter-head audit: fixed ARC heads-flat delta +2.40pp; delayed_claim heads-flat -0.97pp; grid_path heads-flat +0.07pp; ARC OOD heads-single +4.67pp top-1 and -1.1836 NLL.",
+      "title": "Shared trunk plus domain heads is gated as architecture evidence"
+    },
+    {
       "claim_id": "C7.tiny_net_plateau_stop_rule",
       "residual": [
         "Do not explain ARC or learned-wheel failures as capacity limits until this audit is present.",
+        "Keep architecture conclusions under limitations if task-head plateau rows are incomplete.",
         "Run make tiny-net-plateau-audit and inspect the width-help verdicts before increasing default hidden sizes."
       ],
       "roadmap_items": [
@@ -3010,7 +3393,7 @@
       ],
       "severity": "scope",
       "status": "underpowered",
-      "text": "tiny-net plateau audit covers 4 capacities across 4 domains; 10/16 shared rows meet the plateau threshold, and ARC shared width verdict picks 16x8 as best hidden.",
+      "text": "tiny-net plateau audit covers 4 capacities, 4 domains, and variants shared, shared_task_heads, single_task; 15/48 required rows meet the plateau threshold and 1/12 domain/variant verdicts are audit-ready.",
       "title": "Tiny-net architecture claims are gated by plateau audits"
     }
   ],
@@ -3062,6 +3445,27 @@
       "sha256": "64dcca510a223705a6e9e004129b62678d940f986bd178dc134c3152cd94f80c",
       "size_bytes": 1652
     },
+    "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_decision.jsonl": {
+      "exists": true,
+      "modified_utc": "2026-05-18T09:07:07.080030+00:00",
+      "row_count": 1,
+      "sha256": "bfdc19698d1e1300d1254520b4adfddf2d1f3af9b068d34b8bbdea8cd2dbad54",
+      "size_bytes": 768
+    },
+    "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_deltas.csv": {
+      "exists": true,
+      "modified_utc": "2026-05-18T09:07:07.079960+00:00",
+      "row_count": 5,
+      "sha256": "fd3d765f3374dbd6129e12640842d8e2a6b53c681f1d0cce5fb64c7ec146a044",
+      "size_bytes": 2498
+    },
+    "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_summary.csv": {
+      "exists": true,
+      "modified_utc": "2026-05-18T09:07:07.079806+00:00",
+      "row_count": 15,
+      "sha256": "9ea7d9a6e7bfbb09f2741fe1871f0581f0817961dad788d2853cc6ad2b9884f2",
+      "size_bytes": 2984
+    },
     "results/2026-05-17-multitask-roadmap/rmt5_calibration_summary.csv": {
       "exists": true,
       "modified_utc": "2026-05-17T22:46:17.041882+00:00",
@@ -3097,19 +3501,26 @@
       "sha256": "0fbc51accf6be6c2955efcee3bf31c8f9010050567bc8a680e76159ab532f218",
       "size_bytes": 238
     },
+    "results/2026-05-17-multitask-roadmap/tiny_net_audit_verdict.jsonl": {
+      "exists": true,
+      "modified_utc": "2026-05-18T09:07:10.073824+00:00",
+      "row_count": 12,
+      "sha256": "d861e141f44a47ac2b7d9d678a03f8fe119e4665a87f1449e58b9f1f7364be01",
+      "size_bytes": 6591
+    },
     "results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:46:17.101840+00:00",
-      "row_count": 32,
-      "sha256": "1a35c10ba271df23ea158cfd03f653b0d0383582fe8ac8a36fc4e7c7772299a1",
-      "size_bytes": 14655
+      "modified_utc": "2026-05-18T09:07:10.070143+00:00",
+      "row_count": 48,
+      "sha256": "25d8de5ed5c9c5aec4a3a3c440738a2dbbcf7c57d257e3fe68d6e7975230b4ea",
+      "size_bytes": 28603
     },
     "results/2026-05-17-multitask-roadmap/tiny_net_width_help.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:46:17.101211+00:00",
-      "row_count": 8,
-      "sha256": "8bbdd8ddc791c5f06a29aafec7fc7bfeb96d4110f08a94d7bc5d6741943d040d",
-      "size_bytes": 2962
+      "modified_utc": "2026-05-18T09:07:10.072235+00:00",
+      "row_count": 12,
+      "sha256": "dadc63b536c9ae570214c0a15b8eff936b7424afa452881f2ffc1c3d3543157b",
+      "size_bytes": 4465
     },
     "results/2026-05-17-signal-flight/live_active_frames.jsonl": {
       "exists": true,
@@ -3162,10 +3573,10 @@
     },
     "results/2026-05-17-substrate-extensions/hypothesis_library_heldout_result.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:46:18.298771+00:00",
+      "modified_utc": "2026-05-18T09:07:10.068178+00:00",
       "row_count": 30,
-      "sha256": "d489d849a4c22ca104399f5e20fddfbbf209bacc18b562b6ad982698c7097170",
-      "size_bytes": 29631
+      "sha256": "39b2dd00dd563405540be989151bd9bd0c6765d9c6a818c8b20f4a94e3645b33",
+      "size_bytes": 41241
     },
     "results/2026-05-17-substrate-extensions/hypothesis_library_promotion.md": {
       "exists": true,
@@ -3183,35 +3594,35 @@
     },
     "results/2026-05-17-substrate-extensions/rejected_candidate_reason_family_seed_interval.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:46:18.354137+00:00",
+      "modified_utc": "2026-05-18T09:07:10.065994+00:00",
       "row_count": 880,
       "sha256": "2a02f6c6dd72400e640d3e700160c0c477f1bacc23a71206f76e3aa4ba7b68ce",
       "size_bytes": 769212
     },
     "results/2026-05-17-substrate-extensions/rejected_candidate_reason_family_sweep.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:46:18.435716+00:00",
+      "modified_utc": "2026-05-18T09:07:10.061354+00:00",
       "row_count": 880,
       "sha256": "64b9b1dfe05aaadf0ef55dac11af5f1f8bd205a0549a82fa4c6e7272809c2810",
       "size_bytes": 427876
     },
     "results/2026-05-17-substrate-extensions/rejected_candidate_reason_learning.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:46:18.384350+00:00",
+      "modified_utc": "2026-05-18T09:07:10.055479+00:00",
       "row_count": 48,
-      "sha256": "e952694c69becb69cafe49bbf18a76674e81c47651c8b56051793de51a15d7b3",
-      "size_bytes": 250947
+      "sha256": "590fac670303618001f0266f3d4eb10a73f69a93ceb5bfccb79480a8708b71a0",
+      "size_bytes": 259980
     },
     "results/2026-05-17-substrate-extensions/rejected_candidate_seed_interval_summary.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:46:18.391142+00:00",
+      "modified_utc": "2026-05-18T09:07:10.063610+00:00",
       "row_count": 48,
       "sha256": "4f7f3b8213b73a91deec6320ca9baa980a2bca4f2f706d5e6f9841b4e9dbea7d",
       "size_bytes": 30697
     },
     "results/2026-05-17-substrate-extensions/rejected_candidate_split_sweep.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-17T22:46:18.364423+00:00",
+      "modified_utc": "2026-05-18T09:07:10.059168+00:00",
       "row_count": 44,
       "sha256": "fe1fb06d1346173efca8437ada30d482b9d5bc765f3c7a390d2b5690def32651",
       "size_bytes": 36118
@@ -3225,21 +3636,21 @@
     },
     "results/latest/trace_determinism.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-18T08:28:40.487262+00:00",
+      "modified_utc": "2026-05-19T03:17:28.215892+00:00",
       "row_count": 3,
       "sha256": "476f76325fea0cec2327485185b09a8c7bb55e16aefa8aca676fb50121318cd9",
       "size_bytes": 2201
     }
   },
   "status_counts": {
-    "contradicted": 1,
+    "contradicted": 2,
     "missing": 0,
     "stale": 0,
     "supported": 12,
     "underpowered": 1
   },
   "support": {
-    "limitation_count": 2,
+    "limitation_count": 3,
     "ok": true,
     "required_failures": [],
     "roadmap_missing_links": 0,

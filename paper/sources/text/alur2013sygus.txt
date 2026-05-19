@@ -1,0 +1,527 @@
+                                    Syntax-Guided Synthesis
+     Rajeev Alur†          Rastislav Bodik‡        Garvit Juniwal‡    Milo M. K. Martin† Mukund Raghothaman†
+   Sanjit A. Seshia‡       Rishabh Singh]       Armando Solar-Lezama]   Emina Torlak‡      Abhishek Udupa†
+     † University of Pennsylvania         ‡ University of California, Berkeley            ] Massachusetts Institute of Technology
+
+
+
+   Abstract—The classical formulation of the program-synthesis       the potential of even greater impact on software quality than
+problem is to find a program that meets a correctness specifica-     program verification. Classically, program synthesis is viewed
+tion given as a logical formula. Recent work on program synthesis    as a problem in deductive theorem proving: a program is
+and program optimization illustrates many potential benefits
+of allowing the user to supplement the logical specification         derived from the constructive proof of the theorem that states
+with a syntactic template that constrains the space of allowed       that for all inputs, there exists an output, such that the desired
+implementations. Our goal is to identify the core computational      correctness specification holds (see [3]). Our work is motivated
+problem common to these proposals in a logical framework. The        by a recent trend in synthesis in which the programmer, in
+input to the syntax-guided synthesis problem (SyGuS) consists        addition to the correctness specification, provides a syntactic
+of a background theory, a semantic correctness specification
+for the desired program given by a logical formula, and a            template for the desired program. For instance, in the pro-
+syntactic set of candidate implementations given by a grammar.       gramming approach advocated by the S KETCH system, a pro-
+The computational problem then is to find an implementation          grammer writes a partial program with incomplete details, and
+from the set of candidate expressions so that it satisfies the       the synthesizer fills in the missing details using user-specified
+specification in the given theory. We describe three different       assertions as the correctness specification [4]. We call such
+instantiations of the counter-example-guided-inductive-synthesis
+(CEGIS) strategy for solving the synthesis problem, report on        an approach to synthesis syntax-guided synthesis (SyGuS).
+prototype implementations, and present experimental results on       Besides program sketching, a number of recent efforts such as
+an initial set of benchmarks.                                        synthesis of loop-free programs [5], synthesis of Excel macros
+                                                                     from examples [6], program de-obfuscation [7], synthesis of
+                       I. I NTRODUCTION                              protocols from the skeleton and example behaviors [8], synthe-
+   In program verification, we want to check if a program            sis of loop-bodies from pre/post conditions [9], integration of
+satisfies its logical specification. Contemporary verification       constraint solvers in programming environments for program
+tools vary widely in terms of source languages, verification         completion [10], and super-optimization by finding equivalent
+methodology, and the degree of automation, but they all              shorter loop bodies [11], all are arguably instances of syntax-
+rely on repeatedly invoking an SMT (Satisfiability Modulo            guided synthesis. Also related are techniques for automatic
+Theories) solver. An SMT solver determines the truth of              generation of invariants using templates and by learning [12]–
+a given logical formula built from typed variables, logical          [14], and recent work on solving quantified Horn clauses [15].
+connectives, and typical operations such as arithmetic and              Existing formalization of the SMT problem and the in-
+array accesses (see [1], [2]). Despite the computational in-         terchange format does not provide a suitable abstraction for
+tractability of these problems, modern SMT solvers are ca-           capturing the syntactic guidance. The computational engines
+pable of solving instances with thousands of variables due           used by the various synthesis projects mentioned above rely
+to sustained innovations in core algorithms, data structures,        on a small set of algorithmic ideas, but have evolved inde-
+decision heuristics, and performance tuning by exploiting            pendently with no mechanism for comparison, benchmarking,
+the architecture of contemporary processors. A key driving           and sharing of back-ends. The main contribution of this paper
+force for this progress has been the standardization of a            is to define the syntax-guided synthesis (SyGuS) problem in
+common interchange format for benchmarks called SMT-LIB              a manner that (1) captures the computational essence of these
+(see smt-lib.org) and the associated annual competition (see         recent proposals and (2) is based on more canonical formal
+smtcomp.org). These efforts have proved to be instrumental           frameworks such as logics and grammars instead of features
+in creating a virtuous feedback loop between developers and          of specific programming languages. In our formalization, the
+users of SMT solvers: with the availability of open-source           correctness specification of the function f to be synthesized
+and highly optimized solvers, researchers from verification          is given as a logical formula ϕ that uses symbols from a
+and other application domains find it beneficial to translate        background theory T . The syntactic space of possible im-
+their problems into the common format instead of attempting          plementations for f is described as a set L of expressions
+to develop their own customized tools from scratch, and the          built from the theory T , and this set is specified using a
+limitations of the current SMT tools are constantly exposed by       grammar. The syntax-guided synthesis problem then is to find
+the ever growing repository of different kinds of benchmarks,        an implementation expression e ∈ L such that the formula
+thereby spurring greater innovation for improving the solvers.       ϕ[f /e] is valid in the theory T . To illustrate an application of
+   In program synthesis, we wish to automatically synthesize         the SyGuS-problem, suppose we want to find a completion of
+an implementation for the program that satisfies the given           a partial program with holes so as to satisfy given assertions.
+correctness specification. A mature synthesis technology has         A typical SyGuS-encoding of this task will translate the
+concrete parts of the partial program and the assertions into        to a first order formula in the background theory with all
+the specification formula ϕ, while the holes will be represented     its variables universally quantified, and (3) the universe of
+with the unknown functions to be synthesized, and the space          possible functions f is restricted to syntactic expressions
+of expressions that can substitute the holes will be captured        described by a grammar. We now elaborate on each of these
+by the grammar.                                                      points.
+   Compared to the classical formulation of the synthesis               Background Theory: The syntax for writing specifications is
+problem that involves only the correctness specification, the        the same as classical typed first-order logic, but the formulas
+syntax-guided version has many potential benefits. First, the        are evaluated with respect to a specified background theory
+user can use the candidate set L to limit the search-space for       T . The theory gives the vocabulary used for constructing
+potential implementations, and this has significant computa-         formulas, the set of values for each type, and the interpretation
+tional benefits for solving the synthesis problem. Second, this      for each of the function and relation (predicate) symbols in
+approach gives the programmer the flexibility to express the         the vocabulary. We are mainly interested in theories T for
+desired artifact using a combination of syntactic and semantic       which well-understood decision procedures are available for
+constraints. Such forms of multi-modal specifications have the       determining satisfaction modulo T (see [1] for a survey).
+potential to make programming more intuitive. Third, the set         A typical example is the theory of linear integer arithmetic
+L can be used to constrain the space of implementations for          (LIA) where each variable is either a boolean or an integer,
+the purpose of performance optimizations. For example, to            and the vocabulary consists of boolean and integer constants,
+optimize the computation of the product of two two-by-two            standard boolean connectives, addition (+), comparison (≤),
+matrices, we can limit the search space to implementations that      and conditionals (ITE). Note that the background theory can
+use only 7 multiplication operations, and such a restriction can     be a combination of logical theories, for instance, LIA and the
+be expressed only syntactically. Fourth, because the synthesis       theory of uninterpreted functions with equality.
+problem boils down to finding a correct expression from the             Correctness Specification: For the function f to be syn-
+syntactic space of expressions, this search problem lends itself     thesized, we are given the type of f and a formula ϕ as
+to machine learning and inductive inference as discussed in          its correctness specification. The formula ϕ is a Boolean
+Section III. Finally, it is worth noting that the statement “there   combination of predicates from the background theory, in-
+exists an expression e in the language generated by a context-       volving universally quantified free variables, symbols from the
+free grammar G such that the formula ϕ[f /e] is valid in a           background theory, and the function symbol f , all used in a
+theory T ” cannot be translated to determining the truth of a        type-consistent manner.
+formula in the theory T , even with additional quantifiers.             Example 1: Assuming the background theory is LIA, con-
+   The rest of the paper is organized in the following manner.       sider the specification of a function f of type int × int 7→ int:
+In Section II, we formalize the core problem of syntax-
+                                                                                ϕ1 : f (x, y) = f (y, x) ∧ f (x, y) ≥ x.
+guided synthesis with examples. In Section III, we discuss
+a generic architecture for solving the proposed problem us-          The free variables in the specification are assumed to be
+ing the iterative counter-example guided inductive synthesis         universally quantified: a given function f satisfies the above
+strategy [16] that combines a learning algorithm with a ver-         specification if the quantified formula ∀x, y. ϕ1 holds, or
+ification oracle. For the learning algorithm, we show how            equivalently, if the formula ϕ1 is valid.
+three techniques from recent literature can be adapted for our          Set of Candidate Expressions: In order to make the synthe-
+purpose: the enumerative technique generates the candidate           sis problem tractable, the “syntax-guided” version allows the
+expressions of increasing size relying on the input-output           user to impose structural (syntactic) constraints on the set of
+examples for pruning; the symbolic technique encodes parse           possible functions f . The structural constraints are imposed
+trees of increasing size using variables and constraints, and        by restricting f to the set L of functions defined by a given
+it calls an SMT solver to find a parse tree consistent with          context-free grammar GL . Each expression in L has the same
+all the examples encountered so far; and the stochastic search       type as that of the function f , and uses the symbols in the
+uniformly samples the set L of expressions as a starting point,      background theory T along with the variables corresponding
+and then executes (probabilistic) traversal of the graph where       to the formal parameters of f .
+two expressions are neighbors if one can be obtained from               Example 2: Suppose the background theory is LIA, and the
+the other by a single edit operation on the parse tree. We           type of the function f is int×int 7→ int. We can restrict the set
+report on a prototype implementation of these three algorithms,      of expressions f (x, y) to be linear expressions of the inputs
+and evaluate their performance on a number of benchmarks in          by restricting the body of the function to expressions in the
+Section IV.                                                          set L1 described by the grammar below:
+                II. P ROBLEM F ORMULATION                                     LinExp := x | y | Const | LinExp + LinExp
+   At a high level, the functional synthesis problem consists        Alternatively, we can restrict f (x, y) to conditional expres-
+of finding a function f such that some logical formula ϕ             sions with no addition by restricting the body terms from the
+capturing the correctness of f is valid. In syntax-guided            set L2 described by:
+synthesis, the synthesis problem is constrained in three ways:
+(1) the logical symbols and their interpretation are restricted       Term := x | y | Const | ITE(Cond, Term, Term)
+to a background theory, (2) the specification ϕ is limited            Cond := Term ≤ Term | Cond ∧ Cond | ¬Cond | (Cond)
+Grammars can be conveniently used to express a wide range            fundamentally increase the expressiveness of the notation,
+of constraints, and in particular, to bound the depth and/or the     it does offer significant convenience in encoding real-world
+size of the desired expression.                                      synthesis problems.
+   SyGuS Problem Definition: Informally, given the correct-             Let Expressions in Grammar Productions: The SMT-LIB
+ness specification ϕ and the set L of candidates, we want            interchange format for specifying constraints allows the use of
+to find an expression e ∈ L such that if we use e as                 let expressions as part of the formulas, and this is supported by
+an implementation of the function f , the specification ϕ is         our language also: (let [var = e1 ] e2 ). While let-expressions
+valid. Let us denote the result of replacing each occurrence         in a specification can be desugared, the same does not hold
+of the function symbol f in ϕ with the expression e by               when they are used in a grammar. As an example, consider
+ϕ[f /e]. Note that we need to take care of binding of input          the grammar below for the set of candidate expressions for
+values during such a substitution: if f has two inputs that the      the function f (x, y):
+expressions in L refer to by the variable names x and y, then
+                                                                             T    := (let [z = U ] z + z)
+the occurrence f (e1 , e2 ) in the formula ϕ must be replaced
+with the expression e[x/e1 , y/e2 ] obtained by replacing x and              U    := x | y | Const | U + U | U ∗ U | (U )
+y in e by the expressions e1 and e2 , respectively. Now we can       The top-level expression specified by this grammar is the
+define the syntax-guided synthesis problem, SyGuS for short,         sum of two identical subexpressions built using arithmetic
+precisely:                                                           operators, and such a structure cannot be specified using a
+     Given a background theory T , a typed function                  standard context-free grammar. In the example above, every
+     symbol f , a formula ϕ over the vocabulary of T                 let introduced by the grammar uses the same variable name. If
+     along with f , and a set L of expressions over the              the application of let-expressions are nested in the derivation
+     vocabulary of T and of the same type as f , find an             tree, the standard rules for shadowing of variable definitions
+     expression e ∈ L such that the formula ϕ[f /e] is               determine which definition corresponds to which use of the
+     valid modulo T .                                                variable.
+   Example 3: For the specification ϕ1 presented earlier, if the        SYNTH-LIB Input Format: To specify the input to the
+set of allowed implementations is L1 as shown before, there          SyGuS problem, we have developed an interchange format,
+is no solution to the synthesis problem. On the other hand, if       called SYNTH-LIB, based on the syntax of SMT-LIB2—the
+the set of allowed implementations is L2 , a possible solution       input format accepted by the SMT solvers (see smt-lib.org).
+is the conditional if-then-else expression ITE(x ≥ y, x, y).         The input for the SyGuS problem to synthesize the function f
+   In some special cases, it is possible to reduce the deci-         with the specification ϕ1 in the theory LIA, with the grammar
+sion problem for syntax guided synthesis to the problem of           for the languages L1 is encoded in SYNTH-LIB as:
+deciding formulas in the background theory using additional               (set-logic LIA)
+                                                                          (synth-fun f ((x Int) (y Int)) Int
+quantification. For example, every expression in the set L1 is              ((Start Int (x y
+equivalent to ax+by+c, for integer constants a, b, c. If ϕ is the                        (Constant Int)
+correctness specification, then deciding whether there exists an                         (+ Start Start)))))
+implementation for f in the set L1 corresponds to checking                (declare-var a Int)
+whether the formula ∃ a, b, c. ∀ X. ϕ[f /ax + by + c] holds,              (declare-var b Int)
+                                                                          (constraint (= (f a b) (f b a)))
+where X is the set of all free variables in ϕ. This reduction             (constraint (>= (f a b) a))
+was possible for L1 because the set of all expressions in L1              (check-synth)
+can be represented by a single parameterized expression in the          Optimality Criterion: The answer to our synthesis problem
+original theory. However, the grammar may permit expressions         need not be unique: there may be two expressions e1 and e2 in
+of arbitrary depth which may not be representable in this way,       the set L of allowed expressions such that both implementa-
+as in the case of L2 .                                               tions satisfy the correctness specification ϕ. Ideally, we would
+   Synthesis of Multiple Functions: A general synthesis prob-        like to associate a cost with each expression, and consider the
+lem can involve more than one unknown function. In principle,        problem of optimal synthesis which requires the synthesis tool
+adding support for problems with more than one unknown               to return the expression with the least cost among the correct
+function is merely a matter of syntactic sugar. For exam-            ones. A natural cost metric is the size of the expression. In
+ple, suppose we want to synthesize functions f1 (x1 ) and            presence of let-expressions, the size directly corresponds to the
+f2 (x2 ), with corresponding candidate expressions given by          number of instructions in the corresponding straight-line code,
+grammars G1 and G2 , with start non-terminals S1 and S2 ,            and thus such a metric can be used effectively for applications
+respectively. Both functions can be encoded with a single            such as super-optimization.
+function f12 (id, x1 , x2 ). The set of candidate expressions is
+described by the grammar that contains the rules of G1 and                           III. I NDUCTIVE S YNTHESIS
+G2 along with a new production S := ITE(id = 0, S1 , S2 ),              Algorithmic approaches to program synthesis range over a
+with the new start non-terminal S. Then, every occurrence of         wide spectrum, from deductive synthesis to inductive synthesis.
+f1 (x1 ) in the specification can be replaced with f12 (0, x1 , ∗)   In deductive program synthesis (e.g., [3]), a program is synthe-
+and every call to f2 (x2 ) can be replaced with f12 (1, ∗, x2 ).     sized by constructively proving a theorem, employing logical
+Although adding support for multiple functions does not              inference and constraint solving. On the other hand, inductive
+synthesis [17]–[19] seeks to find a program matching a set
+                                                                             INITIALIZE      “Concept Class”, Initial Examples
+of input-output examples. It is thus an instance of learning
+from examples, also termed as inductive inference or machine
+learning [20], [21]. Many current approaches to synthesis                                       Candidate
+blend induction and deduction [22]; syntax guidance is usually                                   Concept
+a key ingredient in these approaches.
+   Inductive synthesizers generalize from examples by search-               LEARNING                           VERIFICATION
+                                                                           ALGORITHM                             ORACLE
+ing a restricted space of programs. In machine learning, this
+restricted space is called the concept class, and each element                               Counterexample
+of that space is often called a candidate concept. The concept
+class is usually specified syntactically. Inductive learning is             Learning Fails                     Learning Succeeds
+thus a natural fit for the syntax-guided synthesis problem
+introduced in this paper: the concept class is simply the set L          Fig. 1.   Counterexample-Guided Inductive Synthesis (CEGIS)
+of permissible expressions.                                         repair in the former case, and synthesizing an abstraction
+                                                                    function in the latter (see [22] for a more detailed discussion).
+A. Synthesis via Active Learning
+                                                                       The defining aspect of CEGIS is its example selection strat-
+   A common approach to inductive synthesis is to formulate         egy: learning from counterexamples provided by a verification
+the overall synthesis problem as one of active learning using       oracle. The learning algorithm, which is initialized with a
+a query-based model. Active learning is a special case of           particular choice of concept class L and possibly with an initial
+machine learning in which the learning algorithm can control        set of (positive) examples, proceeds by searching the space of
+the selection of examples that it generalizes from and can          candidate concepts for one that is consistent with the examples
+query one or more oracles to obtain both examples as well as        seen so far. There may be several such consistent concepts,
+labels for those examples. In our setting, we can consider the      and the search strategy determines the chosen candidate, an
+labels to be binary: positive or negative. A positive example       expression e. The concept e is then presented to the verification
+is simply an interpretation to f in the background theory           oracle OV , which checks the candidate against the correctness
+T that is consistent with the specification ϕ; i.e., it is a        specification. OV can be implemented as an SMT solver that
+valuation to the arguments of the function symbol f along with      checks whether ϕ[f /e] is valid modulo the theory T . If the
+the corresponding valuation of f that satisfies ϕ. A negative       candidate is correct, the synthesizer terminates and outputs this
+example is any interpretation of f that is not consistent with ϕ.   candidate. Otherwise, the verification oracle generates a coun-
+We refer the reader to a paper by Angluin [23] for an overview      terexample, an interpretation to the symbols and free variables
+of various models for query-based active learning.                  in ϕ[f /e] that falsifies it. This counterexample is returned to
+   In program synthesis via active learning, the query oracles      the learning algorithm, which adds the counterexample to its
+are often implemented using deductive procedures such as            set of examples and repeats its search; note that the precise
+model checkers or satisfiability solvers. Thus, the overall         encoding of a counterexample and its use can vary depending
+synthesis algorithm usually comprises a top-level inductive         on the details of the learning algorithm employed. It is possible
+learning algorithm that invokes deductive procedures (query         that, after some number of iterations of this loop, the learning
+oracles); e.g., in our problem setting, it is intuitive, although   algorithm may be unable to find a candidate concept consistent
+not required, to implement an oracle using an SMT solver for        with its current set of (positive/negative) examples, in which
+the theory T . Even though this approach combines induction         case the learning step, and hence the overall CEGIS procedure,
+and deduction, it is usually referred to in the literature simply   fails.
+as “inductive synthesis.” We will continue to use this termi-          Several search strategies are possible for learning a can-
+nology in the present paper.                                        didate expression in L, each with its pros and cons. In the
+   Consider the syntax-guided synthesis problem of Sec. II.         following sections, we describe three different search strategies
+Given the tuple (T , f , ϕ, L), there are two important choices     and illustrate the main ideas in each using a small example.
+one must make to fix an inductive synthesis algorithm: (1)
+search strategy: How should one search the concept class L?         C. Illustrative Example
+and (2) example selection strategy: Which examples do we
+learn from?                                                            Consider the problem of synthesizing a program which
+                                                                    returns the maximum of two integer inputs. The specification
+B. Counterexample-Guided Inductive Synthesis                        of the desired program max is given by:
+  Counterexample-guided inductive synthesis (CEGIS) [16],
+[24] shown in Figure 1 is perhaps the most popular approach                        max(x, y) ≥ x ∧ max(x, y) ≥ y ∧
+to inductive synthesis today. CEGIS has close connections                            (max(x, y) = x ∨ max(x, y) = y)
+to algorithmic debugging using counterexamples [19] and
+counterexample-guided abstraction refinement (CEGAR) [25].            The search space is suitably defined by an expression
+This connection is no surprise, because both debugging and          grammar which includes addition, subtraction, comparison,
+abstraction-refinement involve synthesis steps: synthesizing a      conditional operators and the integer constants 0 and 1.
+Expression to Verifier                      Learned Test Input         Production               Component
+                                                                       E → ITE(B, E, E)         Inputs:         (i1 : B)(i2 , i3 : E)
+        x                                     hx = 0, y = 1i
+                                                                                                Output:         (o : E)
+        y                                     hx = 1, y = 0i                                    Spec:           o = ITE(i1 , i2 , i3 )
+        1                                     hx = 0, y = 0i
+                                                                       B→E≤E                    Inputs:         (i1 , i2 : E)
+       x+y                                    hx = 1, y = 1i
+                                                                                                Output:         (o : B)
+  ITE(x ≤ y, y, x)                                  –
+                                                                                                Spec:           o = i1 ≤ i2
+                            TABLE I                                                              TABLE II
+              A RUN OF THE ENUMERATIVE ALGORITHM                                       C OMPONENTS FROM P RODUCTIONS
+D. Enumerative Learning                                              E. Constraint-based Learning
+   The enumerative learning algorithm [8] adopts a dynamic              The symbolic CEGIS approach uses a constraint solver
+programming based search strategy that systematically enu-           both for searching for a candidate expression that works
+merates concepts (expressions) in increasing order of complex-       for a set of concrete input examples (concept learning) and
+ity. Various complexity metrics can be assigned to concepts,         verification of validity of an expression for all possible inputs.
+the simplest being the expression size. The algorithm needs          We use component based synthesis of loop-free programs
+to store all enumerated expressions, because expressions of          as described by Jha et al. [5], [7]. Each production in the
+a given size are composed to form larger expressions in the          grammar corresponds to a component in a library. A loop-
+spirit of dynamic programming. The algorithm maintains a             free program comprising these components corresponds to an
+set of concrete test cases, obtained from the counterexamples        expression from the grammar. Some sample components for
+returned by the verification oracle. These concrete test cases       the illustrative example are shown in Table II along with their
+are used to reduce the number of expressions stored at each          corresponding productions.
+step by the dynamic programming algorithm.                              The input/output ports of these components are typed and
+   We demonstrate the working of the algorithm on the illus-         only well-typed programs correspond to well-formed expres-
+trative example. Table I shows the expressions submitted to          sions from the grammar. To ensure this, Jha et al.’s encod-
+the verification oracle (an SMT solver) during the execution of      ing [5] is extended with typing constraints. We illustrate the
+the algorithm and the values for which the expression produces       working of this algorithm on the maximum of two integers
+incorrect results. Initially, the algorithm submits the expression   example. The library of allowed components is instantiated
+x to the verifier. The verifier returns a counterexample hx =        to contain one instance each of ITE and all comparison
+0, y = 1i, corresponding to the case where the expression            operators(≤, ≥, =) and the concrete example set is initialized
+x violates the specification. The expression enumeration is          with hx = 0, y = 0i. The first candidate loop-free program
+started from scratch every time a counterexample is added. All       synthesized corresponds to the expression x. This candidate
+enumerated expressions are checked for conformance with the          is submitted to the verification oracle which returns with
+accumulated (counter)examples before making a potentially-           hx = −1, y = 0i as a counterexample. This counterexample is
+expensive query to the verifier. In addition, suppose the            added to the concrete example set and the learning algorithm
+algorithm enumerates two expressions e and e0 which evaluate         is queried again. The SMT formula for learning a candidate
+to the same value on the examples obtained so far, then only         expression is solved in an incremental fashion; i.e., the con-
+one of e or e0 needs to be considered for the purpose of             straint for every new example is added to the list of constraints
+constructing larger expressions.                                     from the previous examples. The steps of the algorithm on the
+   Proceeding with the illustrative example, the algorithm then      illustrative example are shown in Table III.
+submits the expression y and the constant 1 to the verifier. The        If synthesis fails for a component library, we add one in-
+verifier returns the values hx = 1, y = 0i and hx = 0, y =           stance of every operator to the library and restart the algorithm
+0i, respectively, as counterexamples to these expressions. The       with the new library. We also tried a modification to the
+algorithm then submits the expression x+y to the verifier. The       original algorithm [5], in which, instead of searching for a
+verifier returns the values hx = 1, y = 1i as a counterexample.      loop-free program that utilizes all components from the given
+The algorithm then submits the expression shown in the last          library at once, we search for programs of increasing length
+row of Table I to the verifier. The verifier certifies it to be      such that every line can still select any component from the
+correct and the algorithm terminates.                                library. The program length is increased in an exponential
+   The optimization of pruning based on concrete counterex-
+amples helps in two ways. First, it reduces the number of            Iteration     Loop-free program      Learned counter-example
+invocations of the verification oracle. In the example we have
+                                                                        1          o1 := x                     hx = −1, y = 0i
+described, the correct expression was examined after only
+                                                                        2          o1 := x ≤ x
+four calls to the SMT solver, although about 200 expressions
+                                                                                   o2 := ITE(o1 , y, x)        hx = 0, y = −1i
+were enumerated by the algorithm. Second, it reduces the
+search space for candidate expressions significantly (see [8]           3          o1 := y ≥ x
+for details). For instance, in the run of the algorithm on                         o2 := ITE(o1 , y, x)                 –
+the example, although the algorithm enumerated about 200                                          TABLE III
+expressions, only about 80 expressions were stored.                              A RUN OF THE CONSTRAINT LEARNING ALGORITHM
+fashion (1, 2, 4, 8, · · · ) for a good coverage. This approach     code, and (3) since we do not know the expression size n, we
+provides better running times for most benchmarks in our set,       run concurrent searches for different values of n, whereas the
+but it can also be more expensive in certain cases.                 super-optimizer can use the size of the input program as an
+                                                                    upper bound on program size.
+F. Learning by Stochastic Search
+   The stochastic learning procedure is an adaptation of the                    IV. B ENCHMARKS AND E VALUATION
+algorithm recently used by Schufza et al. [11] for program
+                                                                       We are in the process of assembling a benchmark suite
+super-optimization. The learning algorithm of the CEGIS loop
+                                                                    of synthesis problems to provide a basis for side-by-side
+uses the Metropolis-Hastings procedure to sample expressions.
+                                                                    comparisons of different solution strategies. The current set
+The probability of choosing an expression e is proportional to a
+                                                                    of benchmarks is limited to synthesis of loop-free functions
+value Score(e), which indicates the extent to which e meets the
+                                                                    with no optimality criterion; nevertheless, the benchmarks
+specification ϕ. The Metropolis-Hastings algorithm guarantees
+                                                                    provide an initial demonstration of the expressiveness of the
+that, in the limit, expressions e are sampled with probability
+                                                                    base formalism and of the relative merits of the individual
+proportional to Score(e). To complete the description of the
+                                                                    solution strategies presented earlier. Specifically, in this section
+search procedure, we need to define Score(e) and the Markov
+                                                                    we explore three key questions about the benchmarks and the
+chain used for successor sampling. We define Score(e) to be
+                                                                    prototype synthesizers.
+exp(−βC(e)), where β is a smoothing constant (set by default
+                                                                       • Complexity of the benchmarks. Our suite includes a
+to 0.5), and the cost function C(e) is the number of concrete
+examples on which e does not satisfy ϕ.                                   range of benchmarks from simple toy problems to non-
+   We now describe the Markov chain underlying the search.                trivial functions that are difficult to derive by hand. Some
+Fix an expression size n, and consider all expressions in L with          of the benchmarks can be solved in a few hundredths of
+parse trees of size n. The initial candidate is chosen uniformly          a second, whereas others could not be solved by any of
+at random from this set [26]. Given a candidate e, we pick a              our prototype implementations. In all cases, however, the
+node v in its parse tree uniformly at random. Let ev be the               complexity of the problems derives from the size of the
+subexpression rooted at this node. This subtree is replaced by            space of possible functions and not from the complexity
+another subtree (of the same type) of size equal to |ev | chosen          of checking whether a candidate solution is correct.
+                                                                       • Relative merits of different solvers. The use of a
+uniformly at random. Given the original candidate e, and a
+mutation e0 thus obtained, the probability of making e0 the               standard format allows us to perform the first side-to-
+new candidate is given by the Metropolis-Hastings acceptance              side comparison of different approaches to synthesis.
+ratio α(e, e0 ) = min(1, Score(e0 )/Score(e)).                            None of the implementations were engineered with high-
+   The final step is to describe how the algorithm selects the            performance in mind, so the exact solution times are not
+expression size n. Although the solver comes with an option               necessarily representative of the best that can be achieved
+to specify n, the expression size is typically not known a priori         by a particular approach. However, the order of magni-
+given a specification ϕ. Intuitively, we run concurrent searches          tude of the solution times and the relative complexity of
+for a range of values for n. Starting with n = 1, with some               the different approaches on different benchmarks can give
+probability pm (set by default to 0.01), we switch at each step           us an idea of the relative merits of each of the approaches
+to one of the searches at size n ± 1. If an answer e exists, then         described earlier.
+                                                                       • Effect of problem encoding. For many problems, there
+the search at size n = |e| is guaranteed to converge.
+   Consider the earlier example for computing the maxi-                   are different natural ways to encode the space of desired
+mum of two integers. There are 768 integer-valued expres-                 functions into a grammar, so we are interested in observ-
+sions in the grammar of size six. Thus, the probability of                ing the effect of these differences in encoding for the
+choosing e = ITE(x ≤ 0, y, x) as the initial candidate                    different solvers.
+is 1/768. The subexpression to mutate is chosen uniformly              To account for variability and for the constant factors
+at random, and so the probability of deciding to mutate             introduced by the prototype nature of the implementations,
+the boolean condition x ≤ 0 is 1/6. Of the 48 boolean               we report only the order of magnitude of the solution times
+conditions in the grammar, y ≤ 0 may be chosen with                 in five different buckets: 0.1 for solution times less than half
+probability 1/48. Thus, the mutation e0 = ITE(0 ≤ y, y, x)          a second, 1 for solution times between half a second and 15
+is considered with probability 1/288. Given a set of con-           seconds, 100 for solution times up to two minutes, 300 for
+crete examples {(−1, −4), (−1, −3), (−1, −2), (1, 1), (1, 2)},      solution times of up to 5 minutes, and infinity for runs that
+Score(e) = exp(−2β), and Score(e0 ) = exp(−3β), and so e0           time out after 5 minutes.
+becomes the new candidate with probability exp(−β). If, on             The benchmarks themselves are grouped into three cate-
+the other hand, e0 = ITE(x ≤ y, y, x) had been the mutation         gories: hacker’s delight problems, integer benchmarks, and
+considered, then Score(e0 ) = 1, and e0 would have become           assorted boolean and bit-vector problems.
+the new candidate with probability 1.                                  Hacker’s delight benchmarks: This set includes 57 differ-
+   Our algorithm differs from that of Schufza et al. [11] in        ent benchmarks derived from 20 different bit-manipulation
+three ways: (1) we do not attempt to optimize the size of           problems from the book Hacker’s Delight [27]. These bit-
+the expression while the super-optimizer does so; (2) we            vector problems were among the first to be successfully
+synthesize expression graphs rather than straight-line assembly     tackled by synthesis technology and remain an active area of
+                                                                                                             Relative Performance on a Sample of Hacker's Delight Benchmarks
+                              1000
+   approximate time in sec.
+
+
+                               100
+                                10
+                                 1
+                               0.1
+                              0.01
+
+
+
+
+                                                                                                                              Enumerative   Stochastic (median)                       Symbolic
+
+
+
+                                                                       Relative Performance of Integer Benchmarks                                                                 Relative Performance of Bit-vector and Boolean Problems
+                                                                1000                                                                                                       1000
+
+
+
+
+                                                                                                                                                approximate time in sec.
+                                                                 100                                                                                                        100
+                                     approximate time in sec.
+
+
+
+
+                                                                  10                                                                                                         10
+
+                                                                   1                                                                                                          1
+
+                                                                 0.1                                                                                                        0.1
+
+                                                                0.01                                                                                                       0.01
+
+
+
+
+                                                                             Enumerative   Stochastic (median)   Symbolic                                                                        Enumerative   Stochastic (median)   Symbolic
+
+
+
+                                                                                                   Fig. 2.       Selected performance results for the three classes of benchmarks
+
+
+
+research [4], [5], [16]. For these benchmarks, the goal is to                                                                                                                 Integer benchmarks: These benchmarks are meant to be
+discover clever implementations of bit-vector transformations                                                                                                              loosely representative of synthesis problems involving func-
+(colloquially known as bit-twiddling). For most problems,                                                                                                                  tions with complex branching structures involving linear inte-
+there are three different levels of grammars numbered d0, d1                                                                                                               ger arithmetic. One of the benchmarks is array-search,
+and d5; level d0 involves only the instructions necessary for                                                                                                              which synthesizes a loop-free function that finds the index of
+the implementation, so the synthesizer only needs to discover                                                                                                              an element in a sorted tuple of size n, for n ranging from
+how to connect them together. Level d5, on the other extreme,                                                                                                              2 to 16. This benchmark proved to be quite complex, as no
+involves a highly unconstrained grammar, so the synthesizer                                                                                                                solver was able to synthesize this function for n > 4. The max
+must discover which operators to use in addition to how to                                                                                                                 benchmarks are similar except they compute the maximum of
+connect them together.                                                                                                                                                     a tuple of size n.
+   Fig. 2 shows the performance of the three solvers on a sam-                                                                                                                Fig. 2 shows the relative performance of the three solvers
+ple of the benchmarks. For the Hacker’s Delight benchmarks                                                                                                                 on these benchmarks for sizes up to 4. With one exception, the
+(hd) we see that the enumerative solver dominates, followed                                                                                                                enumerative solver is the fastest for this class of benchmarks,
+by the stochastic solver. The symbolic search was the slowest,                                                                                                             followed by the stochastic solver. The exception was max3
+failing to terminate on 29 of the 57 benchmarks. It is worth                                                                                                               where the stochastic solver was faster.
+mentioning, however, that none of the grammars for these                                                                                                                      Boolean/Bit-vector benchmarks: The parity benchmark
+problems required the synthesizer to discover the bit-vector                                                                                                               computes the parity of a set of Boolean values. The different
+constants involved in the efficient implementations. We have                                                                                                               versions represent different grammars to describe the set of
+some evidence to suggest that the symbolic solver can discover                                                                                                             Boolean functions. As with other benchmarks, the enumerative
+such constants from the full space of 232 possible constants                                                                                                               solver was always faster, whereas the symbolic solver failed
+with relatively little additional effort. On the other hand, for                                                                                                           on every instance. These results show the impact that different
+many of these problems the magic constants come from a                                                                                                                     encodings of the same space of functions can have on the
+handful of values such as 1, 0, or 0xffffffff, so it is                                                                                                                    solution time for both of the solution strategies that succeeded.
+unnecessary for the enumerative solver to search the space of                                                                                                              Unlike the hd benchmarks where the different grammars for
+232 possible bit-vectors.                                                                                                                                                  a given benchmark were strict subsets of each other, in this
+   Finally, because these benchmarks have different grammars                                                                                                               case the encodings AIG and NAND correspond to different
+for the same problem, we can observe the effect of using                                                                                                                   representations of the same space of functions.
+more restrictive or less restrictive grammars as part of the                                                                                                                  The Morton benchmarks, which involve the synthesis
+problem description. We can see in the data that all solvers                                                                                                               of a function to compute Morton numbers, are intended as
+were affected by the encoding of the problem for at least some                                                                                                             challenge problems, and could not be completed by any of
+benchmark; although in some cases, the pruning strategies                                                                                                                  the synthesizers.
+used by the solvers were able to ameliorate the impact of                                                                                                                     Observations: The number of benchmarks and the maturity
+the larger search space.                                                                                                                                                   of the solvers are too limited to draw broad conclusions,
+but the overall trend we observe is that the encoding of             Acknowledgements: We thank Nikolaj Bjorner and Stavros
+the problem space into grammar has a significant impact on         Tripakis for their feedback. This research is supported by the
+performance, although the solvers are often good at mitigating     NSF Expeditions in Computing project ExCAPE (award CCF
+the effect of larger search spaces. We can also see that non-      1138996).
+symbolic techniques can be effective in exploring spaces of
+implementations and can surpass symbolic techniques, espe-                                      R EFERENCES
+cially when the problems do not require the synthesizer to          [1] C. Barrett, R. Sebastiani, S. A. Seshia, and C. Tinelli, “Satisfiability
+                                                                        modulo theories,” in Handbook of Satisfiability, 2009, vol. 4, ch. 8.
+derive complex bit-vector constants, which is true for all the      [2] L. M. de Moura and N. Bjørner, “Satisfiability modulo theories: Intro-
+bit-vector benchmarks used. Moreover, we observe that the               duction and applications,” Commun. ACM, vol. 54, no. 9, 2011.
+enumerative technique was better than the stochastic search for     [3] Z. Manna and R. Waldinger, “A deductive approach to program synthe-
+                                                                        sis,” ACM TOPLAS, vol. 2, no. 1, pp. 90–121, 1980.
+all but two benchmarks, so although both implementations are        [4] A. Solar-Lezama, R. Rabbah, R. Bodı́k, and K. Ebcioglu, “Programming
+immature, these results suggest that it may be easier to derive         by sketching for bit-streaming programs,” in PLDI, 2005.
+good pruning rules for the explicit search than an effective        [5] S. Gulwani, S. Jha, A. Tiwari, and R. Venkatesan, “Synthesis of loop-
+                                                                        free programs,” SIGPLAN Not., vol. 46, pp. 62–73, June 2011.
+fitness function for the stochastic solver.                         [6] S. Gulwani, W. R. Harris, and R. Singh, “Spreadsheet data manipulation
+   The symbolic solver used for these experiments represents            using examples,” Commun. ACM, vol. 55, no. 8, pp. 97–105, 2012.
+one of many possible approaches to encoding the synthesis           [7] S. Jha, S. Gulwani, S. A. Seshia, and A. Tiwari, “Oracle-guided
+                                                                        component-based program synthesis,” in ICSE, 2010, pp. 215–224.
+problem into a series of constraints. We have some evidence         [8] A. Udupa, A. Raghavan, J. V. Deshmukh, S. Mador-Haim, M. M. Martin,
+that more optimized encodings can make the symbolic ap-                 and R. Alur, “T RANSIT: Specifying Protocols with Concolic Snippets,”
+proach more competitive, although there are still many prob-            in PLDI, 2013, pp. 287–296.
+                                                                    [9] S. Srivastava, S. Gulwani, and J. S. Foster, “From program verification
+lems for which the enumerative approach is more effective.              to program synthesis,” in POPL, 2010, pp. 313–326.
+Specifically, we have transcribed all the hacker’s delight and     [10] V. Kuncak, M. Mayer, R. Piskac, and P. Suter, “Software synthesis
+integer benchmarks into the input language of the Sketch                procedures,” Commun. ACM, vol. 55, no. 2, pp. 103–111, 2012.
+                                                                   [11] E. Schkufza, R. Sharma, and A. Aiken, “Stochastic superoptimization,”
+synthesis system [24]. Sketch completed all but 11 of the hd            in ASPLOS, 2013, pp. 305–316.
+benchmarks, and it was able to synthesize array-search             [12] M. Colón, S. Sankaranarayanan, and H. Sipma, “Linear invariant gener-
+up to size 7. This experiment is not an entirely fair comparison        ation using non-linear constraint solving,” in CAV, 2003, pp. 420–432.
+                                                                   [13] A. Rybalchenko, “Constraint solving for program verification: Theory
+because, although Sketch uses a specialized constraint solver           and practice by example,” in CAV, 2010, pp. 57–71.
+and carefully tuned encodings, the symbolic solver presented       [14] R. Sharma, S. Gupta, B. Hariharan, A. Aiken, P. Liang, and A. V. Nori,
+in this paper uses a direct encoding of the problem into                “A data driven approach for algebraic loop invariants,” in ESOP, 2013,
+                                                                        pp. 574–592.
+sequences of constraints and uses Z3, a widely used off-           [15] N. Bjørner, K. L. McMillan, and A. Rybalchenko, “On solving univer-
+the-shelf SMT solver which is not as aggressively tuned for             sally quantified Horn clauses,” in SAS, 2013, pp. 105–125.
+synthesis problems. Despite these limitations, the symbolic        [16] A. Solar-Lezama, L. Tancau, R. Bodı́k, S. A. Seshia, and V. Saraswat,
+                                                                        “Combinatorial sketching for finite programs,” in ASPLOS, 2006.
+solver was able to solve many of the benchmarks, providing a       [17] E. M. Gold, “Language identification in the limit,” Information and
+lower bound on what can be achieved with a straightforward              Control, vol. 10, no. 5, pp. 447–474, 1967.
+use of off-the-shelf technology.                                   [18] P. D. Summers, “A methodology for LISP program construction from
+                                                                        examples,” J. ACM, vol. 24, no. 1, pp. 161–175, 1977.
+   Moreover, the enumerative solver was able to solve more         [19] E. Y. Shapiro, Algorithmic Program Debugging. Cambridge, MA, USA:
+hd problems than even the more optimized symbolic solver.               MIT Press, 1983.
+The problems where the enumerative solver succeeded but            [20] D. Angluin and C. H. Smith, “Inductive inference: Theory and methods,”
+                                                                        ACM Computing Surveys, vol. 15, pp. 237–269, Sep. 1983.
+Sketch failed were the d5 versions of problems 11, 12, 14          [21] T. M. Mitchell, Machine Learning. McGraw-Hill, 1997.
+and 15, which suggests that the enumerative solver was better      [22] S. A. Seshia, “Sciduction: Combining induction, deduction, and structure
+at pruning unnecessary instructions from the grammar. On                for verification and synthesis,” in DAC, 2012, pp. 356–365.
+                                                                   [23] D. Angluin, “Queries and concept learning,” Machine Learning, vol. 2,
+the other hand, the more optimized symbolic solver did have             pp. 319–342, 1988.
+a significant advantage in the array-search benchmarks             [24] A. Solar-Lezama, “Program synthesis by sketching,” Ph.D. dissertation,
+which the enumerative solver could only solve up to size 4.             University of California, Berkeley, 2008.
+                                                                   [25] E. M. Clarke, O. Grumberg, S. Jha, Y. Lu, and H. Veith,
+                      V. C ONCLUSIONS                                   “Counterexample-guided abstraction refinement for symbolic model
+                                                                        checking,” J. ACM, vol. 50, no. 5, pp. 752–794, 2003.
+   Aimed at formulating the core computational problem             [26] B. McKenzie, “Generating strings at random from a context free
+common to many recent tools for program synthesis in a                  grammar,” 1997.
+                                                                   [27] H. S. Warren, Hacker’s Delight. Boston, MA, USA: Addison-Wesley
+canonical and logical manner, we have formalized the problem            Longman Publishing Co., Inc., 2002.
+of syntax-guided synthesis. Our prototype implementation of
+the three approaches to solve this problem is the first attempt
+to compare and contrast existing algorithms on a common set
+of benchmarks. We are already working on the next steps in
+this project. These consist of (1) finalizing the input syntax
+(SYNTH-LIB) based on the input format of SMT-LIB2, with
+an accompanying publicly available parser, (2) building a
+more extensive and diverse repository of benchmarks, and
+(3) organizing a competition for SyGuS-solvers. We welcome
+feedback and help from the community on all of these steps.
+

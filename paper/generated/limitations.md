@@ -13,12 +13,24 @@ Residual work:
 - Run R-E2.1 for 5+ seeds and budget grids.
 - Run R-E2.2/R-E2.3 only if the richer grammar creates non-saturated cases where learned ordering can matter.
 
+## C4.adapter_heads_shared_trunk (contradicted)
+
+- Severity: `scope`
+- Roadmap: `R-MT.4`, `R-F.1`, `R-F.5`
+- Candidate text: adapter-head audit: fixed ARC heads-flat delta +2.40pp; delayed_claim heads-flat -0.97pp; grid_path heads-flat +0.07pp; ARC OOD heads-single +4.67pp top-1 and -1.1836 NLL.
+
+Residual work:
+- Keep shared trunk plus domain heads as a diagnostic architecture rather than the default.
+- Avoid broad all-task competence language; report the fixed ARC, OOD, delayed-claim, grid, and prime rows separately.
+- Use the flat shared scorer as the interference control until the gates pass.
+
 ## C7.tiny_net_plateau_stop_rule (underpowered)
 
 - Severity: `scope`
 - Roadmap: `E-MT.9`, `R-F.1`, `R-F.5`
-- Candidate text: tiny-net plateau audit covers 4 capacities across 4 domains; 10/16 shared rows meet the plateau threshold, and ARC shared width verdict picks 16x8 as best hidden.
+- Candidate text: tiny-net plateau audit covers 4 capacities, 4 domains, and variants shared, shared_task_heads, single_task; 15/48 required rows meet the plateau threshold and 1/12 domain/variant verdicts are audit-ready.
 
 Residual work:
 - Do not explain ARC or learned-wheel failures as capacity limits until this audit is present.
+- Keep architecture conclusions under limitations if task-head plateau rows are incomplete.
 - Run make tiny-net-plateau-audit and inspect the width-help verdicts before increasing default hidden sizes.

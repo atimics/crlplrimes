@@ -124,6 +124,30 @@ Success criteria:
 Failure modes to report:
 - If fixed and OOD calibration move in the same direction, rewrite the Axis 3 paragraph from the generated claim state.
 
+## axis4-adapter-heads-shared-trunk: Shared trunk plus domain-head architecture gate
+
+- Role: `claim_boundary`
+- Evaluated claim targets: `C4.adapter_heads_shared_trunk` (contradicted)
+- Claim families: `C4` Shared scoring should improve residual generalization
+- Roadmap: `R-F.1`, `R-F.5`, `R-MT.4`
+- Command: `python3 scripts/multitask_adapter_heads.py`
+- Artifacts: `results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_summary.csv`, `results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_deltas.csv`, `results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_decision.jsonl`
+
+Agent brief:
+- Treat shared trunk plus domain heads as an architecture gate: promote it only if fixed ARC improves without losing delayed-claim transfer, grid-path performance, or same-envelope ARC OOD.
+
+Success criteria:
+- The artifact includes fixed ARC, ARC OOD, delayed_claim, grid_path, and prime_gap rows for shared, shared_task_heads, and single_task.
+- The generated decision row says promote_shared_trunk_heads only when every gate passes.
+
+Failure modes to report:
+- If task heads help fixed ARC but hurt OOD or transfer, keep the architecture as diagnostic evidence.
+
+Current claim residuals:
+- Keep shared trunk plus domain heads as a diagnostic architecture rather than the default.
+- Avoid broad all-task competence language; report the fixed ARC, OOD, delayed-claim, grid, and prime rows separately.
+- Use the flat shared scorer as the interference control until the gates pass.
+
 ## axis4-arc-ood-transfer: ARC same-envelope OOD shared-vs-single support
 
 - Role: `claim_support`
@@ -188,7 +212,7 @@ Failure modes to report:
 - Claim families: `C7` Tiny-net training and capacity claims are plateau-checked before architecture claims
 - Roadmap: `E-MT.9`, `R-F.1`, `R-F.5`
 - Command: `make tiny-net-plateau-audit`
-- Artifacts: `results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl`, `results/2026-05-17-multitask-roadmap/tiny_net_width_help.jsonl`
+- Artifacts: `results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl`, `results/2026-05-17-multitask-roadmap/tiny_net_width_help.jsonl`, `results/2026-05-17-multitask-roadmap/tiny_net_audit_verdict.jsonl`
 
 Agent brief:
 - Treat wider-network claims as unsupported unless the tiny-net plateau audit shows width, not training budget, is the limiting factor.
@@ -202,6 +226,7 @@ Failure modes to report:
 
 Current claim residuals:
 - Do not explain ARC or learned-wheel failures as capacity limits until this audit is present.
+- Keep architecture conclusions under limitations if task-head plateau rows are incomplete.
 - Run make tiny-net-plateau-audit and inspect the width-help verdicts before increasing default hidden sizes.
 
 ## framework-trace-determinism: Trace determinism audit closes the replay-semantics reproducibility gap

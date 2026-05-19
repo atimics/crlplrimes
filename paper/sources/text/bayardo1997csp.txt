@@ -1,0 +1,386 @@
+      From: AAAI-97 Proceedings. Copyright © 1997, AAAI (www.aaai.org). All rights reserved.
+
+
+
+
+                                                                                                          Robert C. S&rag
+                The University of Texas at Austin                                             Information Extraction and Transport, Inc.
+           Department of Computer Sciences (COSOO)                                                 1730 North Lynn Street, Suite 502
+                     Austin, TX 78712 USA                                                              Arlington, VA 22209 USA
+                     bayardo @cs.utexas.edu                                                                  s&rag @iet.com
+            http://www.cs.utexas.edu/users/bayardo                                                  http://www.iet.com/users/schrag
+
+                                      Abstract                                        ment schemes such as forward checking. The latter class
+                                                                                      includes schemes for backjumping (also known as intelli-
+   We report on the performance of an enhanced version of the
+   “Davis-Putnam”       (DP) proof procedure for propositional                        gent backtracking) and learning (also known as nogood or
+   satisfiability   (SAT) on large instances derived from real-                       constraint recording). In CSP algorithms, techniques from
+   world problems in planning, scheduling, and circuit diagnosis                      both classes are popular; for instance, one common combi-
+   and synthesis. Our results show that incorporating CSP look-                       nation of techniques is forward checking, conflict-directed
+   back techniques -- especially the relatively new technique of
+   relevance-bounded      learning -- renders easy many problems                      backjumping, and an ordering heuristic preferring variables
+   which otherwise are beyond DP’s reach. Frequently they                             with the smallest domains.
+   make DP, a systematic algorithm, perform as well or better                             SAT is a specific kind of CSP in which every variable
+   than stochastic SAT algorithms such as GSAT or WSAT. We                            ranges over the values {true, false}. For SAT, the most pop-
+   recommend that such techniques be included as options in                           ular systematic algorithms are variants of the Davis-Putnam
+   implementations       of DP, just as they are in systematic
+   algorithms     for the more general constraint satisfaction                        procedure (DP) [Davis et al. 621. In CSP terms, DP is equiv-
+   problem.                                                                           alent to backtrack search with forward checking and an
+                                                                                      ordering heuristic favoring unit-domained variables. Two
+                                                                                      effective modern implementations of it are Tableau [Craw-
+                                                                                      ford and Auton 961 and POSIT Freeman 951; both are
+While CNF propositional satisfiability (SAT) is a specific                            highly optimized and include carefully selected variable
+kind constraint satisfaction problem (CSP), until recently                            ordering heuristics. Neither of these implementations (in
+there has been little application of popular CSP look-back                            their published descriptions) include look-back enhance-
+techniques in SAT algorithms. In previous work [Bayardo                               ments like we describe.
+& S&rag 961 we demonstrated that a look-back-enhanced                                     Systematic, or global search algorithms traverse a search
+version of the Tableau algorithm for 3SAT instances [Craw-                            space systematically to ensure that no part of it goes unex-
+ford and Auton 961 can solve easily many instances which                              plored. They are complete: given enough running time, if a
+without look-back are “exceptionally hard’ -- orders of                               solution exists they will find it; if no solution exists they
+magnitude harder than other instances with the same sur-                              will report this. Alternative to systematic algorithms for
+face characteristics. In this work the instances were artifi-                         SAT are stochastic, or local search algorithms such as
+cially generated. Here, we demonstrate the practical utility                          WSAT and GSAT [Selman et al. 921. Stochastic algorithms
+of CSP look-back techniques by using a look-back-                                     explore a search space randomly by making local perturba-
+enhanced algorithm related to Tableau to solve large SAT                              tions to a working assignment without memory of where
+instances derived from real-world problems in planning,                               they have been. They are incomplete: they are not guaran-
+scheduling, and circuit diagnosis and synthesis. Kautz and                            teed to find a solution if one exists; they cannot report that
+Selman [96] had found unenhanced Tableau inadequate to                                no solution exists if they do not find one.
+solve several planning-derived instances and resorted to                                  Stochastic algorithms outperform systematic ones dra-
+using a stochastic algorithm, WSAT (also known as Walk-                               matically on satisfiable instances from the phase transition
+SAT) [Selman et al. 941; our results show that look-back                              region of random problem spaces, such as Random 3SAT
+enhancements make this recourse unnecessary.                                           [Selman et al. 921. Instances in this region are on average
+   Given the usual framework of backtrack search for sys-                             most difficult for widely differing algorithms; they have
+tematic solution of the finite-domained constraint satisfac-                          come to be used frequently as benchmarks for SAT algo-
+tion problem (CSP), techniques intended to improve                                    rithm performance. At the same time, it is widely recog-
+efficiency can be divided into two classes: look-ahead tech-                          nized that they have very different underlying structures
+niques, which exploit information about the remaining                                 from SAT instances one would expect to arise naturally in
+search space, and look-back techniques, which exploit                                 real-world problems of interest.
+information about search which has already taken place.                                   Stochastic algorithms also outperform systematic algo-
+The former class includes variable ordering heuristics,                               rithms such as Tableau on some real-world problems. Sev-
+value ordering heuristics, and dynamic consistency enforce-                           eral SAT-encoded planning problems described by Kautz
+                                                                                       and Selman [96] are infeasible for Tableau (given 10 hours)
+Copyright     1997,     American      Association   for   Artificial   Intelligence   but solved easily by WSAT (given around 10 minutes). Our
+(wwwaaaiorg).       All rights reserved.
+
+
+                                                                                                 CONSTRAINT    SATISFACTION    TECHNIQUES        203
+look-back enhanced version of DP is competitive with                diction, this is failure and backtracking is necessary. If all of
+WSAT in identifying feasible plans using the same                   its clauses have been simplified away, then the current
+instances. Furthermore, look-back-enhanced DP proves the            assignment satisfies the CNF. SELECT-BRANCH-VARIABLE
+nonexistence of shorter plans in 1 to 3 minutes on instances        is a heuristic function returning the next variable to value in
+which Tableau did not solve in 10 hours; this task is impos-        the developing search tree. If neither truth value works, this
+sible for WSAT because of its incompleteness. The innova-           also is failure.
+tive work of Kautz and Selman [96] was “pushing the                   UNIT-PROPAGATE(F, o)
+envelope” of feasibility for planning problems; this lays a               while (exists o in F where a = (h) )
+foundation where our look-back-enhanced DP slips in                            otou(h)
+neatly as a key component in a planning system at the state                    F t SIMPLIFY(F)
+of the art.
+                                                                         UNIT-PROPAGATEadds the single literal h from a unit
+                        Definitions                                 clause o to the literal set 0, then it simplifies the CNF by
+                                                                    removing any clauses in which lambda occurs, and shorten-
+A propositional logic variable ranges over the domain               ing any clauses in which 4 occurs through resolution.
+ {true, false} . An assignment is a mapping of these values              Modern variants of DP including POSIT and Tableau
+to variables. A literal is the occurrence of a variable, e.g. x ,   incorporate highly optimized unit propagators and sophisti-
+or its negation, e.g. 7x; a positive literal x: is satisfied        cated branch-variable selection heuristics. The branch-vari-
+when the variable x is assigned true, and a negative literal        able selection heuristic used by our implementation is
+lx is satisfied when x is assigned false. A clause is a sim-        inspired by the heuristics of POSIT and Tableau, though is
+ple disjunction of literals, e.g. (X v y v 72) ; a clause is sat-   somewhat simpler to reduce implementation burdens.
+isfied when one or more of its literals is satisfied. A unit             Details of branch-variable selection are as follows. If
+clause contains exactly one variable, and a binary clause           there are no binary clauses, select a branch variable at ran-
+contains exactly two. The empty clause ( ) signals a con-           dom. Otherwise, assign each variable y appearing in some
+tradiction (seen in the interpretation, “choose one or more         binary clause a score of neg(y) . pas(y) + neg(y) + pas(y)
+literals to be true from among none”). A conjunctive nor-           where pas(y) and neg(y) are the numbers of occurrences
+mal formula (CNF) is a conjunction of clauses (e.g.                  of y and ly in all binary clauses, respectively. Gather all
+ (a v b) A (X v y v --xz)); a CNF is satisfied if all of its        variables within 20% of the best score into a candidate set.
+clauses are satisfied.                                              If there are more than 10 candidates, remove variables at
+    For a given CNF, we represent an assignment notation-           random until there are exactly 10. If there is only one candi-
+ally as a set of literals each of which is satisfied. A nogood      date, return it as the branch variable. Otherwise, each candi-
+is a partial assignment which will not satisfy a given CNF.         date is re-scored as follows. For a candidate y, compute
+The clause (a v b v IC) encodes the nogood Cla, --,b, c} .           pas(y) and neg(y) as the number of variables valued by
+We call such a nogood-encoding clause a reason. ResoZu-             UNIT-PROPAGATEafter making the assignment {y} and
+tion is the operation of combining two input clauses men-             { Iy} respectively. Should either unit propagation lead to a
+tioning a given literal and its negation, respectively,             contradiction, immediately return y as the next branch vari-
+deriving an implied clause which mentions all other literals        able and pursue the assignment for this variable which led
+besides these. For example, (a v Tb) resolves with                  to the contradiction. Otherwise, score y using the same
+ (b v c) to produce (a v c) .                                        function as above. Should every candidate be scored with-
+                                                                     out finding a contradiction, select a branch variable at ran-
+                                                                    dom from those candidates within 10% of the best (newly
+The Davis-Putnam proof procedure (DP) is represented                computed) score.
+below in pseudo-code. As classically stated, SAT is a deci-              Except in the cases of contradiction noted above, the
+sion problem, though frequently we also are interested in           truth value first assigned to a branch variable is selected at
+exhibiting a satisfying truth assignment 0, which is empty          random. We have applied the described randomizations
+upon initial top-level entry to the recursive, call-by-value        only where additional heuristics were not found to substan-
+procedure DP.                                                       tially improve performance across several instances.
+ DW’, 0)
+       UNIT-PROPAGATE(F,G)
+      if ( ) in F then return                                       The pseudo-code version of DP above performs naive back-
+      if F = 0 then exit-with(o)                                    tracking mediated by the recursive function stack. Conflict
+       DESELECT-BRANCH-VARIABLE(F)                                  directed backjumping (CBJ) [Prosser 931 backs up through
+       WF u CWI, CJu Cal>                                           this abstract stack in a non-sequential manner, skipping
+       WF u {(-@I,       CJu {la>>                                  stack frames where possible for efficiency’s sake. Its
+      return                                                        mechanics involve examining assignments made by UNIT-
+                                                                    PROPAGATE,   not just assignments to DP branch variables, so
+  The CNF F and the truth assignment 0 are modified in              it is more complicated than the DP pseudo-code would rep-
+calls by name to UNIT-PROPAGATE.If F contains a contra-             resent. We forego CBJ pseudo-code in this short paper.
+
+
+204     CONSTRAINT    SATISFACTION     & SEARCH
+    We implement CBJ by having UNIT-PROPAGATE maintain           cuit s nthesis instances from the 1996 Beijing SAT compe-
+a pointer to the clause in the (unsimplified) input CNF          tition Y.
+which serves as the reason for excluding a particular assign-          TABLE       1. Kautz and Sehnan’s planning instances.
+ment from consideration. For instance, when {+, Tb} is
+part of the current assignment, the input clause (a v b v x)           instance               vars        clauses           type
+is the reason for excluding the assignment {-G} . When-                1og-gp.b        -7gw             --ByT            planning
+ever a contradiction is derived, we know some variable has             1og-gp.c           2,809            48,920        planning
+                                                                       log-dir.a            828             6,718        planning
+both truth values excluded. CBJ constructs a working rea-              log-dir.b            843             7,301        planning
+son C for this failure by resolving the two respective rea-            log-dir.c          1,141            10,719        planning
+sons;  then it backs up to the most recently assigned variable         log-un.b           1,729            21,943        planning
+ 6 in C . Suppose {y } was the most recent assignment of               log-un.c           2,353            37,121        planning
+variable y . If { 7y} is excluded by a reason D , then we              bw-dir.c           3,016            50,457        planning
+create a new working reason E by resolving C and D and                 bw-dir.d           6,325           131,973        planning
+back up to the most recently assigned variable in E . Other-
+wise, we install C as the reason for excluding {r} , change         Selected SAT-encoding planning instances constructed
+the current assignment to include { +y} , and proceed with       by Mautz and Selman [96] (the hardest of these instances
+DP.                                                              which were available to us) are listed in Table 1. The “‘log”
+    Extending our example, suppose upon detecting failure        instances correspond to planning problems in logistics; the
+we have the complementary reason (a v b v --IX) , and that       “bw” instances are for blocks worlds -- not “real” worlds --
+ b was assigned after a . Resolution gives us the working        but they are nonetheless hard. The “gp” instances are
+reason (a v b) , so CBJ backs up to where the assignment         Graphplan encodings, the “dir” instances direct encodings
+ { 7b} was made. If {b} is excluded, then suppose the rea-       (state-based for the logistics instances, linear for blocks
+son is (Tb v y) . Resolution yields the new working reason       world), and the “un” instances are unsatisfiable Graphplan
+ (a v y) and CBJ keeps backing up. If {b} is not excluded        encodings used to demonstrate the infeasibility of shorter
+(b was a branch variable), (a v b) becomes the reason            plans. (See cited paper for more details.)
+excluding { 7b}, and {b} replaces { Tb} in the current                 TABLE 2. DlMACS               instances.
+assignment before DP continues.
+    Learning schemes maintain derived reasons longer than
+does CBJ, which can discard them as soon as they are no
+longer denoting a value as excluded. Unrestricted learning
+records every derived reason exactly as if it was a clause
+from the underlying instance, allowing it to be used for the
+remainder of the search. Because the overhead of unre-              In the DIMACS suite, we looked at Van Gelder and
+stricted learning is high, we apply only the restricted learn-   Tsuji’s “ssa” (single-stuck-at) and “bf’ (bridge-fault) circuit
+ing schemes as defined in Bayardo & Miranker 961. Size-          diagnosis instances, and Selman’s tower of hanoi planning
+bounded learning of order i retains indefinitely only those      instances also using linear encoding. For brevity, we report
+derived reasons containing i or fewer variables. For             on only the hardest, for all algorithms investigated, of the
+instance, the reason (a v b) would be maintained by sec-         single-stuck-at and bridge-fault instances (shown in Table
+ond-order size-bounded learning, but longer reasons would        2).
+not. Relevance-bounded learning of order i maintains any            We report on all instances in the Beijing suite, shown in
+reason that contains at most i variables whose assignments       Table 3. The planning instances (“blocks”) again use the
+have changed since the reason was derived. For example,          linear encodings. The scheduling instances (“e”) encode
+suppose we are performing second-order relevance-                Sadeh’s benchmarks as described in [Crawford and Baker
+bounded learning, and we derive a reason (a v b v y)             941. The circuit synthesis instances (“bit”) were contributed
+where variables a, b , and y where assigned in the order         by Bart Selman.
+they appear. This reason would be maintained by second-
+order relevance-bounded learning as long as a remains                                                entail
+assigned as la. As soon as a is re-assigned or un-assigned       Our algorithms are coded in C++ using fewer than 2000
+by a backup, the reason would be discarded.                      lines including header files, blank lines, and comments.4
+                                                                 The implementation is flexible, with different look-back
+                       Test Suites                               techniques and degrees installed by setting various com-
+We use three separate test suites to compare the perfor-
+mance of look-back-enhanced DP with other algorithms             1. Available at ftp://ftp.research.att.com/distki/logistics.tar.Z   and
+whose performance has been reported for the same                    satp1an.data.tar.Z.
+instances: SAT-encoded planning instances from Mautz and         2. Available at ftp://dimacs.rutgers.edu/pub/challenge/satisfiabil-
+Selman’; selected circuit diagnosis and planning instances          ity.
+from the DIMACS Challenge directory associated with the          3. Available at http://www.cirl.edu/crawford/beijing.
+                                                                 4. Source code available at http://www.cs.utexas.edu/users/
+1993 SAT competition2; and planning, scheduling, and cir-           bayardo.
+
+                                                                                  CONSTRAINT          SATISFACTION   TECHNIQUES      205
+      TABLE 3. Beijing instances.                                   selected set of instances and compared the mean “flips per
+                                                                    second” reported by WSAT, concluding their machine to
+      instance              vars     clauses     sat      tYPe      have been 1.6 times faster than our SPARC-10s. In the
+      eO-lo-by-51       19,500       108,887     Y     scheduling   experimental results that follow, we take the liberty of
+      eO-1 O-by-54        19,500     104,527      Y    scheduling   reporting all run-times in “normalized SPARC-10” CPU
+      en-lo-by-51        20,700      111,567      Y    scheduling   seconds. Instead of normalizing run-times reported by
+      en-lo-by-5-8       20,700      113,729      Y    scheduling   Kautz and Selman for Tableau (ntab), we repeat the experi-
+      ew-lo-by-5-l       21,800      118,607      Y    scheduling
+      ew-lo-by-5-8       22,500      123,329      Y    scheduling   ments on our machine, only using the newest available ver-
+      3block.s               283        9,690     Y     planning    sion of Tableau, “ntab-back”,           available at http://
+      4blocksb               410       24,75 8    Y     planning    www.cirl.uoregon.edu/crawford/ntab.tar.      This version of
+      4blocks                758       47,820     Y     planning    Tableau incorporates a backjumping scheme, and hence is
+      2bitadd-10             590        1,422     N     synthesis   most similar to our “cbjsat” (though better optimized).
+      2bitadd-11             649        1,562     Y     synthesis   Because ntab-back incorporates no randomizations, the
+      2bitadd-12             708        1,702     Y     synthesis   runtimes reported for this algorithm are for a single run per
+      2bitcomp-5             125          310     Y     synthesis   instance.
+      2bitmax-6              252          766     Y     synthesis
+      3bitadd-3 1          8,432       31,310     Y     synthesis
+      3bitadd32            8,704       32,316     Y     synthesis                    Experimental Results
+                                                                    Table 4 displays performance data for relsat(4), WSAT, and
+pile-time and run-time parameters. We did not optimize the          ntab-back on Kautz and Selman’s planning instances. Cut-
+implementation extensively. We believe investing more               off time was 10 minutes for each instance except bw-dir.d,
+attention in this regard, perhaps along the lines suggested         for which it was 30 minutes. The times for WSAT are those
+by Freeman [95], should improve our performance by up to            reported by Kautz and Selman [96], normalized to SPARC-
+a factor of three. Freeman’s more sophisticated branch-vari-        10 CPU seconds. Relsat(4) outperformed WSAT on most
+able selection heuristics and instance preprocessing tech-          instances. One exception where WSAT is clearly superior is
+niques also should improve performance.                             on instance log-dir.c which caused relsat(4) to reach cutoff
+    We experiment with several variants of our DP algo-             22 times. Instance bw-dir.d caused relsat(4) to reach cutoff
+rithm. The version applying no look-back enhancements is            18 times, but it still outperformed WSAT by several min-
+denoted “naivesat”, that applying only CBJ “cbjsat”, one
+                                                                    utes even after averaging in 30 minutes for each relsat cut-
+applying relevance-bounded learning of order i “relsat( i )“,       off. Though it is difficult to draw solid conclusions about
+and one applying size-bounded learning of order i “size-            the performance of ntab-back since the times reported are
+sat( i )“. We only use learn orders of 3 and 4, since higher        only for a single run, we can determine that relsat(4) is
+learn orders resulted in too high an overhead to be generally       more effective than ntab-back on the instances for which
+useful, and lower learn orders had little effect.                   relsat(4) never reached cutoff, yet ntab-back required sub-
+    Care must be taken when experimenting with real world           stantially more than 10 minutes to solve. This includes all
+instances because the number of instances available for             loggp and log_un instances.
+experimentation is often limited. The experiment must
+somehow allow for performance results on the limited                   TABLE 4. Performance       of relsat(4) on Kautz and Selman’s
+instance space to generalize to other similar instances. We            planning instances .
+found the runtime variance of algorithms solving the same              instance      relsat(4)      % fail    WSAT       ntab-back
+instance to be extremely high given what seem to be insig-                                 12.9     0%       73.2              2,621
+                                                                       1og-gp.b
+nificant differences in either value or variable ordering poli-                           39.4         0%       419.2         11,144
+                                                                       l0g-Xp.c
+cies, whether or not the instance is satisfiable.                      log-dir.a            4.1        0%          4.3         369.7
+    Kautz and Selman [96] address this issue by averaging              log-dir.b           16.6        0%          2.6         161.4
+WSAT’s runtime over multiple runs. We take the same                    log-dir.c          90.3        22%         3.0    > 12 hours
+approach and run our algorithms several times (100) on                 log-un.b            66.8        0%                     12,225
+each instance with a different random number seed for each             log-uric          192.5         0%                > 12 hours
+run to ensure different execution patterns. In order to deal           bw-dir.c             119        0%        1072            16.9
+with runs which could take an inordinate amount of time, a             bw-dir.d          813.3        18%        1499    > 12 hours
+cutoff time was imposed (10 minutes unless otherwise                   Table 5 displays performance data for our several DP
+noted) after which the algorithm was to report failure. We          variants on DIMACS instance bf1355-075 -- the hardest of
+report the percentage of instances an algorithm failed to           the bridge-fault instances. Freeman [95] reports that POSIT
+solve within the cutoff time. We report the mean CPU time           requires 9.8 hours on a SPARC 10 to solve this instance,
+required per run and sometimes the mean variable assign-            and we found ntab-back to solve it in 17.05 seconds. Table
+ments made per run, averaged over successful runs.                  6 displays the same information for the DIMACS instance
+    The experiments were performed en SPARC- 10 works ta-
+tions. Kautz and Selman [96] reported running times from a
+110-MHz SGI Challenge. To “normalize” our running                   5. We could not easily repeat the experiments of Kautz and Sel-
+times against theirs for the same instances, we solved a               man on our machines due to the need to hand-tune the multiple
+                                                                       input parameters of WSAT.
+
+
+206        CONSTRAINT     SATISFACTION      & SEARCH
+                                                                           successfully solved the instance at all was relsat(4), and it
+   TABLE 5. Performance        on DIMACS     bridge-fault   instance       did so in only 4 out of the 100 attempts. The average run-
+   bf1355075.                                                              time in these four successful runs was under three minutes.
+   algorithm              run-time      assgnmnts           % fail            Our DP variants performed relatively well on most of the
+   naivesat                        --             --        100%           Beijing instances. The general trend was that thus far illus-
+   cbjsat                       115        999,555            0%           trated -- the more look-back applied, the better the perfor-
+   sizesat(3)                    2.6        18,754            0%           mance and the lower the probability of reaching cutoff. We
+   sizesat(4)                     .5         3,914            0%           were able to solve all the instances within this suite without
+   relsat(3)                     3.6        23,107            0%           significant difficulty using relsat(4) with the exception of
+   relsat(41                      .6         4,391            0%           the “3bit” circuit instances which were never solved by any
+                                                                           of our DP variants. Interestingly, we found these instances
+   TABLE 6. Performance        on DIMACS      single-stuck-at   instance
+                                                                           were trivial for WSAT.
+   ssa270-141.                                                                The “2bit” circuit instances were trivial (a fraction of a
+   algorithm              run-time    assgnmnts             % fail         second mean solution time) even for cbjsat, with the excep-
+   naivesat                       --              --        100%           tion of 2bitadd-10, their only unsatisfiable representative.
+   cbjsat                       415   9.4 Million            23%           This instance was not solvable by any of our algorithms
+   sizesat(3)                   242   5.0 Million             0%           within 10 minutes. After disabling cutoff, relsat(4) deter-
+   sizesat(4)                   278   4.7 Million             4%           mined it unsatisfiable in 18 hours.
+   relsat(3)                     71   1.2 Million             0%              Relsat(4) solved 4 out of 6 scheduling instances with a
+   relsat(4 j         I          46 1 .62MilIion     1        0% 1
+                                                                           100% success rate. Two of the instances, eO-lo-by-5-1 and
+ssa270-141 -- the hardest of the single-stuck-at instances.                en-lo-by-5-l resulted in failure rates of 21% and 18%
+Freeman reports POSIT to require 50 seconds to solve this                  respectively. Repeating the experiments for these two
+instance6, and we found ntabback to solve it in 1,353 sec-                 instances with a 30minute cutoff reduced the failure rate to
+onds. Both of these instances are unsatisfiable.                           3% and 1% respectively. Crawford and Baker [94] reported
+   Naivesat was unable to solve either instance within 10                  that ISAMP, a simple randomized algorithm, solved these
+minutes in any of 100 runs. Adding CBJ resulted in the                     types of instances more effectively than WSAT or Tableau.
+bridge-fault instance being solved in all 100 runs, but the                Our implementation of ISAMP solved these 6 instances an
+single-stuck-at instance still caused 23 failures. All the                 order of magnitude more quickly than relsat(4), and with a
+learning algorithms performed extremely well on the                        100% successrate. We did not find ISAMP capable of solv-
+bridge-fault instance. For the single-stuck-at-instance, rele-             ing any other instances considered in this paper.
+vance-bounded learning resulted in a significant speedup.                     Of the Beijing planning instances, relsat(3) and relsat(4)
+Fourth-order size-bounded learning, while restricting the                  found 3blocks to be easy, solving it with 100% success in
+size of the search space more than third-order size-bounded                6.0 and 6.4 seconds on average respectively. The 4blocksb
+learning, performed less well due to its higher overhead.                  instance was also easy, with both relsat(3) and relsat(4)
+   TABLE7.      Performance on DIMACS planning instance hanoi4.            again achieving 100% success, though this time in 79 and
+                                                                           55 seconds respectively. The 4blocks instance was more
+   algorithm              run-time      assgnmnts           % fail         difficult. The failure rate was 34% for relsat(3) and 17% for
+   naivesat                       --                  --    100%           relsat(4), with average CPU seconds of 406 and 333 sec-
+   cbjsat                       325     3.5 Million          94%           onds respectively. Because the mean times were so close to
+   sizesat(3)                   214     1.7 Million          92%           the cutoff, we expect increasing the cutoff time should sig-
+   sizesat(4)                   227     1.4 Million          79%           nificantly reduce the failure rate as it did with the schedul-
+   relsat(3)                    254     1.6 Million          13%
+   relsat(4)                    183     .89 Million            1%          ing instances.
+
+    DIMACS instances hanoi4 and hanoi5 appear to contain                                             iscussio
+very deep local minima; although they are satisfiable, they
+have not, to our knowledge, been solved by stochastic algo-                Look-back enhancements clearly make DP a more capable
+rithms. Ntab-back solves hanoi4 in 2,877 seconds but was                   algorithm. For almost every one of the instances tested here
+unable to solve hanoi5 within 12 hours. We are not aware of                (selected for their difficulty), learning and CBJ were critical
+any SAT algorithm reported to have solved hanoi5. The                      for good performance. We suspect the dramatic perfor-
+results for our DP variants on hanoi4 appear in Table 7.                   mance improvements resulting from the incorporation of
+Though sizesat(4) appears faster than relsat(3), its mean                  look-back is in fact due to a synergy between the look-
+run-time is skewed by the fact that it only successfully                   ahead and look-back techniques applied. Variable selection
+solved the instance in 21% of its runs. Relsat(3) was suc-                 heuristics attempt to seek out the most-constrained areas of
+cessful in nearly all runs and relsat(4) in all but one. We ran            the search space to realize inevitable failures as quickly as
+the same set of DP variants on hanoi5. The only variant that               possible. Learning schemes, through the recording of
+                                                                           derived clauses, can create constrained search-sub-spaces
+                                                                           for the variable selection heuristic to exploit.
+                                                                              Size-bounded learning is effective when instances have
+6. Freeman also reports that POSIT exhibits high run-time vari-            relatively many short nogoods which can be derived with-
+   ability on ssa2670-141, though the variance is not quantified.
+
+                                                                                     CONSTRAINT    SATISFACTION    TECHNIQUES        207
+out deep inference. Relevance-bounded learning is effective        look-back-enhanced DP should probably replace unen-
+when many sub-problems corresponding to the current DP             hanced DP; where another SAT algorithm is used, DP
+assignment also have this property.7 Our findings indicate         should be given a new evaluation using look-back enhance-
+that real-world instances often contain subproblems with           ments. Finally, look-back-enhanced DP should become a
+short, easily derived nogoods. Phase transition instances          standard algorithm, along with unenhanced DP, against
+from Random 3SAT tend to have very short nogoods                   which other styles of SAT algorithm are compared.
+[S&rag and Crawford 961, but these seem to require deep
+inference to derive, and look-back-enhanced DP provides                                        eferences
+little advantage on them [Bayardo & Schrag 961.
+     As we have noted, a few test instances were infeasible for    Bayardo, R. J. and Miranker, D. P. 1996. A Complexity Analysis
+look-back-enhanced DP but easy or even trivial for WSAT.           of Space-Bounded Learning Algorithms for the Constraint Satis-
+Look-back for DP is not a “magic bullet”, and good look-           faction Problem. In Proc. 13th Nat’1 Conf on Artijicial Intelli-
+back techniques alone will not result in universally superior      gence, 558-562.
+performance, just as alone the good look-ahead techniques          Bayardo, R. J. and Schrag, R. 1996. Using CSP Look-Back Tech-
+included in Tableau and POSIT do not. The best algorithms,         niques to Solve Exceptionally Hard SAT Instances. In Proc. Sec-
+stochastic or systematic, are bound to be stymied by               ond Int ‘1 Con. on Principles      and Practice of Constraint
+instances of sufficient size and complexity or adversarial         Programming      (Lecture Notes in Computer Science v. 1118),
+structure. Nevertheless, combining good techniques for             Springer, 46-60.
+look-ahead and look-back is likely to give better perfor-          Crawford, J. M. and Auton, L. D. 1996. Experimental Results on
+mance across a broad range of problems.                            the Crossover Point in Random 3SAT. Artificial Intelligence 81 (l-
+     Some researchers have attempted to exploit the distinct       2), 31-57.
+advantages of systematic and stochastic search in hybrid           Crawford, J. M. and Baker, A. B. 1994. Experimental Results on
+global/local search algorithms. Ginsberg and McAllester’s          the Application of Satisfiability Algorithms to Scheduling Prob-
+[94] partial-order dynamic backtracking, which incorpo-            lems. In Proc. Twelfth Nat’1 Con. on Artijicial Intelligence, 1097-
+rates a form of relevance-bounded learning along with a             1097.
+scheme that relaxes the restrictions on changing past vari-
+                                                                   Davis, M., Logemann, G. and Loveland, D. 1962. A Machine Pro-
+able assignments, has been shown to perform better than            gram for Theorem Proving, CACA4 5,394-397.
+Tableau on a random problem space with crystallographic
+structure. Mazure et al. [96] evaluated a hybrid algorithm         Freeman, J. W. 1995. Improvements to Propositional Satisjiability
+with interleaved DP and local search execution using sev-          Search Algorithms. Ph.D. Dissertation, U. Pennsylvania Dept. of
+eral instances from the DIMACS suite, showing that it fre-         Computer and Information Science.
+quently       outperformed      capable     non-hybrid      DP     Frost, D. and Dechter, R. 1994. Dead-End Driven Learning. In
+implementations. Because look-back enhanced DP is also             Proc. of the Twelfth Nat’1 Co@ on Artijicial Intelligence, 294-300.
+effective at solving the DIMACS instances used by Mazure
+                                                                   Ginsberg, M. and McAllester, D. 1994. GSAT and Dynamic Back-
+et al. and the crystallographic instances of Ginsberg and          tracking, Principles of Knowledge Representation and Reasoning:
+McAllester payardo and S&rag 961, future work is                   Proceedings of the Fourth Int ‘1 Co&, 226-237.
+required to see if and when these techniques are comple-
+mentary to look-back.                                              Kautz, H. and Selman, B. 1996. Pushing the Envelope: Planning,
+     Given the similarities between experimental results from      Propositional Logic, and Stochastic Search. In Proc. 13th Nat’1
+this study and those from our previous study on randomly           Conf: on Artificial Intelligence, 558-562.
+generated “exceptionally hard” instances payardo and               Mazure, M., Sais, L. and Gregoire, E. 1996. Detecting Logical
+S&rag 961, we speculate that this random problem space             Inconsistencies. In Proc. of the Fourth Int’l Symposium on Art@-
+may contain instances that better reflect computational dif-       cial Intelligence and Mathematics, 116- 121.
+ficulties arising in real-world instances than random spaces       Prosser, P. 1993. Hybrid Algorithms for the Constraint    Satisfac-
+like Random 3SAT.                                                  tion Problem. Computational Intelligence 9(3):268-299.
+                                                                   Schrag, R. and Crawford, J. M. Implicates and Prime Implicates in
+                                                                   Random 3SAT Artificial Intelligence 81(1-2), 199-222.
+We have described CSP look-back enhancements for DP                Sehnan, B., Kautz, H., and Cohen, B., 1994. Noise Strategies for
+and demonstrated their significant advantages. We feel their       Local Search. In Proc. Twelfth Nat’1 Con. on Artijicial Intelli-
+performance warrants their being included as options in DP         gence, 337-343.
+implementations more commonly. Where DP is used in a
+larger system (for planning, scheduling, circuit processing,       Sehnan, B., Levesque, H. and Mitchell, D. 1992. A New Method
+knowledge representation, higher-order theorem proving,            for Solving Hard Satisfiability Problems, In Proc. Tenth Nut’1
+                                                                   Co@ on Artijicial Intelligence, 440-446.
+etc., or in a hybrid systematic/stochastic SAT algorithm),
+                                                                   Stallman R. M. and. Sussman G. J., 1977. Forward Reasoning and
+                                                                   Dependency-Directed    Backtracking in a System for Computer-
+                                                                   Aided Circuit Analysis. Artificial Intelligence 9, 135-196.
+7. A theoretical comparison of these two methods for restricting
+   learning overhead appears in [B ayardo & Miranker 961.
+
+208     CONSTRAINT     SATISFACTION     &z SEARCH
+
