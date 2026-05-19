@@ -13,13 +13,14 @@ from typing import Any
 DOMAIN_ROWS = [
     {
         "domain": "prime_gap",
-        "candidate_set": "next-gap actions plus certified modular rule filters",
+        "domain_display": "arithmetic sequence filtering",
+        "candidate_set": "next-prime gap actions plus certified modular filters",
         "verifier": "segmented-sieve replay and modular certificate checks",
-        "certificate_gate": "zero-false-rejection divisibility certificates over train/validation support",
-        "scorer_role": "rank residual gaps and budgeted certified rules",
+        "certificate_gate": "zero-false-rejection divisibility certificates for the audited next-prime instance",
+        "scorer_role": "rank residual gaps and budgeted certified filters",
         "trace_artifact": "crlp.compare.v1; crlp.rule_trace.v1; crlp.rule_search.summary.v1",
-        "result": "learned gate 68.87% top-1 vs 45.12% hand-wheel and 9.13% raw; seed interval audited",
-        "claim": "certified modular gates shrink the residual action space",
+        "result": "learned filter 68.87% top-1 vs 45.12% hand-wheel and 9.13% raw; seed interval audited",
+        "claim": "certified modular filters shrink the residual action space",
         "claim_ids": ["C1.prime_gate_delta", "C1.prime_gate_delta_ci", "C2.prime_proposer_fixed_budget"],
         "limitation": "static neural proposer is not superior to deterministic baselines at fixed budget",
     },
@@ -112,10 +113,10 @@ DOMAIN_ROWS = [
 
 PROTOCOL_DETAILS = {
     "prime_gap": {
-        "data_domain": "prime gaps over segmented sieve windows",
+        "data_domain": "next-prime gaps over segmented-sieve windows; broader family includes period-residue sequence filters",
         "grammar": "local modular filters over residues, gap classes, and wheel support",
-        "examples": ["modular reject rule", "wheel support certificate", "residual gap action"],
-        "takeaway": "certified modular structure is the candidate mechanism; the neural scorer ranks residual budget choices.",
+        "examples": ["modular reject rule", "wheel support certificate", "next-prime gap action", "Pisano-period recurrence gate"],
+        "takeaway": "certified modular structure is the candidate mechanism; the neural scorer ranks residual budget choices while Fibonacci/Lucas-style filters remain boundary evidence.",
     },
     "grid_path": {
         "data_domain": "grid mazes with deterministic shortest-path labels",
@@ -199,7 +200,7 @@ def add_status(row: dict[str, Any], claims: dict[str, dict[str, Any]]) -> dict[s
     protocol.update(PROTOCOL_DETAILS.get(str(row["domain"]), {}))
     protocol.setdefault("result_table", row["result"])
     enriched = {**protocol, **row}
-    enriched["domain_display"] = str(row["domain"]).replace("_", " ")
+    enriched.setdefault("domain_display", str(row["domain"]).replace("_", " "))
     enriched.setdefault("result_table", enriched["result"])
     claim_source = row.get("claim_ids", row.get("claim", ""))
     if isinstance(claim_source, list):
@@ -270,7 +271,7 @@ def write_markdown(path: Path, rows: list[dict[str, Any]]) -> None:
         "",
         f"Date: {date.today().isoformat()}",
         "",
-        "The paper evidence families are frozen to these rows. New domains belong in roadmap notes until this matrix is deliberately revised.",
+        "The evidence families are frozen to these rows. New domains belong in roadmap notes until this matrix is deliberately revised.",
         "",
         "| Domain/data | Grammar | Candidate set | Verifier/gate | Scorer role | Trace artifact | Result table | Takeaway | Limitation |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",

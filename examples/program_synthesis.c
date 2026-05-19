@@ -1979,8 +1979,15 @@ static int ps_write_schema(void)
     spec.observable_features = "structural abstraction features only";
     spec.leakage_policy = NN_LEAKAGE_PRIORS_ALLOWED;
     spec.neural_scorer = "static structural scorer or closed-loop residual proposer";
+    spec.grounding_authority = NN_GROUNDING_EXACT_CHECK;
+    spec.grounding_operator = "deterministic DSL execution against task input/output examples";
     spec.exact_verifier = "run candidate abstraction on every input/output example";
     spec.verifier_feedback = "per-task exact pass/fail plus compression coverage diagnostics";
+    spec.candidate_grammar = "typed list/int DSL abstractions enumerated by the program synthesizer";
+    spec.outcome_row_schema = "crlp.rule_search.summary.v1 proposer rows";
+    spec.claim_scope = "synthetic list-routine abstraction discovery under declared task-family splits";
+    spec.known_non_claims =
+        "does not claim open-ended program synthesis outside the declared DSL and fixture corpus";
     spec.rule_grammar = "abstraction(name, lambda xs.body) over map/filter/fold/list primitives";
     spec.certificate_checker = "syntactic monomorphic DSL type checker";
     spec.gate_executor = "accepted abstraction library used as MDL compression set";

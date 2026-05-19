@@ -56,13 +56,13 @@ Agent brief:
 - Treat public ARC coverage as a measured evidence surface, not as a broad ARC-solved claim.
 
 Success criteria:
-- The paper can state public train/eval certified-task and covered-cell counts from generated claim variables.
+- The generated claim variables support public train/eval certified-task and covered-cell counts.
 - Residual ARC categories stay visible as roadmap input.
 
 Failure modes to report:
 - Do not collapse ARC public-corpus parity into same-envelope synthetic OOD scorer performance.
 
-## axis1-prime-gate-delta: Prime learned-gate delta support
+## axis1-prime-gate-delta: Next-prime filter learned-gate delta support
 
 - Role: `claim_support`
 - Evaluated claim targets: `C1.prime_gate_delta` (supported)
@@ -72,11 +72,11 @@ Failure modes to report:
 - Artifacts: `results/latest/comparison.canonical.jsonl`, `paper/generated/gap_report.md`
 
 Agent brief:
-- Strengthen or falsify the prime learned-gate claim without changing the claim compiler contract.
+- Strengthen or falsify the audited next-prime filter claim without changing the claim compiler contract.
 
 Success criteria:
 - Required claim C1.prime_gate_delta remains supported.
-- Seed/CIs or calibration tradeoff evidence can be added as derived claims without rewriting paper prose by hand.
+- Seed/CIs or calibration tradeoff evidence can be added as derived claims without rewriting prose by hand.
 
 Failure modes to report:
 - If learned gate no longer beats hand-wheel or raw, move the headline gate claim to generated limitations.
@@ -233,7 +233,7 @@ Current claim residuals:
 
 - Role: `claim_support`
 - Evaluated claim targets: `C8.trace_determinism_audit` (supported)
-- Claim families: `C8` The paper compiler enforces code-to-PDF claim support
+- Claim families: `C8` The claim compiler enforces artifact-backed claim support
 - Roadmap: `R-P.5`
 - Command: `make trace-determinism-compare`
 - Artifacts: `results/latest/trace_determinism.jsonl`, `results/latest/prime_gap_trace.semantic.jsonl`

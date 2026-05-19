@@ -178,8 +178,15 @@ static const NNExperimentSpec SF_EXPERIMENT_SPEC = {
     .observable_features = "candidate key controls plus normalized ship kinematics, heading, path, hull, and clearance observations",
     .leakage_policy = NN_LEAKAGE_FORBIDDEN,
     .neural_scorer = "tiny MLP scores one state/action row and softmax ranks WASD candidates",
+    .grounding_authority = NN_GROUNDING_DETERMINISTIC_REPLAY,
+    .grounding_operator = "authoritative Signal simulator replay from captured deterministic states",
     .exact_verifier = "deterministic Signal authoritative replay for each WASD hypothesis; legacy teacher traces remain accepted for ablation",
     .verifier_feedback = "certified utility, straight-forward progress, wall-aware clearance, hull loss, damage/death events, held-out top-k regret, NLL, calibration, and candidate-mask sanity rate",
+    .candidate_grammar = "nine WASD key combinations plus rollout-time control-target hypotheses",
+    .outcome_row_schema = SF_TRACE_SCHEMA "," SF_COUNTERFACTUAL_TRACE_SCHEMA,
+    .claim_scope = "offline and shadow replay rows for the declared Signal flight interface",
+    .known_non_claims =
+        "does not claim live active control unless live-active summaries report neural intervention",
     .rule_grammar = "WASD control hypotheses plus rollout-time direct/nav/bypass/brake control-target hypotheses; richer flight predicates planned",
     .certificate_checker = "deterministic simulator replay that records collision pain, plus rollout-time control-target certificates over nav segment clearance, forward/velocity clearance, and progress alignment",
     .gate_executor = "closed-loop rollout uses certified_control_target_v1 before neural WASD ranking; live active neural gate remains staged behind shadow/replay checks",
@@ -1172,61 +1179,29 @@ static int sf_save_checkpoint(NeuralNet *net,
                               char out_hash[65])
 {
     NNCheckpointMeta meta;
-    memset(&meta, 0, sizeof(meta));
-    meta.checkpoint_version = 1;
-    meta.feature_encoder_version = live_features ? 2 : 1;
-    strcpy(meta.parent_model_hash, "none");
-    strcpy(meta.training_trace_root,
-           utility_mode ? "signal_flight_counterfactual_csv"
-                        : "signal_flight_trace_csv");
-    strcpy(meta.notes,
-           live_features
-               ? "Signal flight WASD scorer trained from replay-certified utility with live-observable features"
-               : (utility_mode
-                      ? "Signal flight WASD scorer trained from replay-certified counterfactual utility"
-                      : "Signal flight WASD scorer trained from flight_trace CSV"));
-    strcpy(meta.feature_set, live_features ? "signal-flight-live-v2" : "signal-flight-wasd-v1");
+    nn_checkpoint_meta_init(&meta, live_features ? 2u : 1u);
+    if (!nn_checkpoint_meta_set_parent_model_hash(&meta, "none") ||
+        !nn_checkpoint_meta_set_training_trace_root(
+            &meta,
+            utility_mode ? "signal_flight_counterfactual_csv" : "signal_flight_trace_csv") ||
+        !nn_checkpoint_meta_set_notes(
+            &meta,
+            live_features
+                ? "Signal flight WASD scorer trained from replay-certified utility with live-observable features"
+                : (utility_mode
+                       ? "Signal flight WASD scorer trained from replay-certified counterfactual utility"
+                       : "Signal flight WASD scorer trained from flight_trace CSV")) ||
+        !nn_checkpoint_meta_set_feature_set(
+            &meta,
+            live_features ? "signal-flight-live-v2" : "signal-flight-wasd-v1")) {
+        return 0;
+    }
     return nn_save_checkpoint(net, path, &meta) && nn_hash_checkpoint_hex(path, out_hash);
 }
 
 static void sf_json_string(FILE *fp, const char *text)
 {
-    fputc('"', fp);
-    if (text != NULL) {
-        for (const unsigned char *p = (const unsigned char *)text; *p != '\0'; ++p) {
-            switch (*p) {
-            case '"':
-                fputs("\\\"", fp);
-                break;
-            case '\\':
-                fputs("\\\\", fp);
-                break;
-            case '\b':
-                fputs("\\b", fp);
-                break;
-            case '\f':
-                fputs("\\f", fp);
-                break;
-            case '\n':
-                fputs("\\n", fp);
-                break;
-            case '\r':
-                fputs("\\r", fp);
-                break;
-            case '\t':
-                fputs("\\t", fp);
-                break;
-            default:
-                if (*p < 0x20u) {
-                    fprintf(fp, "\\u%04x", (unsigned int)*p);
-                } else {
-                    fputc((int)*p, fp);
-                }
-                break;
-            }
-        }
-    }
-    fputc('"', fp);
+    (void)nn_write_json_string(fp, text);
 }
 
 static double sf_rate(size_t numerator, size_t denominator)

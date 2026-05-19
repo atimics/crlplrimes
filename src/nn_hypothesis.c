@@ -1,4 +1,5 @@
 #include "nn_hypothesis.h"
+#include "nn_text.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -87,36 +88,7 @@ static uint64_t nn_hypothesis_hash_double(uint64_t hash, double value)
 
 static void nn_hypothesis_json_string(FILE *fp, const char *value)
 {
-    fputc('"', fp);
-    if (value != NULL) {
-        for (const unsigned char *p = (const unsigned char *)value; *p != '\0'; ++p) {
-            switch (*p) {
-            case '"':
-                fputs("\\\"", fp);
-                break;
-            case '\\':
-                fputs("\\\\", fp);
-                break;
-            case '\n':
-                fputs("\\n", fp);
-                break;
-            case '\r':
-                fputs("\\r", fp);
-                break;
-            case '\t':
-                fputs("\\t", fp);
-                break;
-            default:
-                if (*p < 0x20u) {
-                    fprintf(fp, "\\u%04x", (unsigned int)*p);
-                } else {
-                    fputc((int)*p, fp);
-                }
-                break;
-            }
-        }
-    }
-    fputc('"', fp);
+    (void)nn_write_json_string(fp, value);
 }
 
 const char *nn_hypothesis_slot_type_name(NNHypothesisSlotType type)

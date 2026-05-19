@@ -413,11 +413,12 @@ include/nn_train.h            sample training, batch training, action-scorer tra
 include/nn_experiment.h       shared experiment-schema contract for verifier-backed action tasks
 include/nn_symbolic.h         shared rule, certificate, symbolic-domain, and closed-loop residual policy API
 include/nn_program.h          shared typed program/transform candidates, canonical ids, coverage, and proposer summary rows
+include/nn_json.h             small JSON cursor used by local loaders and parser tests
 include/nn_tasks_prime_gap.h  command entry points for the prime-gap task module
 include/nn.h                  compatibility umbrella for existing users
 ```
 
-The prime-gap implementation is split across `src/prime_gap/`: data generation, feature encoding, symbolic-wheel discovery, expanded rule search, block-verifier accounting, evaluation, training, run orchestration, and replay/compare entry points each have their own module. Shared private declarations live in `src/prime_gap/internal.h`. `src/nn_tasks_prime_gap.c` remains as a test-only module index so private helpers can be exercised without exporting them from the public task header. The files in `examples/prime_gap.c`, `examples/prime_replay.c`, `examples/prime_compare.c`, and `examples/prime_rule_search.c` are thin command wrappers.
+The prime-gap implementation is split across `src/prime_gap/`: data generation, feature encoding, symbolic-wheel discovery, expanded rule search, block-verifier accounting, evaluation, training, run orchestration, and replay/compare entry points each have their own module. Shared private declarations live in `src/prime_gap/internal.h`; `make test` compiles those modules with `NN_ENABLE_TEST_API` so private helper coverage stays explicit without textual `.c` inclusion in the test runner. The files in `examples/prime_gap.c`, `examples/prime_replay.c`, `examples/prime_compare.c`, and `examples/prime_rule_search.c` are thin command wrappers.
 
 ## Build
 

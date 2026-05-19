@@ -26,6 +26,13 @@ typedef enum {
     NN_PROPOSER_DISCOVERY = 1,
 } NNProposerMode;
 
+typedef enum {
+    NN_GROUNDING_EXACT_CHECK = 0,
+    NN_GROUNDING_DETERMINISTIC_REPLAY = 1,
+    NN_GROUNDING_CORPUS_PROXY = 2,
+    NN_GROUNDING_HUMAN_REVIEW = 3,
+} NNGroundingAuthority;
+
 typedef struct {
     const char *name;
     NNFeatureProvenance provenance;
@@ -55,8 +62,14 @@ typedef struct {
     const char *observable_features;
     NNLeakagePolicy leakage_policy;
     const char *neural_scorer;
+    NNGroundingAuthority grounding_authority;
+    const char *grounding_operator;
     const char *exact_verifier;
     const char *verifier_feedback;
+    const char *candidate_grammar;
+    const char *outcome_row_schema;
+    const char *claim_scope;
+    const char *known_non_claims;
     const char *rule_grammar;
     const char *certificate_checker;
     const char *gate_executor;
@@ -75,7 +88,9 @@ typedef struct {
 const char *nn_feature_provenance_name(NNFeatureProvenance provenance);
 const char *nn_leakage_policy_name(NNLeakagePolicy policy);
 const char *nn_proposer_mode_name(NNProposerMode mode);
+const char *nn_grounding_authority_name(NNGroundingAuthority authority);
 int nn_leakage_policy_is_valid(NNLeakagePolicy policy);
+int nn_grounding_authority_is_valid(NNGroundingAuthority authority);
 int nn_feature_schema_is_valid(const NNFeatureSchema *features, size_t feature_count);
 NNFeatureAudit nn_feature_schema_audit(const NNFeatureSchema *features,
                                        size_t feature_count,

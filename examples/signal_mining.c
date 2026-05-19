@@ -284,8 +284,15 @@ static const NNExperimentSpec SM_EXPERIMENT_SPEC = {
     .observable_features = "candidate hypothesis id, grammar primitive one-hots, base option id, plus observable ship, rock, fragment, station, demand, and prefix-state features",
     .leakage_policy = NN_LEAKAGE_FORBIDDEN,
     .neural_scorer = "tiny MLP scores one tactical option row and softmax ranks options within a replay group",
+    .grounding_authority = NN_GROUNDING_DETERMINISTIC_REPLAY,
+    .grounding_operator = "authoritative Signal world replay over deterministic tactical option prefixes",
     .exact_verifier = "fresh deterministic Signal simulator replay from the same scenario seed and prefix for each candidate option",
     .verifier_feedback = "certified utility, smelts, pickups, fractures, mining ticks, towed fragments, shipyard-input deltas, repair-kit deltas, hull loss, damage events, and death events",
+    .candidate_grammar = "target selector x route constraint x speed/contact profile x interaction primitive",
+    .outcome_row_schema = SM_TRACE_SCHEMA " and " SM_SUMMARY_SCHEMA,
+    .claim_scope = "offline tactical option ranking over the declared deterministic Signal mining scenarios",
+    .known_non_claims =
+        "does not claim live economy control or scenario families outside the replay-certified prefixes",
     .rule_grammar = "target selector x route constraint x speed/contact profile x interaction primitive; neural scorer ranks only replay-certified grammar hypotheses",
     .certificate_checker = "authoritative replay records candidate outcomes; verifier outputs are labels/diagnostics and are not scorer inputs",
     .gate_executor = "candidate policies drive normal Signal input_intent_t controls through world_sim_step; no sim state is shallow-copied",
@@ -407,25 +414,7 @@ static int sm_parse_real(const char *text, nn_real *out_value)
 
 static void sm_json_string(FILE *fp, const char *text)
 {
-    fputc('"', fp);
-    if (text != NULL) {
-        for (const unsigned char *p = (const unsigned char *)text; *p != '\0'; ++p) {
-            switch (*p) {
-            case '"': fputs("\\\"", fp); break;
-            case '\\': fputs("\\\\", fp); break;
-            case '\b': fputs("\\b", fp); break;
-            case '\f': fputs("\\f", fp); break;
-            case '\n': fputs("\\n", fp); break;
-            case '\r': fputs("\\r", fp); break;
-            case '\t': fputs("\\t", fp); break;
-            default:
-                if (*p < 0x20u) fprintf(fp, "\\u%04x", (unsigned int)*p);
-                else fputc((int)*p, fp);
-                break;
-            }
-        }
-    }
-    fputc('"', fp);
+    (void)nn_write_json_string(fp, text);
 }
 
 static const char *sm_scenario_name(int kind)
@@ -1994,18 +1983,18 @@ static int sm_save_checkpoint(NeuralNet *net,
 {
     if (net == NULL || path == NULL) return 0;
     NNCheckpointMeta meta;
-    memset(&meta, 0, sizeof(meta));
-    meta.checkpoint_version = 1u;
-    meta.feature_encoder_version = 3u;
-    strcpy(meta.parent_model_hash, "none");
-    strcpy(meta.benchmark_report_hash, "pending");
-    if (trace_path != NULL) {
-        snprintf(meta.training_trace_root, sizeof(meta.training_trace_root), "%s", trace_path);
-    } else {
-        strcpy(meta.training_trace_root, "generated_in_memory");
+    nn_checkpoint_meta_init(&meta, 3u);
+    if (!nn_checkpoint_meta_set_parent_model_hash(&meta, "none") ||
+        !nn_checkpoint_meta_set_benchmark_report_hash(&meta, "pending") ||
+        !nn_checkpoint_meta_set_training_trace_root(
+            &meta,
+            trace_path != NULL ? trace_path : "generated_in_memory") ||
+        !nn_checkpoint_meta_set_notes(
+            &meta,
+            "Signal mining/tow/smelt/supply grammar scorer trained from replay-certified utility") ||
+        !nn_checkpoint_meta_set_feature_set(&meta, "signal-mining-grammar-v1")) {
+        return 0;
     }
-    strcpy(meta.notes, "Signal mining/tow/smelt/supply grammar scorer trained from replay-certified utility");
-    strcpy(meta.feature_set, "signal-mining-grammar-v1");
     return nn_save_checkpoint(net, path, &meta) && nn_hash_checkpoint_hex(path, out_hash);
 }
 

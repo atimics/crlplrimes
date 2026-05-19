@@ -1308,30 +1308,6 @@ static void usage(const char *argv0)
             argv0);
 }
 
-static int parse_size(const char *text, size_t *out)
-{
-    char *end = NULL;
-    errno = 0;
-    unsigned long value = strtoul(text, &end, 10);
-    if (errno != 0 || end == text || *end != '\0') {
-        return 0;
-    }
-    *out = (size_t)value;
-    return 1;
-}
-
-static int parse_double_arg(const char *text, double *out)
-{
-    char *end = NULL;
-    errno = 0;
-    double value = strtod(text, &end);
-    if (errno != 0 || end == text || *end != '\0') {
-        return 0;
-    }
-    *out = value;
-    return 1;
-}
-
 static int parse_config(int argc, char **argv, HWConfig *config)
 {
     config->corpus_path = "data/haiku_tiny.txt";
@@ -1359,48 +1335,48 @@ static int parse_config(int argc, char **argv, HWConfig *config)
         } else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) {
             config->save_path = argv[++i];
         } else if (strcmp(argv[i], "--epochs") == 0 && i + 1 < argc) {
-            if (!parse_size(argv[++i], &config->epochs)) {
+            if (!nn_parse_size_nonnegative_text(argv[++i], &config->epochs)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--max-updates") == 0 && i + 1 < argc) {
-            if (!parse_size(argv[++i], &config->max_updates)) {
+            if (!nn_parse_size_nonnegative_text(argv[++i], &config->max_updates)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--samples") == 0 && i + 1 < argc) {
-            if (!parse_size(argv[++i], &config->samples)) {
+            if (!nn_parse_size_nonnegative_text(argv[++i], &config->samples)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--top-k") == 0 && i + 1 < argc) {
-            if (!parse_size(argv[++i], &config->top_k)) {
+            if (!nn_parse_size_nonnegative_text(argv[++i], &config->top_k)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--max-candidates") == 0 && i + 1 < argc) {
-            if (!parse_size(argv[++i], &config->max_candidates)) {
+            if (!nn_parse_size_nonnegative_text(argv[++i], &config->max_candidates)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--lr") == 0 && i + 1 < argc) {
-            if (!parse_double_arg(argv[++i], &config->learning_rate)) {
+            if (!nn_parse_double_text(argv[++i], &config->learning_rate)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--temperature") == 0 && i + 1 < argc) {
-            if (!parse_double_arg(argv[++i], &config->temperature)) {
+            if (!nn_parse_double_text(argv[++i], &config->temperature)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--sample") == 0 && i + 1 < argc) {
             size_t value = 0;
-            if (!parse_size(argv[++i], &value)) {
+            if (!nn_parse_size_nonnegative_text(argv[++i], &value)) {
                 return 0;
             }
             config->sample = value != 0;
         } else if (strcmp(argv[i], "--strict-adjacency") == 0 && i + 1 < argc) {
             size_t value = 0;
-            if (!parse_size(argv[++i], &value)) {
+            if (!nn_parse_size_nonnegative_text(argv[++i], &value)) {
                 return 0;
             }
             config->strict_adjacency = value != 0;
         } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
             size_t value = 0;
-            if (!parse_size(argv[++i], &value)) {
+            if (!nn_parse_size_nonnegative_text(argv[++i], &value)) {
                 return 0;
             }
             config->seed = (unsigned int)value;
@@ -1606,11 +1582,13 @@ int main(int argc, char **argv)
     char model_hash[65] = "unsaved";
     if (config.save_path != NULL) {
         NNCheckpointMeta meta;
-        memset(&meta, 0, sizeof(meta));
-        meta.checkpoint_version = 1u;
-        meta.feature_encoder_version = HW_FEATURE_ENCODER_VERSION;
-        snprintf(meta.notes, sizeof(meta.notes), "haiku_word_lm word scorer");
-        snprintf(meta.feature_set, sizeof(meta.feature_set), "haiku_word_v1");
+        nn_checkpoint_meta_init(&meta, HW_FEATURE_ENCODER_VERSION);
+        if (!nn_checkpoint_meta_set_notes(&meta, "haiku_word_lm word scorer") ||
+            !nn_checkpoint_meta_set_feature_set(&meta, "haiku_word_v1")) {
+            fprintf(stderr, "checkpoint metadata is too long\n");
+            nn_free(net);
+            return EXIT_FAILURE;
+        }
         if (!nn_save_checkpoint(net, config.save_path, &meta) ||
             !nn_hash_checkpoint_hex(config.save_path, model_hash)) {
             fprintf(stderr, "failed to save checkpoint: %s\n", config.save_path);

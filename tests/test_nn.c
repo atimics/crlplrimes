@@ -1,23 +1,12 @@
 #include "nn.h"
+#include "nn_json.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunused-function"
-#elif defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-#endif
-#include "../src/nn_tasks_prime_gap.c"
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#elif defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
+#include "../src/prime_gap/internal.h"
 
 #if NN_REAL_IS_FLOAT
 #define TEST_EPS ((nn_real)1e-2)
@@ -84,8 +73,14 @@ static int test_experiment_schema_json_contract(void)
         .observable_features = "state plus action one-hot",
         .leakage_policy = NN_LEAKAGE_FORBIDDEN,
         .neural_scorer = "shared action scorer",
+        .grounding_authority = NN_GROUNDING_EXACT_CHECK,
+        .grounding_operator = "unit-test exact oracle",
         .exact_verifier = "exact checker",
         .verifier_feedback = "target and cost",
+        .candidate_grammar = "two finite actions",
+        .outcome_row_schema = NN_TRACE_SCHEMA,
+        .claim_scope = "unit-test schema contract only",
+        .known_non_claims = "no paper claim",
         .rule_grammar = "toy predicates",
         .certificate_checker = "exhaustive finite check",
         .gate_executor = "predicate gate",
@@ -121,8 +116,69 @@ static int test_experiment_schema_json_contract(void)
     return strstr(buffer, "\"schema\":\"crlp.experiment_schema.v1\"") != NULL &&
            strstr(buffer, "\"task\":\"toy_task\"") != NULL &&
            strstr(buffer, "\"leakage_policy\":\"forbidden\"") != NULL &&
+           strstr(buffer, "\"grounding_authority\":\"exact_check\"") != NULL &&
+           strstr(buffer, "\"claim_scope\":\"unit-test schema contract only\"") != NULL &&
            strstr(buffer, "\"feature_schema\"") != NULL &&
            strstr(buffer, "\"provenance\":\"structural_prior\"") != NULL;
+}
+
+static int test_json_cursor_contract(void)
+{
+    const char *json = "{\"a\":[1,{\"b\":\"x\\n\"}],\"n\":42}";
+    NNJsonCursor parser = {json, json + strlen(json)};
+    char key[8];
+    unsigned long value = 0;
+
+    int ok = nn_json_expect(&parser, '{') &&
+             nn_json_parse_string(&parser, key, sizeof(key)) &&
+             strcmp(key, "a") == 0 && nn_json_expect(&parser, ':') &&
+             nn_json_skip_value(&parser) && nn_json_expect(&parser, ',') &&
+             nn_json_parse_string(&parser, key, sizeof(key)) &&
+             strcmp(key, "n") == 0 && nn_json_expect(&parser, ':') &&
+             nn_json_parse_uint(&parser, &value) && value == 42ul &&
+             nn_json_expect(&parser, '}');
+    return ok && parser.cursor == parser.end;
+}
+
+static int test_text_helpers_contract(void)
+{
+    size_t size_value = 0;
+    uint64_t u64_value = 0;
+    int64_t i64_value = 0;
+    double double_value = 0.0;
+    nn_real real_value = (nn_real)0;
+    char buffer[128];
+
+    FILE *fp = tmpfile();
+    if (fp == NULL) {
+        return 0;
+    }
+
+    int ok = nn_parse_size_text("12", &size_value) && size_value == 12u &&
+             !nn_parse_size_text("0", &size_value) &&
+             !nn_parse_size_text("+12", &size_value) &&
+             !nn_parse_size_text("12x", &size_value) &&
+             nn_parse_size_nonnegative_text("0", &size_value) &&
+             size_value == 0u &&
+             !nn_parse_size_nonnegative_text("-1", &size_value) &&
+             nn_parse_u64_text("0", &u64_value) && u64_value == 0u &&
+             !nn_parse_u64_text("-1", &u64_value) &&
+             nn_parse_i64_text("-7", &i64_value) && i64_value == -7 &&
+             nn_parse_double_text("1.5", &double_value) &&
+             double_value > 1.49 && double_value < 1.51 &&
+             nn_parse_real_positive_text("0.25", &real_value) &&
+             nearly_equal(real_value, (nn_real)0.25, TEST_ABS_TOL, TEST_REL_TOL) &&
+             !nn_parse_real_positive_text("0", &real_value) &&
+             nn_parse_real_nonnegative_text("0", &real_value) &&
+             real_value == (nn_real)0 &&
+             !nn_parse_real_nonnegative_text("-0.01", &real_value) &&
+             nn_write_json_string(fp, "a\"b\\c\n");
+    ok = ok && fflush(fp) == 0 && fseek(fp, 0, SEEK_SET) == 0 &&
+         fgets(buffer, sizeof(buffer), fp) != NULL &&
+         strcmp(buffer, "\"a\\\"b\\\\c\\n\"") == 0;
+
+    fclose(fp);
+    return ok;
 }
 
 static int test_role_tagged_scorer_envelope_contract(void)
@@ -1961,14 +2017,17 @@ static int test_checkpoint_roundtrip_hash_and_invalid_files(void)
         return 0;
     }
 
-    memset(&meta, 0, sizeof(meta));
-    meta.checkpoint_version = 1;
-    meta.feature_encoder_version = 7;
-    strcpy(meta.parent_model_hash, "unknown");
-    strcpy(meta.training_trace_root, "trace-root");
-    strcpy(meta.benchmark_report_hash, "bench-root");
-    strcpy(meta.notes, "fixture checkpoint");
-    strcpy(meta.feature_set, "fixture-features");
+    nn_checkpoint_meta_init(&meta, 7);
+    ok = ok && meta.checkpoint_version == 1 && meta.feature_encoder_version == 7;
+    ok = ok && nn_checkpoint_meta_set_parent_model_hash(&meta, "unknown");
+    ok = ok && nn_checkpoint_meta_set_training_trace_root(&meta, "trace-root");
+    ok = ok && nn_checkpoint_meta_set_benchmark_report_hash(&meta, "bench-root");
+    ok = ok && nn_checkpoint_meta_set_notes(&meta, "fixture checkpoint");
+    ok = ok && nn_checkpoint_meta_set_feature_set(&meta, "fixture-features");
+    ok = ok && !nn_checkpoint_meta_set_feature_set(
+                   &meta,
+                   "fixture-feature-set-name-that-is-too-long-for-the-fixed-field");
+    ok = ok && nn_checkpoint_meta_set_feature_set(&meta, "fixture-features");
 
     nn_forward(net, input, before);
     ok = ok && nn_save_checkpoint(net, path_a, &meta);
@@ -1996,7 +2055,7 @@ static int test_checkpoint_roundtrip_hash_and_invalid_files(void)
     ok = ok && nn_hash_checkpoint_hex(path_c, hash_c);
     ok = ok && !hashes_equal(hash_a, hash_c);
 
-    strcpy(meta.notes, "metadata changed");
+    ok = ok && nn_checkpoint_meta_set_notes(&meta, "metadata changed");
     ok = ok && nn_save_checkpoint(net, path_b, &meta);
     ok = ok && nn_hash_checkpoint_hex(path_b, hash_d);
     ok = ok && !hashes_equal(hash_c, hash_d);
@@ -3393,6 +3452,10 @@ int main(void)
           "trace writer emits parseable jsonl");
     check(test_experiment_schema_json_contract(),
           "experiment schema emits parseable task contract");
+    check(test_json_cursor_contract(),
+          "json cursor parses strings, values, and unsigned integers");
+    check(test_text_helpers_contract(),
+          "text helpers parse numbers and escape JSON strings");
     check(test_symbolic_domain_rule_certificate_contract(),
           "symbolic domain certifies and applies generic rules");
     check(test_symbolic_domain_rejects_leaky_feature_schema(),

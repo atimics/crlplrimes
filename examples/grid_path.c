@@ -160,8 +160,15 @@ static const NNExperimentSpec GRID_PATH_EXPERIMENT_SPEC = {
         "start/goal coordinates, candidate displacement, obstacle map, action one-hot, and Manhattan structural priors",
     .leakage_policy = NN_LEAKAGE_PRIORS_ALLOWED,
     .neural_scorer = "shared MLP scores one grid/action row and softmax ranks surviving moves",
+    .grounding_authority = NN_GROUNDING_EXACT_CHECK,
+    .grounding_operator = "BFS shortest-path oracle over the generated obstacle grid",
     .exact_verifier = "BFS identifies shortest-path successors and verifier node cost",
     .verifier_feedback = "target move, correctness, utility, candidate count, BFS nodes, calibration bins",
+    .candidate_grammar = "four compass moves with legality and dominance gates",
+    .outcome_row_schema = "crlp.trace.v1 and crlp.rule_search.summary.v1 rows keyed by stable move ids",
+    .claim_scope = "shortest-path action ranking and certified move-pruning on generated 7x7 grids",
+    .known_non_claims =
+        "does not claim optimal planning beyond the generated finite grid family or undisclosed obstacle models",
     .rule_grammar =
         "legality, dead-end, component-trap, clear-path admissible-bound, and shortest-distance dominance predicates over grid actions",
     .certificate_checker =
@@ -305,40 +312,6 @@ static uint32_t gp_rng_next(uint32_t *state)
 static double gp_rng_unit(uint32_t *state)
 {
     return (double)gp_rng_next(state) / (double)UINT32_MAX;
-}
-
-static int parse_size_text(const char *text, size_t *out_value)
-{
-    if (text == NULL || text[0] == '\0' || text[0] == '-' || text[0] == '+') {
-        return 0;
-    }
-
-    errno = 0;
-    char *end = NULL;
-    unsigned long value = strtoul(text, &end, 10);
-    if (end == text || *end != '\0' || errno == ERANGE || value == 0) {
-        return 0;
-    }
-
-    *out_value = (size_t)value;
-    return 1;
-}
-
-static int parse_u64_text(const char *text, uint64_t *out_value)
-{
-    if (text == NULL || text[0] == '\0' || text[0] == '-' || text[0] == '+') {
-        return 0;
-    }
-
-    errno = 0;
-    char *end = NULL;
-    unsigned long long value = strtoull(text, &end, 10);
-    if (end == text || *end != '\0' || errno == ERANGE) {
-        return 0;
-    }
-
-    *out_value = (uint64_t)value;
-    return 1;
 }
 
 static int cell_index(int x, int y)
@@ -2176,19 +2149,15 @@ static int save_grid_checkpoint(NeuralNet *net,
 {
     const GridFeatureSet *selected_feature_set = grid_feature_set_or_default(feature_set);
     NNCheckpointMeta meta;
-    memset(&meta, 0, sizeof(meta));
-    meta.checkpoint_version = 1;
-    meta.feature_encoder_version = GP_FEATURE_ENCODER_VERSION;
-    snprintf(meta.parent_model_hash,
-             sizeof(meta.parent_model_hash),
-             "%s",
-             parent_hash == NULL ? "unknown" : parent_hash);
-    snprintf(meta.training_trace_root, sizeof(meta.training_trace_root), "grid_path");
-    snprintf(meta.notes,
-             sizeof(meta.notes),
-             "%s",
-             notes == NULL ? "grid_path action scorer" : notes);
-    snprintf(meta.feature_set, sizeof(meta.feature_set), "%s", selected_feature_set->name);
+    nn_checkpoint_meta_init(&meta, GP_FEATURE_ENCODER_VERSION);
+    if (!nn_checkpoint_meta_set_parent_model_hash(&meta,
+                                                  parent_hash == NULL ? "unknown" : parent_hash) ||
+        !nn_checkpoint_meta_set_training_trace_root(&meta, "grid_path") ||
+        !nn_checkpoint_meta_set_notes(&meta,
+                                      notes == NULL ? "grid_path action scorer" : notes) ||
+        !nn_checkpoint_meta_set_feature_set(&meta, selected_feature_set->name)) {
+        return 0;
+    }
     return nn_save_checkpoint(net, path, &meta) && nn_hash_checkpoint_hex(path, out_hash);
 }
 
@@ -3064,7 +3033,7 @@ int main(int argc, char **argv)
             if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
                 out_path = argv[++i];
             } else if (strcmp(argv[i], "--epochs") == 0 && i + 1 < argc) {
-                if (!parse_size_text(argv[++i], &epochs)) {
+                if (!nn_parse_size_text(argv[++i], &epochs)) {
                     print_usage(stderr);
                     return EXIT_FAILURE;
                 }
@@ -3095,7 +3064,7 @@ int main(int argc, char **argv)
         size_t random_trials = 5;
         for (int i = 2; i < argc; ++i) {
             if (strcmp(argv[i], "--max-rules") == 0 && i + 1 < argc) {
-                if (!parse_size_text(argv[++i], &rule_config.max_rules) ||
+                if (!nn_parse_size_text(argv[++i], &rule_config.max_rules) ||
                     rule_config.max_rules == 0 ||
                     rule_config.max_rules > GP_RULE_COUNT) {
                     print_usage(stderr);
@@ -3108,7 +3077,7 @@ int main(int argc, char **argv)
                     return EXIT_FAILURE;
                 }
             } else if (strcmp(argv[i], "--proposer-seed") == 0 && i + 1 < argc) {
-                if (!parse_u64_text(argv[++i], &rule_config.proposer_seed)) {
+                if (!nn_parse_u64_text(argv[++i], &rule_config.proposer_seed)) {
                     print_usage(stderr);
                     return EXIT_FAILURE;
                 }
@@ -3124,7 +3093,7 @@ int main(int argc, char **argv)
             } else if (strcmp(argv[i], "--budget-sweep") == 0) {
                 budget_sweep = 1;
             } else if (strcmp(argv[i], "--random-trials") == 0 && i + 1 < argc) {
-                if (!parse_size_text(argv[++i], &random_trials) || random_trials == 0) {
+                if (!nn_parse_size_text(argv[++i], &random_trials) || random_trials == 0) {
                     print_usage(stderr);
                     return EXIT_FAILURE;
                 }
@@ -3203,12 +3172,12 @@ int main(int argc, char **argv)
             trace_seed_start = GP_TRAIN_SEED_START;
             trace_samples = GP_TRAIN_SAMPLES;
         } else if (strcmp(argv[i], "--trace-seed") == 0 && i + 1 < argc) {
-            if (!parse_u64_text(argv[++i], &trace_seed_start)) {
+            if (!nn_parse_u64_text(argv[++i], &trace_seed_start)) {
                 print_usage(stderr);
                 return EXIT_FAILURE;
             }
         } else if (strcmp(argv[i], "--trace-samples") == 0 && i + 1 < argc) {
-            if (!parse_size_text(argv[++i], &trace_samples)) {
+            if (!nn_parse_size_text(argv[++i], &trace_samples)) {
                 print_usage(stderr);
                 return EXIT_FAILURE;
             }

@@ -4,7 +4,7 @@
 #import "generated/experiment_matrix.typ": experiment_matrix_rows
 
 #set document(
-  title: "Executable Accountability for Verifier-Grounded Residual Ranking",
+  title: "Verified Search with Neural Ranking and Executable Claims",
   author: "Anonymous authors",
 )
 
@@ -86,13 +86,13 @@
 
 #align(center)[
   #text(size: 17pt, weight: "bold")[
-    Executable Accountability for \
-    Verifier-Grounded Residual Ranking
+    Verified Search with Neural Ranking \
+    and Executable Claims
   ]
 
   #v(4pt)
   #text(size: 11pt)[
-    Certificate-gated neural proposers under claim governance
+    Rules decide what is allowed; neural models rank what remains
   ]
 
   #v(8pt)
@@ -108,18 +108,21 @@
     #set par(justify: true)
     #set text(size: 10pt)
     *Abstract.*
-    This paper studies executable accountability for verifier-grounded residual ranking.
-    Exact or replayable checks own admissibility and consequences; small learned models rank,
-    calibrate, reuse, or learn around the residual. The contribution is not that tiny
-    networks solve hard tasks, but that verifier and replay artifacts become proposal
-    structure while the manuscript is constrained by generated evidence. The clean
-    anchor is `prime_gap`, where the generated claim row reports
-    #claim_C1_prime_gate_delta_summary The main feedback results are
-    rejected-candidate reason learning and certified hypothesis-library promotion. Boundary
-    rows for ARC, Signal, tiny-net capacity, and language-adjacent haiku probes test scope
-    without expanding the central claim. The paper explicitly does not claim broad ARC
-    competence, CDCL-equivalent learned clauses, comparative live neural-control
-    improvement, semantic language understanding, or general end-to-end task solving.
+    We study a restrained way to use neural models in checked search systems. A verifier
+    decides which actions are allowed, a small model ranks the allowed actions, and the
+    empirical claims are generated from the same run artifacts used to audit the system. The
+    contribution is not that tiny networks solve hard tasks. It is that checked failures and
+    checked successes become reusable training and proposal structure without giving the
+    model authority over correctness. The clean anchor is arithmetic sequence filtering: in
+    the audited next-prime instance (`prime_gap` in traces), the generated claim row reports
+    #claim_C1_prime_gate_delta_summary The same family also admits recurrence filters such
+    as Fibonacci/Lucas gates via period residues, but those remain smoke-level boundary
+    evidence here. The main feedback results are rejected-candidate reason learning and
+    certified hypothesis-library promotion. Boundary rows for ARC, Signal, tiny-net
+    capacity, and haiku test where this protocol holds and where it weakens. The scope of
+    this evidence explicitly excludes broad ARC competence, CDCL-equivalent learned clauses,
+    comparative live neural-control improvement, semantic language understanding, and
+    general end-to-end task solving.
   ]
 ]
 
@@ -127,45 +130,43 @@
 
 = Introduction
 
-Machine-learning systems increasingly operate in settings where bad actions can be checked
-after the fact, but correctness should not be delegated to end-to-end model authority.
-Verifier-grounded systems should separate authority from ranking. Exact checkers,
-deterministic replay, and certificate tests should decide which candidates are admissible or
-what consequences a candidate produced. Learned components should spend their limited
-capacity on the residual: search order, calibration, reuse, and prioritization. The same
-discipline should govern the paper. Empirical prose should be downstream of trace rows,
-environment identity, checkpoint hashes, result summaries, and generated limitation
-candidates rather than manually maintained claims.
+Many tasks have a simple asymmetry: it is hard to know the best action in advance, but easy
+to check whether a proposed action is allowed. In those settings, the learned model should
+not own the final answer. A rule, verifier, certificate, or replay system should decide what
+is valid. The model should only decide which valid candidate to try first.
 
-This paper is therefore a protocol paper, not an experiment catalog. The one-sentence thesis
-is:
+The same discipline should govern the claims. Reported numbers should come from trace rows,
+environment identity, checkpoint hashes, result summaries, and generated limitation
+candidates rather than from hand-maintained prose.
+
+The thesis is:
 
 #quote[
-  Verifier-grounded systems should let exact or replayable checks own admissibility, use
-  small learned models only to rank the residual, and bind empirical claims to executable
-  artifact evidence.
+  Let exact or replayable checks decide what is allowed. Let small learned models order the
+  allowed choices. Let repository artifacts decide which empirical claims are admissible.
 ]
 
-The operational summary is simple: the model proposes, the verifier decides, and the trace
-remembers enough to train the next proposal pass and govern the next manuscript claim.
+The operational summary is simple: the model proposes, the checker decides, and the trace
+remembers enough to train the next proposal pass and constrain the next empirical claim.
 
 Two empirical loops carry the result. First, rejected verifier rows are logged with reason
 codes and reused as supervision for a later safety-first residual ranker. Second, repeatedly
 certified hypotheses are promoted into a library and reused as proposal priors under held-out
-budgets. The prime-gap gate result supplies the clean anchor; the fixed-budget proposer
-failure supplies the falsifying negative row that motivates the feedback loop.
+budgets. The arithmetic sequence-filter result supplies the clean anchor; the fixed-budget
+proposer failure supplies the falsifying negative row that motivates the feedback loop.
 
-The remaining domains are boundary evidence. ARC tests grammar provenance and failure
+The remaining domains are boundary evidence. ARC tests grammar coverage and failure
 taxonomy, not benchmark competence. Signal tests replay and guarded live execution pressure,
 not comparative live-control performance. Tiny-net and adapter rows bound architecture
-claims. Haiku is language-adjacent corpus-proxy grounding, not semantic understanding. New
-domains stay outside the paper body until promoted through the evidence matrix.
+claims. Haiku is a language-adjacent corpus check, not semantic understanding. New domains
+stay outside the claim set until promoted through the evidence matrix.
 
-The environment names are deliberately small. `prime_gap` tests exact arithmetic
-verification; `grid_path` tests topological path constraints; delayed-claim tests hidden
-outcome and safety-margin gates; ARC tests visual-spatial abstraction provenance; Signal
-tests bounded WASD control under replay and live telemetry; haiku tests corpus-derived proxy
-grounding.
+The environment names are deliberately small. The audited `prime_gap` trace is the
+next-prime instance of a broader modular-filter family; smoke rows already include
+Fibonacci/Lucas recurrence filters via period residues. `grid_path` tests topological path
+constraints; delayed-claim tests hidden outcome and safety-margin gates; ARC tests
+visual-spatial abstraction provenance; Signal tests bounded WASD control under replay and
+live telemetry; haiku tests corpus-derived proxy grounding.
 
 At this artifact snapshot, the generated claim compiler reports
 #paper_claim_status_counts.supported supported claims,
@@ -183,8 +184,8 @@ The formal-methods ancestry is counterexample-guided search. Sketching combines 
 synthesis with validation-generated counterexamples @solarlezama2008sketching, and SyGuS
 names the grammar-plus-specification setting @alur2013sygus. CEGAR and CDCL add the adjacent
 lesson that failed traces can refine later search rather than disappear as waste
-@clarke2000cegar @marquessilva1999grasp @bayardo1997csp. This paper inherits that shape but
-uses failures as supervised ranking data, not as sound learned clauses.
+@clarke2000cegar @marquessilva1999grasp @bayardo1997csp. This protocol inherits that shape
+but uses failures as supervised ranking data, not as sound learned clauses.
 
 Modern verifier-bounded learning asks models to solve or help verify reasoning traces
 @cobbe2021training @lightman2023verify @uesato2022solving @hosseini2024vstar
@@ -196,32 +197,34 @@ smaller and narrower: the learned model never owns correctness.
 The accountability lineage is equally important. Model Cards, Datasheets, reproducibility
 checklists, and reinforcement-learning reproducibility critiques made documentation and
 artifact discipline central research objects @mitchell2019modelcards @gebru2021datasheets
-@pineau2021reproducibility @henderson2018deep. The claim compiler is an executable version
-of that idea: claims, numbers, limitations, and support status are generated from repository
-artifacts before the paper compiles.
+@pineau2021reproducibility @henderson2018deep. Here, that idea becomes a build rule:
+numbers, limitations, and support status are generated from repository artifacts before
+claim compilation.
 
 = Protocol
 
-Every promoted row has the same contract:
+The protocol has three jobs. First, list the candidates. Second, use a checker or replay to
+decide what each candidate is allowed to mean. Third, let a small model rank only the
+remaining choices. Every promoted row records those jobs in the same contract:
 
 ```text
 Task T = {
   state distribution S_T,
   candidate enumerator A_T(s),
   observable features x_T(s, a),
-  residual scorer f_theta(x_T),
-  grounding operator O_T(s, a),
-  grounding authority level,
+  candidate ranker f_theta(x_T),
+  checking or replay operator O_T(s, a),
+  checker authority level,
   grammar G_T,
   certificate or replay checker C_T,
   trace / replay / claim protocol
 }
 ```
 
-The invariant is:
+The protocol's invariant is simple:
 
 ```text
-The model proposes. The grounding operator decides. The trace remembers.
+The model proposes. The checker decides. The trace remembers.
 ```
 
 #figure(
@@ -229,7 +232,7 @@ The model proposes. The grounding operator decides. The trace remembers.
     columns: (1.0fr, 2.1fr, 2.2fr),
     align: left,
     inset: 4pt,
-    table.header[*Stage*][*Concrete prime-gap object*][*Artifact that survives*],
+    table.header[*Stage*][*Concrete arithmetic-filter object*][*Artifact that survives*],
     [Candidate],
       [The proposer emits a modular gate candidate such as "reject candidate `n` when
         `n > 3` and `n % 3 == 0`" for next-prime search states.],
@@ -239,24 +242,24 @@ The model proposes. The grounding operator decides. The trace remembers.
         outcome under the declared support.],
       [A false-rejection certificate; accepted only when false rejections are zero.],
     [Residual rank],
-      [Certified composite candidates are removed, and the scorer ranks the remaining
-        action ids by residual score.],
+      [Certified composite candidates are removed, and the model ranks the remaining
+        action ids.],
       [Top-k metrics, stable action ids, ranking policy, and score margins.],
     [Trace emit],
       [The run writes comparison, rule-search, and certificate-trace rows.],
       [`crlp.compare.v1`, `crlp.rule_search.summary.v1`, environment and model hashes.],
     [Claim consume],
-      [The claim compiler derives the paper macro from the artifact summary.],
+      [The claim compiler derives the registered summary from the artifact.],
       [`claim_C1_prime_gate_delta_summary` and generated support/limitation status.],
   ),
-  caption: [Concrete prime-gap trace. The paper number is downstream of candidate
-    generation, verifier certification, residual ranking, trace emission, and generated
-    claim consumption.],
+  caption: [Concrete arithmetic-filter trace. The headline number is downstream of candidate
+    generation, verifier certification, model ranking, trace emission, and generated claim
+    consumption.],
 ) <tab:prime-trace-walkthrough>
 
-An exact verifier is the strongest grounding operator, but the protocol also admits
-deterministic replay and explicitly weaker corpus proxies. Authority level determines claim
-scope.
+Not every domain gives the system the same kind of checker. Exact verification is strongest.
+Replay is weaker but still auditable. Corpus tests are weaker again: they can show fit to a
+dataset, not truth. Claim scope changes with that authority level.
 
 #figure(
   table(
@@ -281,34 +284,41 @@ scope.
       [editorial-agent pull requests],
       [review-gated assistance, not autonomous empirical authority],
   ),
-  caption: [Grounding authority levels. The same residual scorer has different evidentiary
-    force depending on which operator produced the outcome row.],
+  caption: [Checker authority levels. The same model ranking has different evidentiary force
+    depending on which operator produced the outcome row.],
 ) <tab:grounding-authority>
 
-The task-independent rules are concise. Candidate enumeration is complete before gating.
-Features declare provenance, and grounding-derived quantities are labels, rewards,
-diagnostics, or gates unless the schema explicitly permits them as inputs. Rules enter the
-gate only through the task grammar and certificate or replay checker. JSONL traces use stable
-candidate ids, ranking policy, score-margin metadata, environment identity, and replay
-semantic hashes so reordered candidates or float ties cannot silently change the paper's
-meaning.
+The task-independent rules are short. Enumerate candidates before checking them. Say where
+features came from. Treat checker-derived quantities as labels, rewards, diagnostics, or
+gates unless a schema explicitly allows them as model inputs. Let rules enter the gate only
+through the task grammar and certificate or replay checker. JSONL traces carry stable
+candidate ids, ranking policy, score margins, environment identity, and semantic hashes so
+reordered candidates or float ties cannot silently change registered claim meaning.
 
 = Evidence Matrix
 
-The matrix is the scope boundary. A row may be interpreted in the prose only if its data,
-candidate grammar, grounding operator, scorer role, trace artifact, result, claim, and
-limitation are registered. The paper may tighten wording without adding experiment families;
-new families require revising this matrix first.
+The matrix is the scope boundary. Every row answers the same questions: what produced
+the candidates, what checked them, what did the model rank, what artifact proves the result,
+and what claim is allowed? A row may support a claim only if those pieces and its limitation
+are registered. New experiment families require revising this matrix first.
 
 #figure(
   text(size: 7pt)[
     #table(
-      columns: (0.9fr, 2.25fr, 1.65fr, 2.45fr),
+      columns: (1.4fr, 2.05fr, 1.5fr, 2.3fr),
       align: left,
       inset: 4pt,
       table.header[*Family*][*Grounding*][*Learned Role*][*Claim / Boundary*],
       ..experiment_matrix_rows.map(r => (
-        [#strong[#r.domain_display]],
+        [
+          #strong[
+            #if r.domain == "prime_gap" {
+              [arithmetic #linebreak() sequence #linebreak() filtering]
+            } else {
+              [#r.domain_display]
+            }
+          ]
+        ],
         [
           #strong[Grounding:] #r.verifier; #r.certificate_gate
         ],
@@ -321,18 +331,25 @@ new families require revising this matrix first.
       )).flatten()
     )
   ],
-  caption: [Frozen evidence matrix. Rows use a four-column protocol view to avoid treating
-    the paper as a leaderboard or a catalog.],
+  caption: [Frozen evidence matrix. Each row states the checker, learned role, supported
+    claim, and boundary condition.],
 ) <tab:frozen-evidence>
 
-= Prime-Gap Anchor
+= Anchor: Arithmetic Sequence Filtering
 
-The prime-gap row is the cleanest evidence because the verifier is exact and the gate has a
-clear safety property. Candidate actions are possible prime gaps after a segmented-sieve
-window. Candidate gates are modular rejection predicates. A gate is accepted only if its
-certificate has zero false rejections over the declared support; the scorer then ranks the
-residual candidates. The `hand wheel` baseline is a deterministic hand-coded
-wheel-factorization filter over small modular divisibility rules.
+The cleanest test case involves arithmetic sequence filtering. The model suggests
+mathematical rules that filter out candidates known not to belong to a target sequence.
+While the family extends to sequences such as Fibonacci and Lucas numbers through
+Pisano-period residue gates, the strictly audited anchor here is a next-prime filter. A rule
+is only accepted if an exact mathematical checker confirms that it never deletes the true
+next-prime answer inside the declared support. The machine-readable trace id remains
+`prime_gap`.
+
+In formal terms, candidate actions are possible next-prime gaps after a segmented-sieve
+window. Candidate filters are modular rejection predicates. A filter is accepted only if its
+certificate has zero false rejections; the scorer then ranks the remaining candidates. The
+`hand wheel` baseline is a deterministic hand-coded wheel-factorization filter over small
+modular divisibility rules.
 
 #figure(
   table(
@@ -346,35 +363,37 @@ wheel-factorization filter over small modular divisibility rules.
       [#strong[#pct(claim_C1_prime_gate_delta_learned_top10)]],
       [#strong[#claim_C1_prime_gate_delta_false_rejections]],
   ),
-  caption: [Prime-gap certified modular gate on the canonical sample of
-    #claim_C1_prime_gate_delta_sample_count rows. #claim_C1_prime_gate_delta_summary
+  caption: [Arithmetic sequence filtering on the canonical next-prime sample of
+    #claim_C1_prime_gate_delta_sample_count rows: #claim_C1_prime_gate_delta_summary
     Learned-vs-hand top-1 delta: #pp(claim_C1_prime_gate_delta_learned_vs_hand_delta_pp).],
 ) <tab:prime-anchor>
 
-The seed audit closes the headline-stability gap for this anchor:
+The seed audit checks that the headline does not depend on one lucky training run:
 #claim_C1_prime_gate_delta_ci_summary
 The zero spread is a seed-stability audit over this deterministic benchmark: seeds vary
 checkpoints and proposer runs, not the declared prime-range evaluation distribution.
 
-This result is intentionally narrow. It supports the protocol claim that certified structure
-can shrink residual search sharply while preserving correctness under the declared support.
-It does not imply that a static neural proposer is better than deterministic symbolic
-ordering. The generated negative row says the opposite:
+This result is intentionally narrow. It shows that verified structure can shrink the search
+space sharply while preserving correctness under the declared support. It does not show that
+a static neural proposer beats deterministic symbolic ordering. The generated negative row
+says the opposite:
 #claim_C2_prime_proposer_fixed_budget_summary That failure is useful because it prevents the
-paper from becoming a generic "neural proposal wins" story.
+claim set from becoming a generic "neural proposal wins" story.
 
 The naive learned proposer fails. That is the point. Unsupported neural proposal is not
 trusted; verifier feedback is recycled until proposal economics improve. In this protocol,
 negative rows are not cleanup work after the fact. They are the training substrate that
-separates residual ranking from admissibility.
+separates model ranking from validity.
 
 = Feedback Loops
 
-The main contribution is what happens after verifier feedback exists.
+The main contribution is what happens after the checker has said yes or no.
 
-*Rejected-candidate learning.* Failed rule proposals are logged with task, split, seed,
-reason family, false-rejection counts, and marginal verifier utility. Those rows become
-targets for a later residual ranker. The supported claim is scoped to prime/modular sweeps:
+*Rejected-candidate learning.* When the verifier rejects a model suggestion, the system logs
+exactly why it failed. Those failures are then recycled as training data, teaching the model
+to rank future guesses better. In formal terms, failed rule proposals are logged with task,
+split, seed, reason family, false-rejection counts, and marginal verifier utility, then used
+as targets for a later ranker. The supported claim is scoped to arithmetic-sequence/modular sweeps:
 #claim_C5_rejected_candidate_reason_learning_summary
 
 #figure(
@@ -387,9 +406,11 @@ targets for a later residual ranker. The supported claim is scoped to prime/modu
     without making the learned model authoritative.],
 ) <fig:claim-reason-learning>
 
-*Certified hypothesis-library feedback.* Repeated zero-false-rejection hypotheses are promoted
-into a reusable library, converted into slot priors, and checked on held-out tasks under the
-same tight budget. The supported claim is:
+*Certified hypothesis-library feedback.* If a generated rule is perfectly safe and verified
+multiple times, it is saved as a reusable building block. The model can then use those saved
+rules as proposal hints on future, unseen tasks. In formal terms, repeated
+zero-false-rejection hypotheses are promoted into a reusable library, converted into slot
+priors, and checked on held-out tasks under the same tight budget. The supported claim is:
 #claim_C5_hypothesis_library_promotion_summary
 
 #figure(
@@ -402,14 +423,14 @@ same tight budget. The supported claim is:
     priors only after passing the promotion gate.],
 ) <fig:claim-hypothesis-library>
 
-Together these rows are the paper's feedback mechanism. Rejections and certifications are not
-post-hoc diagnostics; they are reusable artifacts that change the next proposal pass.
+Together these rows are the protocol's feedback mechanism. Rejections and certifications are not
+after-the-fact diagnostics; they are reusable artifacts that change the next proposal pass.
 
 = Boundary Evidence
 
 Boundary rows keep the thesis honest without becoming separate stories.
 
-*ARC.* ARC is a provenance and grammar-coverage stress surface. The paper reports the current
+*ARC.* ARC is a provenance and grammar-coverage stress surface. The reported result is the current
 measured public-corpus surface, not a headline ARC score:
 #claim_C1_arc_public_evidence_surface_summary Calibration remains conditional:
 #claim_C3_arc_ood_calibration_tradeoff_summary
@@ -424,16 +445,16 @@ measured public-corpus surface, not a headline ARC score:
     taxonomy, not broad ARC competence.],
 ) <fig:claim-arc-public-surface>
 
-*Signal.* Signal is a deterministic-replay pressure test. Offline replay scores bounded WASD
-candidate actions against recorded simulator consequences, and closed-loop replay evaluates
-guarded rollout rows before any live-control language is admitted. The live `neural_active`
-row is narrower: a running local Signal pilot applies checkpoint-ranked WASD proposals only
-through protocol checks and safety gates, and those gates may veto execution instead of
-letting the neural top choice own control. The trace records active source, checkpoint hash,
-latency, protocol compatibility, safety-gate rows, damage/death telemetry, and replay-ready
-frames:
+*Signal.* To test physical control pressure, we use a simulator where bounded movement
+actions have recorded consequences. The model's WASD choices are scored against replayed
+simulation rows before live-control claims are admitted. This is the deterministic-replay
+pressure test. The live `neural_active` row is narrower: a running local
+Signal pilot applies checkpoint-ranked WASD proposals only through protocol checks and
+safety gates, and those gates may veto execution instead of letting the neural top choice own
+control. The trace records active source, checkpoint hash, latency, protocol compatibility,
+safety-gate rows, damage/death telemetry, and replay-ready frames:
 #claim_C9_signal_flight_replay_control_summary
-#claim_C9_signal_live_neural_active_summary The paper still does not claim active neural
+#claim_C9_signal_live_neural_active_summary The supported claim set still does not show that active neural
 control improves utility, regret, damage, or death versus the heuristic baseline.
 
 #figure(
@@ -447,22 +468,25 @@ control improves utility, regret, damage, or death versus the heuristic baseline
     superiority.],
 ) <fig:claim-signal-live-active>
 
-*Architecture and language-adjacent probes.* Shared-scorer, adapter, and tiny-net rows remain
-boundary evidence: #claim_C4_multitask_capacity_tradeoff_summary
-#claim_C4_adapter_heads_shared_trunk_summary Haiku prototypes use corpus-derived vocabulary,
-adjacency, syllable/shape constraints, and real-vs-corrupt discrimination as a
-`corpus_proxy` operator. They test how the architecture behaves when the "verifier" is only
-dataset grounding; they are intentionally not promoted as semantic language understanding.
+*Architecture and language-adjacent probes.* Some rows ask how much the design depends on
+model size or task-specific heads. Those are boundary checks, not architecture claims:
+#claim_C4_multitask_capacity_tradeoff_summary #claim_C4_adapter_heads_shared_trunk_summary
+For haiku, there is no exact checker for meaning. The system can only check whether a line
+uses corpus-derived vocabulary, adjacency, syllable/shape constraints, and real-vs-corrupt
+discrimination. We call that weaker checker `corpus_proxy`; it makes haiku a boundary probe,
+not a semantic language-understanding result.
 
 = Claim Governance
 
-The paper construction layer mirrors the protocol. Result scripts emit canonical summaries,
-the claim compiler converts those summaries into Typst macros and limitation candidates, and
-the PDF consumes those macros rather than hand-maintained numbers. The trace determinism row
-is currently supported: #claim_C8_trace_determinism_audit_summary
-This is not a claim that every sentence is cryptographically enforced. It is the narrower
-claim that registered empirical claims cannot remain supported when their required artifacts
-are missing, stale, contradicted, or underpowered.
+Empirical reporting is wired directly to experiment outputs. Result scripts write canonical
+summaries. The claim compiler turns those summaries into Typst macros and limitation
+candidates. The compilation layer uses those macros rather than hand-maintained numbers. If
+an artifact is missing, stale, contradicted, or underpowered, the manuscript compilation
+layer will reject the registered claim as supported. The trace determinism row is currently
+supported:
+#claim_C8_trace_determinism_audit_summary
+This does not mean every sentence is cryptographically enforced. It means the empirical
+claims registered with the claim compiler must stay attached to live artifacts.
 
 #figure(
   table(
@@ -480,25 +504,26 @@ are missing, stale, contradicted, or underpowered.
       [Must block or remove body claims until artifacts are regenerated.],
   ),
   caption: [Generated claim-gate summary. The detailed support-surface rows remain in
-    `paper/generated/claims.typ`; the body uses the counts and generated claim macros rather
-    than forcing every long row into the PDF.],
+    `paper/generated/claims.typ`; the body uses counts and generated claim macros rather
+    than forcing every long support row into the main text.],
 ) <tab:generated-claim-support>
 
-Editorial agents fit the same governance model. They may improve wording, structure,
-transitions, and clarity through reviewable pull requests. They may not change claim scope,
-numeric results, generated summaries, citations, or experiment interpretation unless they
-open an explicit claim-change PR. This disclosure is operational rather than decorative: AI
-agents are reviewable assistants, while empirical claims are generated from repository
-artifacts and checked before compilation.
+Editorial agents fit the same rule. They may improve wording, structure, transitions, and
+clarity through reviewable pull requests. They may not change claim scope, numeric results,
+generated summaries, citations, or experiment interpretation unless they open an explicit
+claim-change PR. The disclosure is operational: AI agents are assistants, while empirical
+claims come from repository artifacts checked before compilation.
 
 = Limitations
 
 #set enum(numbering: "1.", spacing: 6pt)
 
-+ *Scope is deliberately narrow.* The paper supports verifier-grounded residual ranking and
-  executable claim governance. It does not support broad task solving, broad ARC
-  competence, semantic language understanding, or competitive theorem proving.
-+ *Multi-seed intervals are still uneven.* The clean prime-gate headline now has a generated
++ *Scope is deliberately narrow.* The supported object is a checked search system: rules
+  decide validity, neural models rank what remains, and claims stay tied to artifacts. The
+  formal scope is verifier-grounded residual ranking and executable claim governance. It does
+  not support broad task solving, broad ARC competence, semantic language understanding, or
+  competitive theorem proving.
++ *Multi-seed intervals are still uneven.* The clean next-prime filter headline now has a generated
   seed interval. Some boundary rows still need more explicit confidence intervals before
   they should be treated as stable quantitative laws.
 + *The fixed-budget proposer result is negative.* The generated contradiction is not an
@@ -512,7 +537,7 @@ artifacts and checked before compilation.
   adjacency, shape, and corruption discrimination. It cannot ground truth or semantics.
 + *Executable accountability is partial.* Claim compilation catches unsupported generated
   claims, stale evidence, and limitation candidates. It does not replace human judgment
-  about interpretation, ethics, or whether a domain belongs in the paper.
+  about interpretation, ethics, or whether a domain belongs in the supported claim set.
 
 #set enum(numbering: "1.")
 
@@ -529,23 +554,24 @@ artifacts and checked before compilation.
       [#item.text],
     )).flatten(),
   ),
-  caption: [Generated limitation candidates from the paper-claim compiler. The required
+  caption: [Generated limitation candidates from the claim compiler. The required
     claim support gate is currently #paper_support_status. Optional contradicted claims
     remain visible here instead of blocking PDF compilation.],
 ) <tab:generated-limitations>
 
 = Conclusion
 
-The result is a disciplined loop: enumerate candidates, ground them with an exact check or
-replayable operator, let a small model rank the residual, preserve the trace, and bind the
-paper's claims to generated evidence. Prime-gap shows the clean certified-gate anchor.
-Rejected-candidate learning and hypothesis-library promotion show that verifier artifacts can
-feed back into later proposal structure. ARC, Signal, tiny-net, adapter, and haiku rows mark
-the boundary rather than widening the thesis.
+The result is a disciplined loop. Enumerate candidates. Check which ones are allowed. Let a
+small model rank the allowed choices. Preserve the trace. Bind empirical claims to the
+generated evidence. Arithmetic sequence filtering supplies the clean certified-gate anchor,
+with the next-prime trace as the fully audited instance. Rejected-candidate learning and
+hypothesis-library promotion show that checked failures and checked successes can feed back
+into later proposal structure. ARC, Signal, tiny-net, adapter, and haiku rows mark the
+boundary rather than widening the thesis.
 
 The broader lesson is pragmatic. When correctness, safety, or auditability matter, the model
-should not own the whole decision and the paper should not own the whole narrative. The
-checker or replay system owns admissibility and consequence. The learned component owns
-ranking pressure. The repository trace owns what the manuscript is allowed to say.
+should not own the whole decision and prose should not outrun the evidence. The checker or
+replay system owns validity and consequence. The learned component owns ranking pressure.
+The repository trace owns what empirical reporting is allowed to say.
 
 #bibliography("references.bib")

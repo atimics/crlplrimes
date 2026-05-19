@@ -1039,24 +1039,20 @@ int save_prime_checkpoint_with_meta(NeuralNet *net,
                                     char out_hash[65])
 {
     NNCheckpointMeta meta;
-    memset(&meta, 0, sizeof(meta));
-    meta.checkpoint_version = 1;
-    meta.feature_encoder_version = 1;
-    snprintf(meta.parent_model_hash,
-             sizeof(meta.parent_model_hash),
-             "%s",
-             parent_hash == NULL ? "unknown" : parent_hash);
-    if (rule_hash != NULL && rule_hash[0] != '\0' && strcmp(rule_hash, "unknown") != 0) {
-        snprintf(meta.training_trace_root, sizeof(meta.training_trace_root), "%s", rule_hash);
+    nn_checkpoint_meta_init(&meta, 1u);
+    const char *trace_root =
+        rule_hash != NULL && rule_hash[0] != '\0' && strcmp(rule_hash, "unknown") != 0
+            ? rule_hash
+            : "";
+    if (!nn_checkpoint_meta_set_parent_model_hash(&meta,
+                                                  parent_hash == NULL ? "unknown" : parent_hash) ||
+        !nn_checkpoint_meta_set_training_trace_root(&meta, trace_root) ||
+        !nn_checkpoint_meta_set_notes(&meta,
+                                      notes == NULL ? "prime_gap action scorer" : notes) ||
+        !nn_checkpoint_meta_set_feature_set(&meta,
+                                            feature_set == NULL ? "unknown" : feature_set)) {
+        return 0;
     }
-    snprintf(meta.notes,
-             sizeof(meta.notes),
-             "%s",
-             notes == NULL ? "prime_gap action scorer" : notes);
-    snprintf(meta.feature_set,
-             sizeof(meta.feature_set),
-             "%s",
-             feature_set == NULL ? "unknown" : feature_set);
 
     if (!nn_save_checkpoint(net, path, &meta) || !nn_hash_checkpoint_hex(path, out_hash)) {
         return 0;

@@ -3,21 +3,6 @@
 #include "internal.h"
 
 
-typedef struct {
-    uint32_t p;
-    uint32_t target_action_id;
-    double log_scale;
-} ReplaySample;
-
-typedef struct {
-    ReplaySample *items;
-    size_t count;
-    size_t capacity;
-    char parent_hash[65];
-    char rule_hash[65];
-    char feature_set[32];
-} ReplayTrace;
-
 typedef enum {
     PRIME_RULE_INPUT_NONE = 0,
     PRIME_RULE_INPUT_SYMBOLIC = 1,
@@ -104,13 +89,13 @@ static int append_replay_sample(ReplayTrace *trace, ReplaySample sample)
     return 1;
 }
 
-static void free_replay_trace(ReplayTrace *trace)
+PRIME_GAP_TEST_API void free_replay_trace(ReplayTrace *trace)
 {
     free(trace->items);
     memset(trace, 0, sizeof(*trace));
 }
 
-static int load_replay_trace(const char *path, ReplayTrace *trace)
+PRIME_GAP_TEST_API int load_replay_trace(const char *path, ReplayTrace *trace)
 {
     memset(trace, 0, sizeof(*trace));
     strcpy(trace->parent_hash, "unknown");
@@ -404,16 +389,10 @@ int nn_prime_replay_main(int argc, char **argv)
     }
 
     NNCheckpointMeta meta;
-    memset(&meta, 0, sizeof(meta));
-    meta.checkpoint_version = 1;
-    meta.feature_encoder_version = 1;
-    strcpy(meta.parent_model_hash, trace.parent_hash);
-    snprintf(meta.training_trace_root,
-             sizeof(meta.training_trace_root),
-             "%s",
-             strcmp(rule_hash, "unknown") == 0 ? "jsonl" : rule_hash);
-    snprintf(meta.notes,
-             sizeof(meta.notes),
+    nn_checkpoint_meta_init(&meta, 1u);
+    char notes[256];
+    snprintf(notes,
+             sizeof(notes),
              "%s feature_set=%s",
              replay_rules.kind == PRIME_RULE_INPUT_EXPANDED
                  ? "prime_gap successor trained from expanded-rule trace replay"
@@ -421,7 +400,15 @@ int nn_prime_replay_main(int argc, char **argv)
                        ? "prime_gap successor trained from learned-wheel trace replay"
                        : "prime_gap successor trained from trace replay",
              trace_mask->name);
-    snprintf(meta.feature_set, sizeof(meta.feature_set), "%s", trace_mask->name);
+    if (!nn_checkpoint_meta_set_parent_model_hash(&meta, trace.parent_hash) ||
+        !nn_checkpoint_meta_set_training_trace_root(
+            &meta,
+            strcmp(rule_hash, "unknown") == 0 ? "jsonl" : rule_hash) ||
+        !nn_checkpoint_meta_set_notes(&meta, notes) ||
+        !nn_checkpoint_meta_set_feature_set(&meta, trace_mask->name)) {
+        fprintf(stderr, "checkpoint metadata is too long for fixed metadata fields\n");
+        return EXIT_FAILURE;
+    }
 
     char hash[65];
     int ok = nn_save_checkpoint(net, out_path, &meta) &&
