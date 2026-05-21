@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
+
+from crlp.io import read_jsonl, safe_float, safe_int, write_jsonl
 
 
 SCHEMA = "crlp.arc_neural_discovery.failure_proof.v1"
@@ -28,40 +29,6 @@ MISSING_FAMILY_PRIORITIES = {
     "add_projection_compression_templates",
     "inspect_for_compositional_template",
 }
-
-
-def safe_int(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def safe_float(value: Any) -> float:
-    try:
-        return float(value or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def parse_json_rows(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    rows: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as fp:
-        for line in fp:
-            line = line.strip()
-            if line.startswith("{"):
-                rows.append(json.loads(line))
-    return rows
-
-
-def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fp:
-        for row in rows:
-            fp.write(json.dumps(row, sort_keys=True, separators=(",", ":")))
-            fp.write("\n")
 
 
 def public_split_dirs(path: Path) -> dict[str, Path]:
@@ -134,7 +101,7 @@ def train_consistent_templates(selection: dict[str, Any]) -> list[str]:
 def parse_replay_log(log_path: Path) -> dict[str, dict[str, Any]]:
     by_task: dict[str, dict[str, Any]] = defaultdict(dict)
     evidence_by_task: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in parse_json_rows(log_path):
+    for row in read_jsonl(log_path):
         schema = row.get("schema")
         if schema == "crlp.arc_hypothesis.selection.v1":
             task_id = str(row.get("task_instance", ""))
@@ -435,7 +402,7 @@ def build_summary(rows: list[dict[str, Any]], sketch_summary: dict[str, Any]) ->
 
 
 def build_proof(args: argparse.Namespace) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    mutation_rows = parse_json_rows(args.mutation_verification)
+    mutation_rows = read_jsonl(args.mutation_verification)
     if not mutation_rows:
         raise RuntimeError(
             "no mutation verification rows loaded from "
@@ -443,8 +410,8 @@ def build_proof(args: argparse.Namespace) -> tuple[list[dict[str, Any]], list[di
             "--mutation-representatives greater than zero before building "
             "ARC neural failure proof"
         )
-    candidate_rows = parse_json_rows(args.candidate_sketches)
-    triage_rows = parse_json_rows(args.triage)
+    candidate_rows = read_jsonl(args.candidate_sketches)
+    triage_rows = read_jsonl(args.triage)
     split_dirs = public_split_dirs(args.public_arc_dir)
 
     mutation_by_task = aggregate_mutations(mutation_rows)
@@ -586,8 +553,8 @@ def main() -> None:
     args = parser.parse_args()
 
     proof_rows, replay_rows, sketch_summary = build_proof(args)
-    write_jsonl(args.output_dir / "task_proof_rows.jsonl", proof_rows)
-    write_jsonl(args.output_dir / "promotion_replay.jsonl", replay_rows)
+    write_jsonl(args.output_dir / "task_proof_rows.jsonl", proof_rows, compact=True)
+    write_jsonl(args.output_dir / "promotion_replay.jsonl", replay_rows, compact=True)
     (args.output_dir / "summary.md").write_text(
         build_summary(proof_rows, sketch_summary),
         encoding="utf-8",

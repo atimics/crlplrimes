@@ -124,6 +124,10 @@ TINY_NET_AUDIT_CAPACITIES ?= 8x4,16x8,32x16,64x32
 TINY_NET_AUDIT_EPOCH_GRID ?= 1,2,4,8,16,32
 TINY_NET_AUDIT_STEPS_PER_EPOCH ?= 12000
 TINY_NET_AUDIT_EVAL_SAMPLES ?= 1000
+MULTITASK_FAILURE_DIAGNOSTIC_SEEDS ?= 20240516,20240517,20240518
+MULTITASK_FAILURE_DIAGNOSTIC_STEPS_PER_EPOCH ?= 12000
+MULTITASK_FAILURE_DIAGNOSTIC_EVAL_SAMPLES ?= 1000
+MULTITASK_FAILURE_DIAGNOSTIC_HIDDEN ?= 64x32
 ARC_AGI_TASK_DIR ?=
 ARC_AGI_MAX_TASKS ?= 400
 ARC_EVIDENCE_SURFACE_DIR ?= $(BUILD_DIR)/arc_evidence_surface
@@ -389,7 +393,7 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune python-check benchmark test sanitize check experimental-check clean
+.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune python-check benchmark test sanitize check experimental-check clean
 
 all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(BENCHMARK)
 
@@ -778,6 +782,9 @@ multitask-domain: $(MULTITASK_DOMAIN)
 multitask-adapter-heads: $(MULTITASK_DOMAIN)
 	$(PYTHON) scripts/multitask_adapter_heads.py
 
+multitask-failure-diagnostics: $(MULTITASK_DOMAIN)
+	$(PYTHON) scripts/multitask_failure_diagnostics.py --binary ./$(MULTITASK_DOMAIN) --output-dir $(MULTITASK_ROADMAP_RESULTS_DIR) --seeds $(MULTITASK_FAILURE_DIAGNOSTIC_SEEDS) --steps-per-epoch $(MULTITASK_FAILURE_DIAGNOSTIC_STEPS_PER_EPOCH) --eval-samples $(MULTITASK_FAILURE_DIAGNOSTIC_EVAL_SAMPLES) --hidden $(MULTITASK_FAILURE_DIAGNOSTIC_HIDDEN)
+
 tiny-net-plateau-audit: $(MULTITASK_DOMAIN)
 	$(PYTHON) scripts/tiny_net_plateau_audit.py --binary ./$(MULTITASK_DOMAIN) --output-dir $(TINY_NET_PLATEAU_AUDIT_DIR) --seeds $(TINY_NET_AUDIT_SEEDS) --capacities $(TINY_NET_AUDIT_CAPACITIES) --epoch-grid $(TINY_NET_AUDIT_EPOCH_GRID) --steps-per-epoch $(TINY_NET_AUDIT_STEPS_PER_EPOCH) --eval-samples $(TINY_NET_AUDIT_EVAL_SAMPLES)
 
@@ -807,6 +814,10 @@ arc-agi: $(ARC_AGI)
 
 arc-agi-loader: $(ARC_AGI)
 	./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS) --program-budget-grid
+
+arc-gate-invariance: $(ARC_AGI)
+	@if [ -z "$(ARC_AGI_TASK_DIR)" ]; then echo "set ARC_AGI_TASK_DIR=/path/to/ARC-AGI/data"; exit 2; fi
+	$(PYTHON) scripts/arc_gate_invariance.py --arc-agi ./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --output-dir "$(MULTITASK_ROADMAP_RESULTS_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS)
 
 arc-agi-induction-smoke: $(ARC_AGI)
 	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 14 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 13

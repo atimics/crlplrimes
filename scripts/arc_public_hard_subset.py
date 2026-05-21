@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from crlp.io import read_jsonl_required, safe_int, write_jsonl
 
 STRICT_EVAL_FLAGS = [
     "--program-budget-tight-grid",
@@ -74,31 +75,6 @@ class TaskDiag:
             or self.rejected_evidence > 0
             or self.proposal_cap_hit
         )
-
-
-def parse_json_rows(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as fp:
-        for line in fp:
-            line = line.strip()
-            if line.startswith("{"):
-                rows.append(json.loads(line))
-    return rows
-
-
-def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fp:
-        for row in rows:
-            fp.write(json.dumps(row, sort_keys=True, separators=(",", ":")))
-            fp.write("\n")
-
-
-def safe_int(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
 
 
 def public_split_dirs(path: Path) -> tuple[Path, Path]:
@@ -594,9 +570,9 @@ def main() -> int:
         heldout_task_ids,
     )
 
-    source_diags = diagnose(parse_json_rows(source_raw), source_split.name, "promotion")
-    default_diags = diagnose(parse_json_rows(heldout_default_raw), heldout_split.name, "default")
-    stress_diags = diagnose(parse_json_rows(heldout_stress_raw), heldout_split.name, "stress_no_prior")
+    source_diags = diagnose(read_jsonl_required(source_raw), source_split.name, "promotion")
+    default_diags = diagnose(read_jsonl_required(heldout_default_raw), heldout_split.name, "default")
+    stress_diags = diagnose(read_jsonl_required(heldout_stress_raw), heldout_split.name, "stress_no_prior")
 
     source_tasks = select_sources(source_diags, args.source_count)
     source_ids = {task.task_id for task in source_tasks}
@@ -649,7 +625,7 @@ def main() -> int:
             *stress_diags.values(),
         ]
     ]
-    write_jsonl(args.output_dir / "diagnostics.jsonl", diagnostic_rows)
+    write_jsonl(args.output_dir / "diagnostics.jsonl", diagnostic_rows, compact=True)
 
     selected_rows = [
         *(
@@ -670,7 +646,7 @@ def main() -> int:
             for task in heldout_tasks
         ),
     ]
-    write_jsonl(args.output_dir / "selected_tasks.jsonl", selected_rows)
+    write_jsonl(args.output_dir / "selected_tasks.jsonl", selected_rows, compact=True)
     write_summary(
         args.output_dir / "summary.md",
         source_split,

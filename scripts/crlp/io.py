@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -23,6 +24,32 @@ def read_jsonl(path: Path, *, schema: str | None = None) -> list[dict[str, Any]]
     return rows
 
 
+def read_jsonl_required(path: Path, *, schema: str | None = None) -> list[dict[str, Any]]:
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    return read_jsonl(path, schema=schema)
+
+
+def read_jsonl_lenient(path: Path, *, schema: str | None = None) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.exists():
+        return rows
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            if schema is None or row.get("schema") == schema:
+                rows.append(row)
+    return rows
+
+
 def write_jsonl(
     path: Path,
     rows: Iterable[dict[str, Any]],
@@ -37,6 +64,31 @@ def write_jsonl(
             handle.write(
                 json.dumps(row, sort_keys=sort_keys, separators=separators) + "\n"
             )
+
+
+def safe_int(value: Any, default: int = 0) -> int:
+    if isinstance(value, bool) or value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_float(value: Any, default: float = 0.0, *, finite: bool = False) -> float:
+    if isinstance(value, bool) or value is None:
+        return default
+    try:
+        value_float = float(value)
+    except (TypeError, ValueError):
+        return default
+    if finite and (math.isnan(value_float) or math.isinf(value_float)):
+        return default
+    return value_float
+
+
+def safe_finite_float(value: Any, default: float = 0.0) -> float:
+    return safe_float(value, default, finite=True)
 
 
 def ordered_fieldnames(rows: Sequence[dict[str, Any]]) -> list[str]:

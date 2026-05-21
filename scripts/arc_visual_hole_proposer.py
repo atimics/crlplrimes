@@ -9,13 +9,14 @@ candidate before any prior row is exported.
 from __future__ import annotations
 
 import argparse
-import json
-import math
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from crlp.io import read_jsonl_lenient as load_jsonl
+from crlp.io import safe_finite_float as safe_float
+from crlp.io import safe_int, write_jsonl
 
 EXAMPLE_SCHEMA = "crlp.neural_grammar_discovery.arc_visual_hole_example.v1"
 SUMMARY_SCHEMA = "crlp.neural_grammar_discovery.arc_visual_hole_summary.v1"
@@ -118,52 +119,6 @@ STAGE_REPAIR_TOKENS = {
         "counterexample_shape_frame_repair",
     ],
 }
-
-
-def load_jsonl(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    if not path.exists():
-        return rows
-    with path.open("r", encoding="utf-8") as fp:
-        for line in fp:
-            line = line.strip()
-            if not line or not line.startswith("{"):
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(row, dict):
-                rows.append(row)
-    return rows
-
-
-def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fp:
-        for row in rows:
-            fp.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
-
-
-def safe_int(value: Any, default: int = 0) -> int:
-    if isinstance(value, bool) or value is None:
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def safe_float(value: Any, default: float = 0.0) -> float:
-    if isinstance(value, bool) or value is None:
-        return default
-    try:
-        value_float = float(value)
-    except (TypeError, ValueError):
-        return default
-    if math.isnan(value_float) or math.isinf(value_float):
-        return default
-    return value_float
 
 
 def parse_scoped_path(raw: str, default_scope: str) -> tuple[str, Path]:
@@ -736,8 +691,8 @@ def build_hole_proposer(args: argparse.Namespace) -> int:
     }
 
     write_candidate_tsv(args.candidate_tsv, candidate_rows)
-    write_jsonl(args.examples, examples)
-    write_jsonl(args.summary, [summary])
+    write_jsonl(args.examples, examples, compact=True)
+    write_jsonl(args.summary, [summary], compact=True)
     return 0
 
 

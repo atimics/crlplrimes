@@ -30,7 +30,7 @@ Failure modes to report:
 - Evaluated claim targets: `C1.arc_gate_scorer_invariance` (supported)
 - Claim families: `C1` Certified gates reduce the residual action space
 - Roadmap: `R-MT.7`
-- Command: `python3 scripts/arc_gate_invariance.py`
+- Command: `make arc-gate-invariance ARC_AGI_TASK_DIR=/path/to/ARC-AGI/data`
 - Artifacts: `results/2026-05-17-multitask-roadmap/rmt7_arc_gate_invariance_summary.csv`, `results/2026-05-17-multitask-roadmap/rmt7_arc_gate_invariance_mismatches.csv`
 
 Agent brief:

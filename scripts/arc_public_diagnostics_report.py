@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
+
+from crlp.io import read_jsonl_required, safe_int, write_jsonl
 
 BUCKET_ORDER = [
     "certified",
@@ -25,31 +26,6 @@ BUCKET_LABELS = {
     "proposal_cap_no_train_consistent": "Proposal cap hit, no train-consistent hypothesis",
     "no_meaningful_proposals": "No meaningful proposals",
 }
-
-
-def safe_int(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def parse_rows(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as fp:
-        for line in fp:
-            line = line.strip()
-            if line.startswith("{"):
-                rows.append(json.loads(line))
-    return rows
-
-
-def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    with path.open("w", encoding="utf-8") as fp:
-        for row in rows:
-            fp.write(json.dumps(row, sort_keys=True, separators=(",", ":")))
-            fp.write("\n")
-
 
 def overlap(left: list[str], right: list[str]) -> list[str]:
     return sorted(set(left) & set(right))
@@ -297,8 +273,8 @@ def main() -> int:
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    rows = [bucket_row(row) for row in parse_rows(args.diagnostics)]
-    write_jsonl(args.output_dir / "arc_public_diagnostics_buckets.jsonl", rows)
+    rows = [bucket_row(row) for row in read_jsonl_required(args.diagnostics)]
+    write_jsonl(args.output_dir / "arc_public_diagnostics_buckets.jsonl", rows, compact=True)
     write_csv(args.output_dir / "arc_public_diagnostics_buckets.csv", rows)
     (args.output_dir / "arc_public_diagnostics_report.md").write_text(
         markdown_summary(rows, args.top_k),

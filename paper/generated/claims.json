@@ -712,7 +712,7 @@
           "results/2026-05-17-multitask-roadmap/rmt7_arc_gate_invariance_mismatches.csv"
         ],
         "source": "results/2026-05-17-multitask-roadmap/rmt7_arc_gate_invariance_summary.csv",
-        "source_command": "python3 scripts/arc_gate_invariance.py",
+        "source_command": "make arc-gate-invariance ARC_AGI_TASK_DIR=/path/to/ARC-AGI/data",
         "source_row_count": 2,
         "source_sha256": "0fbc51accf6be6c2955efcee3bf31c8f9010050567bc8a680e76159ab532f218"
       },
@@ -2849,7 +2849,7 @@
           }
         ],
         "commands": [
-          "python3 scripts/arc_gate_invariance.py"
+          "make arc-gate-invariance ARC_AGI_TASK_DIR=/path/to/ARC-AGI/data"
         ],
         "failure_modes": [
           "Do not let public ARC gate coverage be interpreted as a shared-scorer gain if the scorer is not in the gate/proposer path."
@@ -3515,7 +3515,7 @@
     ],
     "schema": "crlp.paper_claim_experiment_map.v1"
   },
-  "generated_at": "2026-05-20T22:54:02.198389+00:00",
+  "generated_at": "2026-05-21T05:34:14.382315+00:00",
   "limitations": [
     {
       "claim_id": "C2.prime_proposer_fixed_budget",
@@ -3841,7 +3841,7 @@
     },
     "results/latest/prime_gap_trace.semantic.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-20T22:54:02.117076+00:00",
+      "modified_utc": "2026-05-21T04:33:16.416631+00:00",
       "row_count": 1000,
       "sha256": "257c89bfcca16d09622ee0c7e163f7aa42083414be8152f71aac38930ed176dc",
       "size_bytes": 844842
@@ -3855,7 +3855,7 @@
     },
     "results/latest/trace_determinism.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-20T22:54:02.109055+00:00",
+      "modified_utc": "2026-05-21T04:33:16.408871+00:00",
       "row_count": 3,
       "sha256": "476f76325fea0cec2327485185b09a8c7bb55e16aefa8aca676fb50121318cd9",
       "size_bytes": 2201

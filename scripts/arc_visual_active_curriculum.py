@@ -4,58 +4,16 @@
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
+from crlp.io import read_jsonl_lenient as load_jsonl
+from crlp.io import safe_float, safe_int, write_jsonl
 
 ITERATION_SCHEMA = "crlp.neural_grammar_discovery.arc_visual_active_curriculum_iteration.v1"
 SUMMARY_SCHEMA = "crlp.neural_grammar_discovery.arc_visual_active_curriculum_summary.v1"
-
-
-def load_jsonl(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    if not path.exists():
-        return rows
-    with path.open("r", encoding="utf-8") as fp:
-        for line in fp:
-            line = line.strip()
-            if not line or not line.startswith("{"):
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(row, dict):
-                rows.append(row)
-    return rows
-
-
-def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fp:
-        for row in rows:
-            fp.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
-
-
-def safe_int(value: Any, default: int = 0) -> int:
-    if isinstance(value, bool) or value is None:
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def safe_float(value: Any, default: float = 0.0) -> float:
-    if isinstance(value, bool) or value is None:
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def visual_template_stats(row: dict[str, Any]) -> dict[str, Any]:
@@ -344,7 +302,7 @@ def run_loop(args: argparse.Namespace) -> int:
         "output_dir": str(args.output_dir),
     }
     rows.append(summary)
-    write_jsonl(args.summary, rows)
+    write_jsonl(args.summary, rows, compact=True)
     return 0
 
 

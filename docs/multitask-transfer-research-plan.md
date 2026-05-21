@@ -454,6 +454,8 @@ Result:
 - Capacity is therefore not the dominant explanation by itself. The follow-up
   diagnostic in `rmt_arc_failure_diagnostics.md` narrows the issue further to
   fixed ARC cell/color mode collapse under the current row formulation.
+  Reproduce it with `make multitask-failure-diagnostics`; override
+  `MULTITASK_FAILURE_DIAGNOSTIC_*` variables for a shorter local probe.
   R-MT.8 remains useful for sampling dynamics, but exact fixed-ARC scorer
   recovery likely needs a better ARC feature/training surface or adapter path.
   Before adding architecture, run the fully-trained tiny-net audit in E-MT.9 so

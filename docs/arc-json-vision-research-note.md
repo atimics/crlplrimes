@@ -84,7 +84,8 @@ as perceptual facts.
 
 The failure diagnostic in
 `results/2026-05-17-multitask-roadmap/rmt_arc_failure_diagnostics.md` matches
-that representation gap:
+that representation gap. Reproduce it with `make multitask-failure-diagnostics`;
+override `MULTITASK_FAILURE_DIAGNOSTIC_*` variables for a shorter local probe:
 
 - ARC is not simply starved. Uniform and round-robin both give about 48k ARC
   updates, while `arc_heavy` gives about 96k updates.

@@ -171,7 +171,7 @@
       "roadmap_items": [
         "R-MT.7"
       ],
-      "command": "python3 scripts/arc_gate_invariance.py",
+      "command": "make arc-gate-invariance ARC_AGI_TASK_DIR=/path/to/ARC-AGI/data",
       "artifacts": [
         "results/2026-05-17-multitask-roadmap/rmt7_arc_gate_invariance_summary.csv",
         "results/2026-05-17-multitask-roadmap/rmt7_arc_gate_invariance_mismatches.csv"
@@ -718,7 +718,7 @@
         "secondary_sources": [
           "results/2026-05-17-multitask-roadmap/rmt7_arc_gate_invariance_mismatches.csv"
         ],
-        "command": "python3 scripts/arc_gate_invariance.py",
+        "command": "make arc-gate-invariance ARC_AGI_TASK_DIR=/path/to/ARC-AGI/data",
         "schemas": [
           "crlp.arc_transform.summary.v1",
           "crlp.program_proposer.summary.v1"

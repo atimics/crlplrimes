@@ -19,7 +19,7 @@ Run it after `arc_induction_parity.py` has produced the task diagnostics JSONL:
 
 ```sh
 make arc-family-discovery \
-  ARC_AGI_TASK_DIR=/private/tmp/ARC-AGI/data \
+  ARC_AGI_TASK_DIR=/path/to/ARC-AGI/data \
   ARC_FAMILY_DIAGNOSTICS=results/2026-05-17-arc-induction-task-diagnostics.tasks.jsonl
 ```
 
@@ -27,7 +27,7 @@ Or directly:
 
 ```sh
 python3 scripts/arc_family_discovery.py \
-  --task-dir /private/tmp/ARC-AGI/data \
+  --task-dir /path/to/ARC-AGI/data \
   --diagnostics results/2026-05-17-arc-induction-task-diagnostics.tasks.jsonl \
   --output-dir build/float/arc_family_discovery
 ```

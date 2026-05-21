@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -88,6 +89,11 @@ def split_dir(task_dir: Path, split: str) -> Path:
         if candidate.is_dir():
             return candidate
     raise FileNotFoundError(f"could not find split {split} under {task_dir}")
+
+
+def path_from_env(name: str) -> Path | None:
+    value = os.environ.get(name, "").strip()
+    return Path(value) if value else None
 
 
 def run_arc_loader(command: list[str], cwd: Path, log_path: Path) -> list[dict[str, Any]]:
@@ -237,7 +243,12 @@ def write_report(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--arc-agi", type=Path, default=Path("build/float/arc_agi"))
-    parser.add_argument("--task-dir", type=Path, default=Path("/private/tmp/ARC-AGI/data"))
+    parser.add_argument(
+        "--task-dir",
+        type=Path,
+        default=None,
+        help="ARC-AGI data root containing training/ and evaluation/; defaults to ARC_AGI_TASK_DIR.",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("results/2026-05-17-multitask-roadmap"))
     parser.add_argument("--splits", type=parse_csv_set, default=parse_csv_set("train,eval"))
     parser.add_argument("--max-tasks", type=int, default=400)
@@ -245,7 +256,9 @@ def main(argv: list[str] | None = None) -> int:
 
     repo = Path(__file__).resolve().parents[1]
     arc_agi = args.arc_agi if args.arc_agi.is_absolute() else repo / args.arc_agi
-    task_dir = args.task_dir
+    task_dir = args.task_dir or path_from_env("ARC_AGI_TASK_DIR")
+    if task_dir is None:
+        parser.error("--task-dir is required unless ARC_AGI_TASK_DIR is set")
     output_dir = args.output_dir if args.output_dir.is_absolute() else repo / args.output_dir
     log_dir = output_dir / "logs"
     output_dir.mkdir(parents=True, exist_ok=True)
