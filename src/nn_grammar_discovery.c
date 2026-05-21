@@ -20,6 +20,11 @@ typedef struct {
     size_t capacity;
 } NNGDStringList;
 
+typedef struct {
+    size_t *slots;
+    size_t slot_count;
+} NNGDStringTable;
+
 typedef enum {
     NN_GD_CE_ARC,
     NN_GD_CE_HAIKU_GENERATION,
@@ -131,6 +136,7 @@ typedef struct {
     double verifier_score;
     size_t contrast_accepted_index;
     NNGDStringList tokens;
+    size_t token_count;
     size_t *token_indices;
     size_t token_index_count;
 } NNGDArcPipelineAttempt;
@@ -228,6 +234,8 @@ typedef struct {
 static const NNGDSketch *nn_gd_sort_sketches = NULL;
 static const NNGDArcPipelineAttempt *nn_gd_sort_arc_attempts = NULL;
 
+static uint64_t nn_gd_fnv1a_update(uint64_t hash, const char *value);
+
 static char *nn_gd_strdup(const char *value) {
     size_t len;
     char *copy;
@@ -318,6 +326,110 @@ static int nn_gd_compare_strings(const void *a, const void *b) {
 static void nn_gd_string_list_sort(NNGDStringList *list) {
     if (list->count > 1U) {
         qsort(list->items, list->count, sizeof(char *), nn_gd_compare_strings);
+    }
+}
+
+static uint64_t nn_gd_string_hash(const char *value) {
+    return nn_gd_fnv1a_update(UINT64_C(1469598103934665603),
+                              value == NULL ? "" : value);
+}
+
+static void nn_gd_string_table_free(NNGDStringTable *table) {
+    if (table == NULL) {
+        return;
+    }
+    free(table->slots);
+    table->slots = NULL;
+    table->slot_count = 0U;
+}
+
+static size_t nn_gd_string_table_slot(const NNGDStringTable *table,
+                                      const NNGDStringList *strings,
+                                      const char *value,
+                                      uint64_t hash) {
+    size_t slot = (size_t)(hash & (uint64_t)(table->slot_count - 1U));
+    for (;;) {
+        size_t string_index = table->slots[slot];
+        if (string_index == 0U ||
+            strcmp(strings->items[string_index - 1U], value) == 0) {
+            return slot;
+        }
+        slot = (slot + 1U) & (table->slot_count - 1U);
+    }
+}
+
+static int nn_gd_string_table_rehash(const NNGDStringList *strings,
+                                     NNGDStringTable *table,
+                                     size_t needed) {
+    NNGDStringTable rebuilt = {0};
+    size_t i;
+    if (needed == 0U) {
+        return 0;
+    }
+    rebuilt.slot_count = table->slot_count == 0U ? 512U : table->slot_count;
+    while (needed * 10U > rebuilt.slot_count * 7U) {
+        rebuilt.slot_count *= 2U;
+    }
+    if (rebuilt.slot_count == table->slot_count) {
+        return 0;
+    }
+    rebuilt.slots = (size_t *)calloc(rebuilt.slot_count, sizeof(size_t));
+    if (rebuilt.slots == NULL) {
+        return -1;
+    }
+    for (i = 0U; i < strings->count; ++i) {
+        uint64_t hash = nn_gd_string_hash(strings->items[i]);
+        size_t slot = nn_gd_string_table_slot(&rebuilt, strings, strings->items[i], hash);
+        rebuilt.slots[slot] = i + 1U;
+    }
+    nn_gd_string_table_free(table);
+    *table = rebuilt;
+    return 0;
+}
+
+static int nn_gd_string_table_add_unique(NNGDStringList *strings,
+                                         NNGDStringTable *table,
+                                         const char *value) {
+    uint64_t hash;
+    size_t slot;
+    if (value == NULL || value[0] == '\0') {
+        return 0;
+    }
+    if (nn_gd_string_table_rehash(strings, table, strings->count + 1U) != 0) {
+        return -1;
+    }
+    hash = nn_gd_string_hash(value);
+    slot = nn_gd_string_table_slot(table, strings, value, hash);
+    if (table->slots[slot] != 0U) {
+        return 0;
+    }
+    if (nn_gd_string_list_add(strings, value) != 0) {
+        return -1;
+    }
+    table->slots[slot] = strings->count;
+    return 0;
+}
+
+static long nn_gd_string_table_find(const NNGDStringTable *table,
+                                    const NNGDStringList *strings,
+                                    const char *value) {
+    uint64_t hash;
+    size_t slot;
+    if (table == NULL || strings == NULL || table->slot_count == 0U ||
+        value == NULL || value[0] == '\0') {
+        return -1L;
+    }
+    hash = nn_gd_string_hash(value);
+    slot = (size_t)(hash & (uint64_t)(table->slot_count - 1U));
+    for (;;) {
+        size_t string_index = table->slots[slot];
+        if (string_index == 0U) {
+            return -1L;
+        }
+        if (strcmp(strings->items[string_index - 1U], value) == 0) {
+            return (long)(string_index - 1U);
+        }
+        slot = (slot + 1U) & (table->slot_count - 1U);
     }
 }
 
@@ -2933,6 +3045,7 @@ static int nn_gd_arc_attempt_list_add(NNGDArcPipelineAttemptList *list,
         memset(attempt, 0, sizeof(*attempt));
         return -1;
     }
+    attempt->token_count = attempt->tokens.count;
     ++list->count;
     return 0;
 }
@@ -3198,24 +3311,37 @@ static void nn_gd_resolve_arc_contrast_pairs(NNGDArcPipelineAttemptList *attempt
 
 static int nn_gd_build_arc_vocab(const NNGDArcPipelineAttemptList *attempts,
                                  NNGDStringList *vocab) {
+    NNGDStringTable table = {0};
+    int status = -1;
     size_t i;
     size_t j;
     for (i = 0U; i < attempts->count; ++i) {
         const NNGDArcPipelineAttempt *attempt = &attempts->items[i];
         for (j = 0U; j < attempt->tokens.count; ++j) {
-            if (nn_gd_string_list_add_unique(vocab, attempt->tokens.items[j]) != 0) {
-                return -1;
+            if (nn_gd_string_table_add_unique(vocab,
+                                              &table,
+                                              attempt->tokens.items[j]) != 0) {
+                goto done;
             }
         }
     }
     nn_gd_string_list_sort(vocab);
-    return 0;
+    status = 0;
+
+done:
+    nn_gd_string_table_free(&table);
+    return status;
 }
 
 static int nn_gd_index_arc_attempt_tokens(NNGDArcPipelineAttemptList *attempts,
                                           const NNGDStringList *vocab) {
+    NNGDStringTable index = {0};
+    int status = -1;
     size_t i;
     if (attempts == NULL || vocab == NULL) {
+        return -1;
+    }
+    if (nn_gd_string_table_rehash(vocab, &index, vocab->count) != 0) {
         return -1;
     }
     for (i = 0U; i < attempts->count; ++i) {
@@ -3224,22 +3350,29 @@ static int nn_gd_index_arc_attempt_tokens(NNGDArcPipelineAttemptList *attempts,
         free(attempt->token_indices);
         attempt->token_indices = NULL;
         attempt->token_index_count = 0U;
+        attempt->token_count = attempt->tokens.count;
         if (attempt->tokens.count == 0U) {
             continue;
         }
         attempt->token_indices =
             (size_t *)calloc(attempt->tokens.count, sizeof(size_t));
         if (attempt->token_indices == NULL) {
-            return -1;
+            goto done;
         }
         for (j = 0U; j < attempt->tokens.count; ++j) {
-            long index = nn_gd_token_index(vocab, attempt->tokens.items[j]);
-            if (index >= 0L) {
-                attempt->token_indices[attempt->token_index_count++] = (size_t)index;
+            long token_index = nn_gd_string_table_find(&index, vocab, attempt->tokens.items[j]);
+            if (token_index >= 0L) {
+                attempt->token_indices[attempt->token_index_count++] =
+                    (size_t)token_index;
             }
         }
+        nn_gd_string_list_free(&attempt->tokens);
     }
-    return 0;
+    status = 0;
+
+done:
+    nn_gd_string_table_free(&index);
+    return status;
 }
 
 static double nn_gd_arc_attempt_logit(const NNGDArcPipelineAttempt *attempt,
@@ -3436,7 +3569,7 @@ static int nn_gd_train_arc_aux_head(const NNGDArcPipelineAttemptList *attempts,
             pred = nn_gd_sigmoid(
                 nn_gd_arc_attempt_logit(attempt, vocab, head->weights, head->bias));
             error = pred - label;
-            active = attempt->tokens.count == 0U ? 1.0 : (double)attempt->tokens.count;
+            active = attempt->token_count == 0U ? 1.0 : (double)attempt->token_count;
             scale = learning_rate * error / active;
             head->bias -= scale;
             for (j = 0U; j < attempt->token_index_count; ++j) {
@@ -3858,7 +3991,7 @@ static int nn_gd_write_arc_visual_pipeline_ranker_loaded(
             pred = nn_gd_sigmoid(z);
             row_weight = attempt->accepted ? positive_weight : 1.0 + label;
             error = (pred - label) * row_weight;
-            active = attempt->tokens.count == 0U ? 1.0 : (double)attempt->tokens.count;
+            active = attempt->token_count == 0U ? 1.0 : (double)attempt->token_count;
             scale = learning_rate * error / active;
             bias -= scale;
             for (j = 0U; j < attempt->token_index_count; ++j) {
@@ -3894,9 +4027,9 @@ static int nn_gd_write_arc_visual_pipeline_ranker_loaded(
             pred = nn_gd_sigmoid(pos_z - neg_z);
             pair_scale = 0.5 * learning_rate * (pred - 1.0);
             pos_active =
-                positive->tokens.count == 0U ? 1.0 : (double)positive->tokens.count;
+                positive->token_count == 0U ? 1.0 : (double)positive->token_count;
             neg_active =
-                negative->tokens.count == 0U ? 1.0 : (double)negative->tokens.count;
+                negative->token_count == 0U ? 1.0 : (double)negative->token_count;
             for (j = 0U; j < positive->token_index_count; ++j) {
                 weights[positive->token_indices[j]] -= pair_scale / pos_active;
             }
@@ -4089,7 +4222,7 @@ static int nn_gd_write_arc_visual_pipeline_ranker_loaded(
                     source_rejected,
                     positive_weight,
                     rank + 1U,
-                    attempt->tokens.count,
+                    attempt->token_count,
                     source_contrast_pair_count,
                     target_contrast_pair_count,
                     attempt->contrast_slot_distance,
