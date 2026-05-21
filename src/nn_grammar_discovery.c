@@ -10,7 +10,7 @@
 #include <string.h>
 
 #define NN_GD_LINE_MAX 65536
-#define NN_GD_MAX_FIELDS 64
+#define NN_GD_MAX_FIELDS 96
 #define NN_GD_COUNTEREXAMPLE_LIMIT 8
 
 typedef struct {
@@ -102,8 +102,14 @@ typedef struct {
     char *op_name;
     char *visual_program;
     char *slot_contract;
+    char *composition_kind;
+    char *normalization_frame;
+    char *typed_stages;
+    char *primitive_contract;
     char *slot_tokens;
     char *rejection_reason;
+    char *failure_stage;
+    char *failure_detail;
     char *contrast_accepted_attempt_id;
     char *contrast_pair_kind;
     int accepted;
@@ -136,7 +142,31 @@ typedef struct {
     size_t attempt_index;
     double score;
     double model_score;
+    double renderer_score;
+    double sequence_block_score;
+    double component_score;
+    double component_selector_layout_score;
 } NNGDScoredArcAttempt;
+
+typedef enum {
+    NN_GD_ARC_HEAD_RENDERER,
+    NN_GD_ARC_HEAD_SEQUENCE_BLOCK_RENDERER,
+    NN_GD_ARC_HEAD_COMPONENT_SHAPE_COLOR,
+    NN_GD_ARC_HEAD_COMPONENT_SELECTOR_LAYOUT
+} NNGDArcAuxHeadKind;
+
+typedef struct {
+    const char *name;
+    NNGDArcAuxHeadKind kind;
+    double *weights;
+    double bias;
+    size_t train_rows;
+    size_t positive_rows;
+    double label_sum;
+    double final_loss;
+    double target_score_sum;
+    size_t target_rows;
+} NNGDArcAuxHead;
 
 typedef struct {
     int loaded;
@@ -1172,6 +1202,38 @@ static int nn_gd_add_token_pair(NNGDStringList *tokens,
     return 0;
 }
 
+static int nn_gd_add_pipe_context_tokens(NNGDStringList *tokens,
+                                         const char *prefix,
+                                         const char *values) {
+    char *copy;
+    char *start;
+    char *p;
+    if (values == NULL || values[0] == '\0') {
+        return 0;
+    }
+    copy = nn_gd_strdup(values);
+    if (copy == NULL) {
+        return -1;
+    }
+    start = copy;
+    for (p = copy; ; ++p) {
+        if (*p == '|' || *p == '\0') {
+            char saved = *p;
+            *p = '\0';
+            if (start[0] != '\0' && nn_gd_add_token_pair(tokens, prefix, start) != 0) {
+                free(copy);
+                return -1;
+            }
+            if (saved == '\0') {
+                break;
+            }
+            start = p + 1;
+        }
+    }
+    free(copy);
+    return 0;
+}
+
 static int nn_gd_add_atom_tokens(NNGDStringList *tokens, const char *atoms) {
     char *copy;
     char *start;
@@ -1283,7 +1345,8 @@ static int nn_gd_sketch_list_add(NNGDSketchList *list,
                                  const char *family,
                                  const char *compiler_target,
                                  const char *atoms,
-                                 const char *slots) {
+                                 const char *slots,
+                                 const char *composition) {
     NNGDSketch *sketch;
     if (nn_gd_sketch_list_reserve(list, list->count + 1U) != 0) {
         return -1;
@@ -1300,7 +1363,10 @@ static int nn_gd_sketch_list_add(NNGDSketchList *list,
         nn_gd_add_token_pair(&sketch->tokens, "family:", family) != 0 ||
         nn_gd_add_token_pair(&sketch->tokens, "compiler:", compiler_target) != 0 ||
         nn_gd_add_atom_tokens(&sketch->tokens, atoms) != 0 ||
-        nn_gd_add_slot_tokens(&sketch->tokens, slots) != 0) {
+        nn_gd_add_slot_tokens(&sketch->tokens, slots) != 0 ||
+        nn_gd_add_pipe_context_tokens(&sketch->tokens,
+                                      "composition:",
+                                      composition) != 0) {
         return -1;
     }
     ++list->count;
@@ -1341,7 +1407,8 @@ static int nn_gd_read_sketches(const char *path, NNGDSketchList *sketches) {
                                   nn_gd_field(fields, field_count, 2U),
                                   nn_gd_field(fields, field_count, 3U),
                                   nn_gd_field(fields, field_count, 4U),
-                                  nn_gd_field(fields, field_count, 5U)) != 0) {
+                                  nn_gd_field(fields, field_count, 5U),
+                                  nn_gd_field(fields, field_count, 6U)) != 0) {
             fclose(fp);
             return -1;
         }
@@ -1417,6 +1484,8 @@ static int nn_gd_read_labels(const char *path,
         }
         if (strcmp(outcome, "accepted") == 0) {
             label = 1.0;
+        } else if (strcmp(outcome, "diagnostic_positive") == 0) {
+            label = 0.75;
         } else if (strcmp(outcome, "rejected") == 0 ||
                    strcmp(outcome, "unsafe") == 0 ||
                    strcmp(outcome, "no_support") == 0) {
@@ -1427,6 +1496,12 @@ static int nn_gd_read_labels(const char *path,
         sketch_index = nn_gd_find_sketch(sketches, sketch_id);
         if (sketch_index < 0L) {
             continue;
+        }
+        if (nn_gd_add_pipe_context_tokens(&sketches->items[sketch_index].tokens,
+                                          "frame:",
+                                          nn_gd_field(fields, field_count, 2U)) != 0) {
+            fclose(fp);
+            return -1;
         }
         if (nn_gd_label_list_add(labels, (size_t)sketch_index, label) != 0) {
             fclose(fp);
@@ -1703,8 +1778,14 @@ static void nn_gd_arc_attempt_free(NNGDArcPipelineAttempt *attempt) {
     free(attempt->op_name);
     free(attempt->visual_program);
     free(attempt->slot_contract);
+    free(attempt->composition_kind);
+    free(attempt->normalization_frame);
+    free(attempt->typed_stages);
+    free(attempt->primitive_contract);
     free(attempt->slot_tokens);
     free(attempt->rejection_reason);
+    free(attempt->failure_stage);
+    free(attempt->failure_detail);
     free(attempt->contrast_accepted_attempt_id);
     free(attempt->contrast_pair_kind);
     nn_gd_string_list_free(&attempt->tokens);
@@ -1833,13 +1914,32 @@ static int nn_gd_arc_attempt_add_tokens(NNGDArcPipelineAttempt *attempt,
         "verifier_shape_mismatch_pairs",
         "verifier_missing_output_pairs",
         "verifier_first_failing_pair",
+        "input_component_count",
+        "selected_component_count",
+        "selected_component_area_min",
+        "selected_component_area_max",
+        "selected_component_area_total",
+        "selected_component_same_shape",
+        "selected_component_shape_count",
+        "selected_component_bbox_width",
+        "selected_component_bbox_height",
+        "selected_bbox_matches_output_shape",
+        "selected_bbox_rotated_output_shape",
+        "output_foreground_cell_count",
+        "output_component_count",
+        "output_non_background_color_count",
+        "selected_count_matches_output_components",
+        "selected_count_matches_output_foreground",
+        "selected_area_matches_output_foreground",
     };
     static const size_t numeric_indices[] = {
-        17U, 18U, 19U, 20U, 21U, 22U, 23U, 24U, 25U, 26U,
-        27U, 28U, 29U, 30U, 31U, 32U, 33U, 14U, 15U,
-        38U, 39U, 40U, 41U, 42U, 43U, 44U, 45U, 46U, 47U,
-        48U, 49U, 50U, 51U,
-        52U, 53U, 54U, 55U, 56U, 57U, 58U, 59U,
+        23U, 24U, 25U, 26U, 27U, 28U, 29U, 30U, 31U, 32U,
+        33U, 34U, 35U, 36U, 37U, 38U, 39U, 20U, 21U,
+        44U, 45U, 46U, 47U, 48U, 49U, 50U, 51U, 52U, 53U,
+        54U, 55U, 56U, 57U,
+        58U, 59U, 60U, 61U, 62U, 63U, 64U, 65U,
+        68U, 69U, 70U, 71U, 72U, 73U, 74U, 75U, 76U, 77U,
+        78U, 79U, 80U, 81U, 82U, 83U, 84U,
     };
     size_t i;
     if (nn_gd_add_token_pair(&attempt->tokens, "family:", attempt->family) != 0 ||
@@ -1847,11 +1947,29 @@ static int nn_gd_arc_attempt_add_tokens(NNGDArcPipelineAttempt *attempt,
         nn_gd_add_token_pair(&attempt->tokens, "pipeline:", attempt->pipeline_kind) != 0 ||
         nn_gd_add_token_pair(&attempt->tokens, "op:", attempt->op_name) != 0 ||
         nn_gd_add_token_pair(&attempt->tokens,
+                             "composition:",
+                             attempt->composition_kind) != 0 ||
+        nn_gd_add_token_pair(&attempt->tokens,
+                             "normalizer:",
+                             attempt->normalization_frame) != 0 ||
+        nn_gd_add_token_pair(&attempt->tokens,
                              "visual_program:",
                              attempt->visual_program) != 0 ||
         nn_gd_add_pipe_tokens_with_prefix(&attempt->tokens,
+                                          "stage:",
+                                          attempt->typed_stages) != 0 ||
+        nn_gd_add_pipe_tokens_with_prefix(&attempt->tokens,
                                           "contract:",
                                           attempt->slot_contract) != 0 ||
+        nn_gd_add_token_pair(&attempt->tokens,
+                             "primitive_contract:",
+                             attempt->primitive_contract) != 0 ||
+        nn_gd_add_token_pair(&attempt->tokens,
+                             "failure_stage:",
+                             attempt->failure_stage) != 0 ||
+        nn_gd_add_token_pair(&attempt->tokens,
+                             "failure_detail:",
+                             attempt->failure_detail) != 0 ||
         nn_gd_add_slot_tokens(&attempt->tokens, attempt->slot_tokens) != 0) {
         return -1;
     }
@@ -1887,46 +2005,55 @@ static int nn_gd_arc_attempt_list_add(NNGDArcPipelineAttemptList *list,
     attempt->op_name = nn_gd_strdup(nn_gd_field(fields, field_count, 8U));
     attempt->visual_program = nn_gd_strdup(nn_gd_field(fields, field_count, 9U));
     attempt->slot_contract = nn_gd_strdup(nn_gd_field(fields, field_count, 10U));
-    attempt->slot_tokens = nn_gd_strdup(nn_gd_field(fields, field_count, 11U));
-    attempt->accepted = nn_gd_parse_bool(nn_gd_field(fields, field_count, 12U));
-    attempt->rejection_reason = nn_gd_strdup(nn_gd_field(fields, field_count, 13U));
-    attempt->proposal_count = nn_gd_parse_long(nn_gd_field(fields, field_count, 14U));
-    attempt->support_tasks = nn_gd_parse_long(nn_gd_field(fields, field_count, 15U));
-    attempt->utility_mean = nn_gd_parse_double(nn_gd_field(fields, field_count, 16U));
+    attempt->composition_kind = nn_gd_strdup(nn_gd_field(fields, field_count, 11U));
+    attempt->normalization_frame = nn_gd_strdup(nn_gd_field(fields, field_count, 12U));
+    attempt->typed_stages = nn_gd_strdup(nn_gd_field(fields, field_count, 13U));
+    attempt->primitive_contract = nn_gd_strdup(nn_gd_field(fields, field_count, 14U));
+    attempt->slot_tokens = nn_gd_strdup(nn_gd_field(fields, field_count, 15U));
+    attempt->accepted = nn_gd_parse_bool(nn_gd_field(fields, field_count, 16U));
+    attempt->rejection_reason = nn_gd_strdup(nn_gd_field(fields, field_count, 17U));
+    attempt->failure_stage = nn_gd_strdup(nn_gd_field(fields, field_count, 18U));
+    attempt->failure_detail = nn_gd_strdup(nn_gd_field(fields, field_count, 19U));
+    attempt->proposal_count = nn_gd_parse_long(nn_gd_field(fields, field_count, 20U));
+    attempt->support_tasks = nn_gd_parse_long(nn_gd_field(fields, field_count, 21U));
+    attempt->utility_mean = nn_gd_parse_double(nn_gd_field(fields, field_count, 22U));
     attempt->contrast_accepted_attempt_id =
-        nn_gd_strdup(nn_gd_field(fields, field_count, 34U));
+        nn_gd_strdup(nn_gd_field(fields, field_count, 40U));
     attempt->contrast_slot_distance =
-        nn_gd_parse_long(nn_gd_field(fields, field_count, 35U));
-    attempt->contrast_pair_kind = nn_gd_strdup(nn_gd_field(fields, field_count, 36U));
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 41U));
+    attempt->contrast_pair_kind = nn_gd_strdup(nn_gd_field(fields, field_count, 42U));
     attempt->contrast_rejected_sibling_count =
-        nn_gd_parse_long(nn_gd_field(fields, field_count, 37U));
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 43U));
     attempt->verifier_train_pairs =
-        nn_gd_parse_long(nn_gd_field(fields, field_count, 52U));
-    attempt->verifier_checked_cells =
-        nn_gd_parse_long(nn_gd_field(fields, field_count, 53U));
-    attempt->verifier_mismatches =
-        nn_gd_parse_long(nn_gd_field(fields, field_count, 54U));
-    attempt->verifier_unsupported_pairs =
-        nn_gd_parse_long(nn_gd_field(fields, field_count, 55U));
-    attempt->verifier_apply_failed_pairs =
-        nn_gd_parse_long(nn_gd_field(fields, field_count, 56U));
-    attempt->verifier_shape_mismatch_pairs =
-        nn_gd_parse_long(nn_gd_field(fields, field_count, 57U));
-    attempt->verifier_missing_output_pairs =
         nn_gd_parse_long(nn_gd_field(fields, field_count, 58U));
-    attempt->verifier_first_failing_pair =
+    attempt->verifier_checked_cells =
         nn_gd_parse_long(nn_gd_field(fields, field_count, 59U));
+    attempt->verifier_mismatches =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 60U));
+    attempt->verifier_unsupported_pairs =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 61U));
+    attempt->verifier_apply_failed_pairs =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 62U));
+    attempt->verifier_shape_mismatch_pairs =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 63U));
+    attempt->verifier_missing_output_pairs =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 64U));
+    attempt->verifier_first_failing_pair =
+        nn_gd_parse_long(nn_gd_field(fields, field_count, 65U));
     attempt->verifier_mismatch_ratio =
-        nn_gd_parse_double(nn_gd_field(fields, field_count, 60U));
+        nn_gd_parse_double(nn_gd_field(fields, field_count, 66U));
     attempt->verifier_score =
-        nn_gd_parse_double(nn_gd_field(fields, field_count, 61U));
+        nn_gd_parse_double(nn_gd_field(fields, field_count, 67U));
     attempt->contrast_accepted_index = SIZE_MAX;
     if (attempt->split_name == NULL || attempt->family == NULL ||
         attempt->task_id == NULL || attempt->split == NULL ||
         attempt->attempt_id == NULL || attempt->library_id == NULL ||
         attempt->pipeline_kind == NULL || attempt->op_name == NULL ||
         attempt->visual_program == NULL || attempt->slot_contract == NULL ||
+        attempt->composition_kind == NULL || attempt->normalization_frame == NULL ||
+        attempt->typed_stages == NULL || attempt->primitive_contract == NULL ||
         attempt->slot_tokens == NULL || attempt->rejection_reason == NULL ||
+        attempt->failure_stage == NULL || attempt->failure_detail == NULL ||
         attempt->contrast_accepted_attempt_id == NULL ||
         attempt->contrast_pair_kind == NULL ||
         nn_gd_arc_attempt_add_tokens(attempt, fields, field_count) != 0) {
@@ -2040,6 +2167,222 @@ static double nn_gd_arc_attempt_logit(const NNGDArcPipelineAttempt *attempt,
         }
     }
     return z;
+}
+
+static double nn_gd_clamp01(double value) {
+    if (value < 0.0) {
+        return 0.0;
+    }
+    if (value > 1.0) {
+        return 1.0;
+    }
+    return value;
+}
+
+static int nn_gd_str_contains(const char *haystack, const char *needle) {
+    return haystack != NULL && needle != NULL && needle[0] != '\0' &&
+           strstr(haystack, needle) != NULL;
+}
+
+static int nn_gd_arc_attempt_is_sequence_block_renderer(
+    const NNGDArcPipelineAttempt *attempt) {
+    if (attempt == NULL) {
+        return 0;
+    }
+    return nn_gd_str_contains(attempt->visual_program, "repeat") ||
+           nn_gd_str_contains(attempt->visual_program, "count") ||
+           nn_gd_str_contains(attempt->visual_program, "template") ||
+           nn_gd_str_contains(attempt->typed_stages, "repeat") ||
+           nn_gd_str_contains(attempt->typed_stages, "count") ||
+           nn_gd_str_contains(attempt->typed_stages, "template") ||
+           strcmp(attempt->op_name, "macrocell_substitute") == 0 ||
+           strcmp(attempt->op_name, "marker_count_motif_tile") == 0 ||
+           strcmp(attempt->op_name, "component_count_line") == 0 ||
+           strcmp(attempt->op_name, "visual_combinator") == 0;
+}
+
+static int nn_gd_arc_attempt_is_component_selector_layout(
+    const NNGDArcPipelineAttempt *attempt) {
+    if (attempt == NULL) {
+        return 0;
+    }
+    return nn_gd_str_contains(attempt->primitive_contract, "selector:components") ||
+           nn_gd_str_contains(attempt->primitive_contract, "selector:object") ||
+           nn_gd_str_contains(attempt->normalization_frame, "object") ||
+           nn_gd_str_contains(attempt->normalization_frame, "component") ||
+           nn_gd_str_contains(attempt->typed_stages, "select_components") ||
+           strcmp(attempt->op_name, "visual_combinator") == 0 ||
+           strcmp(attempt->op_name, "object_mask_extract") == 0 ||
+           strcmp(attempt->op_name, "object_color_tile") == 0 ||
+           strcmp(attempt->op_name, "component_color_summary") == 0;
+}
+
+static int nn_gd_arc_aux_head_applies(const NNGDArcPipelineAttempt *attempt,
+                                      NNGDArcAuxHeadKind kind) {
+    if (attempt == NULL) {
+        return 0;
+    }
+    if (kind == NN_GD_ARC_HEAD_SEQUENCE_BLOCK_RENDERER) {
+        return nn_gd_arc_attempt_is_sequence_block_renderer(attempt);
+    }
+    if (kind == NN_GD_ARC_HEAD_COMPONENT_SELECTOR_LAYOUT) {
+        return nn_gd_arc_attempt_is_component_selector_layout(attempt);
+    }
+    return 1;
+}
+
+static double nn_gd_arc_renderer_label(const NNGDArcPipelineAttempt *attempt) {
+    double score;
+    if (attempt == NULL) {
+        return 0.0;
+    }
+    if (attempt->accepted) {
+        return 1.0;
+    }
+    score = nn_gd_clamp01(attempt->verifier_score);
+    if (strcmp(attempt->failure_stage, "renderer_cells") == 0) {
+        return score;
+    }
+    if (strcmp(attempt->failure_stage, "transform_or_color") == 0) {
+        return 0.65 * score;
+    }
+    if (strcmp(attempt->failure_stage, "renderer_shape") == 0) {
+        return 0.35 * score;
+    }
+    return 0.0;
+}
+
+static double nn_gd_arc_component_label(const NNGDArcPipelineAttempt *attempt) {
+    double score;
+    if (attempt == NULL) {
+        return 0.0;
+    }
+    if (attempt->accepted) {
+        return 1.0;
+    }
+    score = nn_gd_clamp01(attempt->verifier_score);
+    if (strcmp(attempt->failure_stage, "selector_or_transform") == 0 ||
+        strcmp(attempt->failure_stage, "unsupported_shape") == 0 ||
+        attempt->verifier_apply_failed_pairs > 0L) {
+        return 0.0;
+    }
+    if (strcmp(attempt->failure_stage, "renderer_cells") == 0) {
+        return nn_gd_clamp01(0.45 + 0.55 * score);
+    }
+    if (strcmp(attempt->failure_stage, "transform_or_color") == 0) {
+        return 0.45 * score;
+    }
+    if (strcmp(attempt->failure_stage, "renderer_shape") == 0) {
+        return 0.25 * score;
+    }
+    return 0.25 * score;
+}
+
+static double nn_gd_arc_component_selector_layout_label(
+    const NNGDArcPipelineAttempt *attempt) {
+    double score;
+    if (attempt == NULL) {
+        return 0.0;
+    }
+    if (attempt->accepted) {
+        return 1.0;
+    }
+    score = nn_gd_clamp01(attempt->verifier_score);
+    if (strcmp(attempt->failure_stage, "selector_or_transform") == 0 ||
+        attempt->verifier_apply_failed_pairs > 0L ||
+        attempt->verifier_checked_cells <= 0L) {
+        return 0.0;
+    }
+    if (strcmp(attempt->failure_stage, "renderer_shape") == 0) {
+        return 0.20 * score;
+    }
+    if (strcmp(attempt->failure_stage, "transform_or_color") == 0) {
+        return 0.55 * score;
+    }
+    if (strcmp(attempt->failure_stage, "renderer_cells") == 0) {
+        return nn_gd_clamp01(0.50 + 0.50 * score);
+    }
+    return 0.35 * score;
+}
+
+static double nn_gd_arc_aux_label(const NNGDArcPipelineAttempt *attempt,
+                                  NNGDArcAuxHeadKind kind) {
+    switch (kind) {
+        case NN_GD_ARC_HEAD_RENDERER:
+            return nn_gd_arc_renderer_label(attempt);
+        case NN_GD_ARC_HEAD_SEQUENCE_BLOCK_RENDERER:
+            return nn_gd_arc_renderer_label(attempt);
+        case NN_GD_ARC_HEAD_COMPONENT_SHAPE_COLOR:
+            return nn_gd_arc_component_label(attempt);
+        case NN_GD_ARC_HEAD_COMPONENT_SELECTOR_LAYOUT:
+            return nn_gd_arc_component_selector_layout_label(attempt);
+        default:
+            return 0.0;
+    }
+}
+
+static int nn_gd_train_arc_aux_head(const NNGDArcPipelineAttemptList *attempts,
+                                    const NNGDStringList *vocab,
+                                    NNGDArcAuxHead *head,
+                                    unsigned epochs,
+                                    double learning_rate) {
+    unsigned epoch;
+    size_t i;
+    if (attempts == NULL || vocab == NULL || head == NULL || head->weights == NULL) {
+        return -1;
+    }
+    for (epoch = 0U; epoch < epochs; ++epoch) {
+        double loss = 0.0;
+        size_t rows = 0U;
+        for (i = 0U; i < attempts->count; ++i) {
+            const NNGDArcPipelineAttempt *attempt = &attempts->items[i];
+            double label;
+            double pred;
+            double error;
+            double active;
+            double scale;
+            size_t j;
+            if (strcmp(attempt->split_name, "source") != 0 ||
+                !nn_gd_arc_aux_head_applies(attempt, head->kind)) {
+                continue;
+            }
+            label = nn_gd_arc_aux_label(attempt, head->kind);
+            pred = nn_gd_sigmoid(
+                nn_gd_arc_attempt_logit(attempt, vocab, head->weights, head->bias));
+            error = pred - label;
+            active = attempt->tokens.count == 0U ? 1.0 : (double)attempt->tokens.count;
+            scale = learning_rate * error / active;
+            head->bias -= scale;
+            for (j = 0U; j < attempt->tokens.count; ++j) {
+                long index = nn_gd_token_index(vocab, attempt->tokens.items[j]);
+                if (index >= 0L) {
+                    head->weights[index] -= scale;
+                }
+            }
+            loss += error * error;
+            ++rows;
+            if (epoch == 0U) {
+                ++head->train_rows;
+                if (label >= 0.95) {
+                    ++head->positive_rows;
+                }
+                head->label_sum += label;
+            }
+        }
+        head->final_loss = rows == 0U ? 0.0 : loss / (double)rows;
+    }
+    return 0;
+}
+
+static double nn_gd_arc_aux_head_score(const NNGDArcPipelineAttempt *attempt,
+                                       const NNGDStringList *vocab,
+                                       const NNGDArcAuxHead *head) {
+    if (attempt == NULL || vocab == NULL || head == NULL || head->weights == NULL ||
+        !nn_gd_arc_aux_head_applies(attempt, head->kind)) {
+        return 0.5;
+    }
+    return nn_gd_sigmoid(
+        nn_gd_arc_attempt_logit(attempt, vocab, head->weights, head->bias));
 }
 
 static int nn_gd_compare_arc_scored_attempts(const void *a, const void *b) {
@@ -2326,6 +2669,12 @@ int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
     NNGDScoredArcAttempt *target_scores = NULL;
     double *weights = NULL;
     double bias = 0.0;
+    NNGDArcAuxHead aux_heads[] = {
+        {"renderer_correctness", NN_GD_ARC_HEAD_RENDERER, NULL, 0.0, 0U, 0U, 0.0, 0.0, 0.0, 0U},
+        {"sequence_block_renderer", NN_GD_ARC_HEAD_SEQUENCE_BLOCK_RENDERER, NULL, 0.0, 0U, 0U, 0.0, 0.0, 0.0, 0U},
+        {"component_shape_color", NN_GD_ARC_HEAD_COMPONENT_SHAPE_COLOR, NULL, 0.0, 0U, 0U, 0.0, 0.0, 0.0, 0U},
+        {"component_selector_layout", NN_GD_ARC_HEAD_COMPONENT_SELECTOR_LAYOUT, NULL, 0.0, 0U, 0U, 0.0, 0.0, 0.0, 0U},
+    };
     FILE *proposals = NULL;
     FILE *summary = NULL;
     int status = -1;
@@ -2340,19 +2689,24 @@ int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
     size_t pairwise_last_epoch_violations = 0U;
     double positive_weight = 1.0;
     unsigned epoch;
+    unsigned aux_epochs;
     size_t i;
     size_t scored_count = 0U;
+    long target_task_count = 0L;
     long evaluated_tasks = 0L;
+    long no_accepted_target_task_count = 0L;
     long top1_hits = 0L;
     long top3_hits = 0L;
     long retained_hits = 0L;
     long proposal_count = 0L;
     NNGDArcMetricList op_recovery = {0};
     NNGDArcMetricList reason_calibration = {0};
+    size_t head_index;
 
     if (max_per_task == 0U) {
         max_per_task = 1U;
     }
+    aux_epochs = epochs > 16U ? 16U : epochs;
     if (nn_gd_read_arc_pipeline_attempts(attempt_rows_path, &attempts) != 0 ||
         nn_gd_build_arc_vocab(&attempts, &vocab) != 0) {
         goto done;
@@ -2387,6 +2741,15 @@ int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
                                                    sizeof(NNGDScoredArcAttempt));
     if (weights == NULL || target_scores == NULL) {
         goto done;
+    }
+    for (head_index = 0U;
+         head_index < sizeof(aux_heads) / sizeof(aux_heads[0]);
+         ++head_index) {
+        aux_heads[head_index].weights =
+            (double *)calloc(vocab.count == 0U ? 1U : vocab.count, sizeof(double));
+        if (aux_heads[head_index].weights == NULL) {
+            goto done;
+        }
     }
     for (epoch = 0U; epoch < epochs; ++epoch) {
         for (i = 0U; i < attempts.count; ++i) {
@@ -2469,6 +2832,17 @@ int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
             ++pairwise_training_updates;
         }
     }
+    for (head_index = 0U;
+         head_index < sizeof(aux_heads) / sizeof(aux_heads[0]);
+         ++head_index) {
+        if (nn_gd_train_arc_aux_head(&attempts,
+                                     &vocab,
+                                     &aux_heads[head_index],
+                                     aux_epochs,
+                                     learning_rate) != 0) {
+            goto done;
+        }
+    }
     for (i = 0U; i < attempts.count; ++i) {
         NNGDArcPipelineAttempt *attempt = &attempts.items[i];
         if (strcmp(attempt->split_name, "target") != 0) {
@@ -2477,9 +2851,30 @@ int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
         target_scores[scored_count].attempt_index = i;
         target_scores[scored_count].model_score =
             nn_gd_sigmoid(nn_gd_arc_attempt_logit(attempt, &vocab, weights, bias));
+        target_scores[scored_count].renderer_score =
+            nn_gd_arc_aux_head_score(attempt, &vocab, &aux_heads[0]);
+        target_scores[scored_count].sequence_block_score =
+            nn_gd_arc_aux_head_score(attempt, &vocab, &aux_heads[1]);
+        target_scores[scored_count].component_score =
+            nn_gd_arc_aux_head_score(attempt, &vocab, &aux_heads[2]);
+        target_scores[scored_count].component_selector_layout_score =
+            nn_gd_arc_aux_head_score(attempt, &vocab, &aux_heads[3]);
         target_scores[scored_count].score =
-            0.65 * target_scores[scored_count].model_score +
-            0.35 * attempt->verifier_score;
+            0.646 * target_scores[scored_count].model_score +
+            0.350 * attempt->verifier_score +
+            0.001 * target_scores[scored_count].renderer_score +
+            0.001 * target_scores[scored_count].component_score +
+            0.001 * target_scores[scored_count].component_selector_layout_score +
+            0.001 * target_scores[scored_count].sequence_block_score;
+        for (head_index = 0U;
+             head_index < sizeof(aux_heads) / sizeof(aux_heads[0]);
+             ++head_index) {
+            if (nn_gd_arc_aux_head_applies(attempt, aux_heads[head_index].kind)) {
+                aux_heads[head_index].target_score_sum +=
+                    nn_gd_arc_aux_head_score(attempt, &vocab, &aux_heads[head_index]);
+                ++aux_heads[head_index].target_rows;
+            }
+        }
         ++scored_count;
     }
     nn_gd_sort_arc_attempts = attempts.items;
@@ -2563,12 +2958,24 @@ int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
             nn_gd_json_write_string(proposals, attempt->pipeline_kind);
             fputs(",\"op_name\":", proposals);
             nn_gd_json_write_string(proposals, attempt->op_name);
+            fputs(",\"composition_kind\":", proposals);
+            nn_gd_json_write_string(proposals, attempt->composition_kind);
+            fputs(",\"normalization_frame\":", proposals);
+            nn_gd_json_write_string(proposals, attempt->normalization_frame);
+            fputs(",\"typed_stages\":", proposals);
+            nn_gd_json_write_string(proposals, attempt->typed_stages);
+            fputs(",\"primitive_contract\":", proposals);
+            nn_gd_json_write_string(proposals, attempt->primitive_contract);
             fprintf(proposals,
                     ",\"score\":%.8f,\"target_accepted\":%s,"
                     "\"target_rejection_reason\":",
                     score->score,
                     attempt->accepted ? "true" : "false");
             nn_gd_json_write_string(proposals, attempt->rejection_reason);
+            fputs(",\"failure_stage\":", proposals);
+            nn_gd_json_write_string(proposals, attempt->failure_stage);
+            fputs(",\"failure_detail\":", proposals);
+            nn_gd_json_write_string(proposals, attempt->failure_detail);
             fprintf(proposals,
                     ",\"rank_features\":{\"epochs\":%u,\"learning_rate\":%.17g,"
                     "\"vocab_size\":%zu,\"source_attempt_count\":%zu,"
@@ -2579,6 +2986,10 @@ int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
                     "\"contrast_slot_distance\":%ld,"
                     "\"contrast_rejected_sibling_count\":%ld,"
                     "\"model_score\":%.8f,\"verifier_proxy_score\":%.8f,"
+                    "\"renderer_model_score\":%.8f,"
+                    "\"sequence_block_renderer_score\":%.8f,"
+                    "\"component_shape_color_score\":%.8f,"
+                    "\"component_selector_layout_score\":%.8f,"
                     "\"verifier_train_pairs\":%ld,"
                     "\"verifier_checked_cells\":%ld,"
                     "\"verifier_mismatches\":%ld,"
@@ -2605,6 +3016,10 @@ int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
                     attempt->contrast_rejected_sibling_count,
                     score->model_score,
                     attempt->verifier_score,
+                    score->renderer_score,
+                    score->sequence_block_score,
+                    score->component_score,
+                    score->component_selector_layout_score,
                     attempt->verifier_train_pairs,
                     attempt->verifier_checked_cells,
                     attempt->verifier_mismatches,
@@ -2619,6 +3034,7 @@ int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
                     attempt->utility_mean,
                     rank + 1U);
         }
+        ++target_task_count;
         if (group_has_accepted) {
             size_t op_index;
             ++evaluated_tasks;
@@ -2661,6 +3077,8 @@ int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
                         ? 1L
                         : 0L;
             }
+        } else {
+            ++no_accepted_target_task_count;
         }
         nn_gd_string_list_free(&accepted_ops);
         i = end;
@@ -2672,23 +3090,40 @@ int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
             "\"source_attempt_count\":%zu,\"source_accepted_count\":%zu,"
             "\"source_rejected_count\":%zu,\"target_attempt_count\":%zu,"
             "\"target_accepted_count\":%zu,\"proposal_count\":%ld,"
-            "\"accepted_target_task_count\":%ld,\"evaluated_tasks\":%ld,"
+            "\"target_task_count\":%ld,"
+            "\"accepted_target_task_count\":%ld,"
+            "\"no_accepted_target_task_count\":%ld,"
+            "\"search_space_coverage_rate\":%.8f,"
+            "\"evaluated_tasks\":%ld,"
             "\"top1_hits\":%ld,\"top3_hits\":%ld,\"retained_hits\":%ld,"
             "\"top1_rate\":%.8f,\"top3_rate\":%.8f,\"retained_rate\":%.8f,"
+            "\"top1_all_task_rate\":%.8f,"
+            "\"top3_all_task_rate\":%.8f,"
+            "\"retained_all_task_rate\":%.8f,"
             "\"epochs\":%u,\"learning_rate\":%.17g,\"vocab_size\":%zu,"
             "\"positive_weight\":%.8f,\"source_contrast_pair_count\":%zu,"
             "\"target_contrast_pair_count\":%zu,"
             "\"pairwise_training_updates\":%zu,"
             "\"pairwise_last_epoch_violations\":%zu,"
-            "\"rerank_model_weight\":0.65,\"rerank_verifier_proxy_weight\":0.35,"
-            "\"training_mode\":\"source_to_target_visual_pipeline_attempts_with_dense_verifier_targets\",",
+            "\"auxiliary_head_epochs\":%u,"
+            "\"rerank_model_weight\":0.646,\"rerank_verifier_proxy_weight\":0.35,"
+            "\"rerank_renderer_weight\":0.001,"
+            "\"rerank_component_shape_color_weight\":0.001,"
+            "\"rerank_component_selector_layout_weight\":0.001,"
+            "\"rerank_sequence_block_weight\":0.001,"
+            "\"training_mode\":\"source_to_target_visual_pipeline_attempts_with_dense_verifier_targets_and_auxiliary_renderer_component_heads\",",
             source_count,
             source_accepted,
             source_rejected,
             target_count,
             target_accepted,
             proposal_count,
+            target_task_count,
             evaluated_tasks,
+            no_accepted_target_task_count,
+            target_task_count == 0L
+                ? 0.0
+                : (double)evaluated_tasks / (double)target_task_count,
             evaluated_tasks,
             top1_hits,
             top3_hits,
@@ -2696,6 +3131,11 @@ int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
             evaluated_tasks == 0L ? 0.0 : (double)top1_hits / (double)evaluated_tasks,
             evaluated_tasks == 0L ? 0.0 : (double)top3_hits / (double)evaluated_tasks,
             evaluated_tasks == 0L ? 0.0 : (double)retained_hits / (double)evaluated_tasks,
+            target_task_count == 0L ? 0.0 : (double)top1_hits / (double)target_task_count,
+            target_task_count == 0L ? 0.0 : (double)top3_hits / (double)target_task_count,
+            target_task_count == 0L
+                ? 0.0
+                : (double)retained_hits / (double)target_task_count,
             epochs,
             learning_rate,
             vocab.count,
@@ -2703,19 +3143,60 @@ int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
             source_contrast_pair_count,
             target_contrast_pair_count,
             pairwise_training_updates,
-            pairwise_last_epoch_violations);
+            pairwise_last_epoch_violations,
+            aux_epochs);
+    fputs("\"auxiliary_heads\":{", summary);
+    for (head_index = 0U;
+         head_index < sizeof(aux_heads) / sizeof(aux_heads[0]);
+         ++head_index) {
+        const NNGDArcAuxHead *head = &aux_heads[head_index];
+        if (head_index > 0U) {
+            fputc(',', summary);
+        }
+        nn_gd_json_write_string(summary, head->name);
+        fprintf(summary,
+                ":{\"train_rows\":%zu,\"positive_rows\":%zu,"
+                "\"mean_label\":%.8f,\"final_loss\":%.8f,"
+                "\"target_rows\":%zu,\"target_mean_score\":%.8f}",
+                head->train_rows,
+                head->positive_rows,
+                head->train_rows == 0U ? 0.0 : head->label_sum / (double)head->train_rows,
+                head->final_loss,
+                head->target_rows,
+                head->target_rows == 0U
+                    ? 0.0
+                    : head->target_score_sum / (double)head->target_rows);
+    }
+    fputs("},", summary);
     fputs("\"by_proposer\":{\"neural_visual_pipeline_ranker\":{", summary);
     fprintf(summary,
+            "\"target_task_count\":%ld,"
+            "\"accepted_target_task_count\":%ld,"
+            "\"no_accepted_target_task_count\":%ld,"
+            "\"search_space_coverage_rate\":%.8f,"
             "\"evaluated_tasks\":%ld,\"top1_hits\":%ld,\"top3_hits\":%ld,"
             "\"retained_hits\":%ld,\"top1_rate\":%.8f,\"top3_rate\":%.8f,"
-            "\"retained_rate\":%.8f}},\"by_accepted_op\":",
+            "\"retained_rate\":%.8f,\"top1_all_task_rate\":%.8f,"
+            "\"top3_all_task_rate\":%.8f,\"retained_all_task_rate\":%.8f}},"
+            "\"by_accepted_op\":",
+            target_task_count,
+            evaluated_tasks,
+            no_accepted_target_task_count,
+            target_task_count == 0L
+                ? 0.0
+                : (double)evaluated_tasks / (double)target_task_count,
             evaluated_tasks,
             top1_hits,
             top3_hits,
             retained_hits,
             evaluated_tasks == 0L ? 0.0 : (double)top1_hits / (double)evaluated_tasks,
             evaluated_tasks == 0L ? 0.0 : (double)top3_hits / (double)evaluated_tasks,
-            evaluated_tasks == 0L ? 0.0 : (double)retained_hits / (double)evaluated_tasks);
+            evaluated_tasks == 0L ? 0.0 : (double)retained_hits / (double)evaluated_tasks,
+            target_task_count == 0L ? 0.0 : (double)top1_hits / (double)target_task_count,
+            target_task_count == 0L ? 0.0 : (double)top3_hits / (double)target_task_count,
+            target_task_count == 0L
+                ? 0.0
+                : (double)retained_hits / (double)target_task_count);
     nn_gd_write_arc_op_recovery(summary, &op_recovery);
     fputs(",\"calibration_by_rejection_reason\":", summary);
     nn_gd_write_arc_reason_calibration(summary, &reason_calibration);
@@ -2735,6 +3216,11 @@ done:
     nn_gd_arc_metric_list_free(&reason_calibration);
     nn_gd_arc_metric_list_free(&op_recovery);
     free(target_scores);
+    for (head_index = 0U;
+         head_index < sizeof(aux_heads) / sizeof(aux_heads[0]);
+         ++head_index) {
+        free(aux_heads[head_index].weights);
+    }
     free(weights);
     nn_gd_string_list_free(&vocab);
     nn_gd_arc_attempt_list_free(&attempts);

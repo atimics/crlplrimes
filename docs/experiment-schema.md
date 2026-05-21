@@ -78,13 +78,20 @@ is `src/nn_program.c`. The shared candidate-verifier protocol row API lives in
 
 The protocol layer intentionally owns row shape rather than grammar semantics.
 Domain code still defines prime modular rules, grid topology predicates,
-delayed-claim thresholds, ARC templates, and Signal control options. Shared
-code normalizes those rows as:
+delayed-claim thresholds, ARC visual-program compiler primitives, and Signal
+control options. Shared code normalizes those rows as:
 
 ```text
 data -> grammar -> candidate set -> grounding outcome -> learned ranking
      -> discovered rules/library feedback -> result -> limitation
 ```
+
+ARC is the pressure case for moving this boundary downward. Handwritten
+transform templates are now treated as legacy compiler/operator scaffolding;
+the learned surface is the typed visual-algebra program plus its coverage holes,
+slot choices, neural proposals, and verifier outcomes. A row that succeeds only
+because a legacy template owns the transform is useful training evidence, but
+not coverage credit or the end-state grammar abstraction.
 
 The canonical JSONL row schemas are:
 
@@ -170,6 +177,8 @@ cannot silently add verifier-derived inputs. Comparison rows also carry
    structural-heuristic, and oracle orderings.
 8. Every replay claim uses stable action ids.
 9. Trace-producing rankers declare their deterministic ranking policy and emit action-id plus score-margin guards so float-sensitive ties are visible instead of silently changing replay semantics.
+10. Numeric training claims must distinguish semantic certification from local optimizer hygiene. `crlp.numeric_step_certificate.v1` rows may certify that supervised or KL/entropy policy updates stayed finite and within declared parameter/logit/margin bounds, and `crlp.neuron_contract.v1` rows may certify interval bounds for dense neurons. Shared supervised calls emit rows at update granularity, env guard variables can tighten finite, parameter, logit, delta, margin, and shrink-step bounds for a run, and `crlp.numeric_certificate_budget.v1` rows define the per-target p99/max envelopes that `make check` enforces. They do not promote a candidate, rule, or program without the domain grounding operator.
+11. Learned-grammar coverage is audited before ranker quality. `crlp.learned_grammar_coverage.v1` rows first ask whether the candidate space contains a train-consistent solution, then whether the neural ranker brings it near the top, whether the verifier certifies it, and whether held-out/test-pair transfer survives. `crlp.experiment_health.v1` rows consolidate those gates with numeric certificate rows, coverage holes, verifier deltas, learning signal, and generated paper-claim support.
 
 ## Current Instantiations
 

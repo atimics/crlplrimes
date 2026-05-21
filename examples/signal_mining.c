@@ -1269,6 +1269,71 @@ static void sm_run_prefix(const sm_scenario_init_t *init, world_t *w, server_pla
     memset(&sp->input, 0, sizeof(sp->input));
 }
 
+static void sm_detach_world_heap_pointers(world_t *w)
+{
+    if (w == NULL) return;
+    w->signal_cache.strength = NULL;
+    w->asteroid_grid.entries = NULL;
+    for (int i = 0; i < MAX_STATIONS; ++i) {
+        w->stations[i].manifest = (manifest_t){0};
+        w->stations[i].receipts_opaque = NULL;
+    }
+    for (int i = 0; i < MAX_PLAYERS; ++i) {
+        w->players[i].ship.manifest = (manifest_t){0};
+        w->players[i].ship.receipts_opaque = NULL;
+    }
+    for (int i = 0; i < MAX_SHIPS; ++i) {
+        w->ships[i].manifest = (manifest_t){0};
+        w->ships[i].receipts_opaque = NULL;
+    }
+}
+
+static bool sm_clone_world_heap_buffers(world_t *dst, const world_t *src)
+{
+    if (src->signal_cache.strength != NULL) {
+        size_t count = (size_t)SIGNAL_GRID_DIM * (size_t)SIGNAL_GRID_DIM;
+        dst->signal_cache.strength = malloc(count * sizeof(*dst->signal_cache.strength));
+        if (dst->signal_cache.strength == NULL) return false;
+        memcpy(dst->signal_cache.strength,
+               src->signal_cache.strength,
+               count * sizeof(*dst->signal_cache.strength));
+    }
+    if (src->asteroid_grid.entries != NULL && src->asteroid_grid.capacity > 0u) {
+        size_t count = (size_t)src->asteroid_grid.capacity;
+        dst->asteroid_grid.entries = malloc(count * sizeof(*dst->asteroid_grid.entries));
+        if (dst->asteroid_grid.entries == NULL) return false;
+        memcpy(dst->asteroid_grid.entries,
+               src->asteroid_grid.entries,
+               count * sizeof(*dst->asteroid_grid.entries));
+    }
+    return true;
+}
+
+static bool sm_clone_world(world_t *dst, const world_t *src)
+{
+    if (dst == NULL || src == NULL) return false;
+    memset(dst, 0, sizeof(*dst));
+    *dst = *src;
+    sm_detach_world_heap_pointers(dst);
+
+    if (!sm_clone_world_heap_buffers(dst, src)) goto fail;
+    for (int i = 0; i < MAX_STATIONS; ++i) {
+        if (!station_copy(&dst->stations[i], &src->stations[i])) goto fail;
+    }
+    for (int i = 0; i < MAX_PLAYERS; ++i) {
+        if (!ship_copy(&dst->players[i].ship, &src->players[i].ship)) goto fail;
+    }
+    for (int i = 0; i < MAX_SHIPS; ++i) {
+        if (!ship_copy(&dst->ships[i], &src->ships[i])) goto fail;
+    }
+    return true;
+
+fail:
+    world_cleanup(dst);
+    memset(dst, 0, sizeof(*dst));
+    return false;
+}
+
 static void sm_accumulate_events(const world_t *w, int player_id, sm_outcome_t *outcome)
 {
     for (int i = 0; i < w->events.count; ++i) {
@@ -1307,23 +1372,21 @@ static void sm_accumulate_events(const world_t *w, int player_id, sm_outcome_t *
     }
 }
 
-static sm_outcome_t sm_replay_option(const sm_config_t *config,
-                                     const sm_scenario_init_t *init,
-                                     size_t candidate,
-                                     int sticky_target)
+static bool sm_replay_option(const sm_config_t *config,
+                             const sm_scenario_init_t *init,
+                             const world_t *base_world,
+                             size_t candidate,
+                             int sticky_target,
+                             sm_outcome_t *outcome)
 {
     const sm_policy_hypothesis_t *hyp = sm_hypothesis(candidate);
     sm_option_t option = hyp->option;
     world_t w;
-    server_player_t *sp = NULL;
-    sm_setup_world(init, &w, &sp);
-    sm_run_prefix(init, &w, sp);
-    if (init->enable_npcs) {
-        sm_seed_supply_chain_fixture(&w, sp);
-    }
-
-    sm_outcome_t outcome;
-    memset(&outcome, 0, sizeof(outcome));
+    if (config == NULL || init == NULL || base_world == NULL || outcome == NULL) return false;
+    memset(outcome, 0, sizeof(*outcome));
+    nav_caches_reset();
+    if (!sm_clone_world(&w, base_world)) return false;
+    server_player_t *sp = &w.players[0];
     double start_hull = sp->ship.hull;
     double start_dock_dist = sm_repair_dock_distance(&w, sp);
     double start_credits = sp->ship.stat_credits_earned;
@@ -1332,87 +1395,87 @@ static sm_outcome_t sm_replay_option(const sm_config_t *config,
     int start_repair_kits = sm_count_station_finished(&w, COMMODITY_REPAIR_KIT);
     int start_shipyard_inputs = sm_count_shipyard_inputs(&w);
     int start_repair_dock_kits = sm_count_repair_dock_kits(&w);
-    outcome.start_repair_kits = start_repair_kits;
+    outcome->start_repair_kits = start_repair_kits;
     nav_path_t path;
     memset(&path, 0, sizeof(path));
 
     for (int tick = 0; tick < config->horizon_ticks; ++tick) {
         sm_apply_option_policy(&w, sp, candidate, &path, sticky_target);
         world_sim_step(&w, SM_SIM_DT);
-        sm_accumulate_events(&w, sp->id, &outcome);
-        if (sp->ship.towed_count > outcome.peak_towed) {
-            outcome.peak_towed = sp->ship.towed_count;
+        sm_accumulate_events(&w, sp->id, outcome);
+        if (sp->ship.towed_count > outcome->peak_towed) {
+            outcome->peak_towed = sp->ship.towed_count;
         }
     }
 
-    outcome.final_towed = sp->ship.towed_count;
-    outcome.final_docked = sp->docked ? 1 : 0;
-    outcome.hull_loss = fmax(0.0, start_hull - (double)sp->ship.hull);
-    outcome.hull_gain = fmax(0.0, (double)sp->ship.hull - start_hull);
+    outcome->final_towed = sp->ship.towed_count;
+    outcome->final_docked = sp->docked ? 1 : 0;
+    outcome->hull_loss = fmax(0.0, start_hull - (double)sp->ship.hull);
+    outcome->hull_gain = fmax(0.0, (double)sp->ship.hull - start_hull);
     {
         double final_dock_dist = sm_repair_dock_distance(&w, sp);
-        outcome.dock_progress =
+        outcome->dock_progress =
             sm_clip((start_dock_dist - final_dock_dist) / 2200.0, 0.0, 1.0);
     }
-    outcome.credits_delta = (double)sp->ship.stat_credits_earned - start_credits;
-    outcome.ore_delta = (double)sp->ship.stat_ore_mined - start_ore;
-    outcome.station_ingots_delta = sm_count_station_ingots(&w) - start_ingots;
-    outcome.final_repair_kits = sm_count_station_finished(&w, COMMODITY_REPAIR_KIT);
-    outcome.final_ship_repair_kits = ship_finished_count(&sp->ship, COMMODITY_REPAIR_KIT);
-    outcome.final_ship_shipyard_inputs = sm_count_ship_shipyard_inputs(sp);
-    outcome.repair_kits_delta = outcome.final_repair_kits - start_repair_kits;
-    outcome.shipyard_inputs_delta = sm_count_shipyard_inputs(&w) - start_shipyard_inputs;
-    outcome.repair_dock_kits_delta = sm_count_repair_dock_kits(&w) - start_repair_dock_kits;
+    outcome->credits_delta = (double)sp->ship.stat_credits_earned - start_credits;
+    outcome->ore_delta = (double)sp->ship.stat_ore_mined - start_ore;
+    outcome->station_ingots_delta = sm_count_station_ingots(&w) - start_ingots;
+    outcome->final_repair_kits = sm_count_station_finished(&w, COMMODITY_REPAIR_KIT);
+    outcome->final_ship_repair_kits = ship_finished_count(&sp->ship, COMMODITY_REPAIR_KIT);
+    outcome->final_ship_shipyard_inputs = sm_count_ship_shipyard_inputs(sp);
+    outcome->repair_kits_delta = outcome->final_repair_kits - start_repair_kits;
+    outcome->shipyard_inputs_delta = sm_count_shipyard_inputs(&w) - start_shipyard_inputs;
+    outcome->repair_dock_kits_delta = sm_count_repair_dock_kits(&w) - start_repair_dock_kits;
 
-    outcome.utility =
-        (double)outcome.smelts * 18.0 +
-        (double)outcome.pickups * 3.0 +
-        (double)outcome.fractures * 2.0 +
-        (double)outcome.peak_towed * 0.85 +
-        outcome.credits_delta * 0.025 +
-        outcome.ore_delta * 0.03 +
-        (double)outcome.mining_ticks * 0.004 -
-        outcome.hull_loss * 0.45 -
-        outcome.damage_amount * 0.25 -
-        (double)outcome.damage_events * 2.0 -
-        (double)outcome.death_events * 80.0;
-    if (option == SM_OPT_DOCK_REPAIR && outcome.repair_events > 0) {
-        outcome.utility += 2.0 + outcome.hull_gain * 0.65;
+    outcome->utility =
+        (double)outcome->smelts * 18.0 +
+        (double)outcome->pickups * 3.0 +
+        (double)outcome->fractures * 2.0 +
+        (double)outcome->peak_towed * 0.85 +
+        outcome->credits_delta * 0.025 +
+        outcome->ore_delta * 0.03 +
+        (double)outcome->mining_ticks * 0.004 -
+        outcome->hull_loss * 0.45 -
+        outcome->damage_amount * 0.25 -
+        (double)outcome->damage_events * 2.0 -
+        (double)outcome->death_events * 80.0;
+    if (option == SM_OPT_DOCK_REPAIR && outcome->repair_events > 0) {
+        outcome->utility += 2.0 + outcome->hull_gain * 0.65;
     }
-    if (start_hull < 55.0 && outcome.hull_gain > 0.0) {
-        outcome.utility += outcome.hull_gain * 0.35;
+    if (start_hull < 55.0 && outcome->hull_gain > 0.0) {
+        outcome->utility += outcome->hull_gain * 0.35;
     }
     if (option == SM_OPT_DOCK_REPAIR && start_hull < 55.0) {
-        outcome.utility += outcome.dock_progress * 3.0;
-        if (outcome.final_docked) outcome.utility += 2.0;
+        outcome->utility += outcome->dock_progress * 3.0;
+        if (outcome->final_docked) outcome->utility += 2.0;
     }
-    if (option == SM_OPT_DELIVER_REFINERY && outcome.final_towed < outcome.peak_towed) {
-        outcome.utility += 4.0;
+    if (option == SM_OPT_DELIVER_REFINERY && outcome->final_towed < outcome->peak_towed) {
+        outcome->utility += 4.0;
     }
     if (option == SM_OPT_SUPPLY_SHIPYARD) {
-        if (outcome.shipyard_inputs_delta > 0) {
-            outcome.utility += (double)outcome.shipyard_inputs_delta * 4.0;
+        if (outcome->shipyard_inputs_delta > 0) {
+            outcome->utility += (double)outcome->shipyard_inputs_delta * 4.0;
         }
-        if (outcome.repair_kits_delta > 0) {
-            outcome.utility += (double)outcome.repair_kits_delta * 0.35;
+        if (outcome->repair_kits_delta > 0) {
+            outcome->utility += (double)outcome->repair_kits_delta * 0.35;
         }
-        if (outcome.final_ship_shipyard_inputs > 0) {
-            outcome.utility += (double)outcome.final_ship_shipyard_inputs * 2.5;
-            if (init->scenario_kind == 6) outcome.utility += 18.0;
+        if (outcome->final_ship_shipyard_inputs > 0) {
+            outcome->utility += (double)outcome->final_ship_shipyard_inputs * 2.5;
+            if (init->scenario_kind == 6) outcome->utility += 18.0;
         }
     }
     if (option == SM_OPT_EXPORT_REPAIR_KITS) {
-        if (outcome.repair_dock_kits_delta > 0) {
-            outcome.utility += (double)outcome.repair_dock_kits_delta * 0.9;
+        if (outcome->repair_dock_kits_delta > 0) {
+            outcome->utility += (double)outcome->repair_dock_kits_delta * 0.9;
         }
-        if (outcome.final_ship_repair_kits > 0) {
-            outcome.utility += (double)outcome.final_ship_repair_kits * 2.5;
-            if (init->scenario_kind == 7) outcome.utility += 18.0;
+        if (outcome->final_ship_repair_kits > 0) {
+            outcome->utility += (double)outcome->final_ship_repair_kits * 2.5;
+            if (init->scenario_kind == 7) outcome->utility += 18.0;
         }
     }
 
     world_cleanup(&w);
-    return outcome;
+    return true;
 }
 
 static void sm_init_scenario(const sm_config_t *config,
@@ -1816,13 +1879,19 @@ static int sm_evaluate_group(const sm_config_t *config,
         sm_encode_features(init, &base_world, base_sp, option, group->features[option]);
     }
     group->baseline = sm_fixed_priority_baseline(group->features);
-    world_cleanup(&base_world);
 
     double best = -1e18;
     double second = -1e18;
     for (size_t option = 0; option < SM_OPTION_COUNT; ++option) {
-        group->outcomes[option] =
-            sm_replay_option(config, init, option, sticky_targets[option]);
+        if (!sm_replay_option(config,
+                              init,
+                              &base_world,
+                              option,
+                              sticky_targets[option],
+                              &group->outcomes[option])) {
+            world_cleanup(&base_world);
+            return 0;
+        }
         double utility = group->outcomes[option].utility;
         if (utility > best) {
             second = best;
@@ -1833,6 +1902,7 @@ static int sm_evaluate_group(const sm_config_t *config,
         }
     }
     group->second_best_utility = isfinite(second) ? second : best;
+    world_cleanup(&base_world);
 
     for (size_t option = 0; option < SM_OPTION_COUNT; ++option) {
         sm_write_trace_row(trace_fp, split, group, option);

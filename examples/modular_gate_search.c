@@ -1,3 +1,6 @@
+#include "nn.h"
+
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -85,7 +88,7 @@ typedef struct {
 enum { LEARNED_FEATURE_COUNT = 8 };
 
 typedef struct {
-    double weights[LEARNED_FEATURE_COUNT];
+    NeuralNet *net;
     double loss;
 } LearnedProposer;
 
@@ -606,18 +609,22 @@ static uint64_t mix_u64(uint64_t value)
     return value;
 }
 
-static void encode_learned_features(const ModularRule *rule, double *features)
+static void encode_learned_features(const ModularRule *rule, nn_real *features)
 {
     double modulus = rule->modulus == 0u ? 1.0 : (double)rule->modulus;
-    features[0] = 1.0;
-    features[1] = 1.0 / modulus;
-    features[2] = rule->residue == 0u ? 1.0 : (double)rule->residue / modulus;
-    features[3] = rule->power == 0u ? 0.0 : (double)rule->power / 3.0;
-    features[4] = rule->tuple_offset == 0u ? 0.0 : (double)rule->tuple_offset / 2.0;
-    features[5] = rule->sequence == SEQUENCE_FIBONACCI ? 1.0 : 0.0;
-    features[6] = rule->sequence == SEQUENCE_LUCAS ? 1.0 : 0.0;
-    features[7] = rule->kind == RULE_RECURRENCE_ZERO ? 1.0 :
-                  (rule->kind == RULE_KFREE_DIVISIBLE ? 0.5 : 0.0);
+    features[0] = (nn_real)1.0;
+    features[1] = (nn_real)(1.0 / modulus);
+    features[2] =
+        (nn_real)(rule->residue == 0u ? 1.0 : (double)rule->residue / modulus);
+    features[3] = (nn_real)(rule->power == 0u ? 0.0 : (double)rule->power / 3.0);
+    features[4] =
+        (nn_real)(rule->tuple_offset == 0u ? 0.0 : (double)rule->tuple_offset / 2.0);
+    features[5] = rule->sequence == SEQUENCE_FIBONACCI ? (nn_real)1.0 : (nn_real)0.0;
+    features[6] = rule->sequence == SEQUENCE_LUCAS ? (nn_real)1.0 : (nn_real)0.0;
+    features[7] = rule->kind == RULE_RECURRENCE_ZERO
+                      ? (nn_real)1.0
+                      : (rule->kind == RULE_KFREE_DIVISIBLE ? (nn_real)0.5
+                                                            : (nn_real)0.0);
 }
 
 static LearnedProposer train_learned_proposer(const ModularRule *rules,
@@ -627,41 +634,84 @@ static LearnedProposer train_learned_proposer(const ModularRule *rules,
 {
     LearnedProposer proposer;
     memset(&proposer, 0, sizeof(proposer));
-    double events = (double)(max_states == 0u ? 1u : max_states) *
-                    (double)(max_actions == 0u ? 1u : max_actions);
-    const double learning_rate = 0.18;
-    const double l2 = 0.0005;
-    for (size_t epoch = 0u; epoch < 384u; ++epoch) {
-        for (size_t i = 0u; i < rule_count; ++i) {
-            double features[LEARNED_FEATURE_COUNT];
-            double prediction = 0.0;
-            double target = (double)rules[i].train_support / events;
-            encode_learned_features(&rules[i], features);
-            for (size_t j = 0u; j < LEARNED_FEATURE_COUNT; ++j) {
-                prediction += proposer.weights[j] * features[j];
-            }
-            double error = prediction - target;
-            for (size_t j = 0u; j < LEARNED_FEATURE_COUNT; ++j) {
-                proposer.weights[j] -= learning_rate *
-                                       (error * features[j] + l2 * proposer.weights[j]);
-            }
-        }
+    proposer.loss = rule_count == 0u ? 0.0 : 1.0;
+    if (rules == NULL || rule_count == 0u ||
+        rule_count > SIZE_MAX / LEARNED_FEATURE_COUNT) {
+        return proposer;
     }
 
+    double events = (double)(max_states == 0u ? 1u : max_states) *
+                    (double)(max_actions == 0u ? 1u : max_actions);
+    nn_real *inputs =
+        (nn_real *)calloc(rule_count * LEARNED_FEATURE_COUNT, sizeof(*inputs));
+    nn_real *targets = (nn_real *)calloc(rule_count, sizeof(*targets));
+    nn_real *outputs = (nn_real *)calloc(rule_count, sizeof(*outputs));
+    if (inputs == NULL || targets == NULL || outputs == NULL) {
+        free(inputs);
+        free(targets);
+        free(outputs);
+        return proposer;
+    }
+
+    for (size_t i = 0u; i < rule_count; ++i) {
+        encode_learned_features(&rules[i], &inputs[i * LEARNED_FEATURE_COUNT]);
+        targets[i] = (nn_real)((double)rules[i].train_support / events);
+    }
+
+    const size_t layers[] = {LEARNED_FEATURE_COUNT, 1u};
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = sizeof(layers) / sizeof(layers[0]);
+    config.seed = 0x4d475u ^ (unsigned int)rule_count ^
+                  (unsigned int)(max_states << 1u) ^ (unsigned int)(max_actions << 9u);
+    config.hidden_activation = NN_ACTIVATION_LINEAR;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+    NeuralNet *net = nn_create_config(&config);
+    if (net == NULL) {
+        free(inputs);
+        free(targets);
+        free(outputs);
+        return proposer;
+    }
+
+    nn_real train_loss = nn_train_batched(net,
+                                          inputs,
+                                          targets,
+                                          rule_count,
+                                          rule_count,
+                                          (nn_real)0.18,
+                                          384u,
+                                          0);
+    if (!isfinite((double)train_loss)) {
+        nn_free(net);
+        free(inputs);
+        free(targets);
+        free(outputs);
+        return proposer;
+    }
+
+    nn_forward_batch(net, inputs, outputs, rule_count);
     double loss = 0.0;
     for (size_t i = 0u; i < rule_count; ++i) {
-        double features[LEARNED_FEATURE_COUNT];
-        double prediction = 0.0;
-        double target = (double)rules[i].train_support / events;
-        encode_learned_features(&rules[i], features);
-        for (size_t j = 0u; j < LEARNED_FEATURE_COUNT; ++j) {
-            prediction += proposer.weights[j] * features[j];
-        }
-        double error = prediction - target;
+        double error = (double)outputs[i] - (double)targets[i];
         loss += error * error;
     }
     proposer.loss = rule_count == 0u ? 0.0 : loss / (double)rule_count;
+    proposer.net = net;
+    free(inputs);
+    free(targets);
+    free(outputs);
     return proposer;
+}
+
+static void learned_proposer_destroy(LearnedProposer *proposer)
+{
+    if (proposer == NULL) {
+        return;
+    }
+    nn_free(proposer->net);
+    proposer->net = NULL;
 }
 
 static double structural_score(const ModularRule *rule)
@@ -679,13 +729,14 @@ static double structural_score(const ModularRule *rule)
 
 static double learned_score(const LearnedProposer *proposer, const ModularRule *rule)
 {
-    double features[LEARNED_FEATURE_COUNT];
-    double score = 0.0;
-    encode_learned_features(rule, features);
-    for (size_t i = 0u; i < LEARNED_FEATURE_COUNT; ++i) {
-        score += proposer->weights[i] * features[i];
+    if (proposer == NULL || proposer->net == NULL) {
+        return structural_score(rule);
     }
-    return score;
+    nn_real features[LEARNED_FEATURE_COUNT];
+    nn_real score = (nn_real)0;
+    encode_learned_features(rule, features);
+    nn_forward(proposer->net, features, &score);
+    return (double)score;
 }
 
 static double order_score(ModularSelectionStrategy strategy,
@@ -1158,6 +1209,7 @@ static int run_task(ModularTask task, const ModularGateConfig *config, FILE *tra
                                &proposer,
                                trace) && ok;
     }
+    learned_proposer_destroy(&proposer);
     return ok;
 }
 

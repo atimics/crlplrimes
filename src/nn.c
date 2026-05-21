@@ -1371,6 +1371,740 @@ size_t nn_parameter_count(const NeuralNet *net)
     return total;
 }
 
+void nn_numeric_guard_config_init(NNNumericGuardConfig *config)
+{
+    if (config == NULL) {
+        return;
+    }
+
+    config->require_finite = 1;
+    config->max_shrink_steps = 4u;
+    config->shrink_factor = (nn_real)0.5;
+    config->max_abs_parameter = (nn_real)0;
+    config->max_abs_parameter_delta = (nn_real)0;
+    config->max_abs_logit = (nn_real)0;
+    config->max_abs_logit_delta = (nn_real)0;
+    config->min_selected_margin = (nn_real)0;
+}
+
+void nn_training_step_certificate_init(NNTrainingStepCertificate *certificate)
+{
+    if (certificate == NULL) {
+        return;
+    }
+
+    memset(certificate, 0, sizeof(*certificate));
+    snprintf(certificate->schema,
+             sizeof(certificate->schema),
+             "%s",
+             NN_NUMERIC_STEP_CERTIFICATE_SCHEMA);
+    snprintf(certificate->step_kind, sizeof(certificate->step_kind), "%s", "candidate_scorer");
+    certificate->report_version = 1u;
+    certificate->rejection_reason = NN_NUMERIC_STEP_REJECT_NONE;
+    certificate->optimizer_loss = (nn_real)NAN;
+    certificate->loss_before = (nn_real)NAN;
+    certificate->loss_after = (nn_real)NAN;
+    certificate->selected_margin_before = (nn_real)NAN;
+    certificate->selected_margin_after = (nn_real)NAN;
+}
+
+const char *nn_numeric_step_reject_reason_name(NNNumericStepRejectReason reason)
+{
+    switch (reason) {
+    case NN_NUMERIC_STEP_REJECT_NONE:
+        return "none";
+    case NN_NUMERIC_STEP_REJECT_INVALID_ARGUMENT:
+        return "invalid_argument";
+    case NN_NUMERIC_STEP_REJECT_NONFINITE:
+        return "nonfinite";
+    case NN_NUMERIC_STEP_REJECT_PARAMETER_BOUND:
+        return "parameter_bound";
+    case NN_NUMERIC_STEP_REJECT_PARAMETER_DELTA_BOUND:
+        return "parameter_delta_bound";
+    case NN_NUMERIC_STEP_REJECT_LOGIT_BOUND:
+        return "logit_bound";
+    case NN_NUMERIC_STEP_REJECT_LOGIT_DELTA_BOUND:
+        return "logit_delta_bound";
+    case NN_NUMERIC_STEP_REJECT_MARGIN_BOUND:
+        return "margin_bound";
+    case NN_NUMERIC_STEP_REJECT_ALLOC_FAILED:
+        return "alloc_failed";
+    default:
+        return "unknown";
+    }
+}
+
+static nn_real nn_abs_real(nn_real value)
+{
+    return value < (nn_real)0 ? -value : value;
+}
+
+static int nn_parameter_metrics(const NeuralNet *net, nn_real *max_abs)
+{
+    if (max_abs != NULL) {
+        *max_abs = (nn_real)0;
+    }
+    if (net == NULL) {
+        return 0;
+    }
+
+    int finite = 1;
+    nn_real observed = (nn_real)0;
+    for (size_t layer = 1; layer < net->layer_count; ++layer) {
+        size_t previous = net->sizes[layer - 1];
+        size_t current = net->sizes[layer];
+        size_t weight_count = previous * current;
+        for (size_t i = 0; i < weight_count; ++i) {
+            nn_real value = net->weights[layer][i];
+            if (!isfinite((double)value)) {
+                finite = 0;
+            } else if (nn_abs_real(value) > observed) {
+                observed = nn_abs_real(value);
+            }
+        }
+        for (size_t i = 0; i < current; ++i) {
+            nn_real value = net->biases[layer][i];
+            if (!isfinite((double)value)) {
+                finite = 0;
+            } else if (nn_abs_real(value) > observed) {
+                observed = nn_abs_real(value);
+            }
+        }
+    }
+    if (max_abs != NULL) {
+        *max_abs = observed;
+    }
+    return finite;
+}
+
+static nn_real nn_parameter_max_abs_delta(const NeuralNet *before, const NeuralNet *after)
+{
+    if (before == NULL || after == NULL || before->layer_count != after->layer_count) {
+        return (nn_real)NAN;
+    }
+
+    nn_real observed = (nn_real)0;
+    for (size_t layer = 1; layer < before->layer_count; ++layer) {
+        if (before->sizes[layer] != after->sizes[layer] ||
+            before->sizes[layer - 1] != after->sizes[layer - 1]) {
+            return (nn_real)NAN;
+        }
+        size_t previous = before->sizes[layer - 1];
+        size_t current = before->sizes[layer];
+        size_t weight_count = previous * current;
+        for (size_t i = 0; i < weight_count; ++i) {
+            nn_real delta = nn_abs_real(after->weights[layer][i] - before->weights[layer][i]);
+            if (!isfinite((double)delta)) {
+                return (nn_real)NAN;
+            }
+            if (delta > observed) {
+                observed = delta;
+            }
+        }
+        for (size_t i = 0; i < current; ++i) {
+            nn_real delta = nn_abs_real(after->biases[layer][i] - before->biases[layer][i]);
+            if (!isfinite((double)delta)) {
+                return (nn_real)NAN;
+            }
+            if (delta > observed) {
+                observed = delta;
+            }
+        }
+    }
+    return observed;
+}
+
+static int nn_copy_parameters(NeuralNet *dst, const NeuralNet *src)
+{
+    if (dst == NULL || src == NULL || dst->layer_count != src->layer_count) {
+        return 0;
+    }
+
+    for (size_t layer = 1; layer < src->layer_count; ++layer) {
+        if (dst->sizes[layer] != src->sizes[layer] ||
+            dst->sizes[layer - 1] != src->sizes[layer - 1]) {
+            return 0;
+        }
+        size_t previous = src->sizes[layer - 1];
+        size_t current = src->sizes[layer];
+        memcpy(dst->biases[layer], src->biases[layer], current * sizeof(*dst->biases[layer]));
+        memcpy(dst->weights[layer],
+               src->weights[layer],
+               current * previous * sizeof(*dst->weights[layer]));
+    }
+    dst->rng_state = src->rng_state;
+    invalidate_batch_cache(dst);
+    return 1;
+}
+
+static int nn_score_metrics(NeuralNet *net,
+                            const nn_real *candidate_inputs,
+                            size_t candidate_count,
+                            size_t selected_index,
+                            nn_real *scores,
+                            nn_real *max_abs_logit,
+                            nn_real *selected_margin,
+                            nn_real *loss,
+                            nn_real weight)
+{
+    if (max_abs_logit != NULL) {
+        *max_abs_logit = (nn_real)0;
+    }
+    if (selected_margin != NULL) {
+        *selected_margin = (nn_real)NAN;
+    }
+    if (loss != NULL) {
+        *loss = (nn_real)NAN;
+    }
+    if (net == NULL || candidate_inputs == NULL || candidate_count == 0 ||
+        selected_index >= candidate_count || scores == NULL || nn_output_size(net) != 1) {
+        return 0;
+    }
+
+    nn_forward_batch(net, candidate_inputs, scores, candidate_count);
+    int finite = 1;
+    nn_real observed = (nn_real)0;
+    for (size_t i = 0; i < candidate_count; ++i) {
+        if (!isfinite((double)scores[i])) {
+            finite = 0;
+            continue;
+        }
+        nn_real abs_score = nn_abs_real(scores[i]);
+        if (abs_score > observed) {
+            observed = abs_score;
+        }
+    }
+    if (max_abs_logit != NULL) {
+        *max_abs_logit = observed;
+    }
+    if (selected_margin != NULL) {
+        *selected_margin = nn_action_score_margin(scores, candidate_count, selected_index);
+    }
+    if (loss != NULL) {
+        *loss = weight * softmax_cross_entropy_index(scores, candidate_count, selected_index);
+    }
+    return finite && selected_margin != NULL && isfinite((double)*selected_margin) &&
+           loss != NULL && isfinite((double)*loss);
+}
+
+static int nn_dataset_metrics(NeuralNet *net,
+                              const nn_real *inputs,
+                              const nn_real *targets,
+                              size_t sample_count,
+                              nn_real *outputs,
+                              nn_real *loss,
+                              nn_real *max_abs_output)
+{
+    if (loss != NULL) {
+        *loss = (nn_real)NAN;
+    }
+    if (max_abs_output != NULL) {
+        *max_abs_output = (nn_real)0;
+    }
+    if (net == NULL || inputs == NULL || targets == NULL || sample_count == 0 ||
+        outputs == NULL || loss == NULL || max_abs_output == NULL) {
+        return 0;
+    }
+
+    size_t output_width = nn_output_size(net);
+    if (output_width == 0) {
+        return 0;
+    }
+
+    nn_forward_batch(net, inputs, outputs, sample_count);
+    int finite = 1;
+    nn_real total_loss = (nn_real)0;
+    nn_real observed = (nn_real)0;
+    for (size_t sample = 0; sample < sample_count; ++sample) {
+        const nn_real *row_output = &outputs[sample * output_width];
+        const nn_real *row_target = &targets[sample * output_width];
+        for (size_t i = 0; i < output_width; ++i) {
+            if (!isfinite((double)row_output[i]) || !isfinite((double)row_target[i])) {
+                finite = 0;
+            } else if (nn_abs_real(row_output[i]) > observed) {
+                observed = nn_abs_real(row_output[i]);
+            }
+        }
+
+        if (net->loss == NN_LOSS_SOFTMAX_CROSS_ENTROPY) {
+            total_loss += nn_softmax_cross_entropy(row_output, row_target, output_width);
+        } else {
+            for (size_t i = 0; i < output_width; ++i) {
+                nn_real error = row_output[i] - row_target[i];
+                total_loss += (nn_real)0.5 * error * error;
+            }
+        }
+    }
+
+    *loss = total_loss / (nn_real)sample_count;
+    *max_abs_output = observed;
+    return finite && isfinite((double)*loss);
+}
+
+static nn_real nn_policy_regularized_objective(const nn_real *scores,
+                                               size_t candidate_count,
+                                               size_t selected_index,
+                                               nn_real policy_weight,
+                                               const nn_real *reference_probabilities,
+                                               nn_real reference_weight,
+                                               nn_real entropy_weight)
+{
+    if (scores == NULL || candidate_count == 0 || selected_index >= candidate_count ||
+        reference_weight < (nn_real)0 || entropy_weight < (nn_real)0 ||
+        (reference_weight != (nn_real)0 && reference_probabilities == NULL)) {
+        return (nn_real)NAN;
+    }
+
+    nn_real loss = (nn_real)0;
+    if (policy_weight != (nn_real)0) {
+        loss += policy_weight * softmax_cross_entropy_index(scores,
+                                                            candidate_count,
+                                                            selected_index);
+    }
+    if (reference_weight != (nn_real)0) {
+        loss += reference_weight *
+                nn_softmax_cross_entropy(scores, reference_probabilities, candidate_count);
+    }
+    if (entropy_weight != (nn_real)0) {
+        nn_real max_score = scores[0];
+        for (size_t i = 1; i < candidate_count; ++i) {
+            if (scores[i] > max_score) {
+                max_score = scores[i];
+            }
+        }
+        nn_real denominator = (nn_real)0;
+        for (size_t i = 0; i < candidate_count; ++i) {
+            denominator += NN_EXP(scores[i] - max_score);
+        }
+        if (denominator <= (nn_real)0 || !isfinite((double)denominator)) {
+            return (nn_real)NAN;
+        }
+        nn_real entropy_loss = (nn_real)0;
+        for (size_t i = 0; i < candidate_count; ++i) {
+            nn_real probability = NN_EXP(scores[i] - max_score) / denominator;
+            entropy_loss += probability * safe_log_probability(probability);
+        }
+        loss += entropy_weight * entropy_loss;
+    }
+    return loss;
+}
+
+static nn_real nn_score_max_abs_delta(const nn_real *before,
+                                      const nn_real *after,
+                                      size_t count)
+{
+    if (before == NULL || after == NULL) {
+        return (nn_real)NAN;
+    }
+    nn_real observed = (nn_real)0;
+    for (size_t i = 0; i < count; ++i) {
+        nn_real delta = nn_abs_real(after[i] - before[i]);
+        if (!isfinite((double)delta)) {
+            return (nn_real)NAN;
+        }
+        if (delta > observed) {
+            observed = delta;
+        }
+    }
+    return observed;
+}
+
+static int nn_guard_bound_active(nn_real value)
+{
+    return isfinite((double)value) && value > (nn_real)0;
+}
+
+static NNNumericStepRejectReason nn_numeric_guard_check(
+    const NNNumericGuardConfig *guard,
+    const NNTrainingStepCertificate *certificate)
+{
+    if (guard == NULL || certificate == NULL) {
+        return NN_NUMERIC_STEP_REJECT_INVALID_ARGUMENT;
+    }
+    if (guard->require_finite &&
+        (!certificate->finite_before || !certificate->finite_after ||
+         !isfinite((double)certificate->loss_before) ||
+         !isfinite((double)certificate->loss_after) ||
+         !isfinite((double)certificate->optimizer_loss) ||
+         !isfinite((double)certificate->max_abs_parameter_delta) ||
+         !isfinite((double)certificate->max_abs_logit_delta) ||
+         !isfinite((double)certificate->selected_margin_before) ||
+         !isfinite((double)certificate->selected_margin_after))) {
+        return NN_NUMERIC_STEP_REJECT_NONFINITE;
+    }
+    if (nn_guard_bound_active(guard->max_abs_parameter) &&
+        certificate->max_abs_parameter_after > guard->max_abs_parameter) {
+        return NN_NUMERIC_STEP_REJECT_PARAMETER_BOUND;
+    }
+    if (nn_guard_bound_active(guard->max_abs_parameter_delta) &&
+        certificate->max_abs_parameter_delta > guard->max_abs_parameter_delta) {
+        return NN_NUMERIC_STEP_REJECT_PARAMETER_DELTA_BOUND;
+    }
+    if (nn_guard_bound_active(guard->max_abs_logit) &&
+        certificate->max_abs_logit_after > guard->max_abs_logit) {
+        return NN_NUMERIC_STEP_REJECT_LOGIT_BOUND;
+    }
+    if (nn_guard_bound_active(guard->max_abs_logit_delta) &&
+        certificate->max_abs_logit_delta > guard->max_abs_logit_delta) {
+        return NN_NUMERIC_STEP_REJECT_LOGIT_DELTA_BOUND;
+    }
+    if (nn_guard_bound_active(guard->min_selected_margin) &&
+        certificate->selected_margin_after < guard->min_selected_margin) {
+        return NN_NUMERIC_STEP_REJECT_MARGIN_BOUND;
+    }
+    return NN_NUMERIC_STEP_REJECT_NONE;
+}
+
+static int nn_write_json_real(FILE *fp, nn_real value)
+{
+    if (fp == NULL) {
+        return 0;
+    }
+    if (!isfinite((double)value)) {
+        return fputs("null", fp) != EOF;
+    }
+    return fprintf(fp, "%.17g", (double)value) >= 0;
+}
+
+int nn_training_step_certificate_write_jsonl(FILE *fp,
+                                             const NNTrainingStepCertificate *certificate)
+{
+    if (fp == NULL || certificate == NULL) {
+        return 0;
+    }
+
+    if (fputs("{\"schema\":", fp) == EOF ||
+        !nn_write_json_string(fp,
+                              certificate->schema[0] == '\0'
+                                  ? NN_NUMERIC_STEP_CERTIFICATE_SCHEMA
+                                  : certificate->schema) ||
+        fputs(",\"step_kind\":", fp) == EOF ||
+        !nn_write_json_string(fp,
+                              certificate->step_kind[0] == '\0'
+                                  ? "candidate_scorer"
+                                  : certificate->step_kind) ||
+        fprintf(fp,
+                ",\"report_version\":%u,\"step_committed\":%s,"
+                "\"rejection_reason\":",
+                certificate->report_version,
+                certificate->step_committed ? "true" : "false") < 0 ||
+        !nn_write_json_string(fp,
+                              nn_numeric_step_reject_reason_name(
+                                  certificate->rejection_reason)) ||
+        fprintf(fp,
+                ",\"shrink_steps\":%zu,\"parameter_count\":%zu,"
+                "\"candidate_count\":%zu,\"selected_index\":%zu,"
+                "\"finite_before\":%s,\"finite_after\":%s",
+                certificate->shrink_steps,
+                certificate->parameter_count,
+                certificate->candidate_count,
+                certificate->selected_index,
+                certificate->finite_before ? "true" : "false",
+                certificate->finite_after ? "true" : "false") < 0) {
+        return 0;
+    }
+
+    const struct {
+        const char *name;
+        nn_real value;
+    } fields[] = {
+        {"attempted_learning_rate", certificate->attempted_learning_rate},
+        {"applied_learning_rate", certificate->applied_learning_rate},
+        {"optimizer_loss", certificate->optimizer_loss},
+        {"loss_before", certificate->loss_before},
+        {"loss_after", certificate->loss_after},
+        {"max_abs_parameter_before", certificate->max_abs_parameter_before},
+        {"max_abs_parameter_after", certificate->max_abs_parameter_after},
+        {"max_abs_parameter_delta", certificate->max_abs_parameter_delta},
+        {"max_abs_logit_before", certificate->max_abs_logit_before},
+        {"max_abs_logit_after", certificate->max_abs_logit_after},
+        {"max_abs_logit_delta", certificate->max_abs_logit_delta},
+        {"selected_margin_before", certificate->selected_margin_before},
+        {"selected_margin_after", certificate->selected_margin_after},
+    };
+    for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i) {
+        if (fprintf(fp, ",\"%s\":", fields[i].name) < 0 ||
+            !nn_write_json_real(fp, fields[i].value)) {
+            return 0;
+        }
+    }
+    return fputs("}\n", fp) != EOF;
+}
+
+static const char *nn_numeric_certificate_path(void)
+{
+    const char *path = getenv("CRLP_NUMERIC_CERT_PATH");
+    if (path == NULL || path[0] == '\0') {
+        return NULL;
+    }
+    return path;
+}
+
+static int nn_env_parse_real(const char *name, nn_real *out)
+{
+    const char *text = getenv(name);
+    if (text == NULL || text[0] == '\0' || out == NULL) {
+        return 0;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    double parsed = strtod(text, &end);
+    if (end == text || errno == ERANGE || !isfinite(parsed)) {
+        return 0;
+    }
+    while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') {
+        ++end;
+    }
+    if (*end != '\0') {
+        return 0;
+    }
+    *out = (nn_real)parsed;
+    return 1;
+}
+
+static int nn_env_parse_size(const char *name, size_t *out)
+{
+    const char *text = getenv(name);
+    if (text == NULL || text[0] == '\0' || out == NULL) {
+        return 0;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    unsigned long long parsed = strtoull(text, &end, 10);
+    if (end == text || errno == ERANGE || parsed > (unsigned long long)SIZE_MAX) {
+        return 0;
+    }
+    while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') {
+        ++end;
+    }
+    if (*end != '\0') {
+        return 0;
+    }
+    *out = (size_t)parsed;
+    return 1;
+}
+
+static void nn_numeric_guard_config_sanitize(NNNumericGuardConfig *config)
+{
+    if (config == NULL) {
+        return;
+    }
+    if (config->shrink_factor <= (nn_real)0 || config->shrink_factor >= (nn_real)1 ||
+        !isfinite((double)config->shrink_factor)) {
+        config->shrink_factor = (nn_real)0.5;
+    }
+    if (config->max_abs_parameter < (nn_real)0 ||
+        !isfinite((double)config->max_abs_parameter)) {
+        config->max_abs_parameter = (nn_real)0;
+    }
+    if (config->max_abs_parameter_delta < (nn_real)0 ||
+        !isfinite((double)config->max_abs_parameter_delta)) {
+        config->max_abs_parameter_delta = (nn_real)0;
+    }
+    if (config->max_abs_logit < (nn_real)0 || !isfinite((double)config->max_abs_logit)) {
+        config->max_abs_logit = (nn_real)0;
+    }
+    if (config->max_abs_logit_delta < (nn_real)0 ||
+        !isfinite((double)config->max_abs_logit_delta)) {
+        config->max_abs_logit_delta = (nn_real)0;
+    }
+    if (config->min_selected_margin < (nn_real)0 ||
+        !isfinite((double)config->min_selected_margin)) {
+        config->min_selected_margin = (nn_real)0;
+    }
+}
+
+static void nn_numeric_guard_config_from_env(NNNumericGuardConfig *config)
+{
+    if (config == NULL) {
+        return;
+    }
+    nn_numeric_guard_config_init(config);
+
+    nn_real real_value = (nn_real)0;
+    size_t size_value = 0u;
+    if (nn_env_parse_size("CRLP_NUMERIC_MAX_SHRINK_STEPS", &size_value)) {
+        config->max_shrink_steps = size_value;
+    }
+    if (nn_env_parse_real("CRLP_NUMERIC_SHRINK_FACTOR", &real_value)) {
+        config->shrink_factor = real_value;
+    }
+    if (nn_env_parse_real("CRLP_NUMERIC_MAX_ABS_PARAMETER", &real_value)) {
+        config->max_abs_parameter = real_value;
+    }
+    if (nn_env_parse_real("CRLP_NUMERIC_MAX_ABS_PARAMETER_DELTA", &real_value)) {
+        config->max_abs_parameter_delta = real_value;
+    }
+    if (nn_env_parse_real("CRLP_NUMERIC_MAX_ABS_LOGIT", &real_value)) {
+        config->max_abs_logit = real_value;
+    }
+    if (nn_env_parse_real("CRLP_NUMERIC_MAX_ABS_LOGIT_DELTA", &real_value)) {
+        config->max_abs_logit_delta = real_value;
+    }
+    if (nn_env_parse_real("CRLP_NUMERIC_MIN_SELECTED_MARGIN", &real_value)) {
+        config->min_selected_margin = real_value;
+    }
+    if (nn_env_parse_real("CRLP_NUMERIC_REQUIRE_FINITE", &real_value)) {
+        config->require_finite = real_value != (nn_real)0;
+    }
+    nn_numeric_guard_config_sanitize(config);
+}
+
+static int nn_numeric_certificate_write_env(const NNTrainingStepCertificate *certificate)
+{
+    const char *path = nn_numeric_certificate_path();
+    if (path == NULL) {
+        return 1;
+    }
+
+    FILE *fp = fopen(path, "a");
+    if (fp == NULL) {
+        return 0;
+    }
+    int ok = nn_training_step_certificate_write_jsonl(fp, certificate);
+    if (fclose(fp) != 0) {
+        ok = 0;
+    }
+    return ok;
+}
+
+int nn_neuron_contract_interval(const NeuralNet *net,
+                                size_t layer_index,
+                                size_t neuron_index,
+                                nn_real input_min,
+                                nn_real input_max,
+                                NNNeuronContract *out_contract)
+{
+    if (out_contract != NULL) {
+        memset(out_contract, 0, sizeof(*out_contract));
+        snprintf(out_contract->schema,
+                 sizeof(out_contract->schema),
+                 "%s",
+                 NN_NEURON_CONTRACT_SCHEMA);
+        out_contract->report_version = 1u;
+        out_contract->pre_activation_min = (nn_real)NAN;
+        out_contract->pre_activation_max = (nn_real)NAN;
+        out_contract->output_min = (nn_real)NAN;
+        out_contract->output_max = (nn_real)NAN;
+    }
+    if (net == NULL || out_contract == NULL || layer_index == 0 ||
+        layer_index >= net->layer_count || neuron_index >= net->sizes[layer_index] ||
+        input_min > input_max || !isfinite((double)input_min) ||
+        !isfinite((double)input_max)) {
+        return 0;
+    }
+
+    size_t previous = net->sizes[layer_index - 1];
+    const nn_real *weights = &net->weights[layer_index][neuron_index * previous];
+    nn_real lower = net->biases[layer_index][neuron_index];
+    nn_real upper = lower;
+    nn_real weight_l1 = (nn_real)0;
+    int finite = isfinite((double)lower);
+    for (size_t i = 0; i < previous; ++i) {
+        nn_real weight = weights[i];
+        if (!isfinite((double)weight)) {
+            finite = 0;
+            continue;
+        }
+        weight_l1 += nn_abs_real(weight);
+        if (weight >= (nn_real)0) {
+            lower += weight * input_min;
+            upper += weight * input_max;
+        } else {
+            lower += weight * input_max;
+            upper += weight * input_min;
+        }
+    }
+
+    NNActivation activation = activation_for_layer(net, layer_index);
+    nn_real output_min = lower;
+    nn_real output_max = upper;
+    nn_real derivative_upper_bound = (nn_real)1;
+    switch (activation) {
+    case NN_ACTIVATION_RELU:
+        derivative_upper_bound = upper <= (nn_real)0 ? (nn_real)0 : (nn_real)1;
+        output_min = lower <= (nn_real)0 ? (nn_real)0 : lower;
+        output_max = upper <= (nn_real)0 ? (nn_real)0 : upper;
+        break;
+    case NN_ACTIVATION_TANH:
+        derivative_upper_bound = (nn_real)1;
+        output_min = NN_TANH(lower);
+        output_max = NN_TANH(upper);
+        break;
+    case NN_ACTIVATION_SIGMOID:
+        derivative_upper_bound = (nn_real)0.25;
+        output_min = sigmoid(lower);
+        output_max = sigmoid(upper);
+        break;
+    case NN_ACTIVATION_LINEAR:
+    default:
+        derivative_upper_bound = (nn_real)1;
+        break;
+    }
+
+    out_contract->layer_index = layer_index;
+    out_contract->neuron_index = neuron_index;
+    out_contract->input_width = previous;
+    out_contract->input_min = input_min;
+    out_contract->input_max = input_max;
+    out_contract->pre_activation_min = lower;
+    out_contract->pre_activation_max = upper;
+    out_contract->output_min = output_min;
+    out_contract->output_max = output_max;
+    out_contract->weight_l1 = weight_l1;
+    out_contract->derivative_upper_bound = derivative_upper_bound;
+    out_contract->lipschitz_upper_bound = weight_l1 * derivative_upper_bound;
+    out_contract->certified = finite && isfinite((double)lower) && isfinite((double)upper) &&
+                              isfinite((double)output_min) && isfinite((double)output_max) &&
+                              isfinite((double)out_contract->lipschitz_upper_bound);
+    return out_contract->certified;
+}
+
+int nn_neuron_contract_write_jsonl(FILE *fp, const NNNeuronContract *contract)
+{
+    if (fp == NULL || contract == NULL) {
+        return 0;
+    }
+    if (fputs("{\"schema\":", fp) == EOF ||
+        !nn_write_json_string(fp,
+                              contract->schema[0] == '\0' ? NN_NEURON_CONTRACT_SCHEMA
+                                                           : contract->schema) ||
+        fprintf(fp,
+                ",\"report_version\":%u,\"layer_index\":%zu,"
+                "\"neuron_index\":%zu,\"input_width\":%zu,\"certified\":%s",
+                contract->report_version,
+                contract->layer_index,
+                contract->neuron_index,
+                contract->input_width,
+                contract->certified ? "true" : "false") < 0) {
+        return 0;
+    }
+
+    const struct {
+        const char *name;
+        nn_real value;
+    } fields[] = {
+        {"input_min", contract->input_min},
+        {"input_max", contract->input_max},
+        {"pre_activation_min", contract->pre_activation_min},
+        {"pre_activation_max", contract->pre_activation_max},
+        {"output_min", contract->output_min},
+        {"output_max", contract->output_max},
+        {"weight_l1", contract->weight_l1},
+        {"derivative_upper_bound", contract->derivative_upper_bound},
+        {"lipschitz_upper_bound", contract->lipschitz_upper_bound},
+    };
+    for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i) {
+        if (fprintf(fp, ",\"%s\":", fields[i].name) < 0 ||
+            !nn_write_json_real(fp, fields[i].value)) {
+            return 0;
+        }
+    }
+    return fputs("}\n", fp) != EOF;
+}
+
 size_t nn_forward_flop_count(const NeuralNet *net)
 {
     if (net == NULL) {
@@ -1872,11 +2606,11 @@ static nn_real train_pairwise_ranker_from_workspace(NeuralNet *net,
     return loss * scale;
 }
 
-nn_real nn_train_softmax_scorer_cached(NeuralNet *net,
-                                       size_t candidate_count,
-                                       size_t selected_index,
-                                       nn_real weight,
-                                       nn_real learning_rate)
+static nn_real nn_train_softmax_scorer_cached_raw(NeuralNet *net,
+                                                  size_t candidate_count,
+                                                  size_t selected_index,
+                                                  nn_real weight,
+                                                  nn_real learning_rate)
 {
     if (net == NULL || candidate_count == 0 || selected_index >= candidate_count ||
         learning_rate <= (nn_real)0 || nn_output_size(net) != 1 ||
@@ -1891,7 +2625,54 @@ nn_real nn_train_softmax_scorer_cached(NeuralNet *net,
         net, candidate_count, selected_index, weight, learning_rate);
 }
 
-nn_real nn_train_softmax_scorer_policy_regularized_cached(
+nn_real nn_train_softmax_scorer_cached(NeuralNet *net,
+                                       size_t candidate_count,
+                                       size_t selected_index,
+                                       nn_real weight,
+                                       nn_real learning_rate)
+{
+    if (nn_numeric_certificate_path() == NULL) {
+        return nn_train_softmax_scorer_cached_raw(
+            net, candidate_count, selected_index, weight, learning_rate);
+    }
+
+    if (net == NULL || candidate_count == 0 || selected_index >= candidate_count ||
+        learning_rate <= (nn_real)0 || nn_output_size(net) != 1 ||
+        net->output_activation != NN_ACTIVATION_LINEAR ||
+        !net->batch_cache_valid || net->batch_cache_sample_count != candidate_count ||
+        net->batch_capacity < candidate_count || net->batch_activations == NULL ||
+        net->batch_activations[0] == NULL || weight == (nn_real)0) {
+        return nn_train_softmax_scorer_cached_raw(
+            net, candidate_count, selected_index, weight, learning_rate);
+    }
+
+    size_t input_width = nn_input_size(net);
+    size_t input_count = candidate_count * input_width;
+    nn_real *candidate_inputs = (nn_real *)malloc(input_count * sizeof(*candidate_inputs));
+    if (candidate_inputs == NULL) {
+        return (nn_real)NAN;
+    }
+    memcpy(candidate_inputs, net->batch_activations[0], input_count * sizeof(*candidate_inputs));
+
+    NNNumericGuardConfig guard;
+    nn_numeric_guard_config_from_env(&guard);
+    NNTrainingStepCertificate certificate;
+    int committed = nn_train_softmax_scorer_weighted_guarded(net,
+                                                             candidate_inputs,
+                                                             candidate_count,
+                                                             selected_index,
+                                                             weight,
+                                                             learning_rate,
+                                                             &guard,
+                                                             &certificate);
+    free(candidate_inputs);
+    if (!nn_numeric_certificate_write_env(&certificate)) {
+        return (nn_real)NAN;
+    }
+    return committed ? certificate.optimizer_loss : (nn_real)NAN;
+}
+
+static nn_real nn_train_softmax_scorer_policy_regularized_cached_raw(
     NeuralNet *net,
     size_t candidate_count,
     size_t selected_index,
@@ -1984,12 +2765,251 @@ nn_real nn_train_softmax_scorer_policy_regularized_cached(
     return loss;
 }
 
-nn_real nn_train_softmax_scorer_weighted(NeuralNet *net,
-                                         const nn_real *candidate_inputs,
-                                         size_t candidate_count,
-                                         size_t selected_index,
-                                         nn_real weight,
-                                         nn_real learning_rate)
+nn_real nn_train_softmax_scorer_policy_regularized_cached(
+    NeuralNet *net,
+    size_t candidate_count,
+    size_t selected_index,
+    nn_real policy_weight,
+    const nn_real *reference_probabilities,
+    nn_real reference_weight,
+    nn_real entropy_weight,
+    nn_real learning_rate)
+{
+    if (nn_numeric_certificate_path() == NULL ||
+        (policy_weight == (nn_real)0 && reference_weight == (nn_real)0 &&
+         entropy_weight == (nn_real)0)) {
+        return nn_train_softmax_scorer_policy_regularized_cached_raw(net,
+                                                                     candidate_count,
+                                                                     selected_index,
+                                                                     policy_weight,
+                                                                     reference_probabilities,
+                                                                     reference_weight,
+                                                                     entropy_weight,
+                                                                     learning_rate);
+    }
+
+    if (net == NULL || candidate_count == 0 || selected_index >= candidate_count ||
+        learning_rate <= (nn_real)0 || nn_output_size(net) != 1 ||
+        net->output_activation != NN_ACTIVATION_LINEAR ||
+        reference_weight < (nn_real)0 || entropy_weight < (nn_real)0 ||
+        (reference_weight != (nn_real)0 && reference_probabilities == NULL) ||
+        !net->batch_cache_valid || net->batch_cache_sample_count != candidate_count ||
+        net->batch_capacity < candidate_count || net->batch_activations == NULL ||
+        net->batch_activations[0] == NULL) {
+        return nn_train_softmax_scorer_policy_regularized_cached_raw(net,
+                                                                     candidate_count,
+                                                                     selected_index,
+                                                                     policy_weight,
+                                                                     reference_probabilities,
+                                                                     reference_weight,
+                                                                     entropy_weight,
+                                                                     learning_rate);
+    }
+
+    size_t input_width = nn_input_size(net);
+    size_t input_count = candidate_count * input_width;
+    nn_real *candidate_inputs = (nn_real *)malloc(input_count * sizeof(*candidate_inputs));
+    if (candidate_inputs == NULL) {
+        return (nn_real)NAN;
+    }
+    memcpy(candidate_inputs, net->batch_activations[0], input_count * sizeof(*candidate_inputs));
+
+    NNNumericGuardConfig guard;
+    nn_numeric_guard_config_from_env(&guard);
+    NNTrainingStepCertificate certificate;
+    int committed = nn_train_softmax_scorer_policy_regularized_guarded(net,
+                                                                       candidate_inputs,
+                                                                       candidate_count,
+                                                                       selected_index,
+                                                                       policy_weight,
+                                                                       reference_probabilities,
+                                                                       reference_weight,
+                                                                       entropy_weight,
+                                                                       learning_rate,
+                                                                       &guard,
+                                                                       &certificate);
+    free(candidate_inputs);
+    if (!nn_numeric_certificate_write_env(&certificate)) {
+        return (nn_real)NAN;
+    }
+    return committed ? certificate.optimizer_loss : (nn_real)NAN;
+}
+
+int nn_train_softmax_scorer_policy_regularized_guarded(
+    NeuralNet *net,
+    const nn_real *candidate_inputs,
+    size_t candidate_count,
+    size_t selected_index,
+    nn_real policy_weight,
+    const nn_real *reference_probabilities,
+    nn_real reference_weight,
+    nn_real entropy_weight,
+    nn_real learning_rate,
+    const NNNumericGuardConfig *guard,
+    NNTrainingStepCertificate *certificate)
+{
+    NNNumericGuardConfig default_guard;
+    NNNumericGuardConfig active_guard;
+    nn_real *before_scores = NULL;
+    nn_real *after_scores = NULL;
+    NeuralNet *candidate = NULL;
+    int status = 0;
+
+    if (certificate != NULL) {
+        nn_training_step_certificate_init(certificate);
+        certificate->attempted_learning_rate = learning_rate;
+        certificate->candidate_count = candidate_count;
+        certificate->selected_index = selected_index;
+        certificate->parameter_count = nn_parameter_count(net);
+    }
+
+    if (net == NULL || candidate_inputs == NULL || candidate_count == 0 ||
+        selected_index >= candidate_count || learning_rate <= (nn_real)0 ||
+        nn_output_size(net) != 1 || net->output_activation != NN_ACTIVATION_LINEAR ||
+        reference_weight < (nn_real)0 || entropy_weight < (nn_real)0 ||
+        (reference_weight != (nn_real)0 && reference_probabilities == NULL) ||
+        (policy_weight == (nn_real)0 && reference_weight == (nn_real)0 &&
+         entropy_weight == (nn_real)0)) {
+        if (certificate != NULL) {
+            certificate->rejection_reason = NN_NUMERIC_STEP_REJECT_INVALID_ARGUMENT;
+        }
+        return 0;
+    }
+
+    if (guard == NULL) {
+        nn_numeric_guard_config_init(&default_guard);
+        active_guard = default_guard;
+    } else {
+        active_guard = *guard;
+    }
+    nn_numeric_guard_config_sanitize(&active_guard);
+
+    before_scores = (nn_real *)calloc(candidate_count, sizeof(*before_scores));
+    after_scores = (nn_real *)calloc(candidate_count, sizeof(*after_scores));
+    if (before_scores == NULL || after_scores == NULL) {
+        if (certificate != NULL) {
+            certificate->rejection_reason = NN_NUMERIC_STEP_REJECT_ALLOC_FAILED;
+        }
+        goto done;
+    }
+
+    NNTrainingStepCertificate base;
+    nn_training_step_certificate_init(&base);
+    base.attempted_learning_rate = learning_rate;
+    base.candidate_count = candidate_count;
+    base.selected_index = selected_index;
+    base.parameter_count = nn_parameter_count(net);
+    nn_real ignored_loss = (nn_real)NAN;
+    int before_score_finite = nn_score_metrics(net,
+                                               candidate_inputs,
+                                               candidate_count,
+                                               selected_index,
+                                               before_scores,
+                                               &base.max_abs_logit_before,
+                                               &base.selected_margin_before,
+                                               &ignored_loss,
+                                               (nn_real)1);
+    base.loss_before = nn_policy_regularized_objective(before_scores,
+                                                       candidate_count,
+                                                       selected_index,
+                                                       policy_weight,
+                                                       reference_probabilities,
+                                                       reference_weight,
+                                                       entropy_weight);
+    base.finite_before = nn_parameter_metrics(net, &base.max_abs_parameter_before) &&
+                         before_score_finite && isfinite((double)base.loss_before);
+
+    nn_real current_learning_rate = learning_rate;
+    size_t max_attempt = active_guard.max_shrink_steps;
+    for (size_t shrink_step = 0; shrink_step <= max_attempt; ++shrink_step) {
+        NNTrainingStepCertificate attempt = base;
+        attempt.shrink_steps = shrink_step;
+        attempt.applied_learning_rate = current_learning_rate;
+        attempt.rejection_reason = NN_NUMERIC_STEP_REJECT_NONE;
+        attempt.step_committed = 0;
+
+        candidate = nn_clone(net);
+        if (candidate == NULL) {
+            attempt.rejection_reason = NN_NUMERIC_STEP_REJECT_ALLOC_FAILED;
+            if (certificate != NULL) {
+                *certificate = attempt;
+            }
+            goto done;
+        }
+
+        nn_forward_batch(candidate, candidate_inputs, after_scores, candidate_count);
+        nn_real update_loss =
+            nn_train_softmax_scorer_policy_regularized_cached_raw(candidate,
+                                                                  candidate_count,
+                                                                  selected_index,
+                                                                  policy_weight,
+                                                                  reference_probabilities,
+                                                                  reference_weight,
+                                                                  entropy_weight,
+                                                                  current_learning_rate);
+        attempt.optimizer_loss = update_loss;
+        nn_real post_ignored_loss = (nn_real)NAN;
+        int after_score_finite = nn_score_metrics(candidate,
+                                                  candidate_inputs,
+                                                  candidate_count,
+                                                  selected_index,
+                                                  after_scores,
+                                                  &attempt.max_abs_logit_after,
+                                                  &attempt.selected_margin_after,
+                                                  &post_ignored_loss,
+                                                  (nn_real)1);
+        attempt.loss_after = nn_policy_regularized_objective(after_scores,
+                                                             candidate_count,
+                                                             selected_index,
+                                                             policy_weight,
+                                                             reference_probabilities,
+                                                             reference_weight,
+                                                             entropy_weight);
+        attempt.finite_after =
+            nn_parameter_metrics(candidate, &attempt.max_abs_parameter_after) &&
+            after_score_finite && isfinite((double)attempt.loss_after);
+        attempt.max_abs_parameter_delta = nn_parameter_max_abs_delta(net, candidate);
+        attempt.max_abs_logit_delta =
+            nn_score_max_abs_delta(before_scores, after_scores, candidate_count);
+        attempt.rejection_reason = nn_numeric_guard_check(&active_guard, &attempt);
+
+        if (attempt.rejection_reason == NN_NUMERIC_STEP_REJECT_NONE) {
+            if (!nn_copy_parameters(net, candidate)) {
+                attempt.rejection_reason = NN_NUMERIC_STEP_REJECT_INVALID_ARGUMENT;
+                if (certificate != NULL) {
+                    *certificate = attempt;
+                }
+                goto done;
+            }
+            attempt.step_committed = 1;
+            if (certificate != NULL) {
+                *certificate = attempt;
+            }
+            status = 1;
+            goto done;
+        }
+
+        if (certificate != NULL) {
+            *certificate = attempt;
+        }
+        nn_free(candidate);
+        candidate = NULL;
+        current_learning_rate *= active_guard.shrink_factor;
+    }
+
+done:
+    nn_free(candidate);
+    free(before_scores);
+    free(after_scores);
+    return status;
+}
+
+static nn_real nn_train_softmax_scorer_weighted_raw(NeuralNet *net,
+                                                    const nn_real *candidate_inputs,
+                                                    size_t candidate_count,
+                                                    size_t selected_index,
+                                                    nn_real weight,
+                                                    nn_real learning_rate)
 {
     if (net == NULL || candidate_inputs == NULL || candidate_count == 0 ||
         selected_index >= candidate_count || learning_rate <= (nn_real)0 ||
@@ -2014,6 +3034,180 @@ nn_real nn_train_softmax_scorer_weighted(NeuralNet *net,
     forward_batch_workspace(net, candidate_count);
     return train_softmax_scorer_from_workspace(
         net, candidate_count, selected_index, weight, learning_rate);
+}
+
+nn_real nn_train_softmax_scorer_weighted(NeuralNet *net,
+                                         const nn_real *candidate_inputs,
+                                         size_t candidate_count,
+                                         size_t selected_index,
+                                         nn_real weight,
+                                         nn_real learning_rate)
+{
+    if (nn_numeric_certificate_path() == NULL || weight == (nn_real)0) {
+        return nn_train_softmax_scorer_weighted_raw(net,
+                                                    candidate_inputs,
+                                                    candidate_count,
+                                                    selected_index,
+                                                    weight,
+                                                    learning_rate);
+    }
+
+    NNNumericGuardConfig guard;
+    nn_numeric_guard_config_from_env(&guard);
+    NNTrainingStepCertificate certificate;
+    int committed = nn_train_softmax_scorer_weighted_guarded(net,
+                                                             candidate_inputs,
+                                                             candidate_count,
+                                                             selected_index,
+                                                             weight,
+                                                             learning_rate,
+                                                             &guard,
+                                                             &certificate);
+    if (!nn_numeric_certificate_write_env(&certificate)) {
+        return (nn_real)NAN;
+    }
+    return committed ? certificate.optimizer_loss : (nn_real)NAN;
+}
+
+int nn_train_softmax_scorer_weighted_guarded(
+    NeuralNet *net,
+    const nn_real *candidate_inputs,
+    size_t candidate_count,
+    size_t selected_index,
+    nn_real weight,
+    nn_real learning_rate,
+    const NNNumericGuardConfig *guard,
+    NNTrainingStepCertificate *certificate)
+{
+    NNNumericGuardConfig default_guard;
+    NNNumericGuardConfig active_guard;
+    nn_real *before_scores = NULL;
+    nn_real *after_scores = NULL;
+    NeuralNet *candidate = NULL;
+    int status = 0;
+
+    if (certificate != NULL) {
+        nn_training_step_certificate_init(certificate);
+        certificate->attempted_learning_rate = learning_rate;
+        certificate->candidate_count = candidate_count;
+        certificate->selected_index = selected_index;
+        certificate->parameter_count = nn_parameter_count(net);
+    }
+
+    if (net == NULL || candidate_inputs == NULL || candidate_count == 0 ||
+        selected_index >= candidate_count || learning_rate <= (nn_real)0 ||
+        nn_output_size(net) != 1 || net->output_activation != NN_ACTIVATION_LINEAR ||
+        weight == (nn_real)0) {
+        if (certificate != NULL) {
+            certificate->rejection_reason = NN_NUMERIC_STEP_REJECT_INVALID_ARGUMENT;
+        }
+        return 0;
+    }
+
+    if (guard == NULL) {
+        nn_numeric_guard_config_init(&default_guard);
+        active_guard = default_guard;
+    } else {
+        active_guard = *guard;
+    }
+    nn_numeric_guard_config_sanitize(&active_guard);
+
+    before_scores = (nn_real *)calloc(candidate_count, sizeof(*before_scores));
+    after_scores = (nn_real *)calloc(candidate_count, sizeof(*after_scores));
+    if (before_scores == NULL || after_scores == NULL) {
+        if (certificate != NULL) {
+            certificate->rejection_reason = NN_NUMERIC_STEP_REJECT_ALLOC_FAILED;
+        }
+        goto done;
+    }
+
+    NNTrainingStepCertificate base;
+    nn_training_step_certificate_init(&base);
+    base.attempted_learning_rate = learning_rate;
+    base.candidate_count = candidate_count;
+    base.selected_index = selected_index;
+    base.parameter_count = nn_parameter_count(net);
+    base.finite_before = nn_parameter_metrics(net, &base.max_abs_parameter_before) &&
+                         nn_score_metrics(net,
+                                          candidate_inputs,
+                                          candidate_count,
+                                          selected_index,
+                                          before_scores,
+                                          &base.max_abs_logit_before,
+                                          &base.selected_margin_before,
+                                          &base.loss_before,
+                                          weight);
+
+    nn_real current_learning_rate = learning_rate;
+    size_t max_attempt = active_guard.max_shrink_steps;
+    for (size_t shrink_step = 0; shrink_step <= max_attempt; ++shrink_step) {
+        NNTrainingStepCertificate attempt = base;
+        attempt.shrink_steps = shrink_step;
+        attempt.applied_learning_rate = current_learning_rate;
+        attempt.rejection_reason = NN_NUMERIC_STEP_REJECT_NONE;
+        attempt.step_committed = 0;
+
+        candidate = nn_clone(net);
+        if (candidate == NULL) {
+            attempt.rejection_reason = NN_NUMERIC_STEP_REJECT_ALLOC_FAILED;
+            if (certificate != NULL) {
+                *certificate = attempt;
+            }
+            goto done;
+        }
+
+        nn_real update_loss = nn_train_softmax_scorer_weighted_raw(candidate,
+                                                                   candidate_inputs,
+                                                                   candidate_count,
+                                                                   selected_index,
+                                                                   weight,
+                                                                   current_learning_rate);
+        attempt.optimizer_loss = update_loss;
+        attempt.finite_after =
+            nn_parameter_metrics(candidate, &attempt.max_abs_parameter_after) &&
+            nn_score_metrics(candidate,
+                             candidate_inputs,
+                             candidate_count,
+                             selected_index,
+                             after_scores,
+                             &attempt.max_abs_logit_after,
+                             &attempt.selected_margin_after,
+                             &attempt.loss_after,
+                             weight);
+        attempt.max_abs_parameter_delta = nn_parameter_max_abs_delta(net, candidate);
+        attempt.max_abs_logit_delta =
+            nn_score_max_abs_delta(before_scores, after_scores, candidate_count);
+        attempt.rejection_reason = nn_numeric_guard_check(&active_guard, &attempt);
+
+        if (attempt.rejection_reason == NN_NUMERIC_STEP_REJECT_NONE) {
+            if (!nn_copy_parameters(net, candidate)) {
+                attempt.rejection_reason = NN_NUMERIC_STEP_REJECT_INVALID_ARGUMENT;
+                if (certificate != NULL) {
+                    *certificate = attempt;
+                }
+                goto done;
+            }
+            attempt.step_committed = 1;
+            if (certificate != NULL) {
+                *certificate = attempt;
+            }
+            status = 1;
+            goto done;
+        }
+
+        if (certificate != NULL) {
+            *certificate = attempt;
+        }
+        nn_free(candidate);
+        candidate = NULL;
+        current_learning_rate *= active_guard.shrink_factor;
+    }
+
+done:
+    nn_free(candidate);
+    free(before_scores);
+    free(after_scores);
+    return status;
 }
 
 nn_real nn_train_softmax_scorer(NeuralNet *net,
@@ -2068,13 +3262,13 @@ nn_real nn_train_pairwise_action_ranker(NeuralNet *net,
         net, candidate_count, target_index, margin, learning_rate);
 }
 
-nn_real nn_train(NeuralNet *net,
-                 const nn_real *inputs,
-                 const nn_real *targets,
-                 size_t sample_count,
-                 nn_real learning_rate,
-                 size_t epochs,
-                 int shuffle)
+static nn_real nn_train_raw(NeuralNet *net,
+                            const nn_real *inputs,
+                            const nn_real *targets,
+                            size_t sample_count,
+                            nn_real learning_rate,
+                            size_t epochs,
+                            int shuffle)
 {
     if (net == NULL || inputs == NULL || targets == NULL || sample_count == 0 || epochs == 0 ||
         learning_rate <= (nn_real)0) {
@@ -2123,14 +3317,14 @@ nn_real nn_train(NeuralNet *net,
     return epoch_loss;
 }
 
-nn_real nn_train_batched(NeuralNet *net,
-                         const nn_real *inputs,
-                         const nn_real *targets,
-                         size_t sample_count,
-                         size_t batch_size,
-                         nn_real learning_rate,
-                         size_t epochs,
-                         int shuffle)
+static nn_real nn_train_batched_raw(NeuralNet *net,
+                                    const nn_real *inputs,
+                                    const nn_real *targets,
+                                    size_t sample_count,
+                                    size_t batch_size,
+                                    nn_real learning_rate,
+                                    size_t epochs,
+                                    int shuffle)
 {
     if (net == NULL || inputs == NULL || targets == NULL || sample_count == 0 || batch_size == 0 ||
         epochs == 0 || learning_rate <= (nn_real)0) {
@@ -2187,6 +3381,307 @@ nn_real nn_train_batched(NeuralNet *net,
     }
 
     free(order);
+    return epoch_loss;
+}
+
+static int nn_train_supervised_guarded_internal(
+    NeuralNet *net,
+    const nn_real *inputs,
+    const nn_real *targets,
+    size_t sample_count,
+    size_t batch_size,
+    nn_real learning_rate,
+    size_t epochs,
+    int shuffle,
+    int use_batches,
+    const NNNumericGuardConfig *guard,
+    NNTrainingStepCertificate *certificate)
+{
+    NNNumericGuardConfig default_guard;
+    NNNumericGuardConfig active_guard;
+    nn_real *before_outputs = NULL;
+    nn_real *after_outputs = NULL;
+    NeuralNet *candidate = NULL;
+    int status = 0;
+
+    if (certificate != NULL) {
+        nn_training_step_certificate_init(certificate);
+        snprintf(certificate->step_kind,
+                 sizeof(certificate->step_kind),
+                 "%s",
+                 "batch_supervised");
+        certificate->attempted_learning_rate = learning_rate;
+        certificate->candidate_count = sample_count;
+        certificate->selected_index = 0u;
+        certificate->parameter_count = nn_parameter_count(net);
+        certificate->selected_margin_before = (nn_real)0;
+        certificate->selected_margin_after = (nn_real)0;
+    }
+
+    if (net == NULL || inputs == NULL || targets == NULL || sample_count == 0 ||
+        epochs == 0 || learning_rate <= (nn_real)0 || nn_output_size(net) == 0) {
+        if (certificate != NULL) {
+            certificate->rejection_reason = NN_NUMERIC_STEP_REJECT_INVALID_ARGUMENT;
+        }
+        return 0;
+    }
+
+    size_t output_width = nn_output_size(net);
+    if (sample_count > SIZE_MAX / output_width) {
+        if (certificate != NULL) {
+            certificate->rejection_reason = NN_NUMERIC_STEP_REJECT_INVALID_ARGUMENT;
+        }
+        return 0;
+    }
+    size_t output_count = sample_count * output_width;
+
+    if (guard == NULL) {
+        nn_numeric_guard_config_init(&default_guard);
+        active_guard = default_guard;
+    } else {
+        active_guard = *guard;
+    }
+    nn_numeric_guard_config_sanitize(&active_guard);
+
+    before_outputs = (nn_real *)calloc(output_count, sizeof(*before_outputs));
+    after_outputs = (nn_real *)calloc(output_count, sizeof(*after_outputs));
+    if (before_outputs == NULL || after_outputs == NULL) {
+        if (certificate != NULL) {
+            certificate->rejection_reason = NN_NUMERIC_STEP_REJECT_ALLOC_FAILED;
+        }
+        goto done;
+    }
+
+    NNTrainingStepCertificate base;
+    nn_training_step_certificate_init(&base);
+    snprintf(base.step_kind, sizeof(base.step_kind), "%s", "batch_supervised");
+    base.attempted_learning_rate = learning_rate;
+    base.candidate_count = sample_count;
+    base.selected_index = 0u;
+    base.parameter_count = nn_parameter_count(net);
+    base.selected_margin_before = (nn_real)0;
+    base.selected_margin_after = (nn_real)0;
+    int before_output_finite = nn_dataset_metrics(net,
+                                                  inputs,
+                                                  targets,
+                                                  sample_count,
+                                                  before_outputs,
+                                                  &base.loss_before,
+                                                  &base.max_abs_logit_before);
+    base.finite_before = nn_parameter_metrics(net, &base.max_abs_parameter_before) &&
+                         before_output_finite && isfinite((double)base.loss_before);
+
+    nn_real current_learning_rate = learning_rate;
+    size_t max_attempt = active_guard.max_shrink_steps;
+    for (size_t shrink_step = 0; shrink_step <= max_attempt; ++shrink_step) {
+        NNTrainingStepCertificate attempt = base;
+        attempt.shrink_steps = shrink_step;
+        attempt.applied_learning_rate = current_learning_rate;
+        attempt.rejection_reason = NN_NUMERIC_STEP_REJECT_NONE;
+        attempt.step_committed = 0;
+
+        candidate = nn_clone(net);
+        if (candidate == NULL) {
+            attempt.rejection_reason = NN_NUMERIC_STEP_REJECT_ALLOC_FAILED;
+            if (certificate != NULL) {
+                *certificate = attempt;
+            }
+            goto done;
+        }
+
+        nn_real update_loss = use_batches
+                                  ? nn_train_batched_raw(candidate,
+                                                         inputs,
+                                                         targets,
+                                                         sample_count,
+                                                         batch_size,
+                                                         current_learning_rate,
+                                                         epochs,
+                                                         shuffle)
+                                  : nn_train_raw(candidate,
+                                                 inputs,
+                                                 targets,
+                                                 sample_count,
+                                                 current_learning_rate,
+                                                 epochs,
+                                                 shuffle);
+        attempt.optimizer_loss = update_loss;
+        int after_output_finite = nn_dataset_metrics(candidate,
+                                                    inputs,
+                                                    targets,
+                                                    sample_count,
+                                                    after_outputs,
+                                                    &attempt.loss_after,
+                                                    &attempt.max_abs_logit_after);
+        attempt.finite_after =
+            nn_parameter_metrics(candidate, &attempt.max_abs_parameter_after) &&
+            after_output_finite && isfinite((double)attempt.loss_after);
+        attempt.max_abs_parameter_delta = nn_parameter_max_abs_delta(net, candidate);
+        attempt.max_abs_logit_delta =
+            nn_score_max_abs_delta(before_outputs, after_outputs, output_count);
+        attempt.selected_margin_before = (nn_real)0;
+        attempt.selected_margin_after = (nn_real)0;
+        attempt.rejection_reason = nn_numeric_guard_check(&active_guard, &attempt);
+
+        if (attempt.rejection_reason == NN_NUMERIC_STEP_REJECT_NONE) {
+            if (!nn_copy_parameters(net, candidate)) {
+                attempt.rejection_reason = NN_NUMERIC_STEP_REJECT_INVALID_ARGUMENT;
+                if (certificate != NULL) {
+                    *certificate = attempt;
+                }
+                goto done;
+            }
+            attempt.step_committed = 1;
+            if (certificate != NULL) {
+                *certificate = attempt;
+            }
+            status = 1;
+            goto done;
+        }
+
+        if (certificate != NULL) {
+            *certificate = attempt;
+        }
+        nn_free(candidate);
+        candidate = NULL;
+        current_learning_rate *= active_guard.shrink_factor;
+    }
+
+done:
+    nn_free(candidate);
+    free(before_outputs);
+    free(after_outputs);
+    return status;
+}
+
+nn_real nn_train(NeuralNet *net,
+                 const nn_real *inputs,
+                 const nn_real *targets,
+                 size_t sample_count,
+                 nn_real learning_rate,
+                 size_t epochs,
+                 int shuffle)
+{
+    if (nn_numeric_certificate_path() == NULL) {
+        return nn_train_raw(net, inputs, targets, sample_count, learning_rate, epochs, shuffle);
+    }
+
+    return nn_train_batched(net, inputs, targets, sample_count, 1u, learning_rate, epochs, shuffle);
+}
+
+nn_real nn_train_batched(NeuralNet *net,
+                         const nn_real *inputs,
+                         const nn_real *targets,
+                         size_t sample_count,
+                         size_t batch_size,
+                         nn_real learning_rate,
+                         size_t epochs,
+                         int shuffle)
+{
+    if (nn_numeric_certificate_path() == NULL) {
+        return nn_train_batched_raw(net,
+                                    inputs,
+                                    targets,
+                                    sample_count,
+                                    batch_size,
+                                    learning_rate,
+                                    epochs,
+                                    shuffle);
+    }
+
+    if (net == NULL || inputs == NULL || targets == NULL || sample_count == 0 || batch_size == 0 ||
+        epochs == 0 || learning_rate <= (nn_real)0) {
+        return (nn_real)NAN;
+    }
+
+    if (batch_size > sample_count) {
+        batch_size = sample_count;
+    }
+
+    size_t input_width = nn_input_size(net);
+    size_t target_width = nn_output_size(net);
+    if (input_width == 0 || target_width == 0 || batch_size > SIZE_MAX / input_width ||
+        batch_size > SIZE_MAX / target_width) {
+        return (nn_real)NAN;
+    }
+
+    size_t *order = NULL;
+    if (shuffle) {
+        order = checked_calloc(sample_count, sizeof(*order));
+        if (order == NULL) {
+            return (nn_real)NAN;
+        }
+        for (size_t i = 0; i < sample_count; ++i) {
+            order[i] = i;
+        }
+    }
+
+    nn_real *batch_inputs =
+        checked_calloc(batch_size * input_width, sizeof(*batch_inputs));
+    nn_real *batch_targets =
+        checked_calloc(batch_size * target_width, sizeof(*batch_targets));
+    if (batch_inputs == NULL || batch_targets == NULL) {
+        free(order);
+        free(batch_inputs);
+        free(batch_targets);
+        return (nn_real)NAN;
+    }
+
+    NNNumericGuardConfig guard;
+    nn_numeric_guard_config_from_env(&guard);
+    nn_real epoch_loss = (nn_real)0;
+
+    for (size_t epoch = 0; epoch < epochs; ++epoch) {
+        if (shuffle) {
+            for (size_t i = sample_count - 1; i > 0; --i) {
+                size_t j = (size_t)rng_next(&net->rng_state) % (i + 1);
+                size_t tmp = order[i];
+                order[i] = order[j];
+                order[j] = tmp;
+            }
+        }
+
+        epoch_loss = (nn_real)0;
+        for (size_t start = 0; start < sample_count; start += batch_size) {
+            size_t remaining = sample_count - start;
+            size_t current_batch = remaining < batch_size ? remaining : batch_size;
+            for (size_t sample = 0; sample < current_batch; ++sample) {
+                size_t index = shuffle ? order[start + sample] : start + sample;
+                memcpy(&batch_inputs[sample * input_width],
+                       &inputs[index * input_width],
+                       input_width * sizeof(*batch_inputs));
+                memcpy(&batch_targets[sample * target_width],
+                       &targets[index * target_width],
+                       target_width * sizeof(*batch_targets));
+            }
+
+            NNTrainingStepCertificate certificate;
+            int committed = nn_train_supervised_guarded_internal(net,
+                                                                 batch_inputs,
+                                                                 batch_targets,
+                                                                 current_batch,
+                                                                 current_batch,
+                                                                 learning_rate,
+                                                                 1u,
+                                                                 0,
+                                                                 1,
+                                                                 &guard,
+                                                                 &certificate);
+            if (!nn_numeric_certificate_write_env(&certificate) || !committed ||
+                !isfinite((double)certificate.optimizer_loss)) {
+                free(order);
+                free(batch_inputs);
+                free(batch_targets);
+                return (nn_real)NAN;
+            }
+            epoch_loss += certificate.optimizer_loss * (nn_real)current_batch;
+        }
+        epoch_loss /= (nn_real)sample_count;
+    }
+
+    free(order);
+    free(batch_inputs);
+    free(batch_targets);
     return epoch_loss;
 }
 

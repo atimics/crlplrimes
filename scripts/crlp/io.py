@@ -62,8 +62,7 @@ def write_csv(
         return
     fields = list(fieldnames) if fieldnames is not None else ordered_fieldnames(rows)
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         for row in rows:
             writer.writerow(row)
-

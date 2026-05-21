@@ -37,7 +37,7 @@ jobs:
       - name: Build all binaries
         run: make -j$(nproc) all
 
-      - name: Run unit + sanitizer + trace determinism + double-precision tests
+      - name: Run unit + sanitizer + trace determinism + numeric certificate gates
         run: make check
 
       - name: Smoke-run experimental sandboxes

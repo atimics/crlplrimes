@@ -153,7 +153,7 @@
         "source": "results/latest/comparison.canonical.jsonl",
         "source_command": "make results",
         "source_row_count": 523,
-        "source_sha256": "ba17042d834b7794ae45fdacec28493fa88a5596ce3737d3e2f5beb4afae848d"
+        "source_sha256": "99d47ec1bafb299ffef9f5f6beda36ccfc4c2ab1b1cf7d26cf577cbb637e4f00"
       },
       "required_for_submission": true,
       "residual": [],
@@ -306,7 +306,7 @@
         "source": "results/latest/prime_gate_delta_seed_interval.jsonl",
         "source_command": "make prime-gate-seed-audit",
         "source_row_count": 6,
-        "source_sha256": "9215f2f630cdcedeb467fc4f5c50ae5681dc3e227dd59fdac0e3efc832ac4edb"
+        "source_sha256": "b28f9e6e79bf251cb9b3fdf9a1bce33e7114297d60aa2c16657853f9a5c9aded"
       },
       "required_for_submission": true,
       "residual": [],
@@ -484,7 +484,7 @@
         "source": "results/latest/comparison.canonical.jsonl",
         "source_command": "make results",
         "source_row_count": 523,
-        "source_sha256": "ba17042d834b7794ae45fdacec28493fa88a5596ce3737d3e2f5beb4afae848d"
+        "source_sha256": "99d47ec1bafb299ffef9f5f6beda36ccfc4c2ab1b1cf7d26cf577cbb637e4f00"
       },
       "required_for_submission": false,
       "residual": [
@@ -1368,19 +1368,19 @@
         "rows": [
           {
             "label": "fixed ARC vs flat",
-            "value": 2.400000000000002
+            "value": 0.0
           },
           {
             "label": "delayed vs flat",
-            "value": -0.9666666666666601
+            "value": 0.0
           },
           {
             "label": "grid vs flat",
-            "value": 0.06666666666665932
+            "value": 0.23333333333334094
           },
           {
             "label": "ARC OOD vs single",
-            "value": 4.666666666666675
+            "value": 5.800000000000005
           }
         ],
         "unit": "pp",
@@ -1406,39 +1406,39 @@
       "evidence_rows": [
         {
           "domain": "arc_agi",
-          "ece_delta_headed_minus_shared": -0.011544539999999937,
+          "ece_delta_headed_minus_shared": 0.01032803333333332,
           "eval_suite": "fixed",
-          "headed_top1_mean": 0.2856666666666667,
+          "headed_top1_mean": 0.262,
           "label": "adapter_fixed_arc",
-          "nll_delta_headed_minus_shared": 0.7679245366666665,
+          "nll_delta_headed_minus_shared": 0.3742469833333333,
           "present": true,
           "seeds": 3,
-          "shared_top1_mean": 0.26166666666666666,
+          "shared_top1_mean": 0.262,
           "single_top1_mean": 0.428,
-          "top1_delta_headed_minus_shared": 0.02400000000000002
+          "top1_delta_headed_minus_shared": 0.0
         },
         {
           "domain": "arc_agi",
-          "ece_delta_headed_minus_single": -0.01673735000000004,
+          "ece_delta_headed_minus_single": -0.037827743333333275,
           "eval_suite": "ood",
-          "headed_top1_mean": 0.47500000000000003,
+          "headed_top1_mean": 0.48700000000000004,
           "label": "adapter_ood_arc",
-          "nll_delta_headed_minus_single": -1.1835613033333323,
+          "nll_delta_headed_minus_single": -1.2020451900000007,
           "present": true,
           "seeds": 3,
-          "shared_top1_mean": 0.484,
-          "single_top1_mean": 0.4283333333333333,
-          "top1_delta_headed_minus_single": 0.046666666666666745
+          "shared_top1_mean": 0.5053333333333333,
+          "single_top1_mean": 0.429,
+          "top1_delta_headed_minus_single": 0.05800000000000005
         },
         {
           "domain": "delayed_claim",
           "eval_suite": "fixed",
-          "headed_top1_mean": 0.9703333333333334,
+          "headed_top1_mean": 0.9766666666666666,
           "label": "adapter_delayed_claim",
           "present": true,
           "seeds": 3,
-          "shared_top1_mean": 0.98,
-          "top1_delta_headed_minus_shared": -0.009666666666666601
+          "shared_top1_mean": 0.9766666666666666,
+          "top1_delta_headed_minus_shared": 0.0
         },
         {
           "domain": "grid_path",
@@ -1447,18 +1447,18 @@
           "label": "adapter_grid_path",
           "present": true,
           "seeds": 3,
-          "shared_top1_mean": 0.9090000000000001,
-          "top1_delta_headed_minus_shared": 0.0006666666666665932
+          "shared_top1_mean": 0.9073333333333333,
+          "top1_delta_headed_minus_shared": 0.0023333333333334094
         },
         {
           "domain": "prime_gap",
           "eval_suite": "fixed",
-          "headed_top1_mean": 0.122,
+          "headed_top1_mean": 0.11499999999999999,
           "label": "adapter_prime_gap",
           "present": true,
           "seeds": 3,
           "shared_top1_mean": 0.14066666666666666,
-          "top1_delta_headed_minus_shared": -0.018666666666666665
+          "top1_delta_headed_minus_shared": -0.02566666666666667
         },
         {
           "label": "adapter_summary_rows",
@@ -1476,15 +1476,15 @@
       "limitation_when_not_supported": "The shared-trunk/domain-head architecture has not passed all promotion gates, so it should be presented as architecture evidence rather than the default model recipe.",
       "metrics": {
         "arc_ood_gate": true,
-        "arc_ood_nll_delta_heads_minus_single_task": -1.1835613033333323,
-        "arc_ood_top1_delta_heads_minus_single_task_pp": 4.666666666666675,
+        "arc_ood_nll_delta_heads_minus_single_task": -1.2020451900000007,
+        "arc_ood_top1_delta_heads_minus_single_task_pp": 5.800000000000005,
         "decision_row": "diagnostic_only",
-        "delayed_claim_gate": false,
-        "delayed_claim_top1_delta_heads_minus_flat_shared_pp": -0.9666666666666601,
-        "fixed_arc_gate": true,
-        "fixed_arc_top1_delta_heads_minus_flat_shared_pp": 2.400000000000002,
+        "delayed_claim_gate": true,
+        "delayed_claim_top1_delta_heads_minus_flat_shared_pp": 0.0,
+        "fixed_arc_gate": false,
+        "fixed_arc_top1_delta_heads_minus_flat_shared_pp": 0.0,
         "grid_path_gate": true,
-        "grid_path_top1_delta_heads_minus_flat_shared_pp": 0.06666666666665932,
+        "grid_path_top1_delta_heads_minus_flat_shared_pp": 0.23333333333334094,
         "headed_forward_flops_fixed_arc": 16545.0,
         "headed_parameters_fixed_arc": 8420.0,
         "headed_train_updates_fixed_arc": 47954.333333333336,
@@ -1546,7 +1546,7 @@
         "source": "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_deltas.csv",
         "source_command": "python3 scripts/multitask_adapter_heads.py",
         "source_row_count": 5,
-        "source_sha256": "a1f2e7b22713fd3ee8c8c90356845b9ff27b25960dea04cebfca8e44e9c0538a"
+        "source_sha256": "39b175ac036d33753c1b778278cba2fe8aa46a30b7aab5dc9683430171586e4b"
       },
       "required_for_submission": false,
       "residual": [
@@ -1560,7 +1560,7 @@
         "R-F.5"
       ],
       "status": "contradicted",
-      "summary": "task-specific heads help some rows and hurt others: fixed ARC heads-flat delta +2.40pp; delayed_claim heads-flat -0.97pp; grid_path heads-flat +0.07pp; ARC OOD heads-single +4.67pp top-1 and -1.1836 NLL.",
+      "summary": "task-specific heads help some rows and hurt others: fixed ARC heads-flat delta +0.00pp; delayed_claim heads-flat +0.00pp; grid_path heads-flat +0.23pp; ARC OOD heads-single +5.80pp top-1 and -1.2020 NLL.",
       "title": "Shared trunk plus domain heads is gated as architecture evidence"
     },
     {
@@ -1962,28 +1962,28 @@
             "label": "shared 16x8",
             "model_kind": "shared",
             "plateau_detected": false,
-            "value": 41.63333333333334
+            "value": 39.266666666666666
           },
           {
             "domain": "arc_agi",
             "label": "shared_task_heads 16x8",
             "model_kind": "shared_task_heads",
             "plateau_detected": false,
-            "value": 40.46666666666667
+            "value": 34.5
           },
           {
             "domain": "arc_agi",
             "label": "single_task 16x8",
             "model_kind": "single_task",
-            "plateau_detected": true,
-            "value": 42.8
+            "plateau_detected": false,
+            "value": 45.199999999999996
           },
           {
             "domain": "arc_agi",
             "label": "shared 32x16",
             "model_kind": "shared",
             "plateau_detected": false,
-            "value": 39.199999999999996
+            "value": 33.300000000000004
           },
           {
             "domain": "arc_agi",
@@ -1997,27 +1997,27 @@
             "label": "single_task 32x16",
             "model_kind": "single_task",
             "plateau_detected": false,
-            "value": 42.83333333333333
+            "value": 45.199999999999996
           },
           {
             "domain": "arc_agi",
             "label": "shared 64x32",
             "model_kind": "shared",
             "plateau_detected": false,
-            "value": 26.166666666666664
+            "value": 34.53333333333333
           },
           {
             "domain": "arc_agi",
             "label": "shared_task_heads 64x32",
             "model_kind": "shared_task_heads",
             "plateau_detected": false,
-            "value": 36.9
+            "value": 28.566666666666666
           },
           {
             "domain": "arc_agi",
             "label": "single_task 64x32",
             "model_kind": "single_task",
-            "plateau_detected": true,
+            "plateau_detected": false,
             "value": 42.8
           },
           {
@@ -2025,21 +2025,21 @@
             "label": "shared 8x4",
             "model_kind": "shared",
             "plateau_detected": false,
-            "value": 39.233333333333334
+            "value": 39.266666666666666
           },
           {
             "domain": "arc_agi",
             "label": "shared_task_heads 8x4",
             "model_kind": "shared_task_heads",
             "plateau_detected": false,
-            "value": 39.266666666666666
+            "value": 40.5
           },
           {
             "domain": "arc_agi",
             "label": "single_task 8x4",
             "model_kind": "single_task",
-            "plateau_detected": false,
-            "value": 40.43333333333334
+            "plateau_detected": true,
+            "value": 45.199999999999996
           }
         ],
         "unit": "top-1",
@@ -2088,27 +2088,27 @@
           "rows": 12
         },
         {
-          "best_hidden": "16x8",
-          "best_top1_mean": 0.4163333333333334,
+          "best_hidden": "8x4",
+          "best_top1_mean": 0.39266666666666666,
           "label": "arc_width_help_shared",
-          "larger_width_helped": true,
-          "largest_minus_smallest_top1": -0.1306666666666667,
+          "larger_width_helped": false,
+          "largest_minus_smallest_top1": -0.04733333333333334,
           "present": true
         },
         {
-          "best_hidden": "16x8",
-          "best_top1_mean": 0.4046666666666667,
+          "best_hidden": "8x4",
+          "best_top1_mean": 0.405,
           "label": "arc_width_help_task_heads",
-          "larger_width_helped": true,
-          "largest_minus_smallest_top1": -0.02366666666666667,
+          "larger_width_helped": false,
+          "largest_minus_smallest_top1": -0.11933333333333335,
           "present": true
         },
         {
           "best_hidden": "32x16",
-          "best_top1_mean": 0.9860000000000001,
+          "best_top1_mean": 0.992,
           "label": "delayed_width_help_shared",
           "larger_width_helped": true,
-          "largest_minus_smallest_top1": -0.0013333333333334085,
+          "largest_minus_smallest_top1": 0.005333333333333301,
           "present": true
         }
       ],
@@ -2116,10 +2116,10 @@
       "id": "C7.tiny_net_plateau_stop_rule",
       "limitation_when_not_supported": "The tiny networks have not yet been audited as fully trained, so larger architectures should remain a hypothesis rather than a supported claim.",
       "metrics": {
-        "arc_larger_width_helped": true,
-        "arc_shared_best_hidden": "16x8",
-        "arc_task_head_best_hidden": "16x8",
-        "audit_ready_count": 1,
+        "arc_larger_width_helped": false,
+        "arc_shared_best_hidden": "8x4",
+        "arc_task_head_best_hidden": "8x4",
+        "audit_ready_count": 0,
         "audit_verdict_rows": 12,
         "capacities": [
           "16x8",
@@ -2139,8 +2139,8 @@
           "shared_task_heads",
           "single_task"
         ],
-        "plateau_count": 15,
-        "plateau_rate": 0.3125,
+        "plateau_count": 17,
+        "plateau_rate": 0.3541666666666667,
         "plateau_rows": 48,
         "required_audit_verdict_rows": 12,
         "required_model_kinds": [
@@ -2187,7 +2187,7 @@
         "source": "results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl",
         "source_command": "make tiny-net-plateau-audit",
         "source_row_count": 48,
-        "source_sha256": "25d8de5ed5c9c5aec4a3a3c440738a2dbbcf7c57d257e3fe68d6e7975230b4ea"
+        "source_sha256": "074d9543a8b14dda16b911128ea7d15c017942db77af58cf90ceb604bb26ccdf"
       },
       "required_for_submission": false,
       "residual": [
@@ -2201,7 +2201,7 @@
         "R-F.5"
       ],
       "status": "underpowered",
-      "summary": "tiny-net plateau audit covers 4 capacities, 4 domains, and variants shared, shared_task_heads, single_task; 15/48 required rows meet the plateau threshold and 1/12 domain/variant verdicts are audit-ready.",
+      "summary": "tiny-net plateau audit covers 4 capacities, 4 domains, and variants shared, shared_task_heads, single_task; 17/48 required rows meet the plateau threshold and 0/12 domain/variant verdicts are audit-ready.",
       "title": "Tiny-net architecture claims are gated by plateau audits"
     },
     {
@@ -3113,7 +3113,7 @@
               "Use the flat shared scorer as the interference control until the gates pass."
             ],
             "status": "contradicted",
-            "summary": "task-specific heads help some rows and hurt others: fixed ARC heads-flat delta +2.40pp; delayed_claim heads-flat -0.97pp; grid_path heads-flat +0.07pp; ARC OOD heads-single +4.67pp top-1 and -1.1836 NLL.",
+            "summary": "task-specific heads help some rows and hurt others: fixed ARC heads-flat delta +0.00pp; delayed_claim heads-flat +0.00pp; grid_path heads-flat +0.23pp; ARC OOD heads-single +5.80pp top-1 and -1.2020 NLL.",
             "title": "Shared trunk plus domain heads is gated as architecture evidence"
           }
         ],
@@ -3326,7 +3326,7 @@
               "Run make tiny-net-plateau-audit and inspect the width-help verdicts before increasing default hidden sizes."
             ],
             "status": "underpowered",
-            "summary": "tiny-net plateau audit covers 4 capacities, 4 domains, and variants shared, shared_task_heads, single_task; 15/48 required rows meet the plateau threshold and 1/12 domain/variant verdicts are audit-ready.",
+            "summary": "tiny-net plateau audit covers 4 capacities, 4 domains, and variants shared, shared_task_heads, single_task; 17/48 required rows meet the plateau threshold and 0/12 domain/variant verdicts are audit-ready.",
             "title": "Tiny-net architecture claims are gated by plateau audits"
           }
         ],
@@ -3515,7 +3515,7 @@
     ],
     "schema": "crlp.paper_claim_experiment_map.v1"
   },
-  "generated_at": "2026-05-19T14:00:31.928194+00:00",
+  "generated_at": "2026-05-20T22:54:02.198389+00:00",
   "limitations": [
     {
       "claim_id": "C2.prime_proposer_fixed_budget",
@@ -3578,8 +3578,7 @@
     },
     "external_row_count": 2,
     "external_verifier_status_counts": {
-      "accepted": 1,
-      "rejected": 1
+      "rejected": 2
     },
     "path": "paper/generated/paper_agent_trace.jsonl",
     "proposer_kind_counts": {
@@ -3592,8 +3591,8 @@
     "schema": "crlp.paper_agent_candidate.v1",
     "trace_version": 1,
     "verifier_status_counts": {
-      "accepted": 47,
-      "rejected": 4
+      "accepted": 46,
+      "rejected": 5
     }
   },
   "registry": "paper/claims.yaml",
@@ -3646,24 +3645,24 @@
     },
     "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_decision.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-19T06:04:12.749349+00:00",
+      "modified_utc": "2026-05-20T21:05:23.261362+00:00",
       "row_count": 1,
-      "sha256": "bfdc19698d1e1300d1254520b4adfddf2d1f3af9b068d34b8bbdea8cd2dbad54",
-      "size_bytes": 768
+      "sha256": "e992f3b83ac60417c60469f44057fbc8e9d72454529a7730e92dd147ae1505b0",
+      "size_bytes": 733
     },
     "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_deltas.csv": {
       "exists": true,
-      "modified_utc": "2026-05-19T06:04:12.749611+00:00",
+      "modified_utc": "2026-05-20T21:21:07.467539+00:00",
       "row_count": 5,
-      "sha256": "a1f2e7b22713fd3ee8c8c90356845b9ff27b25960dea04cebfca8e44e9c0538a",
-      "size_bytes": 2492
+      "sha256": "39b175ac036d33753c1b778278cba2fe8aa46a30b7aab5dc9683430171586e4b",
+      "size_bytes": 2440
     },
     "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_summary.csv": {
       "exists": true,
-      "modified_utc": "2026-05-19T06:04:12.749879+00:00",
+      "modified_utc": "2026-05-20T21:21:07.467284+00:00",
       "row_count": 15,
-      "sha256": "4aadf7e504d2c0a53afe357a754e94ccfd61be9d3d17a51de9cbc636acf01059",
-      "size_bytes": 2968
+      "sha256": "7a5f7e3946cae71df3e229872db86674836c6cae5017ac68eba1dffbea5bd1ed",
+      "size_bytes": 2927
     },
     "results/2026-05-17-multitask-roadmap/rmt5_calibration_summary.csv": {
       "exists": true,
@@ -3702,24 +3701,24 @@
     },
     "results/2026-05-17-multitask-roadmap/tiny_net_audit_verdict.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-19T06:04:12.750057+00:00",
+      "modified_utc": "2026-05-20T21:17:44.576272+00:00",
       "row_count": 12,
-      "sha256": "d861e141f44a47ac2b7d9d678a03f8fe119e4665a87f1449e58b9f1f7364be01",
-      "size_bytes": 6591
+      "sha256": "a35b69d99c154eaa56e42f49f9873a3ceb231257c4576d59c911d748b940470a",
+      "size_bytes": 6541
     },
     "results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-19T06:04:12.750371+00:00",
+      "modified_utc": "2026-05-20T21:17:44.571739+00:00",
       "row_count": 48,
-      "sha256": "25d8de5ed5c9c5aec4a3a3c440738a2dbbcf7c57d257e3fe68d6e7975230b4ea",
-      "size_bytes": 28603
+      "sha256": "074d9543a8b14dda16b911128ea7d15c017942db77af58cf90ceb604bb26ccdf",
+      "size_bytes": 28244
     },
     "results/2026-05-17-multitask-roadmap/tiny_net_width_help.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-19T06:04:12.750700+00:00",
+      "modified_utc": "2026-05-20T21:17:44.574109+00:00",
       "row_count": 12,
-      "sha256": "dadc63b536c9ae570214c0a15b8eff936b7424afa452881f2ffc1c3d3543157b",
-      "size_bytes": 4465
+      "sha256": "eb1df4389a099c03e729fb3c51fc179b990a0ba8dc2edd8a323db26d14a1179d",
+      "size_bytes": 4359
     },
     "results/2026-05-17-signal-flight/live_active_frames.jsonl": {
       "exists": true,
@@ -3835,28 +3834,28 @@
     },
     "results/latest/comparison.canonical.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-19T08:07:18.413924+00:00",
+      "modified_utc": "2026-05-20T21:18:16.029311+00:00",
       "row_count": 523,
-      "sha256": "ba17042d834b7794ae45fdacec28493fa88a5596ce3737d3e2f5beb4afae848d",
-      "size_bytes": 588060
+      "sha256": "99d47ec1bafb299ffef9f5f6beda36ccfc4c2ab1b1cf7d26cf577cbb637e4f00",
+      "size_bytes": 588056
     },
     "results/latest/prime_gap_trace.semantic.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-19T13:01:58.203336+00:00",
+      "modified_utc": "2026-05-20T22:54:02.117076+00:00",
       "row_count": 1000,
       "sha256": "257c89bfcca16d09622ee0c7e163f7aa42083414be8152f71aac38930ed176dc",
       "size_bytes": 844842
     },
     "results/latest/prime_gate_delta_seed_interval.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-19T08:07:42.510725+00:00",
+      "modified_utc": "2026-05-20T21:18:40.434761+00:00",
       "row_count": 6,
-      "sha256": "9215f2f630cdcedeb467fc4f5c50ae5681dc3e227dd59fdac0e3efc832ac4edb",
+      "sha256": "b28f9e6e79bf251cb9b3fdf9a1bce33e7114297d60aa2c16657853f9a5c9aded",
       "size_bytes": 5905
     },
     "results/latest/trace_determinism.jsonl": {
       "exists": true,
-      "modified_utc": "2026-05-19T13:01:58.195995+00:00",
+      "modified_utc": "2026-05-20T22:54:02.109055+00:00",
       "row_count": 3,
       "sha256": "476f76325fea0cec2327485185b09a8c7bb55e16aefa8aca676fb50121318cd9",
       "size_bytes": 2201
@@ -3872,7 +3871,7 @@
   "support": {
     "limitation_count": 3,
     "ok": true,
-    "paper_agent_external_rejections": 1,
+    "paper_agent_external_rejections": 2,
     "paper_agent_external_rows": 2,
     "required_failures": [],
     "roadmap_missing_links": 0,
@@ -3900,7 +3899,7 @@
           "multitask_capacity"
         ],
         "status": "contradicted",
-        "summary": "task-specific heads help some rows and hurt others: fixed ARC heads-flat delta +2.40pp; delayed_claim heads-flat -0.97pp; grid_path heads-flat +0.07pp; ARC OOD heads-single +4.67pp top-1 and -1.1836 NLL.",
+        "summary": "task-specific heads help some rows and hurt others: fixed ARC heads-flat delta +0.00pp; delayed_claim heads-flat +0.00pp; grid_path heads-flat +0.23pp; ARC OOD heads-single +5.80pp top-1 and -1.2020 NLL.",
         "title": "Shared trunk plus domain heads is gated as architecture evidence"
       },
       {
@@ -3912,7 +3911,7 @@
           "architecture"
         ],
         "status": "underpowered",
-        "summary": "tiny-net plateau audit covers 4 capacities, 4 domains, and variants shared, shared_task_heads, single_task; 15/48 required rows meet the plateau threshold and 1/12 domain/variant verdicts are audit-ready.",
+        "summary": "tiny-net plateau audit covers 4 capacities, 4 domains, and variants shared, shared_task_heads, single_task; 17/48 required rows meet the plateau threshold and 0/12 domain/variant verdicts are audit-ready.",
         "title": "Tiny-net architecture claims are gated by plateau audits"
       }
     ],

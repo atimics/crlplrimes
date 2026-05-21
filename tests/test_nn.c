@@ -1,3 +1,7 @@
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "nn.h"
 #include "nn_json.h"
 
@@ -1770,12 +1774,15 @@ static int test_policy_regularized_cached_matches_policy_update(void)
     NeuralNet *regular_net = nn_create_config(&config);
     NeuralNet *policy_net = nn_create_config(&config);
     NeuralNet *regularized_net = nn_create_config(&config);
+    NeuralNet *guarded_regularized_net = nn_create_config(&config);
     int ok = 1;
 
-    if (regular_net == NULL || policy_net == NULL || regularized_net == NULL) {
+    if (regular_net == NULL || policy_net == NULL || regularized_net == NULL ||
+        guarded_regularized_net == NULL) {
         nn_free(regular_net);
         nn_free(policy_net);
         nn_free(regularized_net);
+        nn_free(guarded_regularized_net);
         return 0;
     }
 
@@ -1824,9 +1831,349 @@ static int test_policy_regularized_cached_matches_policy_update(void)
                          (nn_real)0.01,
                          learning_rate));
 
+    NNNumericGuardConfig guard;
+    NNTrainingStepCertificate certificate;
+    nn_numeric_guard_config_init(&guard);
+    guard.max_abs_parameter = (nn_real)100;
+    guard.max_abs_logit = (nn_real)100;
+    guard.max_abs_parameter_delta = (nn_real)10;
+    guard.max_abs_logit_delta = (nn_real)10;
+    ok = ok && nn_train_softmax_scorer_policy_regularized_guarded(
+                     guarded_regularized_net,
+                     candidate_inputs,
+                     candidate_count,
+                     selected_index,
+                     weight,
+                     reference,
+                     (nn_real)0.05,
+                     (nn_real)0.01,
+                     learning_rate,
+                     &guard,
+                     &certificate);
+    ok = ok && certificate.step_committed &&
+         certificate.rejection_reason == NN_NUMERIC_STEP_REJECT_NONE &&
+         isfinite((double)certificate.loss_before) &&
+         isfinite((double)certificate.loss_after);
+    for (size_t i = 0; i < nn_parameter_count(regularized_net); ++i) {
+        nn_real a = nn_test_get_parameter(regularized_net, i);
+        nn_real b = nn_test_get_parameter(guarded_regularized_net, i);
+        if (!nearly_equal(a, b, (nn_real)1e-6, (nn_real)1e-5)) {
+            ok = 0;
+            break;
+        }
+    }
+
     nn_free(regular_net);
     nn_free(policy_net);
     nn_free(regularized_net);
+    nn_free(guarded_regularized_net);
+    return ok;
+}
+
+static int test_guarded_softmax_step_certifies_and_can_reject(void)
+{
+    const size_t layers[] = {4, 5, 1};
+    const size_t candidate_count = 4;
+    const size_t selected_index = 1;
+    const nn_real learning_rate = (nn_real)1e-3;
+    const nn_real candidate_inputs[] = {
+        0.10, 0.20, 0.30, 0.40,
+        0.30, 0.10, 0.70, 0.20,
+        0.80, 0.20, 0.10, 0.60,
+        0.25, 0.50, 0.25, 0.75,
+    };
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = 3;
+    config.seed = 2468;
+    config.hidden_activation = NN_ACTIVATION_RELU;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+
+    NeuralNet *regular_net = nn_create_config(&config);
+    NeuralNet *guarded_net = nn_create_config(&config);
+    NeuralNet *reject_net = nn_create_config(&config);
+    int ok = 1;
+    if (regular_net == NULL || guarded_net == NULL || reject_net == NULL) {
+        nn_free(regular_net);
+        nn_free(guarded_net);
+        nn_free(reject_net);
+        return 0;
+    }
+
+    NNNumericGuardConfig guard;
+    nn_numeric_guard_config_init(&guard);
+    guard.max_abs_parameter = (nn_real)100;
+    guard.max_abs_logit = (nn_real)100;
+    guard.max_abs_parameter_delta = (nn_real)10;
+    guard.max_abs_logit_delta = (nn_real)10;
+    NNTrainingStepCertificate certificate;
+    nn_train_softmax_scorer_weighted(regular_net,
+                                     candidate_inputs,
+                                     candidate_count,
+                                     selected_index,
+                                     (nn_real)1,
+                                     learning_rate);
+    ok = ok && nn_train_softmax_scorer_weighted_guarded(guarded_net,
+                                                        candidate_inputs,
+                                                        candidate_count,
+                                                        selected_index,
+                                                        (nn_real)1,
+                                                        learning_rate,
+                                                        &guard,
+                                                        &certificate);
+    ok = ok && certificate.step_committed &&
+         certificate.rejection_reason == NN_NUMERIC_STEP_REJECT_NONE &&
+         certificate.parameter_count == nn_parameter_count(guarded_net) &&
+         certificate.candidate_count == candidate_count &&
+         isfinite((double)certificate.loss_before) &&
+         isfinite((double)certificate.loss_after);
+    for (size_t i = 0; i < nn_parameter_count(regular_net); ++i) {
+        nn_real a = nn_test_get_parameter(regular_net, i);
+        nn_real b = nn_test_get_parameter(guarded_net, i);
+        if (!nearly_equal(a, b, (nn_real)1e-6, (nn_real)1e-5)) {
+            ok = 0;
+            break;
+        }
+    }
+
+    FILE *fp = tmpfile();
+    char buffer[1024];
+    ok = ok && fp != NULL &&
+         nn_training_step_certificate_write_jsonl(fp, &certificate);
+    if (fp != NULL) {
+        fflush(fp);
+        rewind(fp);
+        size_t read = fread(buffer, 1, sizeof(buffer) - 1, fp);
+        buffer[read] = '\0';
+        fclose(fp);
+        ok = ok && strstr(buffer, NN_NUMERIC_STEP_CERTIFICATE_SCHEMA) != NULL &&
+             strstr(buffer, "\"step_committed\":true") != NULL;
+    }
+
+    nn_real reject_before = nn_test_get_parameter(reject_net, 0);
+    NNNumericGuardConfig rejecting_guard;
+    nn_numeric_guard_config_init(&rejecting_guard);
+    rejecting_guard.max_shrink_steps = 0;
+    rejecting_guard.max_abs_parameter_delta = (nn_real)1e-20;
+    NNTrainingStepCertificate rejection;
+    ok = ok && !nn_train_softmax_scorer_weighted_guarded(reject_net,
+                                                         candidate_inputs,
+                                                         candidate_count,
+                                                         selected_index,
+                                                         (nn_real)1,
+                                                         learning_rate,
+                                                         &rejecting_guard,
+                                                         &rejection);
+    ok = ok && !rejection.step_committed &&
+         rejection.rejection_reason == NN_NUMERIC_STEP_REJECT_PARAMETER_DELTA_BOUND &&
+         nn_test_get_parameter(reject_net, 0) == reject_before;
+
+    nn_free(regular_net);
+    nn_free(guarded_net);
+    nn_free(reject_net);
+    return ok;
+}
+
+static void clear_numeric_certificate_env(void)
+{
+    unsetenv("CRLP_NUMERIC_CERT_PATH");
+    unsetenv("CRLP_NUMERIC_MAX_ABS_PARAMETER_DELTA");
+    unsetenv("CRLP_NUMERIC_MAX_SHRINK_STEPS");
+}
+
+static int count_numeric_certificate_lines(const char *path,
+                                           size_t *rows,
+                                           size_t *committed,
+                                           size_t *rejected,
+                                           size_t *batch_supervised,
+                                           int *saw_delta_reject)
+{
+    FILE *fp = fopen(path, "r");
+    char line[4096];
+    if (rows != NULL) {
+        *rows = 0u;
+    }
+    if (committed != NULL) {
+        *committed = 0u;
+    }
+    if (rejected != NULL) {
+        *rejected = 0u;
+    }
+    if (batch_supervised != NULL) {
+        *batch_supervised = 0u;
+    }
+    if (saw_delta_reject != NULL) {
+        *saw_delta_reject = 0;
+    }
+    if (fp == NULL) {
+        return 0;
+    }
+
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        if (strstr(line, NN_NUMERIC_STEP_CERTIFICATE_SCHEMA) == NULL) {
+            continue;
+        }
+        if (rows != NULL) {
+            ++*rows;
+        }
+        if (strstr(line, "\"step_committed\":true") != NULL) {
+            if (committed != NULL) {
+                ++*committed;
+            }
+        } else if (strstr(line, "\"step_committed\":false") != NULL) {
+            if (rejected != NULL) {
+                ++*rejected;
+            }
+        }
+        if (strstr(line, "\"step_kind\":\"batch_supervised\"") != NULL &&
+            batch_supervised != NULL) {
+            ++*batch_supervised;
+        }
+        if (strstr(line, "\"rejection_reason\":\"parameter_delta_bound\"") != NULL &&
+            saw_delta_reject != NULL) {
+            *saw_delta_reject = 1;
+        }
+    }
+
+    fclose(fp);
+    return 1;
+}
+
+static int test_public_supervised_numeric_certificates_are_update_level(void)
+{
+    const char *path = "/tmp/crlplrimes_numeric_cert_test.jsonl";
+    const size_t layers[] = {2, 3, 1};
+    const size_t sample_count = 8u;
+    const size_t batch_size = 2u;
+    nn_real inputs[16];
+    nn_real targets[8];
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = 3u;
+    config.seed = 13579u;
+    config.hidden_activation = NN_ACTIVATION_RELU;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+
+    fill_inputs(inputs, sizeof(inputs) / sizeof(inputs[0]));
+    fill_targets(targets, sizeof(targets) / sizeof(targets[0]));
+
+    NeuralNet *net = nn_create_config(&config);
+    NeuralNet *reject_net = nn_create_config(&config);
+    int ok = net != NULL && reject_net != NULL;
+    if (!ok) {
+        nn_free(net);
+        nn_free(reject_net);
+        return 0;
+    }
+
+    clear_numeric_certificate_env();
+    remove(path);
+    ok = ok && setenv("CRLP_NUMERIC_CERT_PATH", path, 1) == 0;
+    nn_real loss = nn_train_batched(net,
+                                    inputs,
+                                    targets,
+                                    sample_count,
+                                    batch_size,
+                                    (nn_real)0.02,
+                                    3u,
+                                    0);
+    ok = ok && isfinite((double)loss);
+
+    size_t rows = 0u;
+    size_t committed = 0u;
+    size_t rejected = 0u;
+    size_t batch_supervised = 0u;
+    int saw_delta_reject = 0;
+    ok = ok && count_numeric_certificate_lines(path,
+                                               &rows,
+                                               &committed,
+                                               &rejected,
+                                               &batch_supervised,
+                                               &saw_delta_reject);
+    ok = ok && rows == 12u && committed == 12u && rejected == 0u &&
+         batch_supervised == 12u;
+
+    remove(path);
+    ok = ok && setenv("CRLP_NUMERIC_MAX_ABS_PARAMETER_DELTA", "1e-30", 1) == 0 &&
+         setenv("CRLP_NUMERIC_MAX_SHRINK_STEPS", "0", 1) == 0;
+    nn_real before = nn_test_get_parameter(reject_net, 0u);
+    nn_real rejected_loss = nn_train_batched(reject_net,
+                                            inputs,
+                                            targets,
+                                            sample_count,
+                                            batch_size,
+                                            (nn_real)0.02,
+                                            1u,
+                                            0);
+    ok = ok && isnan((double)rejected_loss) &&
+         nn_test_get_parameter(reject_net, 0u) == before;
+    rows = committed = rejected = batch_supervised = 0u;
+    saw_delta_reject = 0;
+    ok = ok && count_numeric_certificate_lines(path,
+                                               &rows,
+                                               &committed,
+                                               &rejected,
+                                               &batch_supervised,
+                                               &saw_delta_reject);
+    ok = ok && rows == 1u && committed == 0u && rejected == 1u &&
+         batch_supervised == 1u && saw_delta_reject;
+
+    clear_numeric_certificate_env();
+    remove(path);
+    nn_free(net);
+    nn_free(reject_net);
+    return ok;
+}
+
+static int test_neuron_interval_contract_json(void)
+{
+    const size_t layers[] = {2, 1};
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = 2;
+    config.seed = 11;
+    config.hidden_activation = NN_ACTIVATION_LINEAR;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+    NeuralNet *net = nn_create_config(&config);
+    NNNeuronContract contract;
+    int ok = 1;
+    if (net == NULL) {
+        return 0;
+    }
+
+    ok = ok && nn_test_set_parameter(net, 0, (nn_real)2.0) &&
+         nn_test_set_parameter(net, 1, (nn_real)-1.0) &&
+         nn_test_set_parameter(net, 2, (nn_real)0.5);
+    ok = ok && nn_neuron_contract_interval(net,
+                                           1,
+                                           0,
+                                           (nn_real)-1.0,
+                                           (nn_real)1.0,
+                                           &contract);
+    ok = ok && contract.certified &&
+         nearly_equal(contract.pre_activation_min, (nn_real)-2.5, (nn_real)1e-6, (nn_real)1e-6) &&
+         nearly_equal(contract.pre_activation_max, (nn_real)3.5, (nn_real)1e-6, (nn_real)1e-6) &&
+         nearly_equal(contract.output_min, (nn_real)-2.5, (nn_real)1e-6, (nn_real)1e-6) &&
+         nearly_equal(contract.output_max, (nn_real)3.5, (nn_real)1e-6, (nn_real)1e-6) &&
+         nearly_equal(contract.weight_l1, (nn_real)3.0, (nn_real)1e-6, (nn_real)1e-6);
+
+    FILE *fp = tmpfile();
+    char buffer[1024];
+    ok = ok && fp != NULL && nn_neuron_contract_write_jsonl(fp, &contract);
+    if (fp != NULL) {
+        fflush(fp);
+        rewind(fp);
+        size_t read = fread(buffer, 1, sizeof(buffer) - 1, fp);
+        buffer[read] = '\0';
+        fclose(fp);
+        ok = ok && strstr(buffer, NN_NEURON_CONTRACT_SCHEMA) != NULL &&
+             strstr(buffer, "\"certified\":true") != NULL;
+    }
+
+    nn_free(net);
     return ok;
 }
 
@@ -3442,6 +3789,12 @@ int main(void)
           "softmax scorer cached update matches regular update");
     check(test_policy_regularized_cached_matches_policy_update(),
           "policy-regularized cached update matches policy update");
+    check(test_guarded_softmax_step_certifies_and_can_reject(),
+          "guarded softmax step certifies and rejects unsafe updates");
+    check(test_public_supervised_numeric_certificates_are_update_level(),
+          "public supervised numeric certificates are update-level");
+    check(test_neuron_interval_contract_json(),
+          "neuron interval contract emits certified JSONL");
     check(test_action_scorer_api_scores_probabilities_and_ranking(),
           "action scorer scores probabilities and ranks deterministically");
     check(test_pairwise_action_ranker_orders_target(),
