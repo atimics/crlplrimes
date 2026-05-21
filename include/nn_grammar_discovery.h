@@ -1,6 +1,8 @@
 #ifndef NN_GRAMMAR_DISCOVERY_H
 #define NN_GRAMMAR_DISCOVERY_H
 
+#include <stddef.h>
+
 int nn_grammar_discovery_write_delta_outputs(const char *candidate_rows_path,
                                              const char *compiled_output_path,
                                              const char *verification_output_path);
@@ -21,5 +23,10 @@ int nn_grammar_discovery_write_arc_visual_pipeline_ranker(
     unsigned epochs,
     double learning_rate,
     unsigned max_per_task);
+
+int nn_grammar_discovery_dedupe_arc_visual_pipeline_attempts(
+    const char *const *input_paths,
+    size_t input_count,
+    const char *output_path);
 
 #endif

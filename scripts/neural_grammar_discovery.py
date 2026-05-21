@@ -14,6 +14,7 @@ import hashlib
 import json
 import subprocess
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -670,15 +671,17 @@ def safe_bool(value: Any) -> bool:
 
 
 def parse_json_rows(path: Path) -> list[dict[str, Any]]:
+    return list(iter_json_rows(path))
+
+
+def iter_json_rows(path: Path) -> Iterator[dict[str, Any]]:
     if not path.is_file():
-        return []
-    rows: list[dict[str, Any]] = []
+        return
     with path.open("r", encoding="utf-8") as fp:
         for line in fp:
             line = line.strip()
             if line.startswith("{"):
-                rows.append(json.loads(line))
-    return rows
+                yield json.loads(line)
 
 
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -1376,6 +1379,27 @@ def merge_arc_probe_prior_files(output_path: Path, paths: list[Path]) -> int:
     return row_count
 
 
+def run_arc_visual_pipeline_attempt_dedupe(
+    runtime: Path,
+    input_paths: list[Path],
+    output_path: Path,
+) -> bool:
+    valid_inputs = [path for path in input_paths if path.is_file()]
+    if not valid_inputs:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("", encoding="utf-8")
+        return True
+    if not runtime.is_file():
+        return False
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [str(runtime)]
+    for path in valid_inputs:
+        command.extend(["--arc-pipeline-dedupe-attempts-input", str(path)])
+    command.extend(["--arc-pipeline-dedupe-attempts-output", str(output_path)])
+    subprocess.run(command, check=True)
+    return True
+
+
 def run_arc_sketch_candidate_export(
     records: list[dict[str, Any]],
     arc_agi: Path,
@@ -1385,6 +1409,7 @@ def run_arc_sketch_candidate_export(
     prior_path: Path,
     attempts_path: Path,
     sketches_per_task: int,
+    load_attempt_rows: bool = True,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], int, int]:
     candidate_count = write_arc_probe_candidate_record_rows(candidate_path, records)
     if (
@@ -1420,11 +1445,15 @@ def run_arc_sketch_candidate_export(
         for row in source_rows
         if row.get("schema") == ARC_SKETCH_PROBE_SUMMARY_SCHEMA
     ]
-    attempt_rows = [
-        row
-        for row in parse_json_rows(attempts_path)
-        if row.get("schema") == ARC_VISUAL_PIPELINE_ATTEMPT_SCHEMA
-    ]
+    attempt_rows = (
+        [
+            row
+            for row in parse_json_rows(attempts_path)
+            if row.get("schema") == ARC_VISUAL_PIPELINE_ATTEMPT_SCHEMA
+        ]
+        if load_attempt_rows
+        else []
+    )
     return (
         probe_rows,
         summary_rows,
@@ -2098,9 +2127,11 @@ def run_arc_sketch_heldout_export(
     repair_probe_rows: list[dict[str, Any]] = []
     repair_summary_rows: list[dict[str, Any]] = []
     repair_attempt_rows: list[dict[str, Any]] = []
+    repair_attempt_paths: list[Path] = []
     repair_prior_count = 0
     repair_candidate_count = 0
     if repair_records:
+        repair_attempt_paths = [repair_attempts_path]
         (
             repair_probe_rows,
             repair_summary_rows,
@@ -2116,6 +2147,7 @@ def run_arc_sketch_heldout_export(
             repair_prior_path,
             repair_attempts_path,
             sketches_per_task,
+            False,
         )
     else:
         write_empty_arc_probe_artifacts(
@@ -2134,15 +2166,31 @@ def run_arc_sketch_heldout_export(
         ],
     ]
     combined_summary_rows = [*summary_rows, *repair_summary_rows]
-    combined_attempt_rows = dedupe_arc_visual_pipeline_attempts(
-        [*attempt_rows, *repair_attempt_rows]
-    )
     prior_count = merge_arc_probe_prior_files(
         prior_path,
         [first_prior_path, repair_prior_path],
     )
+    if not run_arc_visual_pipeline_attempt_dedupe(
+        runtime,
+        [first_attempts_path, *repair_attempt_paths],
+        attempts_path,
+    ):
+        repair_attempt_rows = [
+            row
+            for path in repair_attempt_paths
+            for row in parse_json_rows(path)
+            if row.get("schema") == ARC_VISUAL_PIPELINE_ATTEMPT_SCHEMA
+        ]
+        write_jsonl(
+            attempts_path,
+            dedupe_arc_visual_pipeline_attempts([*attempt_rows, *repair_attempt_rows]),
+        )
+    combined_attempt_rows = [
+        row
+        for row in parse_json_rows(attempts_path)
+        if row.get("schema") == ARC_VISUAL_PIPELINE_ATTEMPT_SCHEMA
+    ]
     write_jsonl(source_path, [*combined_summary_rows, *combined_probe_rows])
-    write_jsonl(attempts_path, combined_attempt_rows)
     repair_sketches, repair_sketch_summary = build_arc_visual_pipeline_repair_sketches(
         coverage_frontier,
         combined_attempt_rows,
@@ -2156,6 +2204,7 @@ def run_arc_sketch_heldout_export(
         first_prior_count,
         repair_prior_count,
         prior_count,
+        repair_attempt_paths if not repair_attempt_rows else None,
     )
     write_jsonl(output_dir / "arc_visual_pipeline_repair_sketches.jsonl", repair_sketches)
     write_jsonl(
@@ -3286,6 +3335,7 @@ def build_arc_visual_pipeline_repair_gain_summary(
     first_prior_count: int,
     repair_prior_count: int,
     combined_prior_count: int,
+    repair_attempt_paths: list[Path] | None = None,
 ) -> dict[str, Any]:
     first_accepted_by_key = {
         arc_attempt_task_key(row): row
@@ -3293,16 +3343,6 @@ def build_arc_visual_pipeline_repair_gain_summary(
         if safe_bool(row.get("accepted"))
     }
     repair_accepted_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for row in repair_attempts:
-        if not safe_bool(row.get("accepted")):
-            continue
-        key = arc_attempt_task_key(row)
-        existing = repair_accepted_by_key.get(key)
-        if existing is None or arc_attempt_verifier_score(row) > arc_attempt_verifier_score(
-            existing
-        ):
-            repair_accepted_by_key[key] = row
-
     repair_record_by_key = {
         (
             str(row.get("family", "")),
@@ -3311,6 +3351,48 @@ def build_arc_visual_pipeline_repair_gain_summary(
         ): row
         for row in repair_records
     }
+    repair_attempt_count = 0
+    repair_accepted_attempt_count = 0
+    by_family: dict[str, Counter[str]] = defaultdict(Counter)
+    attempts_by_operator: Counter[str] = Counter()
+    accepted_by_operator: Counter[str] = Counter()
+    accepted_by_op: Counter[str] = Counter()
+    repair_rejections_by_reason: Counter[str] = Counter()
+    if repair_attempt_paths is None:
+        repair_rows = repair_attempts
+    else:
+        repair_rows = (
+            row
+            for path in repair_attempt_paths
+            for row in iter_json_rows(path)
+            if row.get("schema") == ARC_VISUAL_PIPELINE_ATTEMPT_SCHEMA
+        )
+    for row in repair_rows:
+        repair_attempt_count += 1
+        key = arc_attempt_task_key(row)
+        repair_record = repair_record_by_key.get(key, {})
+        provenance = arc_attempt_candidate_provenance(row)
+        operator = str(
+            provenance.get("repair_operator")
+            or repair_record.get("repair_operator")
+            or "unknown"
+        )
+        family = key[0]
+        by_family[family]["repair_attempts"] += 1
+        attempts_by_operator[operator] += 1
+        if safe_bool(row.get("accepted")):
+            repair_accepted_attempt_count += 1
+            by_family[family]["repair_accepted_attempts"] += 1
+            accepted_by_operator[operator] += 1
+            accepted_by_op[str(row.get("op_name", "")) or "unknown"] += 1
+            existing = repair_accepted_by_key.get(key)
+            if existing is None or arc_attempt_verifier_score(row) > arc_attempt_verifier_score(
+                existing
+            ):
+                repair_accepted_by_key[key] = row
+        else:
+            reason = str(row.get("rejection_reason", "")) or "unknown"
+            repair_rejections_by_reason[reason] += 1
     frontier_keys = {
         (
             str(row.get("family", "")),
@@ -3324,30 +3406,6 @@ def build_arc_visual_pipeline_repair_gain_summary(
         for key in repair_accepted_by_key
         if key not in first_accepted_by_key
     )
-
-    by_family: dict[str, Counter[str]] = defaultdict(Counter)
-    attempts_by_operator: Counter[str] = Counter()
-    accepted_by_operator: Counter[str] = Counter()
-    accepted_by_op: Counter[str] = Counter()
-    repair_rejections_by_reason: Counter[str] = Counter()
-    for row in repair_attempts:
-        key = arc_attempt_task_key(row)
-        repair_record = repair_record_by_key.get(key, {})
-        provenance = arc_attempt_candidate_provenance(row)
-        operator = str(
-            provenance.get("repair_operator")
-            or repair_record.get("repair_operator")
-            or "unknown"
-        )
-        family = key[0]
-        by_family[family]["repair_attempts"] += 1
-        attempts_by_operator[operator] += 1
-        if safe_bool(row.get("accepted")):
-            by_family[family]["repair_accepted_attempts"] += 1
-            accepted_by_operator[operator] += 1
-            accepted_by_op[str(row.get("op_name", "")) or "unknown"] += 1
-        else:
-            repair_rejections_by_reason[str(row.get("rejection_reason", "")) or "unknown"] += 1
 
     for row in coverage_frontier:
         by_family[str(row.get("family", ""))]["frontier_tasks"] += 1
@@ -3405,10 +3463,8 @@ def build_arc_visual_pipeline_repair_gain_summary(
         "repair_prior_row_count": repair_prior_count,
         "combined_prior_row_count": combined_prior_count,
         "repair_candidate_count": len(repair_records),
-        "repair_attempt_count": len(repair_attempts),
-        "repair_accepted_attempt_count": sum(
-            1 for row in repair_attempts if safe_bool(row.get("accepted"))
-        ),
+        "repair_attempt_count": repair_attempt_count,
+        "repair_accepted_attempt_count": repair_accepted_attempt_count,
         "verified_repair_sketch_count": len(verified_repair_sketches),
         "by_family": {
             family: dict(sorted(counter.items()))

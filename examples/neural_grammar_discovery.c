@@ -24,12 +24,45 @@ static int has_arg(int argc, char **argv, const char *name) {
     return 0;
 }
 
+static size_t count_arg_values(int argc, char **argv, const char *name) {
+    int i;
+    size_t count = 0U;
+    for (i = 1; i + 1 < argc; ++i) {
+        if (strcmp(argv[i], name) == 0) {
+            ++count;
+            ++i;
+        }
+    }
+    return count;
+}
+
+static size_t collect_arg_values(int argc,
+                                 char **argv,
+                                 const char *name,
+                                 const char **values,
+                                 size_t max_values) {
+    int i;
+    size_t count = 0U;
+    for (i = 1; i + 1 < argc; ++i) {
+        if (strcmp(argv[i], name) == 0) {
+            if (count < max_values) {
+                values[count] = argv[i + 1];
+            }
+            ++count;
+            ++i;
+        }
+    }
+    return count;
+}
+
 static void usage(const char *argv0) {
     fprintf(stderr,
             "usage: %s [--candidate-rows PATH --compiled-output PATH "
             "--verification-output PATH] [--sketches PATH --sketch-examples PATH "
             "--neural-proposals-output PATH] [--arc-pipeline-attempts PATH "
             "--arc-pipeline-proposals-output PATH --arc-pipeline-summary-output PATH] "
+            "[--arc-pipeline-dedupe-attempts-input PATH ... "
+            "--arc-pipeline-dedupe-attempts-output PATH] "
             "[--memory-in PATH] [--memory-out PATH] [--epochs N] "
             "[--learning-rate LR] [--arc-pipeline-max-per-task N]\n",
             argv0);
@@ -48,6 +81,11 @@ int main(int argc, char **argv) {
         arg_value(argc, argv, "--arc-pipeline-proposals-output");
     const char *arc_pipeline_summary_output =
         arg_value(argc, argv, "--arc-pipeline-summary-output");
+    const char *arc_pipeline_dedupe_attempts_output =
+        arg_value(argc, argv, "--arc-pipeline-dedupe-attempts-output");
+    size_t arc_pipeline_dedupe_attempts_input_count =
+        count_arg_values(argc, argv, "--arc-pipeline-dedupe-attempts-input");
+    const char **arc_pipeline_dedupe_attempts_inputs = NULL;
     const char *arc_pipeline_max_per_task_arg =
         arg_value(argc, argv, "--arc-pipeline-max-per-task");
     const char *memory_in = arg_value(argc, argv, "--memory-in");
@@ -66,15 +104,30 @@ int main(int argc, char **argv) {
         usage(argv[0]);
         return 0;
     }
+    if (arc_pipeline_dedupe_attempts_input_count > 0U) {
+        arc_pipeline_dedupe_attempts_inputs =
+            (const char **)calloc(arc_pipeline_dedupe_attempts_input_count,
+                                  sizeof(char *));
+        if (arc_pipeline_dedupe_attempts_inputs == NULL) {
+            return 1;
+        }
+        collect_arg_values(argc,
+                           argv,
+                           "--arc-pipeline-dedupe-attempts-input",
+                           arc_pipeline_dedupe_attempts_inputs,
+                           arc_pipeline_dedupe_attempts_input_count);
+    }
     if (candidate_rows != NULL || compiled_output != NULL || verification_output != NULL) {
         if (candidate_rows == NULL || compiled_output == NULL || verification_output == NULL) {
             usage(argv[0]);
+            free(arc_pipeline_dedupe_attempts_inputs);
             return 2;
         }
         if (nn_grammar_discovery_write_delta_outputs(candidate_rows,
                                                      compiled_output,
                                                      verification_output) != 0) {
             fprintf(stderr, "failed to compile or verify neural grammar delta rows\n");
+            free(arc_pipeline_dedupe_attempts_inputs);
             return 1;
         }
     }
@@ -82,6 +135,7 @@ int main(int argc, char **argv) {
         if (sketches == NULL || sketch_examples == NULL ||
             neural_proposals_output == NULL) {
             usage(argv[0]);
+            free(arc_pipeline_dedupe_attempts_inputs);
             return 2;
         }
         if (nn_grammar_discovery_write_neural_sketch_proposals(sketches,
@@ -92,6 +146,7 @@ int main(int argc, char **argv) {
                                                                epochs,
                                                                learning_rate) != 0) {
             fprintf(stderr, "failed to train neural sketch proposer\n");
+            free(arc_pipeline_dedupe_attempts_inputs);
             return 1;
         }
     }
@@ -100,6 +155,7 @@ int main(int argc, char **argv) {
         if (arc_pipeline_attempts == NULL || arc_pipeline_proposals_output == NULL ||
             arc_pipeline_summary_output == NULL) {
             usage(argv[0]);
+            free(arc_pipeline_dedupe_attempts_inputs);
             return 2;
         }
         if (nn_grammar_discovery_write_arc_visual_pipeline_ranker(
@@ -110,12 +166,33 @@ int main(int argc, char **argv) {
                 learning_rate,
                 arc_pipeline_max_per_task) != 0) {
             fprintf(stderr, "failed to train ARC visual pipeline ranker\n");
+            free(arc_pipeline_dedupe_attempts_inputs);
             return 1;
         }
     }
-    if (candidate_rows == NULL && sketches == NULL && arc_pipeline_attempts == NULL) {
+    if (arc_pipeline_dedupe_attempts_input_count > 0U ||
+        arc_pipeline_dedupe_attempts_output != NULL) {
+        if (arc_pipeline_dedupe_attempts_input_count == 0U ||
+            arc_pipeline_dedupe_attempts_output == NULL) {
+            usage(argv[0]);
+            free(arc_pipeline_dedupe_attempts_inputs);
+            return 2;
+        }
+        if (nn_grammar_discovery_dedupe_arc_visual_pipeline_attempts(
+                arc_pipeline_dedupe_attempts_inputs,
+                arc_pipeline_dedupe_attempts_input_count,
+                arc_pipeline_dedupe_attempts_output) != 0) {
+            fprintf(stderr, "failed to dedupe ARC visual pipeline attempts\n");
+            free(arc_pipeline_dedupe_attempts_inputs);
+            return 1;
+        }
+    }
+    if (candidate_rows == NULL && sketches == NULL && arc_pipeline_attempts == NULL &&
+        arc_pipeline_dedupe_attempts_output == NULL) {
         usage(argv[0]);
+        free(arc_pipeline_dedupe_attempts_inputs);
         return 2;
     }
+    free(arc_pipeline_dedupe_attempts_inputs);
     return 0;
 }

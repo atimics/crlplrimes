@@ -139,6 +139,37 @@ typedef struct {
 } NNGDArcPipelineAttemptList;
 
 typedef struct {
+    char *family;
+    char *task_id;
+    char *split;
+    char *library_id;
+    char *rejection_reason;
+    int accepted;
+    double verifier_score;
+} NNGDArcAttemptDedupeFields;
+
+typedef struct {
+    char *family;
+    char *task_id;
+    char *split;
+    char *library_id;
+    char *rejection_reason;
+    int accepted;
+    double verifier_score;
+    size_t source_index;
+    fpos_t position;
+    uint64_t hash;
+} NNGDArcAttemptDedupeRecord;
+
+typedef struct {
+    NNGDArcAttemptDedupeRecord *items;
+    size_t count;
+    size_t capacity;
+    size_t *slots;
+    size_t slot_count;
+} NNGDArcAttemptDedupeTable;
+
+typedef struct {
     size_t attempt_index;
     double score;
     double model_score;
@@ -1580,6 +1611,511 @@ static uint64_t nn_gd_fnv1a_update(uint64_t hash, const char *value) {
         hash *= UINT64_C(1099511628211);
     }
     return hash;
+}
+
+static uint64_t nn_gd_fnv1a_update_separator(uint64_t hash) {
+    hash ^= UINT64_C(255);
+    hash *= UINT64_C(1099511628211);
+    return hash;
+}
+
+static void nn_gd_arc_attempt_dedupe_fields_free(
+    NNGDArcAttemptDedupeFields *fields) {
+    if (fields == NULL) {
+        return;
+    }
+    free(fields->family);
+    free(fields->task_id);
+    free(fields->split);
+    free(fields->library_id);
+    free(fields->rejection_reason);
+    memset(fields, 0, sizeof(*fields));
+}
+
+static void nn_gd_arc_attempt_dedupe_record_free(
+    NNGDArcAttemptDedupeRecord *record) {
+    if (record == NULL) {
+        return;
+    }
+    free(record->family);
+    free(record->task_id);
+    free(record->split);
+    free(record->library_id);
+    free(record->rejection_reason);
+    memset(record, 0, sizeof(*record));
+}
+
+static void nn_gd_arc_attempt_dedupe_table_free(
+    NNGDArcAttemptDedupeTable *table) {
+    size_t i;
+    if (table == NULL) {
+        return;
+    }
+    for (i = 0U; i < table->count; ++i) {
+        nn_gd_arc_attempt_dedupe_record_free(&table->items[i]);
+    }
+    free(table->items);
+    free(table->slots);
+    memset(table, 0, sizeof(*table));
+}
+
+static uint64_t nn_gd_arc_attempt_dedupe_hash(
+    const NNGDArcAttemptDedupeFields *fields) {
+    uint64_t hash = UINT64_C(1469598103934665603);
+    hash = nn_gd_fnv1a_update(hash, fields->family);
+    hash = nn_gd_fnv1a_update_separator(hash);
+    hash = nn_gd_fnv1a_update(hash, fields->task_id);
+    hash = nn_gd_fnv1a_update_separator(hash);
+    hash = nn_gd_fnv1a_update(hash, fields->split);
+    hash = nn_gd_fnv1a_update_separator(hash);
+    hash = nn_gd_fnv1a_update(hash, fields->library_id);
+    hash = nn_gd_fnv1a_update_separator(hash);
+    hash = nn_gd_fnv1a_update(hash, fields->rejection_reason);
+    return hash;
+}
+
+static int nn_gd_arc_attempt_dedupe_keys_equal(
+    const NNGDArcAttemptDedupeRecord *record,
+    const NNGDArcAttemptDedupeFields *fields) {
+    return strcmp(record->family, fields->family) == 0 &&
+           strcmp(record->task_id, fields->task_id) == 0 &&
+           strcmp(record->split, fields->split) == 0 &&
+           strcmp(record->library_id, fields->library_id) == 0 &&
+           strcmp(record->rejection_reason, fields->rejection_reason) == 0;
+}
+
+static int nn_gd_arc_attempt_dedupe_reserve_items(
+    NNGDArcAttemptDedupeTable *table,
+    size_t needed) {
+    NNGDArcAttemptDedupeRecord *items;
+    size_t capacity;
+    if (needed <= table->capacity) {
+        return 0;
+    }
+    capacity = table->capacity == 0U ? 256U : table->capacity * 2U;
+    while (capacity < needed) {
+        capacity *= 2U;
+    }
+    items = (NNGDArcAttemptDedupeRecord *)realloc(
+        table->items,
+        capacity * sizeof(NNGDArcAttemptDedupeRecord));
+    if (items == NULL) {
+        return -1;
+    }
+    table->items = items;
+    table->capacity = capacity;
+    return 0;
+}
+
+static size_t nn_gd_arc_attempt_dedupe_slot(
+    const NNGDArcAttemptDedupeTable *table,
+    const NNGDArcAttemptDedupeFields *fields,
+    uint64_t hash) {
+    size_t slot = (size_t)(hash & (uint64_t)(table->slot_count - 1U));
+    for (;;) {
+        size_t record_index = table->slots[slot];
+        if (record_index == 0U ||
+            (table->items[record_index - 1U].hash == hash &&
+             nn_gd_arc_attempt_dedupe_keys_equal(&table->items[record_index - 1U],
+                                                 fields))) {
+            return slot;
+        }
+        slot = (slot + 1U) & (table->slot_count - 1U);
+    }
+}
+
+static int nn_gd_arc_attempt_dedupe_rehash(
+    NNGDArcAttemptDedupeTable *table,
+    size_t needed) {
+    size_t slot_count = table->slot_count == 0U ? 512U : table->slot_count;
+    size_t *slots;
+    size_t i;
+    while (needed * 10U > slot_count * 7U) {
+        slot_count *= 2U;
+    }
+    if (slot_count == table->slot_count) {
+        return 0;
+    }
+    slots = (size_t *)calloc(slot_count, sizeof(size_t));
+    if (slots == NULL) {
+        return -1;
+    }
+    free(table->slots);
+    table->slots = slots;
+    table->slot_count = slot_count;
+    for (i = 0U; i < table->count; ++i) {
+        NNGDArcAttemptDedupeFields fields;
+        size_t slot;
+        memset(&fields, 0, sizeof(fields));
+        fields.family = table->items[i].family;
+        fields.task_id = table->items[i].task_id;
+        fields.split = table->items[i].split;
+        fields.library_id = table->items[i].library_id;
+        fields.rejection_reason = table->items[i].rejection_reason;
+        slot = nn_gd_arc_attempt_dedupe_slot(table, &fields, table->items[i].hash);
+        table->slots[slot] = i + 1U;
+    }
+    return 0;
+}
+
+static int nn_gd_arc_attempt_dedupe_better(
+    int accepted,
+    double verifier_score,
+    const NNGDArcAttemptDedupeRecord *existing) {
+    if (accepted != existing->accepted) {
+        return accepted > existing->accepted;
+    }
+    return verifier_score > existing->verifier_score;
+}
+
+static int nn_gd_arc_attempt_dedupe_upsert(
+    NNGDArcAttemptDedupeTable *table,
+    NNGDArcAttemptDedupeFields *fields,
+    size_t source_index,
+    const fpos_t *position) {
+    uint64_t hash = nn_gd_arc_attempt_dedupe_hash(fields);
+    size_t slot;
+    size_t record_index;
+    NNGDArcAttemptDedupeRecord *record;
+    if (nn_gd_arc_attempt_dedupe_rehash(table, table->count + 1U) != 0) {
+        return -1;
+    }
+    slot = nn_gd_arc_attempt_dedupe_slot(table, fields, hash);
+    record_index = table->slots[slot];
+    if (record_index != 0U) {
+        record = &table->items[record_index - 1U];
+        if (nn_gd_arc_attempt_dedupe_better(fields->accepted,
+                                            fields->verifier_score,
+                                            record)) {
+            record->accepted = fields->accepted;
+            record->verifier_score = fields->verifier_score;
+            record->source_index = source_index;
+            record->position = *position;
+        }
+        nn_gd_arc_attempt_dedupe_fields_free(fields);
+        return 0;
+    }
+    if (nn_gd_arc_attempt_dedupe_reserve_items(table, table->count + 1U) != 0) {
+        return -1;
+    }
+    record = &table->items[table->count];
+    memset(record, 0, sizeof(*record));
+    record->family = fields->family;
+    record->task_id = fields->task_id;
+    record->split = fields->split;
+    record->library_id = fields->library_id;
+    record->rejection_reason = fields->rejection_reason;
+    record->accepted = fields->accepted;
+    record->verifier_score = fields->verifier_score;
+    record->source_index = source_index;
+    record->position = *position;
+    record->hash = hash;
+    fields->family = NULL;
+    fields->task_id = NULL;
+    fields->split = NULL;
+    fields->library_id = NULL;
+    fields->rejection_reason = NULL;
+    table->slots[slot] = table->count + 1U;
+    ++table->count;
+    return 0;
+}
+
+static char *nn_gd_read_line_dynamic(FILE *fp) {
+    size_t capacity = 4096U;
+    size_t used = 0U;
+    char *line = (char *)malloc(capacity);
+    if (line == NULL) {
+        return NULL;
+    }
+    line[0] = '\0';
+    for (;;) {
+        if (fgets(line + used, (int)(capacity - used), fp) == NULL) {
+            if (used == 0U) {
+                free(line);
+                return NULL;
+            }
+            return line;
+        }
+        used += strlen(line + used);
+        if (used > 0U && line[used - 1U] == '\n') {
+            return line;
+        }
+        if (capacity - used <= 1U) {
+            size_t next_capacity = capacity * 2U;
+            char *next = (char *)realloc(line, next_capacity);
+            if (next == NULL) {
+                free(line);
+                return NULL;
+            }
+            line = next;
+            capacity = next_capacity;
+        }
+    }
+}
+
+static const char *nn_gd_json_find_key_value(const char *line, const char *key) {
+    char pattern[128];
+    int written;
+    const char *start;
+    if (line == NULL || key == NULL || key[0] == '\0') {
+        return NULL;
+    }
+    written = snprintf(pattern, sizeof(pattern), "\"%s\":", key);
+    if (written <= 0 || (size_t)written >= sizeof(pattern)) {
+        return NULL;
+    }
+    start = strstr(line, pattern);
+    return start == NULL ? NULL : start + (size_t)written;
+}
+
+static const char *nn_gd_json_skip_space(const char *cursor) {
+    while (cursor != NULL && isspace((unsigned char)*cursor)) {
+        ++cursor;
+    }
+    return cursor;
+}
+
+static int nn_gd_json_append_char(char **buffer,
+                                  size_t *used,
+                                  size_t *capacity,
+                                  char value) {
+    if (*used + 1U >= *capacity) {
+        size_t next_capacity = *capacity * 2U;
+        char *next = (char *)realloc(*buffer, next_capacity);
+        if (next == NULL) {
+            return -1;
+        }
+        *buffer = next;
+        *capacity = next_capacity;
+    }
+    (*buffer)[(*used)++] = value;
+    return 0;
+}
+
+static char *nn_gd_json_dup_string_value(const char *cursor) {
+    size_t capacity = 64U;
+    size_t used = 0U;
+    char *value;
+    cursor = nn_gd_json_skip_space(cursor);
+    if (cursor == NULL || *cursor != '"') {
+        return nn_gd_strdup("");
+    }
+    ++cursor;
+    value = (char *)malloc(capacity);
+    if (value == NULL) {
+        return NULL;
+    }
+    while (*cursor != '\0' && *cursor != '"') {
+        unsigned char ch = (unsigned char)*cursor++;
+        if (ch == '\\') {
+            ch = (unsigned char)*cursor++;
+            switch (ch) {
+                case '"':
+                case '\\':
+                case '/':
+                    break;
+                case 'b':
+                    ch = '\b';
+                    break;
+                case 'f':
+                    ch = '\f';
+                    break;
+                case 'n':
+                    ch = '\n';
+                    break;
+                case 'r':
+                    ch = '\r';
+                    break;
+                case 't':
+                    ch = '\t';
+                    break;
+                case 'u': {
+                    size_t i;
+                    for (i = 0U; i < 4U; ++i) {
+                        if (!isxdigit((unsigned char)cursor[i])) {
+                            free(value);
+                            return NULL;
+                        }
+                    }
+                    cursor += 4U;
+                    ch = '?';
+                    break;
+                }
+                default:
+                    free(value);
+                    return NULL;
+            }
+        }
+        if (nn_gd_json_append_char(&value, &used, &capacity, (char)ch) != 0) {
+            free(value);
+            return NULL;
+        }
+    }
+    if (*cursor != '"') {
+        free(value);
+        return NULL;
+    }
+    value[used] = '\0';
+    return value;
+}
+
+static char *nn_gd_json_dup_key_string(const char *line, const char *key) {
+    return nn_gd_json_dup_string_value(nn_gd_json_find_key_value(line, key));
+}
+
+static int nn_gd_json_get_bool(const char *line, const char *key) {
+    const char *cursor = nn_gd_json_skip_space(nn_gd_json_find_key_value(line, key));
+    if (cursor == NULL) {
+        return 0;
+    }
+    return strncmp(cursor, "true", 4U) == 0 || strncmp(cursor, "1", 1U) == 0;
+}
+
+static double nn_gd_json_get_double_or_zero(const char *line, const char *key) {
+    const char *cursor = nn_gd_json_skip_space(nn_gd_json_find_key_value(line, key));
+    char *end = NULL;
+    double value;
+    if (cursor == NULL) {
+        return 0.0;
+    }
+    value = strtod(cursor, &end);
+    if (end == cursor || !isfinite(value)) {
+        return 0.0;
+    }
+    return value;
+}
+
+static int nn_gd_parse_arc_attempt_dedupe_fields(
+    const char *line,
+    NNGDArcAttemptDedupeFields *fields) {
+    char *schema;
+    const char *cursor = nn_gd_json_skip_space(line);
+    memset(fields, 0, sizeof(*fields));
+    if (cursor == NULL || *cursor != '{') {
+        return 1;
+    }
+    schema = nn_gd_json_dup_key_string(line, "schema");
+    if (schema == NULL) {
+        return -1;
+    }
+    if (strcmp(schema,
+               "crlp.neural_grammar_discovery.arc_visual_pipeline_attempt.v1") != 0) {
+        free(schema);
+        return 1;
+    }
+    free(schema);
+    fields->family = nn_gd_json_dup_key_string(line, "family");
+    fields->task_id = nn_gd_json_dup_key_string(line, "task_id");
+    fields->split = nn_gd_json_dup_key_string(line, "split");
+    fields->library_id = nn_gd_json_dup_key_string(line, "library_id");
+    fields->rejection_reason = nn_gd_json_dup_key_string(line, "rejection_reason");
+    fields->accepted = nn_gd_json_get_bool(line, "accepted");
+    fields->verifier_score = nn_gd_json_get_double_or_zero(line, "verifier_score");
+    if (fields->family == NULL || fields->task_id == NULL || fields->split == NULL ||
+        fields->library_id == NULL || fields->rejection_reason == NULL) {
+        nn_gd_arc_attempt_dedupe_fields_free(fields);
+        return -1;
+    }
+    return 0;
+}
+
+int nn_grammar_discovery_dedupe_arc_visual_pipeline_attempts(
+    const char *const *input_paths,
+    size_t input_count,
+    const char *output_path) {
+    FILE **inputs = NULL;
+    FILE *output = NULL;
+    NNGDArcAttemptDedupeTable table = {0};
+    int status = -1;
+    size_t input_index;
+    size_t record_index;
+    if (input_paths == NULL || input_count == 0U || output_path == NULL) {
+        return -1;
+    }
+    inputs = (FILE **)calloc(input_count, sizeof(FILE *));
+    if (inputs == NULL) {
+        return -1;
+    }
+    for (input_index = 0U; input_index < input_count; ++input_index) {
+        inputs[input_index] = fopen(input_paths[input_index], "r");
+        if (inputs[input_index] == NULL) {
+            goto done;
+        }
+        for (;;) {
+            fpos_t position;
+            char *line;
+            NNGDArcAttemptDedupeFields fields;
+            int parse_status;
+            if (fgetpos(inputs[input_index], &position) != 0) {
+                goto done;
+            }
+            line = nn_gd_read_line_dynamic(inputs[input_index]);
+            if (line == NULL) {
+                break;
+            }
+            parse_status = nn_gd_parse_arc_attempt_dedupe_fields(line, &fields);
+            free(line);
+            if (parse_status < 0) {
+                goto done;
+            }
+            if (parse_status == 0 &&
+                nn_gd_arc_attempt_dedupe_upsert(&table,
+                                                &fields,
+                                                input_index,
+                                                &position) != 0) {
+                nn_gd_arc_attempt_dedupe_fields_free(&fields);
+                goto done;
+            }
+        }
+    }
+    output = fopen(output_path, "w");
+    if (output == NULL) {
+        goto done;
+    }
+    for (record_index = 0U; record_index < table.count; ++record_index) {
+        const NNGDArcAttemptDedupeRecord *record = &table.items[record_index];
+        char *line;
+        size_t line_len;
+        if (record->source_index >= input_count ||
+            fsetpos(inputs[record->source_index], &record->position) != 0) {
+            goto done;
+        }
+        line = nn_gd_read_line_dynamic(inputs[record->source_index]);
+        if (line == NULL) {
+            goto done;
+        }
+        line_len = strlen(line);
+        if (fputs(line, output) == EOF) {
+            free(line);
+            goto done;
+        }
+        if (line_len == 0U || line[line_len - 1U] != '\n') {
+            if (fputc('\n', output) == EOF) {
+                free(line);
+                goto done;
+            }
+        }
+        free(line);
+    }
+    if (ferror(output)) {
+        goto done;
+    }
+    status = 0;
+
+done:
+    if (output != NULL) {
+        fclose(output);
+    }
+    if (inputs != NULL) {
+        for (input_index = 0U; input_index < input_count; ++input_index) {
+            if (inputs[input_index] != NULL) {
+                fclose(inputs[input_index]);
+            }
+        }
+        free(inputs);
+    }
+    nn_gd_arc_attempt_dedupe_table_free(&table);
+    return status;
 }
 
 static uint64_t nn_gd_proposal_hash(const char *sketch_id) {
