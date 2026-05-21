@@ -18869,14 +18869,6 @@ static int arc_sketch_probe_append_if_exact_with_reason(
         if (reason_out != NULL) {
             *reason_out = ARC_SKETCH_PROBE_REASON_CAP_HIT;
         }
-        arc_sketch_probe_log_spec_attempt(input,
-                                          task_path,
-                                          task,
-                                          spec,
-                                          NULL,
-                                          summary,
-                                          0,
-                                          ARC_SKETCH_PROBE_REASON_CAP_HIT);
         return 0;
     }
     for (size_t i = 0; i < *emitted_count; ++i) {
@@ -19150,6 +19142,10 @@ static int arc_sketch_probe_append_visual_pipeline_if_exact(
     ARCSketchProbeReason reason = ARC_SKETCH_PROBE_REASON_INVALID_ARGUMENT;
     int accepted = 0;
     if (summary == NULL) {
+        return 0;
+    }
+    if (emitted_count != NULL && *emitted_count >= sketches_per_task) {
+        ++summary->cap_hit;
         return 0;
     }
     if (!arc_visual_pipeline_to_sketch_spec(pipeline, &spec)) {
