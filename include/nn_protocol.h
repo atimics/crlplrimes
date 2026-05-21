@@ -13,6 +13,31 @@
 #define NN_PROTOCOL_RANKER_SCHEMA "crlp.protocol.ranker_decision.v1"
 #define NN_PROTOCOL_RULE_SCHEMA "crlp.protocol.discovered_rule.v1"
 #define NN_PROTOCOL_LIBRARY_SCHEMA "crlp.protocol.library_promotion.v1"
+#define NN_PROTOCOL_OPERATOR_SCHEMA "crlp.protocol.operator_promotion.v1"
+
+typedef struct {
+    const char *sequence_id;
+    size_t index;
+    size_t length;
+    const char *position;
+    const char *previous;
+    const char *next;
+    const char *composition_context;
+} NNProtocolFrame;
+
+typedef struct {
+    const char *source_schema;
+    const char *source_artifact;
+    const char *state_hash;
+    const char *parent_hash;
+    const char *trace_root;
+    const char *authority;
+    const char *signature;
+    const char *replay_seed;
+    const char *failure_stage;
+    const char *residual_class;
+    const char *domain_payload_schema;
+} NNProtocolEvidence;
 
 typedef enum {
     NN_VERIFIER_ACCEPTED = 0,
@@ -30,6 +55,10 @@ typedef struct {
     size_t feature_count;
     const char *provenance;
     const char *example_text;
+    const char *source_schema;
+    const char *source_artifact;
+    const char *state_hash;
+    const NNProtocolFrame *frame;
 } NNCandidateRow;
 
 typedef struct {
@@ -40,6 +69,7 @@ typedef struct {
     double cost;
     const char *reason_code;
     const char *proof_kind;
+    const NNProtocolEvidence *evidence;
 } NNVerifierOutcome;
 
 typedef struct {
@@ -80,6 +110,24 @@ typedef struct {
 } NNLibraryPromotionRecord;
 
 typedef struct {
+    const char *operator_id;
+    const char *operator_name;
+    const char *residual_family;
+    const char *source_residual_class;
+    size_t support_rows;
+    size_t support_domains;
+    size_t accepted_rows;
+    size_t unsafe_rows;
+    size_t false_rejections;
+    double utility_mean;
+    double cost_mean;
+    int promoted;
+    const char *promotion_policy;
+    const char *evidence_hash;
+    const char *reason_code;
+} NNOperatorPromotionRecord;
+
+typedef struct {
     char schema[64];
     uint32_t stable_id;
     char domain[64];
@@ -87,6 +135,16 @@ typedef struct {
     size_t feature_count;
     char provenance[128];
     char example_text[256];
+    char source_schema[128];
+    char source_artifact[256];
+    char state_hash[128];
+    char frame_sequence_id[128];
+    size_t frame_index;
+    size_t frame_length;
+    char frame_position[64];
+    char frame_previous[256];
+    char frame_next[256];
+    char composition_context[256];
 } NNParsedCandidateRow;
 
 typedef struct {
@@ -100,6 +158,17 @@ typedef struct {
     double cost;
     char reason_code[128];
     char proof_kind[128];
+    char source_schema[128];
+    char source_artifact[256];
+    char state_hash[128];
+    char parent_hash[128];
+    char trace_root[128];
+    char authority[128];
+    char signature[160];
+    char replay_seed[128];
+    char failure_stage[128];
+    char residual_class[128];
+    char domain_payload_schema[128];
 } NNParsedVerifierOutcome;
 
 const char *nn_protocol_status_name(NNVerifierOutcomeStatus status);
@@ -145,5 +214,6 @@ int nn_verifier_outcome_parse_jsonl(const char *line,
 int nn_ranker_decision_write_json(FILE *fp, const NNRankerDecision *decision);
 int nn_discovered_rule_write_json(FILE *fp, const NNDiscoveredRuleRecord *record);
 int nn_library_promotion_write_json(FILE *fp, const NNLibraryPromotionRecord *record);
+int nn_operator_promotion_write_json(FILE *fp, const NNOperatorPromotionRecord *record);
 
 #endif

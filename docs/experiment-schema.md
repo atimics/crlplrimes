@@ -101,6 +101,16 @@ The canonical JSONL row schemas are:
 - `crlp.protocol.discovered_rule.v1`
 - `crlp.protocol.library_promotion.v1`
 
+The candidate/outcome protocol is now the intended evidence spine, not only a
+small helper row. Candidate rows can carry source schema/artifact, state hash,
+and optional `crlp.neural_frame.v1` fields (`frame_sequence_id`, `frame_index`,
+`frame_length`, previous/next summaries, and composition context). Verifier
+outcome rows can carry evidence attachments for state hash, parent hash,
+trace/root hash, source artifact, authority, signature, replay seed,
+failure-stage, residual-class, and domain payload schema. That gives ARC exact
+prediction rows, Signal replay rows, and future signed cargo/handoff rows the
+same outer contract while leaving the domain payloads domain-owned.
+
 Schema fields describe the intended formal contract. The evidence-status section
 below is the controlling source for which production binaries currently execute
 which gate and baseline paths.
@@ -333,6 +343,27 @@ let the domain verifier accept or reject it. ARC appends task-specific
 shape/color/object descriptors to those domain-neutral program features before
 training its learned proposer. For program synthesis, the same object can name
 reusable DSL abstractions. The certificate checker remains domain-owned.
+
+The value vocabulary now includes Signal/system objects in addition to ARC/DSL
+objects: `sim_state`, `trajectory`, `waypoint`, `resource_transfer`,
+`receipt_chain`, `handoff_ticket`, `authority`, `zone`, and `ship_snapshot`.
+These are type-contract hooks only; they do not make Signal authority or ARC
+visual reasoning automatic.
+
+## Protocol Operator Promotion
+
+`scripts/protocol_spine.py` normalizes candidate/outcome evidence into
+`crlp.protocol.candidate_row.v1` and `crlp.protocol.verifier_outcome.v1`. The
+promotion learner in `scripts/protocol_operator_promotion.py` reads that ledger,
+joins rows by domain and stable id, classifies residuals into operator families,
+and emits `crlp.protocol.operator_promotion.v1` records plus a
+`crlp.protocol.operator_prior.v1` TSV.
+
+The promotion rule is deliberately conservative: an operator family needs
+repeated verifier-backed rows and cross-domain support. A promoted row is still
+a prior, not a gate. It names the compiler contract and input/output slots that
+a domain adapter can try next, but correctness still requires that adapter to
+compile the operator and replay the declared grounding operator.
 
 ## Rule-Search Summary Rows
 

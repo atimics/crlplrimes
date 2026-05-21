@@ -32,6 +32,20 @@ static void nn_protocol_json_string(FILE *fp, const char *value)
     (void)nn_write_json_string(fp, value);
 }
 
+static int nn_protocol_has_text(const char *text)
+{
+    return text != NULL && text[0] != '\0';
+}
+
+static void nn_protocol_write_optional_string(FILE *fp, const char *key, const char *value)
+{
+    if (!nn_protocol_has_text(value)) {
+        return;
+    }
+    fprintf(fp, ",\"%s\":", key);
+    nn_protocol_json_string(fp, value);
+}
+
 static int nn_protocol_json_get_size(const char *line, const char *key, size_t *out_value)
 {
     uint64_t parsed = 0;
@@ -119,6 +133,11 @@ int nn_protocol_candidate_validate(const NNCandidateRow *row)
     if (row == NULL || row->domain == NULL || row->domain[0] == '\0' ||
         row->candidate_kind == NULL || row->candidate_kind[0] == '\0' ||
         row->features == NULL || row->feature_count == 0) {
+        return 0;
+    }
+    if (row->frame != NULL &&
+        row->frame->length > 0u &&
+        row->frame->index >= row->frame->length) {
         return 0;
     }
     for (size_t i = 0; i < row->feature_count; ++i) {
@@ -227,6 +246,10 @@ int nn_protocol_candidate_from_action(const char *domain,
     out_row->feature_count = feature_count;
     out_row->provenance = nn_protocol_text_or_empty(provenance);
     out_row->example_text = nn_protocol_text_or_empty(example_text);
+    out_row->source_schema = "";
+    out_row->source_artifact = "";
+    out_row->state_hash = "";
+    out_row->frame = NULL;
     return 1;
 }
 
@@ -242,6 +265,10 @@ int nn_protocol_candidate_from_rule(const NNRule *rule, NNCandidateRow *out_row)
     out_row->feature_count = rule->structural_feature_count;
     out_row->provenance = "certificate_rule";
     out_row->example_text = rule->name;
+    out_row->source_schema = "";
+    out_row->source_artifact = "";
+    out_row->state_hash = "";
+    out_row->frame = NULL;
     return 1;
 }
 
@@ -259,6 +286,7 @@ int nn_protocol_outcome_from_certificate(const NNCertificate *certificate,
     outcome->cost = cost;
     outcome->reason_code = certificate->reason;
     outcome->proof_kind = certificate->proof_kind;
+    outcome->evidence = NULL;
     if (certificate->status == NN_CERTIFICATE_CERTIFIED) {
         outcome->status = certificate->support > 0u ?
             NN_VERIFIER_ACCEPTED :
@@ -288,6 +316,7 @@ int nn_protocol_outcome_safe_duplicate(size_t support,
     outcome->cost = 0.0;
     outcome->reason_code = nn_protocol_text_or_empty(reason_code);
     outcome->proof_kind = "safe_duplicate";
+    outcome->evidence = NULL;
     return 1;
 }
 
@@ -341,6 +370,26 @@ int nn_candidate_row_write_json(FILE *fp, const NNCandidateRow *row)
     nn_protocol_json_string(fp, row->provenance);
     fputs(",\"example_text\":", fp);
     nn_protocol_json_string(fp, row->example_text);
+    nn_protocol_write_optional_string(fp, "source_schema", row->source_schema);
+    nn_protocol_write_optional_string(fp, "source_artifact", row->source_artifact);
+    nn_protocol_write_optional_string(fp, "state_hash", row->state_hash);
+    if (row->frame != NULL) {
+        nn_protocol_write_optional_string(fp,
+                                          "frame_sequence_id",
+                                          row->frame->sequence_id);
+        if (row->frame->length > 0u) {
+            fprintf(fp,
+                    ",\"frame_index\":%zu,\"frame_length\":%zu",
+                    row->frame->index,
+                    row->frame->length);
+        }
+        nn_protocol_write_optional_string(fp, "frame_position", row->frame->position);
+        nn_protocol_write_optional_string(fp, "frame_previous", row->frame->previous);
+        nn_protocol_write_optional_string(fp, "frame_next", row->frame->next);
+        nn_protocol_write_optional_string(fp,
+                                          "composition_context",
+                                          row->frame->composition_context);
+    }
     fputs("}\n", fp);
     return ferror(fp) == 0;
 }
@@ -351,23 +400,60 @@ int nn_candidate_row_parse_jsonl(const char *line, NNParsedCandidateRow *out_row
         return 0;
     }
     memset(out_row, 0, sizeof(*out_row));
-    return nn_trace_json_get_string(line, "schema", out_row->schema, sizeof(out_row->schema)) &&
-           strcmp(out_row->schema, NN_PROTOCOL_CANDIDATE_SCHEMA) == 0 &&
-           nn_protocol_json_get_u32(line, "stable_id", &out_row->stable_id) &&
-           nn_trace_json_get_string(line, "domain", out_row->domain, sizeof(out_row->domain)) &&
-           nn_trace_json_get_string(line,
-                                    "candidate_kind",
-                                    out_row->candidate_kind,
-                                    sizeof(out_row->candidate_kind)) &&
-           nn_protocol_json_get_size(line, "feature_count", &out_row->feature_count) &&
-           nn_trace_json_get_string(line,
-                                    "provenance",
-                                    out_row->provenance,
-                                    sizeof(out_row->provenance)) &&
-           nn_trace_json_get_string(line,
-                                    "example_text",
-                                    out_row->example_text,
-                                    sizeof(out_row->example_text));
+    if (!nn_trace_json_get_string(line, "schema", out_row->schema, sizeof(out_row->schema)) ||
+        strcmp(out_row->schema, NN_PROTOCOL_CANDIDATE_SCHEMA) != 0 ||
+        !nn_protocol_json_get_u32(line, "stable_id", &out_row->stable_id) ||
+        !nn_trace_json_get_string(line, "domain", out_row->domain, sizeof(out_row->domain)) ||
+        !nn_trace_json_get_string(line,
+                                  "candidate_kind",
+                                  out_row->candidate_kind,
+                                  sizeof(out_row->candidate_kind)) ||
+        !nn_protocol_json_get_size(line, "feature_count", &out_row->feature_count) ||
+        !nn_trace_json_get_string(line,
+                                  "provenance",
+                                  out_row->provenance,
+                                  sizeof(out_row->provenance)) ||
+        !nn_trace_json_get_string(line,
+                                  "example_text",
+                                  out_row->example_text,
+                                  sizeof(out_row->example_text))) {
+        return 0;
+    }
+    (void)nn_trace_json_get_string(line,
+                                   "source_schema",
+                                   out_row->source_schema,
+                                   sizeof(out_row->source_schema));
+    (void)nn_trace_json_get_string(line,
+                                   "source_artifact",
+                                   out_row->source_artifact,
+                                   sizeof(out_row->source_artifact));
+    (void)nn_trace_json_get_string(line,
+                                   "state_hash",
+                                   out_row->state_hash,
+                                   sizeof(out_row->state_hash));
+    (void)nn_trace_json_get_string(line,
+                                   "frame_sequence_id",
+                                   out_row->frame_sequence_id,
+                                   sizeof(out_row->frame_sequence_id));
+    (void)nn_protocol_json_get_size(line, "frame_index", &out_row->frame_index);
+    (void)nn_protocol_json_get_size(line, "frame_length", &out_row->frame_length);
+    (void)nn_trace_json_get_string(line,
+                                   "frame_position",
+                                   out_row->frame_position,
+                                   sizeof(out_row->frame_position));
+    (void)nn_trace_json_get_string(line,
+                                   "frame_previous",
+                                   out_row->frame_previous,
+                                   sizeof(out_row->frame_previous));
+    (void)nn_trace_json_get_string(line,
+                                   "frame_next",
+                                   out_row->frame_next,
+                                   sizeof(out_row->frame_next));
+    (void)nn_trace_json_get_string(line,
+                                   "composition_context",
+                                   out_row->composition_context,
+                                   sizeof(out_row->composition_context));
+    return 1;
 }
 
 int nn_verifier_outcome_write_json(FILE *fp,
@@ -395,6 +481,22 @@ int nn_verifier_outcome_write_json(FILE *fp,
     nn_protocol_json_string(fp, outcome->reason_code);
     fputs(",\"proof_kind\":", fp);
     nn_protocol_json_string(fp, outcome->proof_kind);
+    if (outcome->evidence != NULL) {
+        const NNProtocolEvidence *evidence = outcome->evidence;
+        nn_protocol_write_optional_string(fp, "source_schema", evidence->source_schema);
+        nn_protocol_write_optional_string(fp, "source_artifact", evidence->source_artifact);
+        nn_protocol_write_optional_string(fp, "state_hash", evidence->state_hash);
+        nn_protocol_write_optional_string(fp, "parent_hash", evidence->parent_hash);
+        nn_protocol_write_optional_string(fp, "trace_root", evidence->trace_root);
+        nn_protocol_write_optional_string(fp, "authority", evidence->authority);
+        nn_protocol_write_optional_string(fp, "signature", evidence->signature);
+        nn_protocol_write_optional_string(fp, "replay_seed", evidence->replay_seed);
+        nn_protocol_write_optional_string(fp, "failure_stage", evidence->failure_stage);
+        nn_protocol_write_optional_string(fp, "residual_class", evidence->residual_class);
+        nn_protocol_write_optional_string(fp,
+                                          "domain_payload_schema",
+                                          evidence->domain_payload_schema);
+    }
     fputs("}\n", fp);
     return ferror(fp) == 0;
 }
@@ -427,6 +529,50 @@ int nn_verifier_outcome_parse_jsonl(const char *line,
                                   sizeof(outcome->proof_kind))) {
         return 0;
     }
+    (void)nn_trace_json_get_string(line,
+                                   "source_schema",
+                                   outcome->source_schema,
+                                   sizeof(outcome->source_schema));
+    (void)nn_trace_json_get_string(line,
+                                   "source_artifact",
+                                   outcome->source_artifact,
+                                   sizeof(outcome->source_artifact));
+    (void)nn_trace_json_get_string(line,
+                                   "state_hash",
+                                   outcome->state_hash,
+                                   sizeof(outcome->state_hash));
+    (void)nn_trace_json_get_string(line,
+                                   "parent_hash",
+                                   outcome->parent_hash,
+                                   sizeof(outcome->parent_hash));
+    (void)nn_trace_json_get_string(line,
+                                   "trace_root",
+                                   outcome->trace_root,
+                                   sizeof(outcome->trace_root));
+    (void)nn_trace_json_get_string(line,
+                                   "authority",
+                                   outcome->authority,
+                                   sizeof(outcome->authority));
+    (void)nn_trace_json_get_string(line,
+                                   "signature",
+                                   outcome->signature,
+                                   sizeof(outcome->signature));
+    (void)nn_trace_json_get_string(line,
+                                   "replay_seed",
+                                   outcome->replay_seed,
+                                   sizeof(outcome->replay_seed));
+    (void)nn_trace_json_get_string(line,
+                                   "failure_stage",
+                                   outcome->failure_stage,
+                                   sizeof(outcome->failure_stage));
+    (void)nn_trace_json_get_string(line,
+                                   "residual_class",
+                                   outcome->residual_class,
+                                   sizeof(outcome->residual_class));
+    (void)nn_trace_json_get_string(line,
+                                   "domain_payload_schema",
+                                   outcome->domain_payload_schema,
+                                   sizeof(outcome->domain_payload_schema));
     return 1;
 }
 
@@ -541,6 +687,45 @@ int nn_library_promotion_write_json(FILE *fp, const NNLibraryPromotionRecord *re
     nn_protocol_json_string(fp, record->promotion_task_hash);
     fputs(",\"heldout_result_hash\":", fp);
     nn_protocol_json_string(fp, record->heldout_result_hash);
+    fputs(",\"reason_code\":", fp);
+    nn_protocol_json_string(fp, record->reason_code);
+    fputs("}\n", fp);
+    return ferror(fp) == 0;
+}
+
+int nn_operator_promotion_write_json(FILE *fp, const NNOperatorPromotionRecord *record)
+{
+    if (fp == NULL || record == NULL) {
+        return 0;
+    }
+    fputs("{\"schema\":", fp);
+    nn_protocol_json_string(fp, NN_PROTOCOL_OPERATOR_SCHEMA);
+    fputs(",\"operator_id\":", fp);
+    nn_protocol_json_string(fp, record->operator_id);
+    fputs(",\"operator_name\":", fp);
+    nn_protocol_json_string(fp, record->operator_name);
+    fputs(",\"residual_family\":", fp);
+    nn_protocol_json_string(fp, record->residual_family);
+    fputs(",\"source_residual_class\":", fp);
+    nn_protocol_json_string(fp, record->source_residual_class);
+    fprintf(fp,
+            ",\"support_rows\":%zu,\"support_domains\":%zu",
+            record->support_rows,
+            record->support_domains);
+    fprintf(fp,
+            ",\"accepted_rows\":%zu,\"unsafe_rows\":%zu,\"false_rejections\":%zu",
+            record->accepted_rows,
+            record->unsafe_rows,
+            record->false_rejections);
+    fprintf(fp,
+            ",\"utility_mean\":%.17g,\"cost_mean\":%.17g",
+            record->utility_mean,
+            record->cost_mean);
+    fprintf(fp, ",\"promoted\":%s", record->promoted ? "true" : "false");
+    fputs(",\"promotion_policy\":", fp);
+    nn_protocol_json_string(fp, record->promotion_policy);
+    fputs(",\"evidence_hash\":", fp);
+    nn_protocol_json_string(fp, record->evidence_hash);
     fputs(",\"reason_code\":", fp);
     nn_protocol_json_string(fp, record->reason_code);
     fputs("}\n", fp);

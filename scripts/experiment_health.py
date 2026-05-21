@@ -20,6 +20,9 @@ SIGNAL_FLIGHT_ROLLOUT_SCHEMA = "crlp.signal_flight_rollout.summary.v1"
 SIGNAL_LIVE_ACTIVE_SCHEMA = "crlp.signal_live_active_summary.v1"
 SIGNAL_SHADOW_REPLAY_SCHEMA = "crlp.signal_shadow_replay_audit.v1"
 NEURAL_GRAMMAR_SUMMARY_SCHEMA = "crlp.neural_grammar_discovery.summary.v1"
+PROTOCOL_CANDIDATE_SCHEMA = "crlp.protocol.candidate_row.v1"
+PROTOCOL_VERIFIER_SCHEMA = "crlp.protocol.verifier_outcome.v1"
+PROTOCOL_OPERATOR_SCHEMA = "crlp.protocol.operator_promotion.v1"
 
 
 TARGET_EXPERIMENTS = {
@@ -394,6 +397,116 @@ def summarize_neural_grammar_arc_evidence(args: argparse.Namespace) -> dict[str,
     }
 
 
+def summarize_protocol_spine(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
+    rows = load_jsonl(args.protocol_spine)
+    if not rows:
+        return {}
+    by_experiment: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {
+            "kind": "protocol_spine",
+            "candidate_rows": 0,
+            "outcome_rows": 0,
+            "status_counts": Counter(),
+            "residual_classes": Counter(),
+            "candidate_kinds": Counter(),
+            "source_schemas": Counter(),
+            "source_paths": [str(args.protocol_spine)],
+        }
+    )
+    for row in rows:
+        schema = row.get("schema")
+        domain = str(row.get("domain", "unknown"))
+        info = by_experiment[domain]
+        if schema == PROTOCOL_CANDIDATE_SCHEMA:
+            info["candidate_rows"] += 1
+            info["candidate_kinds"][str(row.get("candidate_kind", "unknown"))] += 1
+            if row.get("source_schema"):
+                info["source_schemas"][str(row.get("source_schema"))] += 1
+        elif schema == PROTOCOL_VERIFIER_SCHEMA:
+            info["outcome_rows"] += 1
+            info["status_counts"][str(row.get("status", "unknown"))] += 1
+            if row.get("residual_class"):
+                info["residual_classes"][str(row.get("residual_class"))] += 1
+            if row.get("source_schema"):
+                info["source_schemas"][str(row.get("source_schema"))] += 1
+    result: dict[str, dict[str, Any]] = {}
+    for experiment, info in by_experiment.items():
+        candidate_rows = as_int(info.get("candidate_rows"))
+        outcome_rows = as_int(info.get("outcome_rows"))
+        status_counts = dict(sorted(info["status_counts"].items()))
+        result[experiment] = {
+            "kind": "protocol_spine",
+            "gates": {
+                "protocol_candidate_outcome_surface": {
+                    "passed": candidate_rows > 0 and outcome_rows > 0,
+                    "required": False,
+                    "metric": {
+                        "candidate_rows": candidate_rows,
+                        "outcome_rows": outcome_rows,
+                    },
+                }
+            },
+            "metrics": {
+                "candidate_rows": candidate_rows,
+                "outcome_rows": outcome_rows,
+                "status_counts": status_counts,
+                "candidate_kinds": dict(sorted(info["candidate_kinds"].items())),
+                "source_schemas": dict(sorted(info["source_schemas"].items())),
+                "top_residual_classes": dict(info["residual_classes"].most_common(12)),
+            },
+            "source_paths": info["source_paths"],
+        }
+    return result
+
+
+def summarize_operator_promotions(args: argparse.Namespace) -> dict[str, Any] | None:
+    rows = [
+        row
+        for row in load_jsonl(args.operator_promotions)
+        if row.get("schema") == PROTOCOL_OPERATOR_SCHEMA
+    ]
+    if not rows:
+        return None
+    promoted = [row for row in rows if row.get("promoted")]
+    by_operator = {
+        str(row.get("operator_name", "unknown")): {
+            "promoted": bool(row.get("promoted")),
+            "support_rows": as_int(row.get("support_rows")),
+            "support_domains": as_int(row.get("support_domains")),
+            "residual_family": str(row.get("residual_family", "")),
+        }
+        for row in rows
+    }
+    domain_counter: Counter[str] = Counter()
+    residual_family_counter: Counter[str] = Counter()
+    for row in rows:
+        residual_family_counter[str(row.get("residual_family", "unknown"))] += 1
+        domains = row.get("domains") or []
+        if isinstance(domains, list):
+            domain_counter.update(str(domain) for domain in domains)
+    return {
+        "kind": "protocol_operator_promotion",
+        "gates": {
+            "cross_domain_operator_promotion_surface": {
+                "passed": len(promoted) > 0,
+                "required": False,
+                "metric": {
+                    "operator_candidates": len(rows),
+                    "promoted_operators": len(promoted),
+                },
+            }
+        },
+        "metrics": {
+            "operator_candidates": len(rows),
+            "promoted_operators": len(promoted),
+            "operators": by_operator,
+            "domains": dict(sorted(domain_counter.items())),
+            "residual_families": dict(sorted(residual_family_counter.items())),
+        },
+        "source_paths": [str(args.operator_promotions)],
+    }
+
+
 def coverage_gate_status(coverage: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
     passing: list[str] = []
     failing_required: list[str] = []
@@ -660,6 +773,21 @@ def build_health_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     neural_grammar_evidence = summarize_neural_grammar_arc_evidence(args)
     if neural_grammar_evidence is not None:
         evidence_by_experiment["arc_agi"] = neural_grammar_evidence
+    operator_evidence = summarize_operator_promotions(args)
+    if operator_evidence is not None:
+        evidence_by_experiment["protocol_operator_promotion"] = operator_evidence
+    for experiment, evidence in summarize_protocol_spine(args).items():
+        if experiment in evidence_by_experiment:
+            prior = evidence_by_experiment[experiment]
+            prior_gates = prior.setdefault("gates", {})
+            for gate_name, gate in (evidence.get("gates") or {}).items():
+                prior_gates[f"protocol_spine:{gate_name}"] = gate
+            prior_metrics = prior.setdefault("metrics", {})
+            prior_metrics["protocol_spine"] = evidence.get("metrics", {})
+            prior.setdefault("related_surfaces", []).append(evidence)
+            prior.setdefault("source_paths", []).extend(evidence.get("source_paths", []))
+        else:
+            evidence_by_experiment[experiment] = evidence
 
     experiments = sorted(
         set(numeric)
@@ -908,6 +1036,16 @@ def parse_args() -> argparse.Namespace:
         "--neural-grammar-summary",
         type=Path,
         default=Path("build/float/neural_grammar_discovery/summary.jsonl"),
+    )
+    parser.add_argument(
+        "--protocol-spine",
+        type=Path,
+        default=Path("build/float/protocol_spine/protocol_spine.jsonl"),
+    )
+    parser.add_argument(
+        "--operator-promotions",
+        type=Path,
+        default=Path("build/float/protocol_operator_promotion/operator_promotions.jsonl"),
     )
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()

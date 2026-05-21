@@ -18,6 +18,22 @@ The core objects are:
 | `NNProgramCoverage` | Shared bitset for program-to-event residual coverage |
 | `NNClosedLoopRulePolicy` | Generic residual-aware neural proposer trained from greedy coverage trajectories |
 
+`include/nn_protocol.h` is the outer evidence row layer for those objects. Its
+candidate rows can carry source schema/artifact, state hash, and neural-frame
+context; verifier outcome rows can carry parent hash, trace root,
+authority/signature, replay seed, failure stage, and residual class. This lets
+ARC program/sketch evidence, Signal replay evidence, and future signed
+cargo/handoff evidence share one ledger shape without forcing their domain
+payloads into one grammar.
+
+The protocol layer also has an operator-promotion row,
+`crlp.protocol.operator_promotion.v1`. `scripts/protocol_operator_promotion.py`
+mines the ledger for residual families that recur across domains and emits
+operator priors such as temporal composition context, rejection-filter priors,
+support-gap bootstrap, and counterexample repair lanes. Those rows are not
+soundness certificates. They are reusable compiler targets that must be lowered
+through the domain verifier before they become production gates.
+
 The separation is intentional:
 
 ```text
@@ -51,6 +67,12 @@ The core engine features are:
 | Program coverage | `NNProgramCoverage` mirrors rule coverage for program-to-event support, residual gain, and accepted-set coverage |
 | Proposer evidence | `nn_program_write_proposer_summary_json()` emits `crlp.program_proposer.summary.v1` rows for random, grammar-order, structural, learned, closed-loop, and oracle program orderings |
 | Hypothesis evidence | `NNHypothesis` binds typed template slots from task evidence, lets domain adapters rank top-K slot proposals, compiles to `NNProgram`, and `nn_hypothesis_write_evidence_json()` emits `crlp.hypothesis.evidence.v1` rows |
+
+The value vocabulary now includes control and provenance objects
+(`sim_state`, `trajectory`, `waypoint`, `resource_transfer`, `receipt_chain`,
+`handoff_ticket`, `authority`, `zone`, `ship_snapshot`) so Signal adapters can
+represent replay, cargo, and handoff candidates as typed programs instead of
+opaque custom values.
 
 This does not make ARC object-relation reasoning automatic. It gives each task
 a first-class place to put learned transform induction or object-relation

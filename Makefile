@@ -306,6 +306,18 @@ EXPERIMENT_HEALTH_SIGNAL_FLIGHT_ROLLOUT ?= $(SIGNAL_FLIGHT_RESULTS_DIR)/rollout_
 EXPERIMENT_HEALTH_SIGNAL_LIVE_ACTIVE ?= $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl
 EXPERIMENT_HEALTH_SIGNAL_SHADOW_REPLAY ?= $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_replay_audit.jsonl
 EXPERIMENT_HEALTH_NEURAL_GRAMMAR_SUMMARY ?= $(NEURAL_GRAMMAR_DISCOVERY_DIR)/summary.jsonl
+PROTOCOL_SPINE_DIR ?= $(BUILD_DIR)/protocol_spine
+PROTOCOL_SPINE_REPORT ?= $(PROTOCOL_SPINE_DIR)/protocol_spine.jsonl
+PROTOCOL_SPINE_SUMMARY ?= $(PROTOCOL_SPINE_DIR)/summary.jsonl
+PROTOCOL_SPINE_GRAMMAR_SKETCH_EXAMPLES ?= $(NEURAL_GRAMMAR_DISCOVERY_DIR)/grammar_sketch_examples.jsonl
+PROTOCOL_SPINE_ARC_HYPOTHESIS_EVIDENCE ?= $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_raw.jsonl
+PROTOCOL_OPERATOR_DIR ?= $(BUILD_DIR)/protocol_operator_promotion
+PROTOCOL_OPERATOR_REPORT ?= $(PROTOCOL_OPERATOR_DIR)/operator_promotions.jsonl
+PROTOCOL_OPERATOR_PRIOR ?= $(PROTOCOL_OPERATOR_DIR)/operator_prior.tsv
+PROTOCOL_OPERATOR_SUMMARY ?= $(PROTOCOL_OPERATOR_DIR)/summary.jsonl
+PROTOCOL_OPERATOR_MARKDOWN ?= $(PROTOCOL_OPERATOR_DIR)/summary.md
+PROTOCOL_OPERATOR_MIN_DOMAINS ?= 2
+PROTOCOL_OPERATOR_MIN_SUPPORT_ROWS ?= 4
 NUMERIC_CERTIFICATE_DIR ?= $(BUILD_DIR)/numeric_certificates
 NUMERIC_CERTIFICATE_TARGETS ?= action-score prime-gap-trace prime-rule-search-smoke delayed-claim-eval grid-path-eval multitask-domain symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search-smoke arc-agi-induction-smoke haiku-lm-smoke haiku-word-lm-smoke haiku-understanding-smoke signal-mining-smoke
 NUMERIC_CERTIFICATE_REPORT ?= $(NUMERIC_CERTIFICATE_DIR)/report.jsonl
@@ -377,7 +389,7 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-visual-hole-proposer learned-grammar-coverage-extended experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune python-check benchmark test sanitize check experimental-check clean
+.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune python-check benchmark test sanitize check experimental-check clean
 
 all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(BENCHMARK)
 
@@ -1100,6 +1112,26 @@ learned-grammar-coverage-extended: learned-grammar-coverage learned-grammar-cove
 		--output "$(LEARNED_GRAMMAR_COVERAGE_EXTENDED_REPORT)" \
 		--fail-on-regression
 
+protocol-spine:
+	mkdir -p $(PROTOCOL_SPINE_DIR)
+	$(PYTHON) scripts/protocol_spine.py \
+		--signal-mining-trace "$(NEURAL_GRAMMAR_DISCOVERY_SIGNAL_MINING_TRACE)" \
+		--grammar-sketch-examples "$(PROTOCOL_SPINE_GRAMMAR_SKETCH_EXAMPLES)" \
+		--arc-hypothesis-evidence "$(PROTOCOL_SPINE_ARC_HYPOTHESIS_EVIDENCE)" \
+		--output "$(PROTOCOL_SPINE_REPORT)" \
+		--summary "$(PROTOCOL_SPINE_SUMMARY)"
+
+protocol-operator-promotion: protocol-spine
+	mkdir -p $(PROTOCOL_OPERATOR_DIR)
+	$(PYTHON) scripts/protocol_operator_promotion.py \
+		--input "$(PROTOCOL_SPINE_REPORT)" \
+		--output "$(PROTOCOL_OPERATOR_REPORT)" \
+		--prior "$(PROTOCOL_OPERATOR_PRIOR)" \
+		--summary "$(PROTOCOL_OPERATOR_SUMMARY)" \
+		--markdown "$(PROTOCOL_OPERATOR_MARKDOWN)" \
+		--min-domains $(PROTOCOL_OPERATOR_MIN_DOMAINS) \
+		--min-support-rows $(PROTOCOL_OPERATOR_MIN_SUPPORT_ROWS)
+
 experiment-health: learned-grammar-coverage numeric-certificate-report paper-support
 	mkdir -p $(EXPERIMENT_HEALTH_DIR)
 	$(PYTHON) scripts/experiment_health.py \
@@ -1112,6 +1144,8 @@ experiment-health: learned-grammar-coverage numeric-certificate-report paper-sup
 		--signal-live-active "$(EXPERIMENT_HEALTH_SIGNAL_LIVE_ACTIVE)" \
 		--signal-shadow-replay "$(EXPERIMENT_HEALTH_SIGNAL_SHADOW_REPLAY)" \
 		--neural-grammar-summary "$(EXPERIMENT_HEALTH_NEURAL_GRAMMAR_SUMMARY)" \
+		--protocol-spine "$(PROTOCOL_SPINE_REPORT)" \
+		--operator-promotions "$(PROTOCOL_OPERATOR_REPORT)" \
 		--output "$(EXPERIMENT_HEALTH_REPORT)"
 
 experiment-health-extended: learned-grammar-coverage-extended numeric-certificate-report paper-support
@@ -1126,6 +1160,8 @@ experiment-health-extended: learned-grammar-coverage-extended numeric-certificat
 		--signal-live-active "$(EXPERIMENT_HEALTH_SIGNAL_LIVE_ACTIVE)" \
 		--signal-shadow-replay "$(EXPERIMENT_HEALTH_SIGNAL_SHADOW_REPLAY)" \
 		--neural-grammar-summary "$(EXPERIMENT_HEALTH_NEURAL_GRAMMAR_SUMMARY)" \
+		--protocol-spine "$(PROTOCOL_SPINE_REPORT)" \
+		--operator-promotions "$(PROTOCOL_OPERATOR_REPORT)" \
 		--output "$(EXPERIMENT_HEALTH_EXTENDED_REPORT)"
 
 numeric-certificate-experiments:

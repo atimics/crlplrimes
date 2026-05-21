@@ -143,6 +143,22 @@ haiku line/poem transitions, grid action traces, signal option groups, and
 program-composition rows all expose previous/current/future context through the
 same proposal surface.
 
+`make protocol-spine` projects existing Signal mining traces, ARC hypothesis
+evidence, and grammar-sketch examples into the shared `crlp.protocol.*.v1`
+candidate/outcome rows. That projection preserves `crlp.neural_frame.v1` fields
+on candidate rows and preserves source schema/artifact, state hash, replay seed,
+authority, failure-stage, and residual-class on verifier outcome rows. It is the
+bridge from the discovery-specific JSONL surfaces into the common evidence
+ledger.
+
+`make protocol-operator-promotion` is the next layer over that ledger. It joins
+candidate rows to verifier outcomes, normalizes repeated residuals into operator
+families such as temporal composition, rejection filters, support-gap bootstrap,
+and counterexample repair lanes, then emits `crlp.protocol.operator_promotion.v1`
+and `crlp.protocol.operator_prior.v1` rows. These rows are reusable priors, not
+new gates: domain adapters must still compile and replay the operator before it
+can make a correctness claim.
+
 The first proposer stage is intentionally simple:
 
 - `frequency_sketch_proposer` ranks sketches by accepted support penalized by

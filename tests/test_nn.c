@@ -534,6 +534,10 @@ static int test_program_typed_composition_and_canonical_id(void)
     ok = ok && !nn_program_compose(&bad, &largest, &components, "bad_composition");
     ok = ok && strcmp(nn_program_value_type_name(NN_PROGRAM_VALUE_OBJECT_SET),
                       "object_set") == 0;
+    ok = ok && strcmp(nn_program_value_type_name(NN_PROGRAM_VALUE_RECEIPT_CHAIN),
+                      "receipt_chain") == 0;
+    ok = ok && strcmp(nn_program_value_type_name(NN_PROGRAM_VALUE_HANDOFF_TICKET),
+                      "handoff_ticket") == 0;
     ok = ok && strcmp(nn_program_kind_name(NN_PROGRAM_KIND_COMPOSITION),
                       "composition") == 0;
     return ok;
@@ -641,6 +645,28 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
     NNVerifierOutcome delayed_outcome;
     NNParsedCandidateRow parsed_row;
     NNParsedVerifierOutcome parsed_outcome;
+    NNProtocolFrame frame = {
+        .sequence_id = "nfr:test",
+        .index = 1,
+        .length = 3,
+        .position = "middle",
+        .previous = "prev_rule",
+        .next = "next_rule",
+        .composition_context = "compose:a+b",
+    };
+    NNProtocolEvidence evidence = {
+        .source_schema = "unit.source.v1",
+        .source_artifact = "unit://trace",
+        .state_hash = "state123",
+        .parent_hash = "parent123",
+        .trace_root = "trace123",
+        .authority = "unit_authority",
+        .signature = "sig123",
+        .replay_seed = "seed123",
+        .failure_stage = "none",
+        .residual_class = "covered",
+        .domain_payload_schema = "unit.payload.v1",
+    };
     char line[2048];
     FILE *fp = tmpfile();
 
@@ -657,6 +683,11 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
          row.feature_count == 3 &&
          strcmp(row.domain, "prime_gap") == 0 &&
          nn_protocol_candidate_validate(&row);
+    row.source_schema = "unit.candidate.v1";
+    row.source_artifact = "unit://candidate";
+    row.state_hash = "state123";
+    row.frame = &frame;
+    ok = ok && nn_protocol_candidate_validate(&row);
     ok = ok && nn_protocol_candidate_from_action("prime_gap",
                                                  "gap_action",
                                                  &bad_action,
@@ -678,6 +709,8 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
          nn_protocol_status_is_safe(outcome.status) &&
          strcmp(nn_protocol_status_name(outcome.status), "accepted") == 0 &&
          nn_protocol_outcome_validate(&outcome);
+    outcome.evidence = &evidence;
+    ok = ok && nn_protocol_outcome_validate(&outcome);
     invalid_outcome = outcome;
     invalid_outcome.false_rejections = 1;
     ok = ok && !nn_protocol_outcome_validate(&invalid_outcome);
@@ -709,7 +742,17 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
         ok = ok && parsed_row.stable_id == 42 &&
              parsed_row.feature_count == 3 &&
              strcmp(parsed_row.candidate_kind, "gap_action") == 0 &&
-             strcmp(parsed_row.example_text, "gap=6") == 0;
+             strcmp(parsed_row.example_text, "gap=6") == 0 &&
+             strcmp(parsed_row.source_schema, "unit.candidate.v1") == 0 &&
+             strcmp(parsed_row.source_artifact, "unit://candidate") == 0 &&
+             strcmp(parsed_row.state_hash, "state123") == 0 &&
+             strcmp(parsed_row.frame_sequence_id, "nfr:test") == 0 &&
+             parsed_row.frame_index == 1 &&
+             parsed_row.frame_length == 3 &&
+             strcmp(parsed_row.frame_position, "middle") == 0 &&
+             strcmp(parsed_row.frame_previous, "prev_rule") == 0 &&
+             strcmp(parsed_row.frame_next, "next_rule") == 0 &&
+             strcmp(parsed_row.composition_context, "compose:a+b") == 0;
         ok = ok && fgets(line, sizeof(line), fp) != NULL;
         ok = ok && strstr(line, NN_PROTOCOL_VERIFIER_SCHEMA) != NULL;
         ok = ok && nn_verifier_outcome_parse_jsonl(line, &parsed_outcome);
@@ -717,6 +760,17 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
              parsed_outcome.status == NN_VERIFIER_ACCEPTED &&
              parsed_outcome.support == 4 &&
              parsed_outcome.false_rejections == 0 &&
+             strcmp(parsed_outcome.source_schema, "unit.source.v1") == 0 &&
+             strcmp(parsed_outcome.source_artifact, "unit://trace") == 0 &&
+             strcmp(parsed_outcome.state_hash, "state123") == 0 &&
+             strcmp(parsed_outcome.parent_hash, "parent123") == 0 &&
+             strcmp(parsed_outcome.trace_root, "trace123") == 0 &&
+             strcmp(parsed_outcome.authority, "unit_authority") == 0 &&
+             strcmp(parsed_outcome.signature, "sig123") == 0 &&
+             strcmp(parsed_outcome.replay_seed, "seed123") == 0 &&
+             strcmp(parsed_outcome.failure_stage, "none") == 0 &&
+             strcmp(parsed_outcome.residual_class, "covered") == 0 &&
+             strcmp(parsed_outcome.domain_payload_schema, "unit.payload.v1") == 0 &&
              nearly_equal((nn_real)parsed_outcome.utility,
                           (nn_real)2.5,
                           (nn_real)1e-6,
@@ -739,6 +793,7 @@ static int test_protocol_rule_library_and_ranker_json_contract(void)
     NNVerifierOutcome outcome;
     NNDiscoveredRuleRecord discovered;
     NNLibraryPromotionRecord promotion;
+    NNOperatorPromotionRecord operator_promotion;
     uint32_t ids[2] = {1001, 1002};
     uint32_t duplicate_ids[2] = {1001, 1001};
     nn_real scores[2] = {(nn_real)0.9, (nn_real)0.9};
@@ -795,6 +850,21 @@ static int test_protocol_rule_library_and_ranker_json_contract(void)
     promotion.promotion_task_hash = "tasks123";
     promotion.heldout_result_hash = "heldout123";
     promotion.reason_code = "zero_false_rejection";
+    operator_promotion.operator_id = "operator:residual_safety:abc";
+    operator_promotion.operator_name = "residual_safety_guard";
+    operator_promotion.residual_family = "safety";
+    operator_promotion.source_residual_class = "damage_event";
+    operator_promotion.support_rows = 12;
+    operator_promotion.support_domains = 2;
+    operator_promotion.accepted_rows = 7;
+    operator_promotion.unsafe_rows = 3;
+    operator_promotion.false_rejections = 0;
+    operator_promotion.utility_mean = 1.25;
+    operator_promotion.cost_mean = 0.5;
+    operator_promotion.promoted = 1;
+    operator_promotion.promotion_policy = "cross_domain_residual_family";
+    operator_promotion.evidence_hash = "evidence123";
+    operator_promotion.reason_code = "meets_cross_domain_threshold";
     ok = ok && nn_protocol_ranker_decision_validate(&decision);
     decision.candidate_ids = duplicate_ids;
     ok = ok && !nn_protocol_ranker_decision_validate(&decision);
@@ -806,16 +876,20 @@ static int test_protocol_rule_library_and_ranker_json_contract(void)
     if (fp != NULL) {
         ok = ok && nn_discovered_rule_write_json(fp, &discovered);
         ok = ok && nn_library_promotion_write_json(fp, &promotion);
+        ok = ok && nn_operator_promotion_write_json(fp, &operator_promotion);
         ok = ok && nn_ranker_decision_write_json(fp, &decision);
         rewind(fp);
         size_t n = fread(buffer, 1, sizeof(buffer) - 1, fp);
         buffer[n] = '\0';
         ok = ok && strstr(buffer, NN_PROTOCOL_RULE_SCHEMA) != NULL;
         ok = ok && strstr(buffer, NN_PROTOCOL_LIBRARY_SCHEMA) != NULL;
+        ok = ok && strstr(buffer, NN_PROTOCOL_OPERATOR_SCHEMA) != NULL;
         ok = ok && strstr(buffer, NN_PROTOCOL_RANKER_SCHEMA) != NULL;
         ok = ok && strstr(buffer, "\"task_name\":\"signal_flight.shadow_replay\"") != NULL;
         ok = ok && strstr(buffer, "\"selected_action_id\":1001") != NULL;
         ok = ok && strstr(buffer, "\"zero_false_rejections\":true") != NULL;
+        ok = ok && strstr(buffer, "\"operator_name\":\"residual_safety_guard\"") != NULL;
+        ok = ok && strstr(buffer, "\"support_domains\":2") != NULL;
         ok = ok && strstr(buffer, "\"promotion_task_hash\":\"tasks123\"") != NULL;
         ok = ok && strstr(buffer, "\"false_rejections\":0") != NULL;
         fclose(fp);
@@ -1005,6 +1079,10 @@ static int test_hypothesis_template_validity_and_canonical_id(void)
 
     int rebind = nn_hypothesis_bind(&hypothesis_c, "translate.unknown", 0.0, 0);
     ok = ok && rebind == 0;
+    ok = ok && strcmp(nn_hypothesis_slot_type_name(NN_HYPOTHESIS_SLOT_AUTHORITY),
+                      "authority") == 0;
+    ok = ok && strcmp(nn_hypothesis_slot_type_name(NN_HYPOTHESIS_SLOT_RECEIPT_CHAIN),
+                      "receipt_chain") == 0;
     return ok;
 }
 

@@ -135,6 +135,24 @@ const char *nn_program_value_type_name(NNProgramValueType type)
         return "boolean";
     case NN_PROGRAM_VALUE_SEQUENCE:
         return "sequence";
+    case NN_PROGRAM_VALUE_SIM_STATE:
+        return "sim_state";
+    case NN_PROGRAM_VALUE_TRAJECTORY:
+        return "trajectory";
+    case NN_PROGRAM_VALUE_WAYPOINT:
+        return "waypoint";
+    case NN_PROGRAM_VALUE_RESOURCE_TRANSFER:
+        return "resource_transfer";
+    case NN_PROGRAM_VALUE_RECEIPT_CHAIN:
+        return "receipt_chain";
+    case NN_PROGRAM_VALUE_HANDOFF_TICKET:
+        return "handoff_ticket";
+    case NN_PROGRAM_VALUE_AUTHORITY:
+        return "authority";
+    case NN_PROGRAM_VALUE_ZONE:
+        return "zone";
+    case NN_PROGRAM_VALUE_SHIP_SNAPSHOT:
+        return "ship_snapshot";
     case NN_PROGRAM_VALUE_CUSTOM:
         return "custom";
     }

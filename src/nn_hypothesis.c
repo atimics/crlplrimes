@@ -112,6 +112,16 @@ const char *nn_hypothesis_slot_type_name(NNHypothesisSlotType type)
         return "scalar";
     case NN_HYPOTHESIS_SLOT_BOOLEAN:
         return "boolean";
+    case NN_HYPOTHESIS_SLOT_WAYPOINT:
+        return "waypoint";
+    case NN_HYPOTHESIS_SLOT_AUTHORITY:
+        return "authority";
+    case NN_HYPOTHESIS_SLOT_RESOURCE_KIND:
+        return "resource_kind";
+    case NN_HYPOTHESIS_SLOT_RECEIPT_CHAIN:
+        return "receipt_chain";
+    case NN_HYPOTHESIS_SLOT_ZONE:
+        return "zone";
     case NN_HYPOTHESIS_SLOT_CUSTOM:
         return "custom";
     }
