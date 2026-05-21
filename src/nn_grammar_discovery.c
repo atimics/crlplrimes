@@ -14,10 +14,12 @@
 #define NN_GD_MAX_FIELDS 96
 #define NN_GD_COUNTEREXAMPLE_LIMIT 8
 #define NN_GD_ARC_RUNTIME_FIELD_COUNT 85
-#define NN_GD_ARC_RANKER_CACHE_VERSION 2U
+#define NN_GD_ARC_RANKER_CACHE_VERSION 5U
 #define NN_GD_ARC_RANKER_CACHE_MAX_STRING_BYTES (16U * 1024U * 1024U)
 #define NN_GD_ARC_RANKER_CACHE_MAX_VOCAB 1000000U
+#define NN_GD_ARC_RANKER_CACHE_MAX_FIELD_STRINGS 5000000U
 #define NN_GD_ARC_RANKER_CACHE_MAX_ATTEMPTS 10000000U
+#define NN_GD_ARC_RANKER_CACHE_EMPTY_STRING_REF UINT32_MAX
 
 typedef enum {
     NN_GD_ARC_RANKER_CACHE_TSV = 1,
@@ -3280,6 +3282,22 @@ static int nn_gd_cache_read_u64(FILE *fp, uint64_t *value) {
     return fread(value, sizeof(*value), 1U, fp) == 1U ? 0 : -1;
 }
 
+static int nn_gd_cache_write_u32(FILE *fp, uint32_t value) {
+    return fwrite(&value, sizeof(value), 1U, fp) == 1U ? 0 : -1;
+}
+
+static int nn_gd_cache_read_u32(FILE *fp, uint32_t *value) {
+    return fread(value, sizeof(*value), 1U, fp) == 1U ? 0 : -1;
+}
+
+static int nn_gd_cache_write_u16(FILE *fp, uint16_t value) {
+    return fwrite(&value, sizeof(value), 1U, fp) == 1U ? 0 : -1;
+}
+
+static int nn_gd_cache_read_u16(FILE *fp, uint16_t *value) {
+    return fread(value, sizeof(*value), 1U, fp) == 1U ? 0 : -1;
+}
+
 static int nn_gd_cache_write_s64(FILE *fp, int64_t value) {
     return fwrite(&value, sizeof(value), 1U, fp) == 1U ? 0 : -1;
 }
@@ -3427,26 +3445,28 @@ static int nn_gd_cache_match_inputs(FILE *fp,
     return 0;
 }
 
-static int nn_gd_cache_write_vocab(FILE *fp, const NNGDStringList *vocab) {
+static int nn_gd_cache_write_string_list(FILE *fp, const NNGDStringList *strings) {
     size_t i;
-    if (vocab == NULL || nn_gd_cache_write_u64(fp, (uint64_t)vocab->count) != 0) {
+    if (strings == NULL || nn_gd_cache_write_u64(fp, (uint64_t)strings->count) != 0) {
         return -1;
     }
-    for (i = 0U; i < vocab->count; ++i) {
-        if (nn_gd_cache_write_string(fp, vocab->items[i]) != 0) {
+    for (i = 0U; i < strings->count; ++i) {
+        if (nn_gd_cache_write_string(fp, strings->items[i]) != 0) {
             return -1;
         }
     }
     return 0;
 }
 
-static int nn_gd_cache_read_vocab(FILE *fp, NNGDStringList *vocab) {
+static int nn_gd_cache_read_string_list(FILE *fp,
+                                        NNGDStringList *strings,
+                                        uint64_t max_count) {
     uint64_t count;
     size_t i;
     if (nn_gd_cache_read_u64(fp, &count) != 0 ||
-        count > NN_GD_ARC_RANKER_CACHE_MAX_VOCAB ||
+        count > max_count ||
         count > (uint64_t)SIZE_MAX ||
-        nn_gd_reserve_strings(vocab, (size_t)count) != 0) {
+        nn_gd_reserve_strings(strings, (size_t)count) != 0) {
         return -1;
     }
     for (i = 0U; i < (size_t)count; ++i) {
@@ -3454,50 +3474,196 @@ static int nn_gd_cache_read_vocab(FILE *fp, NNGDStringList *vocab) {
         if (value == NULL) {
             return -1;
         }
-        vocab->items[vocab->count++] = value;
+        strings->items[strings->count++] = value;
     }
     return 0;
 }
 
+static int nn_gd_cache_write_vocab(FILE *fp, const NNGDStringList *vocab) {
+    return nn_gd_cache_write_string_list(fp, vocab);
+}
+
+static int nn_gd_cache_read_vocab(FILE *fp, NNGDStringList *vocab) {
+    return nn_gd_cache_read_string_list(fp,
+                                        vocab,
+                                        NN_GD_ARC_RANKER_CACHE_MAX_VOCAB);
+}
+
 static int nn_gd_cache_write_long(FILE *fp, long value) {
-    return nn_gd_cache_write_s64(fp, (int64_t)value);
+    int32_t stored;
+    if (value < (long)INT32_MIN || value > (long)INT32_MAX) {
+        return -1;
+    }
+    stored = (int32_t)value;
+    return fwrite(&stored, sizeof(stored), 1U, fp) == 1U ? 0 : -1;
 }
 
 static int nn_gd_cache_read_long(FILE *fp, long *value) {
-    int64_t stored;
-    if (nn_gd_cache_read_s64(fp, &stored) != 0) {
+    int32_t stored;
+    if (fread(&stored, sizeof(stored), 1U, fp) != 1U) {
         return -1;
     }
     *value = (long)stored;
     return 0;
 }
 
+static int nn_gd_cache_add_field_string(NNGDStringList *strings,
+                                        NNGDStringTable *table,
+                                        const char *value) {
+    if (value == NULL) {
+        value = "";
+    }
+    return nn_gd_string_table_add_unique(strings, table, value);
+}
+
+static int nn_gd_cache_add_arc_attempt_field_strings(
+    NNGDStringList *strings,
+    NNGDStringTable *table,
+    const NNGDArcPipelineAttempt *attempt) {
+    const char *values[] = {
+        attempt->split_name,
+        attempt->family,
+        attempt->task_id,
+        attempt->split,
+        attempt->attempt_id,
+        attempt->library_id,
+        attempt->pipeline_kind,
+        attempt->op_name,
+        attempt->composition_kind,
+        attempt->normalization_frame,
+        attempt->typed_stages,
+        attempt->primitive_contract,
+        attempt->rejection_reason,
+        attempt->failure_stage,
+        attempt->failure_detail,
+        attempt->contrast_accepted_attempt_id,
+        attempt->contrast_pair_kind,
+    };
+    size_t i;
+    for (i = 0U; i < sizeof(values) / sizeof(values[0]); ++i) {
+        if (nn_gd_cache_add_field_string(strings, table, values[i]) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int nn_gd_cache_build_arc_field_strings(
+    const NNGDArcPipelineAttemptList *attempts,
+    NNGDStringList *strings,
+    NNGDStringTable *table) {
+    size_t i;
+    if (attempts == NULL) {
+        return -1;
+    }
+    for (i = 0U; i < attempts->count; ++i) {
+        if (nn_gd_cache_add_arc_attempt_field_strings(strings,
+                                                      table,
+                                                      &attempts->items[i]) != 0) {
+            return -1;
+        }
+    }
+    return strings->count <= NN_GD_ARC_RANKER_CACHE_MAX_FIELD_STRINGS ? 0 : -1;
+}
+
+static int nn_gd_cache_write_string_ref(FILE *fp,
+                                        const NNGDStringList *strings,
+                                        const NNGDStringTable *table,
+                                        const char *value) {
+    long index;
+    if (value == NULL || value[0] == '\0') {
+        return nn_gd_cache_write_u32(fp, NN_GD_ARC_RANKER_CACHE_EMPTY_STRING_REF);
+    }
+    index = nn_gd_string_table_find(table, strings, value);
+    if (index < 0L || (uint64_t)index >= NN_GD_ARC_RANKER_CACHE_EMPTY_STRING_REF) {
+        return -1;
+    }
+    return nn_gd_cache_write_u32(fp, (uint32_t)index);
+}
+
+static char *nn_gd_cache_read_string_ref(FILE *fp,
+                                         const NNGDStringList *strings) {
+    uint32_t index;
+    if (strings == NULL ||
+        nn_gd_cache_read_u32(fp, &index) != 0 ||
+        (index != NN_GD_ARC_RANKER_CACHE_EMPTY_STRING_REF &&
+         (size_t)index >= strings->count)) {
+        return NULL;
+    }
+    if (index == NN_GD_ARC_RANKER_CACHE_EMPTY_STRING_REF) {
+        return nn_gd_strdup("");
+    }
+    return nn_gd_strdup(strings->items[index]);
+}
+
 static int nn_gd_cache_write_arc_attempt(FILE *fp,
+                                         const NNGDStringList *field_strings,
+                                         const NNGDStringTable *field_table,
+                                         uint32_t token_index_width,
                                          const NNGDArcPipelineAttempt *attempt) {
     size_t i;
-    if (nn_gd_cache_write_string(fp, attempt->split_name) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->family) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->task_id) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->split) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->attempt_id) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->library_id) != 0 ||
+    if (nn_gd_cache_write_string_ref(fp,
+                                     field_strings,
+                                     field_table,
+                                     attempt->split_name) != 0 ||
+        nn_gd_cache_write_string_ref(fp, field_strings, field_table, attempt->family) != 0 ||
+        nn_gd_cache_write_string_ref(fp, field_strings, field_table, attempt->task_id) != 0 ||
+        nn_gd_cache_write_string_ref(fp, field_strings, field_table, attempt->split) != 0 ||
+        nn_gd_cache_write_string_ref(fp,
+                                     field_strings,
+                                     field_table,
+                                     attempt->attempt_id) != 0 ||
+        nn_gd_cache_write_string_ref(fp,
+                                     field_strings,
+                                     field_table,
+                                     attempt->library_id) != 0 ||
         nn_gd_cache_write_long(fp, attempt->attempt_index) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->pipeline_kind) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->op_name) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->composition_kind) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->normalization_frame) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->typed_stages) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->primitive_contract) != 0 ||
-        nn_gd_cache_write_s64(fp, (int64_t)attempt->accepted) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->rejection_reason) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->failure_stage) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->failure_detail) != 0 ||
+        nn_gd_cache_write_string_ref(fp,
+                                     field_strings,
+                                     field_table,
+                                     attempt->pipeline_kind) != 0 ||
+        nn_gd_cache_write_string_ref(fp, field_strings, field_table, attempt->op_name) != 0 ||
+        nn_gd_cache_write_string_ref(fp,
+                                     field_strings,
+                                     field_table,
+                                     attempt->composition_kind) != 0 ||
+        nn_gd_cache_write_string_ref(fp,
+                                     field_strings,
+                                     field_table,
+                                     attempt->normalization_frame) != 0 ||
+        nn_gd_cache_write_string_ref(fp,
+                                     field_strings,
+                                     field_table,
+                                     attempt->typed_stages) != 0 ||
+        nn_gd_cache_write_string_ref(fp,
+                                     field_strings,
+                                     field_table,
+                                     attempt->primitive_contract) != 0 ||
+        nn_gd_cache_write_u32(fp, attempt->accepted ? 1U : 0U) != 0 ||
+        nn_gd_cache_write_string_ref(fp,
+                                     field_strings,
+                                     field_table,
+                                     attempt->rejection_reason) != 0 ||
+        nn_gd_cache_write_string_ref(fp,
+                                     field_strings,
+                                     field_table,
+                                     attempt->failure_stage) != 0 ||
+        nn_gd_cache_write_string_ref(fp,
+                                     field_strings,
+                                     field_table,
+                                     attempt->failure_detail) != 0 ||
         nn_gd_cache_write_long(fp, attempt->proposal_count) != 0 ||
         nn_gd_cache_write_long(fp, attempt->support_tasks) != 0 ||
         nn_gd_cache_write_double(fp, attempt->utility_mean) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->contrast_accepted_attempt_id) != 0 ||
+        nn_gd_cache_write_string_ref(fp,
+                                     field_strings,
+                                     field_table,
+                                     attempt->contrast_accepted_attempt_id) != 0 ||
         nn_gd_cache_write_long(fp, attempt->contrast_slot_distance) != 0 ||
-        nn_gd_cache_write_string(fp, attempt->contrast_pair_kind) != 0 ||
+        nn_gd_cache_write_string_ref(fp,
+                                     field_strings,
+                                     field_table,
+                                     attempt->contrast_pair_kind) != 0 ||
         nn_gd_cache_write_long(fp, attempt->contrast_rejected_sibling_count) != 0 ||
         nn_gd_cache_write_long(fp, attempt->verifier_train_pairs) != 0 ||
         nn_gd_cache_write_long(fp, attempt->verifier_checked_cells) != 0 ||
@@ -3509,12 +3675,24 @@ static int nn_gd_cache_write_arc_attempt(FILE *fp,
         nn_gd_cache_write_long(fp, attempt->verifier_first_failing_pair) != 0 ||
         nn_gd_cache_write_double(fp, attempt->verifier_mismatch_ratio) != 0 ||
         nn_gd_cache_write_double(fp, attempt->verifier_score) != 0 ||
-        nn_gd_cache_write_u64(fp, (uint64_t)attempt->token_count) != 0 ||
-        nn_gd_cache_write_u64(fp, (uint64_t)attempt->token_index_count) != 0) {
+        attempt->token_count > UINT32_MAX ||
+        attempt->token_index_count > UINT32_MAX ||
+        nn_gd_cache_write_u32(fp, (uint32_t)attempt->token_count) != 0 ||
+        nn_gd_cache_write_u32(fp, (uint32_t)attempt->token_index_count) != 0) {
         return -1;
     }
     for (i = 0U; i < attempt->token_index_count; ++i) {
-        if (nn_gd_cache_write_u64(fp, (uint64_t)attempt->token_indices[i]) != 0) {
+        if (token_index_width == 2U) {
+            if (attempt->token_indices[i] > UINT16_MAX ||
+                nn_gd_cache_write_u16(fp, (uint16_t)attempt->token_indices[i]) != 0) {
+                return -1;
+            }
+        } else if (token_index_width == 4U) {
+            if (attempt->token_indices[i] > UINT32_MAX ||
+                nn_gd_cache_write_u32(fp, (uint32_t)attempt->token_indices[i]) != 0) {
+                return -1;
+            }
+        } else {
             return -1;
         }
     }
@@ -3523,52 +3701,55 @@ static int nn_gd_cache_write_arc_attempt(FILE *fp,
 
 static int nn_gd_cache_read_arc_attempt(FILE *fp,
                                         NNGDArcPipelineAttemptList *attempts,
-                                        size_t vocab_count) {
+                                        size_t vocab_count,
+                                        const NNGDStringList *field_strings,
+                                        uint32_t token_index_width) {
     NNGDArcPipelineAttempt *attempt;
-    int64_t accepted;
-    uint64_t token_count;
-    uint64_t token_index_count;
+    uint32_t accepted;
+    uint32_t token_count;
+    uint32_t token_index_count;
     size_t i;
     if (nn_gd_arc_attempt_list_reserve(attempts, attempts->count + 1U) != 0) {
         return -1;
     }
     attempt = &attempts->items[attempts->count];
     memset(attempt, 0, sizeof(*attempt));
-    attempt->split_name = nn_gd_cache_read_string(fp);
-    attempt->family = nn_gd_cache_read_string(fp);
-    attempt->task_id = nn_gd_cache_read_string(fp);
-    attempt->split = nn_gd_cache_read_string(fp);
-    attempt->attempt_id = nn_gd_cache_read_string(fp);
-    attempt->library_id = nn_gd_cache_read_string(fp);
+    attempt->split_name = nn_gd_cache_read_string_ref(fp, field_strings);
+    attempt->family = nn_gd_cache_read_string_ref(fp, field_strings);
+    attempt->task_id = nn_gd_cache_read_string_ref(fp, field_strings);
+    attempt->split = nn_gd_cache_read_string_ref(fp, field_strings);
+    attempt->attempt_id = nn_gd_cache_read_string_ref(fp, field_strings);
+    attempt->library_id = nn_gd_cache_read_string_ref(fp, field_strings);
     if (nn_gd_cache_read_long(fp, &attempt->attempt_index) != 0) {
         goto fail;
     }
-    attempt->pipeline_kind = nn_gd_cache_read_string(fp);
-    attempt->op_name = nn_gd_cache_read_string(fp);
+    attempt->pipeline_kind = nn_gd_cache_read_string_ref(fp, field_strings);
+    attempt->op_name = nn_gd_cache_read_string_ref(fp, field_strings);
     attempt->visual_program = nn_gd_strdup("");
     attempt->slot_contract = nn_gd_strdup("");
-    attempt->composition_kind = nn_gd_cache_read_string(fp);
-    attempt->normalization_frame = nn_gd_cache_read_string(fp);
-    attempt->typed_stages = nn_gd_cache_read_string(fp);
-    attempt->primitive_contract = nn_gd_cache_read_string(fp);
+    attempt->composition_kind = nn_gd_cache_read_string_ref(fp, field_strings);
+    attempt->normalization_frame = nn_gd_cache_read_string_ref(fp, field_strings);
+    attempt->typed_stages = nn_gd_cache_read_string_ref(fp, field_strings);
+    attempt->primitive_contract = nn_gd_cache_read_string_ref(fp, field_strings);
     attempt->slot_tokens = nn_gd_strdup("");
-    if (nn_gd_cache_read_s64(fp, &accepted) != 0) {
+    if (nn_gd_cache_read_u32(fp, &accepted) != 0) {
         goto fail;
     }
     attempt->accepted = accepted != 0;
-    attempt->rejection_reason = nn_gd_cache_read_string(fp);
-    attempt->failure_stage = nn_gd_cache_read_string(fp);
-    attempt->failure_detail = nn_gd_cache_read_string(fp);
+    attempt->rejection_reason = nn_gd_cache_read_string_ref(fp, field_strings);
+    attempt->failure_stage = nn_gd_cache_read_string_ref(fp, field_strings);
+    attempt->failure_detail = nn_gd_cache_read_string_ref(fp, field_strings);
     if (nn_gd_cache_read_long(fp, &attempt->proposal_count) != 0 ||
         nn_gd_cache_read_long(fp, &attempt->support_tasks) != 0 ||
         nn_gd_cache_read_double(fp, &attempt->utility_mean) != 0) {
         goto fail;
     }
-    attempt->contrast_accepted_attempt_id = nn_gd_cache_read_string(fp);
+    attempt->contrast_accepted_attempt_id =
+        nn_gd_cache_read_string_ref(fp, field_strings);
     if (nn_gd_cache_read_long(fp, &attempt->contrast_slot_distance) != 0) {
         goto fail;
     }
-    attempt->contrast_pair_kind = nn_gd_cache_read_string(fp);
+    attempt->contrast_pair_kind = nn_gd_cache_read_string_ref(fp, field_strings);
     if (nn_gd_cache_read_long(fp, &attempt->contrast_rejected_sibling_count) != 0 ||
         nn_gd_cache_read_long(fp, &attempt->verifier_train_pairs) != 0 ||
         nn_gd_cache_read_long(fp, &attempt->verifier_checked_cells) != 0 ||
@@ -3580,11 +3761,9 @@ static int nn_gd_cache_read_arc_attempt(FILE *fp,
         nn_gd_cache_read_long(fp, &attempt->verifier_first_failing_pair) != 0 ||
         nn_gd_cache_read_double(fp, &attempt->verifier_mismatch_ratio) != 0 ||
         nn_gd_cache_read_double(fp, &attempt->verifier_score) != 0 ||
-        nn_gd_cache_read_u64(fp, &token_count) != 0 ||
-        nn_gd_cache_read_u64(fp, &token_index_count) != 0 ||
-        token_count > (uint64_t)SIZE_MAX ||
-        token_index_count > token_count ||
-        token_index_count > (uint64_t)SIZE_MAX) {
+        nn_gd_cache_read_u32(fp, &token_count) != 0 ||
+        nn_gd_cache_read_u32(fp, &token_index_count) != 0 ||
+        token_index_count > token_count) {
         goto fail;
     }
     attempt->token_count = (size_t)token_count;
@@ -3596,13 +3775,26 @@ static int nn_gd_cache_read_arc_attempt(FILE *fp,
             goto fail;
         }
         for (i = 0U; i < attempt->token_index_count; ++i) {
-            uint64_t token_index;
-            if (nn_gd_cache_read_u64(fp, &token_index) != 0 ||
-                token_index > (uint64_t)SIZE_MAX ||
-                token_index >= (uint64_t)vocab_count) {
+            size_t token_index;
+            if (token_index_width == 2U) {
+                uint16_t stored;
+                if (nn_gd_cache_read_u16(fp, &stored) != 0) {
+                    goto fail;
+                }
+                token_index = (size_t)stored;
+            } else if (token_index_width == 4U) {
+                uint32_t stored;
+                if (nn_gd_cache_read_u32(fp, &stored) != 0) {
+                    goto fail;
+                }
+                token_index = (size_t)stored;
+            } else {
                 goto fail;
             }
-            attempt->token_indices[i] = (size_t)token_index;
+            if (token_index >= vocab_count) {
+                goto fail;
+            }
+            attempt->token_indices[i] = token_index;
         }
     }
     if (attempt->split_name == NULL || attempt->family == NULL ||
@@ -3629,14 +3821,21 @@ fail:
 }
 
 static int nn_gd_cache_write_arc_attempts(FILE *fp,
-                                          const NNGDArcPipelineAttemptList *attempts) {
+                                          const NNGDArcPipelineAttemptList *attempts,
+                                          const NNGDStringList *field_strings,
+                                          const NNGDStringTable *field_table,
+                                          uint32_t token_index_width) {
     size_t i;
     if (attempts == NULL ||
         nn_gd_cache_write_u64(fp, (uint64_t)attempts->count) != 0) {
         return -1;
     }
     for (i = 0U; i < attempts->count; ++i) {
-        if (nn_gd_cache_write_arc_attempt(fp, &attempts->items[i]) != 0) {
+        if (nn_gd_cache_write_arc_attempt(fp,
+                                          field_strings,
+                                          field_table,
+                                          token_index_width,
+                                          &attempts->items[i]) != 0) {
             return -1;
         }
     }
@@ -3645,7 +3844,9 @@ static int nn_gd_cache_write_arc_attempts(FILE *fp,
 
 static int nn_gd_cache_read_arc_attempts(FILE *fp,
                                          NNGDArcPipelineAttemptList *attempts,
-                                         size_t vocab_count) {
+                                         size_t vocab_count,
+                                         const NNGDStringList *field_strings,
+                                         uint32_t token_index_width) {
     uint64_t count;
     size_t i;
     if (nn_gd_cache_read_u64(fp, &count) != 0 ||
@@ -3654,7 +3855,11 @@ static int nn_gd_cache_read_arc_attempts(FILE *fp,
         return -1;
     }
     for (i = 0U; i < (size_t)count; ++i) {
-        if (nn_gd_cache_read_arc_attempt(fp, attempts, vocab_count) != 0) {
+        if (nn_gd_cache_read_arc_attempt(fp,
+                                         attempts,
+                                         vocab_count,
+                                         field_strings,
+                                         token_index_width) != 0) {
             return -1;
         }
     }
@@ -3671,15 +3876,24 @@ static int nn_gd_write_arc_ranker_cache(
     const NNGDArcPipelineAttemptList *attempts,
     const NNGDStringList *vocab) {
     static const unsigned char magic[8] = {'C', 'R', 'L', 'P', 'A', 'R', 'C', '1'};
+    NNGDStringList field_strings = {0};
+    NNGDStringTable field_table = {0};
     FILE *fp;
     int status = -1;
+    uint32_t token_index_width;
     if (cache_path == NULL || cache_path[0] == '\0') {
         return 0;
     }
+    if (nn_gd_cache_build_arc_field_strings(attempts,
+                                            &field_strings,
+                                            &field_table) != 0) {
+        goto done;
+    }
     fp = fopen(cache_path, "wb");
     if (fp == NULL) {
-        return -1;
+        goto done;
     }
+    token_index_width = vocab != NULL && vocab->count <= UINT16_MAX ? 2U : 4U;
     if (fwrite(magic, 1U, sizeof(magic), fp) != sizeof(magic) ||
         nn_gd_cache_write_u64(fp, NN_GD_ARC_RANKER_CACHE_VERSION) != 0 ||
         nn_gd_cache_write_u64(fp, (uint64_t)mode) != 0 ||
@@ -3689,16 +3903,25 @@ static int nn_gd_write_arc_ranker_cache(
                                  target_paths,
                                  target_count) != 0 ||
         nn_gd_cache_write_vocab(fp, vocab) != 0 ||
-        nn_gd_cache_write_arc_attempts(fp, attempts) != 0 ||
+        nn_gd_cache_write_string_list(fp, &field_strings) != 0 ||
+        nn_gd_cache_write_u32(fp, token_index_width) != 0 ||
+        nn_gd_cache_write_arc_attempts(fp,
+                                       attempts,
+                                       &field_strings,
+                                       &field_table,
+                                       token_index_width) != 0 ||
         ferror(fp)) {
-        goto done;
+        goto close_file;
     }
     status = 0;
 
-done:
+close_file:
     if (fclose(fp) != 0) {
         status = -1;
     }
+done:
+    nn_gd_string_table_free(&field_table);
+    nn_gd_string_list_free(&field_strings);
     return status;
 }
 
@@ -3715,6 +3938,8 @@ static int nn_gd_read_arc_ranker_cache(
     unsigned char magic[8];
     uint64_t version;
     uint64_t cached_mode;
+    NNGDStringList field_strings = {0};
+    uint32_t token_index_width;
     FILE *fp;
     int status = -1;
     if (cache_path == NULL || cache_path[0] == '\0') {
@@ -3736,7 +3961,16 @@ static int nn_gd_read_arc_ranker_cache(
                                  target_paths,
                                  target_count) != 0 ||
         nn_gd_cache_read_vocab(fp, vocab) != 0 ||
-        nn_gd_cache_read_arc_attempts(fp, attempts, vocab->count) != 0 ||
+        nn_gd_cache_read_string_list(fp,
+                                     &field_strings,
+                                     NN_GD_ARC_RANKER_CACHE_MAX_FIELD_STRINGS) != 0 ||
+        nn_gd_cache_read_u32(fp, &token_index_width) != 0 ||
+        (token_index_width != 2U && token_index_width != 4U) ||
+        nn_gd_cache_read_arc_attempts(fp,
+                                      attempts,
+                                      vocab->count,
+                                      &field_strings,
+                                      token_index_width) != 0 ||
         ferror(fp)) {
         goto done;
     }
@@ -3748,6 +3982,7 @@ done:
         nn_gd_arc_attempt_list_free(attempts);
         nn_gd_string_list_free(vocab);
     }
+    nn_gd_string_list_free(&field_strings);
     return status;
 }
 
