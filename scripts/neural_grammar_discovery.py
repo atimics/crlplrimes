@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 from collections import Counter, defaultdict
 from collections.abc import Iterator
@@ -2041,6 +2042,7 @@ def run_arc_sketch_heldout_export(
     limit: int,
     per_family: int,
     hints_per_task: int,
+    source_attempts_path: Path | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -2108,6 +2110,8 @@ def run_arc_sketch_heldout_export(
         attempt_rows,
         max_per_task=max(1, min(8, hints_per_task + 2)),
         artifact_prefix="arc_visual_pipeline_pre_repair_guidance",
+        source_attempt_paths=[source_attempts_path] if source_attempts_path else None,
+        target_attempt_paths=[first_attempts_path],
     )
     coverage_frontier, coverage_summary, repair_records = (
         build_arc_visual_pipeline_coverage_frontier(
@@ -4169,6 +4173,8 @@ def run_arc_visual_pipeline_neural_ranker_artifacts(
     *,
     max_per_task: int = 8,
     artifact_prefix: str = "arc_visual_pipeline_neural",
+    source_attempt_paths: list[Path] | None = None,
+    target_attempt_paths: list[Path] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if not runtime.is_file():
         return [], empty_arc_visual_pipeline_neural_summary(
@@ -4186,22 +4192,42 @@ def run_arc_visual_pipeline_neural_ranker_artifacts(
     attempt_rows = runtime_dir / f"{artifact_prefix}_attempts.tsv"
     proposals_output = output_dir / f"{artifact_prefix}_proposals.jsonl"
     summary_output = output_dir / f"{artifact_prefix}_summary.jsonl"
-    write_arc_visual_pipeline_runtime_attempts(
-        attempt_rows,
-        source_attempts,
-        target_attempts,
+    direct_source_paths = [Path(path) for path in source_attempt_paths or []]
+    direct_target_paths = [Path(path) for path in target_attempt_paths or []]
+    use_direct_jsonl = os.environ.get("CRLP_ARC_RANKER_DIRECT_JSONL", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+    }
+    command = [str(runtime)]
+    if (
+        use_direct_jsonl
+        and direct_source_paths
+        and direct_target_paths
+        and all(path.is_file() for path in [*direct_source_paths, *direct_target_paths])
+    ):
+        for path in direct_source_paths:
+            command.extend(["--arc-pipeline-source-attempts-jsonl", str(path)])
+        for path in direct_target_paths:
+            command.extend(["--arc-pipeline-target-attempts-jsonl", str(path)])
+    else:
+        write_arc_visual_pipeline_runtime_attempts(
+            attempt_rows,
+            source_attempts,
+            target_attempts,
+        )
+        command.extend(["--arc-pipeline-attempts", str(attempt_rows)])
+    command.extend(
+        [
+            "--arc-pipeline-proposals-output",
+            str(proposals_output),
+            "--arc-pipeline-summary-output",
+            str(summary_output),
+            "--arc-pipeline-max-per-task",
+            str(max_per_task),
+        ]
     )
-    command = [
-        str(runtime),
-        "--arc-pipeline-attempts",
-        str(attempt_rows),
-        "--arc-pipeline-proposals-output",
-        str(proposals_output),
-        "--arc-pipeline-summary-output",
-        str(summary_output),
-        "--arc-pipeline-max-per-task",
-        str(max_per_task),
-    ]
     subprocess.run(command, check=True)
     proposals = hydrate_arc_visual_pipeline_neural_proposals(
         parse_json_rows(proposals_output),
@@ -4229,6 +4255,8 @@ def run_arc_visual_pipeline_neural_ranker(
         target_attempts,
         max_per_task=max_per_task,
         artifact_prefix="arc_visual_pipeline_neural",
+        source_attempt_paths=[args.output_dir / "arc_visual_pipeline_attempts.jsonl"],
+        target_attempt_paths=[args.output_dir / "arc_visual_pipeline_heldout_attempts.jsonl"],
     )
 
 
@@ -6149,6 +6177,7 @@ def run(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
         args.arc_heldout_limit,
         args.arc_heldout_per_family,
         args.arc_heldout_op_hints_per_task,
+        source_attempts_path=args.output_dir / "arc_visual_pipeline_attempts.jsonl",
     )
     sketch_proposals = build_sketch_proposals(
         sketches,
