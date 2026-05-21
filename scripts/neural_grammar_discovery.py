@@ -4189,7 +4189,9 @@ def run_arc_visual_pipeline_neural_ranker_artifacts(
             "missing_attempt_surface",
         )
     runtime_dir = output_dir / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
     attempt_rows = runtime_dir / f"{artifact_prefix}_attempts.tsv"
+    ranker_cache = runtime_dir / f"{artifact_prefix}_ranker.cache.bin"
     proposals_output = output_dir / f"{artifact_prefix}_proposals.jsonl"
     summary_output = output_dir / f"{artifact_prefix}_summary.jsonl"
     direct_source_paths = [Path(path) for path in source_attempt_paths or []]
@@ -4224,6 +4226,8 @@ def run_arc_visual_pipeline_neural_ranker_artifacts(
             str(proposals_output),
             "--arc-pipeline-summary-output",
             str(summary_output),
+            "--arc-pipeline-cache",
+            str(ranker_cache),
             "--arc-pipeline-max-per-task",
             str(max_per_task),
         ]

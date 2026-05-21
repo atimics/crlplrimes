@@ -90,7 +90,7 @@ static void usage(const char *argv0) {
             "--arc-pipeline-proposals-output PATH --arc-pipeline-summary-output PATH] "
             "[--arc-pipeline-dedupe-attempts-input PATH ... "
             "--arc-pipeline-dedupe-attempts-output PATH] "
-            "[--memory-in PATH] [--memory-out PATH] [--epochs N] "
+            "[--arc-pipeline-cache PATH] [--memory-in PATH] [--memory-out PATH] [--epochs N] "
             "[--learning-rate LR] [--arc-pipeline-max-per-task N]\n",
             argv0);
 }
@@ -108,6 +108,7 @@ int main(int argc, char **argv) {
         arg_value(argc, argv, "--arc-pipeline-proposals-output");
     const char *arc_pipeline_summary_output =
         arg_value(argc, argv, "--arc-pipeline-summary-output");
+    const char *arc_pipeline_cache = arg_value(argc, argv, "--arc-pipeline-cache");
     const char *arc_pipeline_dedupe_attempts_output =
         arg_value(argc, argv, "--arc-pipeline-dedupe-attempts-output");
     size_t arc_pipeline_dedupe_attempts_input_count =
@@ -216,11 +217,12 @@ int main(int argc, char **argv) {
                                 arc_pipeline_target_attempts_jsonl);
             return 2;
         }
-        if (nn_grammar_discovery_write_arc_visual_pipeline_ranker_from_jsonl(
+        if (nn_grammar_discovery_write_arc_visual_pipeline_ranker_from_jsonl_with_cache(
                 arc_pipeline_source_attempts_jsonl,
                 arc_pipeline_source_attempts_jsonl_count,
                 arc_pipeline_target_attempts_jsonl,
                 arc_pipeline_target_attempts_jsonl_count,
+                arc_pipeline_cache,
                 arc_pipeline_proposals_output,
                 arc_pipeline_summary_output,
                 epochs,
@@ -242,8 +244,9 @@ int main(int argc, char **argv) {
                                 arc_pipeline_target_attempts_jsonl);
             return 2;
         }
-        if (nn_grammar_discovery_write_arc_visual_pipeline_ranker(
+        if (nn_grammar_discovery_write_arc_visual_pipeline_ranker_with_cache(
                 arc_pipeline_attempts,
+                arc_pipeline_cache,
                 arc_pipeline_proposals_output,
                 arc_pipeline_summary_output,
                 epochs,
