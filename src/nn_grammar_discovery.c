@@ -200,6 +200,8 @@ typedef enum {
     NN_GD_ARC_HEAD_COMPONENT_SELECTOR_LAYOUT
 } NNGDArcAuxHeadKind;
 
+#define NNGD_ARC_AUX_HEAD_COUNT 4U
+
 typedef struct {
     const char *name;
     NNGDArcAuxHeadKind kind;
@@ -3455,11 +3457,12 @@ static int nn_gd_train_arc_aux_head(const NNGDArcPipelineAttemptList *attempts,
     return 0;
 }
 
-static double nn_gd_arc_aux_head_score(const NNGDArcPipelineAttempt *attempt,
-                                       const NNGDStringList *vocab,
-                                       const NNGDArcAuxHead *head) {
+static double nn_gd_arc_aux_head_score_applied(const NNGDArcPipelineAttempt *attempt,
+                                               const NNGDStringList *vocab,
+                                               const NNGDArcAuxHead *head,
+                                               int applies) {
     if (attempt == NULL || vocab == NULL || head == NULL || head->weights == NULL ||
-        !nn_gd_arc_aux_head_applies(attempt, head->kind)) {
+        !applies) {
         return 0.5;
     }
     return nn_gd_sigmoid(
@@ -3749,7 +3752,7 @@ static int nn_gd_write_arc_visual_pipeline_ranker_loaded(
     NNGDScoredArcAttempt *target_scores = NULL;
     double *weights = NULL;
     double bias = 0.0;
-    NNGDArcAuxHead aux_heads[] = {
+    NNGDArcAuxHead aux_heads[NNGD_ARC_AUX_HEAD_COUNT] = {
         {"renderer_correctness", NN_GD_ARC_HEAD_RENDERER, NULL, 0.0, 0U, 0U, 0.0, 0.0, 0.0, 0U},
         {"sequence_block_renderer", NN_GD_ARC_HEAD_SEQUENCE_BLOCK_RENDERER, NULL, 0.0, 0U, 0U, 0.0, 0.0, 0.0, 0U},
         {"component_shape_color", NN_GD_ARC_HEAD_COMPONENT_SHAPE_COLOR, NULL, 0.0, 0U, 0U, 0.0, 0.0, 0.0, 0U},
@@ -3823,7 +3826,7 @@ static int nn_gd_write_arc_visual_pipeline_ranker_loaded(
         goto done;
     }
     for (head_index = 0U;
-         head_index < sizeof(aux_heads) / sizeof(aux_heads[0]);
+         head_index < NNGD_ARC_AUX_HEAD_COUNT;
          ++head_index) {
         aux_heads[head_index].weights =
             (double *)calloc(vocab.count == 0U ? 1U : vocab.count, sizeof(double));
@@ -3904,7 +3907,7 @@ static int nn_gd_write_arc_visual_pipeline_ranker_loaded(
         }
     }
     for (head_index = 0U;
-         head_index < sizeof(aux_heads) / sizeof(aux_heads[0]);
+         head_index < NNGD_ARC_AUX_HEAD_COUNT;
          ++head_index) {
         if (nn_gd_train_arc_aux_head(attempts,
                                      &vocab,
@@ -3916,20 +3919,27 @@ static int nn_gd_write_arc_visual_pipeline_ranker_loaded(
     }
     for (i = 0U; i < attempts->count; ++i) {
         NNGDArcPipelineAttempt *attempt = &attempts->items[i];
+        double aux_scores[NNGD_ARC_AUX_HEAD_COUNT];
+        int aux_applies[NNGD_ARC_AUX_HEAD_COUNT];
         if (strcmp(attempt->split_name, "target") != 0) {
             continue;
+        }
+        for (head_index = 0U; head_index < NNGD_ARC_AUX_HEAD_COUNT; ++head_index) {
+            aux_applies[head_index] =
+                nn_gd_arc_aux_head_applies(attempt, aux_heads[head_index].kind);
+            aux_scores[head_index] =
+                nn_gd_arc_aux_head_score_applied(attempt,
+                                                 &vocab,
+                                                 &aux_heads[head_index],
+                                                 aux_applies[head_index]);
         }
         target_scores[scored_count].attempt_index = i;
         target_scores[scored_count].model_score =
             nn_gd_sigmoid(nn_gd_arc_attempt_logit(attempt, &vocab, weights, bias));
-        target_scores[scored_count].renderer_score =
-            nn_gd_arc_aux_head_score(attempt, &vocab, &aux_heads[0]);
-        target_scores[scored_count].sequence_block_score =
-            nn_gd_arc_aux_head_score(attempt, &vocab, &aux_heads[1]);
-        target_scores[scored_count].component_score =
-            nn_gd_arc_aux_head_score(attempt, &vocab, &aux_heads[2]);
-        target_scores[scored_count].component_selector_layout_score =
-            nn_gd_arc_aux_head_score(attempt, &vocab, &aux_heads[3]);
+        target_scores[scored_count].renderer_score = aux_scores[0];
+        target_scores[scored_count].sequence_block_score = aux_scores[1];
+        target_scores[scored_count].component_score = aux_scores[2];
+        target_scores[scored_count].component_selector_layout_score = aux_scores[3];
         target_scores[scored_count].score =
             0.646 * target_scores[scored_count].model_score +
             0.350 * attempt->verifier_score +
@@ -3938,11 +3948,10 @@ static int nn_gd_write_arc_visual_pipeline_ranker_loaded(
             0.001 * target_scores[scored_count].component_selector_layout_score +
             0.001 * target_scores[scored_count].sequence_block_score;
         for (head_index = 0U;
-             head_index < sizeof(aux_heads) / sizeof(aux_heads[0]);
+             head_index < NNGD_ARC_AUX_HEAD_COUNT;
              ++head_index) {
-            if (nn_gd_arc_aux_head_applies(attempt, aux_heads[head_index].kind)) {
-                aux_heads[head_index].target_score_sum +=
-                    nn_gd_arc_aux_head_score(attempt, &vocab, &aux_heads[head_index]);
+            if (aux_applies[head_index]) {
+                aux_heads[head_index].target_score_sum += aux_scores[head_index];
                 ++aux_heads[head_index].target_rows;
             }
         }
@@ -4218,7 +4227,7 @@ static int nn_gd_write_arc_visual_pipeline_ranker_loaded(
             aux_epochs);
     fputs("\"auxiliary_heads\":{", summary);
     for (head_index = 0U;
-         head_index < sizeof(aux_heads) / sizeof(aux_heads[0]);
+         head_index < NNGD_ARC_AUX_HEAD_COUNT;
          ++head_index) {
         const NNGDArcAuxHead *head = &aux_heads[head_index];
         if (head_index > 0U) {
@@ -4288,7 +4297,7 @@ done:
     nn_gd_arc_metric_list_free(&op_recovery);
     free(target_scores);
     for (head_index = 0U;
-         head_index < sizeof(aux_heads) / sizeof(aux_heads[0]);
+         head_index < NNGD_ARC_AUX_HEAD_COUNT;
          ++head_index) {
         free(aux_heads[head_index].weights);
     }
