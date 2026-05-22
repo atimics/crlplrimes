@@ -2,7 +2,7 @@
   "schema": "crlp.paper_claim_registry.v1",
   "format_note": "This file is a strict JSON subset of YAML so scripts can parse it with the Python standard library.",
   "paper_contract": {
-    "experiment_families_frozen": true,
+    "experiment_families_frozen": false,
     "primary_contributions": [
       "rejected_candidate_learning",
       "held_out_certified_hypothesis_library_feedback"
@@ -11,13 +11,13 @@
       "arc_agi": "evidence_surface",
       "signal_flight": "application_pressure"
     },
-    "non_claims": [
-      "general task solving",
-      "competitive ARC performance",
-      "comparative live neural-control improvement",
-      "generic cross-domain reason-code safety",
-      "wider MLPs solve the ARC geometry failure"
-    ]
+    "claim_status_vocab": {
+      "supported": "Evidence runs in the claimed direction.",
+      "partial_vignette": "Supported in a scoped setup; generalization deferred.",
+      "contradicted": "Evidence runs opposite to the claim.",
+      "pending": "No evidence yet; intentional future work.",
+      "not_pursued": "Adjacent question this paper does not address."
+    }
   },
   "claim_families": [
     {
@@ -64,6 +64,97 @@
       "id": "C9",
       "title": "Replay-grounded control uses bounded neural rankers without owning safety",
       "role": "application_claim"
+    },
+    {
+      "id": "C10",
+      "title": "Tiny rankers achieve general task solving",
+      "role": "out_of_scope",
+      "status": "not_pursued",
+      "notes": "Migrated from former non_claims list. Bounded-domain success is the contribution; general task solving is explicitly outside it."
+    },
+    {
+      "id": "C11",
+      "title": "Competitive ARC-AGI public-leaderboard performance from this architecture",
+      "role": "out_of_scope",
+      "status": "not_pursued",
+      "notes": "Migrated from former non_claims list. arc_agi carries scoped_role evidence_surface, not leaderboard pursuit."
+    },
+    {
+      "id": "C12",
+      "title": "Bounded rankers comparatively improve live neural control over heuristic baselines",
+      "role": "application_claim",
+      "status": "partial_vignette",
+      "notes": "Migrated from former non_claims list and upgraded to partial_vignette. The 24-episode signal_flight rollout shows neural_guarded utility 0.356 vs flight_steer_to 0.160, damage-episode rate 25% vs 79%, regret roughly halved (results/2026-05-17-signal-flight/rollout_summary.jsonl). Generalization beyond this rollout is deferred."
+    },
+    {
+      "id": "C13",
+      "title": "Generic cross-domain reason-code safety",
+      "role": "method_claim",
+      "status": "pending",
+      "notes": "Migrated from former non_claims list. Per-domain reason codes are wired today; cross-domain unification of the reason-code vocabulary is future work."
+    },
+    {
+      "id": "C14",
+      "title": "Wider MLPs solve the ARC geometry failure",
+      "role": "method_claim",
+      "status": "contradicted",
+      "notes": "Migrated from former non_claims list and flipped to contradicted. The capacity-sweep claim_boundary under C4 (axis4-multitask-capacity-tradeoff) shows widening the trunk does not recover the lost geometry; evidence runs opposite to the claim."
+    },
+    {
+      "id": "C15",
+      "title": "A role-tagged scorer envelope joint-trains one trunk across action and rule scoring over multiple domains",
+      "role": "method_claim",
+      "status": "supported",
+      "notes": "include/nn_core.h defines NN_SCORER_ENVELOPE_FEATURE_COUNT 96 with schema task_role_tagged_action_rule_rows_v1, NNScorerRole (ACTION, RULE) and NNScorerDomain (PRIME_GAP_ACTION, GRID_PATH_ACTION, DELAYED_CLAIM_ACTION, ARC_AGI_ACTION, PRIME_RULE_PROPOSE) (commits b7ebf79, 8d807bb). Sub-claim wiring into experiment_tracks pending before paper-support can enforce."
+    },
+    {
+      "id": "C16",
+      "title": "A unified candidate verifier protocol versions the substrate's data flow as a public contract",
+      "role": "framework_claim",
+      "status": "supported",
+      "notes": "include/nn_protocol.h defines five versioned schemas: crlp.protocol.candidate_row.v1, verifier_outcome.v1, ranker_decision.v1, discovered_rule.v1, library_promotion.v1 (commit ec7fb3e, guards hardened in 4567b2d). Sits alongside C8 as a framework claim. Sub-claim wiring pending."
+    },
+    {
+      "id": "C17",
+      "title": "A typed program engine separates program induction from program execution",
+      "role": "substrate_claim",
+      "status": "supported",
+      "notes": "include/nn_program.h defines NNProgram with typed input/output, canonical id and 64-bit hash, NNCertificate, and the proposer-strategy enum (RANDOM, GRAMMAR_ORDER, STRUCTURAL_HEURISTIC, LEARNED, CLOSED_LOOP, ORACLE) that admits honest baselines (commits 40573e1, df02055). Sub-claim wiring pending."
+    },
+    {
+      "id": "C18",
+      "title": "A domain-neutral hypothesis layer compiles cross-domain templates to canonical NNProgram rows",
+      "role": "substrate_claim",
+      "status": "supported",
+      "notes": "include/nn_hypothesis.h declares domain-neutrality in header text so ARC, program_synthesis, and prime_gap share template + slot vocabulary; compilation produces NNProgram. Provenance contract enforced (state_observation and structural_prior must not mix with verifier_derived or derived_from_gate) (commit 58d6b12). Sub-claim wiring pending."
+    },
+    {
+      "id": "C19",
+      "title": "Bounded neural rankers absorb action-space evolution without retraining the trunk",
+      "role": "substrate_claim",
+      "status": "pending",
+      "notes": "Per-type action encoding via the role-tagged envelope is architecturally in place; behavior under a newly-introduced action type is not yet measured. Acceptance test: add one new action type to a Signal test build and observe rank-and-learn latency without retraining the shared trunk."
+    },
+    {
+      "id": "C20",
+      "title": "Replay-certified utility rows drive a closed-loop induction-deploy cycle under unattended cron",
+      "role": "method_claim",
+      "status": "pending",
+      "notes": "Components exist independently: scripts/certified_hypothesis_library.py, scripts/signal_shadow_replay_audit.py, scripts/signal_live_active_summary.py, and the .github/workflows/results.yml nightly cron. End-to-end loop from live match traces back to a promoted checkpoint is not yet wired."
+    },
+    {
+      "id": "C21",
+      "title": "Population-scale agent dynamics under one shared certified ranker preserve per-agent regret bounds",
+      "role": "application_claim",
+      "status": "pending",
+      "notes": "Single-brain neural_active is supported under C9 sub-claims; N-brain match-level dynamics are not measured. Acceptance test: N=10 ship brains in one Signal match, individual regret-gate pass for 30 minutes, server p95 latency below a fixed threshold, no degenerate equilibrium under a behavior-signature metric (which itself needs design)."
+    },
+    {
+      "id": "C22",
+      "title": "Program induction over a typed DSL plus kiloscale ranking replaces large-model inference for bounded-domain tasks",
+      "role": "substrate_claim",
+      "status": "pending",
+      "notes": "Substrate-level position claim. Indirectly supported by C1, C5, C9, and C15-C18 on bounded symbolic and control domains. Load-bearing future-work item is a language-axis demonstration (dialogue DSL + LLM-backed offline proposer + kiloscale runtime ranker + game-context verifier) that closes the protocol on natural-language outputs."
     }
   ],
   "experiment_tracks": [
