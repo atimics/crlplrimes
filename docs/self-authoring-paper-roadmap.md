@@ -75,7 +75,7 @@ Add a claim layer between `results/latest/comparison.jsonl` and `paper/data.typ`
 paper/claims.yaml
   stable claim definitions and paper-surface mapping
 
-scripts/derive_paper_claims.py
+C neural grammar discovery runtime (`--paper-claims`)
   loads evidence rows, evaluates claim decision rules, writes generated files
 
 paper/generated/claims.json
@@ -191,7 +191,7 @@ R-MT, R-S, or R-W items; they make those items machine-actionable.
 | ID | Work | Effort | Defends |
 | --- | --- | ---: | --- |
 | R-P.1 | Create `paper/claims.yaml` with the first-pass claim registry for C1/C2/C4. | done | self-authoring |
-| R-P.2 | Add `scripts/derive_paper_claims.py` to evaluate claims against `comparison.canonical.jsonl` and roadmap result CSVs. | done | self-authoring |
+| R-P.2 | Add the C neural grammar discovery runtime paper-claim mode to evaluate claims against `comparison.canonical.jsonl` and roadmap result CSVs. | done | self-authoring |
 | R-P.3 | Generate `paper/generated/claims.json`, `claims.typ`, and `gap_report.md`, and import the generated claim snapshot into the paper appendix. | done | self-authoring |
 | R-P.4 | Replace hard-coded abstract/body/caption metrics with generated claim variables. | 1d | self-authoring |
 | R-P.5 | Add `make paper-support`, which fails on stale, missing, underpowered, or contradicted required claims. | done | self-authoring |

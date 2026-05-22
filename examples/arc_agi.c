@@ -63,6 +63,7 @@ enum {
     ARC_HYPOTHESIS_PRIOR_FEATURE_COUNT = NN_HYPOTHESIS_FEATURE_COUNT,
     ARC_HYPOTHESIS_PRIOR_DEFAULT_HIDDEN = 24,
     ARC_HYPOTHESIS_PRIOR_EPOCHS = 32,
+    ARC_HYPOTHESIS_TEMPLATE_SKETCH_PROGRAM_ID = 1036,
     ARC_PROGRAM_PROPOSER_BUDGET = 64,
     ARC_PROGRAM_BUDGET_GRID_COUNT = 4,
     ARC_PROGRAM_TASK_FEATURE_COUNT = 32,
@@ -9500,6 +9501,7 @@ typedef enum {
     ARC_VISUAL_STEP_RENDER_COUNT_TEMPLATE = 11,
     ARC_VISUAL_STEP_RENDER_COMPONENT_SHAPE_GRID = 12,
     ARC_VISUAL_STEP_RENDER_COMPONENT_MASK = 13,
+    ARC_VISUAL_STEP_RENDER_ALIGNED_SPANS = 14,
 } ARCVisualStepKind;
 
 typedef struct {
@@ -10815,6 +10817,38 @@ static void arc_visual_component_mask_apply_style(const uint8_t *source,
     }
 }
 
+static int arc_visual_combinator_frame_shape(const ARCGrid *input,
+                                             const ARCSketchProgramSpec *spec,
+                                             size_t *width_out,
+                                             size_t *height_out)
+{
+    size_t width;
+    size_t height;
+    if (input == NULL || spec == NULL || width_out == NULL || height_out == NULL ||
+        input->width == 0 || input->height == 0) {
+        return 0;
+    }
+    if (spec->op == ARC_SKETCH_OP_VISUAL_COMBINATOR &&
+        spec->width == 0 && spec->height == 0) {
+        width = input->width;
+        height = input->height;
+    } else {
+        if (spec->width == 0 || spec->height == 0) {
+            return 0;
+        }
+        width = spec->width;
+        height = spec->height;
+    }
+    if (width == 0 || height == 0 ||
+        width > ARC_MAX_GRID_WIDTH || height > ARC_MAX_GRID_HEIGHT ||
+        width * height > ARC_MAX_GRID_CELLS) {
+        return 0;
+    }
+    *width_out = width;
+    *height_out = height;
+    return 1;
+}
+
 static int arc_visual_component_mask_shape_for_input(const ARCGrid *input,
                                                      const ARCSketchProgramSpec *spec,
                                                      size_t *render_width,
@@ -10832,7 +10866,7 @@ static int arc_visual_component_mask_shape_for_input(const ARCGrid *input,
     memset(&state, 0, sizeof(state));
     if (input == NULL || spec == NULL || render_width == NULL ||
         render_height == NULL || input->width == 0 || input->height == 0 ||
-        spec->width == 0 || spec->height == 0 ||
+        ((spec->width == 0) != (spec->height == 0)) ||
         spec->width > ARC_MAX_GRID_WIDTH ||
         spec->height > ARC_MAX_GRID_HEIGHT) {
         return 0;
@@ -10884,19 +10918,20 @@ static int arc_visual_component_mask_spec_feasible_for_task(
         spec->x_anchor != 3) {
         return 1;
     }
-    if (task->train_count == 0 || spec->width == 0 || spec->height == 0 ||
-        spec->width > ARC_MAX_GRID_WIDTH ||
-        spec->height > ARC_MAX_GRID_HEIGHT) {
+    if (task->train_count == 0) {
         return 0;
     }
     for (size_t pair = 0; pair < task->train_count; ++pair) {
+        size_t frame_width = 0;
+        size_t frame_height = 0;
         size_t render_width = 0;
         size_t render_height = 0;
         const ARCGrid *input = &task->train[pair].input;
         const ARCGrid *expected = &task->train[pair].output;
         if (!task->train[pair].has_output ||
-            expected->width != spec->width ||
-            expected->height != spec->height) {
+            !arc_visual_combinator_frame_shape(input, spec, &frame_width, &frame_height) ||
+            expected->width != frame_width ||
+            expected->height != frame_height) {
             return 0;
         }
         if (!arc_visual_component_mask_shape_for_input(input,
@@ -10906,12 +10941,12 @@ static int arc_visual_component_mask_spec_feasible_for_task(
             return 0;
         }
         if (arc_visual_component_mask_requires_exact_shape(spec->y_anchor)) {
-            if (render_width != spec->width || render_height != spec->height) {
+            if (render_width != frame_width || render_height != frame_height) {
                 return 0;
             }
         }
         if (spec->y_anchor == 5 &&
-            (render_width > spec->width || render_height > spec->height)) {
+            (render_width > frame_width || render_height > frame_height)) {
             return 0;
         }
     }
@@ -11195,15 +11230,15 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
         return arc_visual_select_components_into_state(input, spec, state);
     }
     case ARC_VISUAL_STEP_RENDER_OCCUPANCY_GRID: {
+        size_t frame_width = 0;
+        size_t frame_height = 0;
         size_t min_x = 0;
         size_t min_y = 0;
         size_t max_x = 0;
         size_t max_y = 0;
         size_t starts_x[ARC_MAX_SCENE_OBJECTS];
         size_t starts_y[ARC_MAX_SCENE_OBJECTS];
-        if (spec->width == 0 || spec->height == 0 ||
-            spec->width > ARC_MAX_GRID_WIDTH ||
-            spec->height > ARC_MAX_GRID_HEIGHT ||
+        if (!arc_visual_combinator_frame_shape(input, spec, &frame_width, &frame_height) ||
             state->component_count == 0) {
             return 0;
         }
@@ -11214,7 +11249,7 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
             starts_x[i] = state->component_min_x[i];
             starts_y[i] = state->component_min_y[i];
         }
-        arc_init_grid(output, spec->width, spec->height);
+        arc_init_grid(output, frame_width, frame_height);
         for (size_t cell = 0; cell < arc_grid_cells(output); ++cell) {
             output->cells[cell] = spec->background;
         }
@@ -11227,33 +11262,33 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
                 state->component_max_y[i] - state->component_min_y[i] + 1u;
             switch (spec->y_anchor) {
             case 0:
-                out_x = (state->component_min_x[i] * spec->width) / input->width;
-                out_y = (state->component_min_y[i] * spec->height) / input->height;
+                out_x = (state->component_min_x[i] * frame_width) / input->width;
+                out_y = (state->component_min_y[i] * frame_height) / input->height;
                 break;
             case 1:
                 out_x = ((state->component_min_x[i] + state->component_max_x[i] + 1u) *
-                         spec->width) /
+                         frame_width) /
                         (2u * input->width);
                 out_y = ((state->component_min_y[i] + state->component_max_y[i] + 1u) *
-                         spec->height) /
+                         frame_height) /
                         (2u * input->height);
                 break;
             case 2: {
                 size_t span_x = max_x - min_x + 1u;
                 size_t span_y = max_y - min_y + 1u;
-                out_x = ((state->component_min_x[i] - min_x) * spec->width) / span_x;
-                out_y = ((state->component_min_y[i] - min_y) * spec->height) / span_y;
+                out_x = ((state->component_min_x[i] - min_x) * frame_width) / span_x;
+                out_y = ((state->component_min_y[i] - min_y) * frame_height) / span_y;
                 break;
             }
             case 3:
                 out_x = arc_rank_value_scaled(starts_x,
                                               state->component_count,
                                               state->component_min_x[i],
-                                              spec->width);
+                                              frame_width);
                 out_y = arc_rank_value_scaled(starts_y,
                                               state->component_count,
                                               state->component_min_y[i],
-                                              spec->height);
+                                              frame_height);
                 break;
             case 4:
                 if (object_width == 0 || object_height == 0) {
@@ -11266,17 +11301,17 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
                 out_x = arc_rank_value_scaled(starts_x,
                                               state->component_count,
                                               state->component_min_x[i],
-                                              spec->width);
-                out_y = arc_interval_pack_row(state, i, spec->height);
+                                              frame_width);
+                out_y = arc_interval_pack_row(state, i, frame_height);
                 break;
             default:
                 return 0;
             }
-            if (out_x >= spec->width) {
-                out_x = spec->width - 1u;
+            if (out_x >= frame_width) {
+                out_x = frame_width - 1u;
             }
-            if (out_y >= spec->height) {
-                out_y = spec->height - 1u;
+            if (out_y >= frame_height) {
+                out_y = frame_height - 1u;
             }
             output->cells[out_y * output->width + out_x] =
                 spec->period == 1u ? spec->color : spec->output_color;
@@ -11284,13 +11319,13 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
         return 1;
     }
     case ARC_VISUAL_STEP_RENDER_COUNT_TEMPLATE: {
-        if (spec->width == 0 || spec->height == 0 ||
-            spec->width > ARC_MAX_GRID_WIDTH ||
-            spec->height > ARC_MAX_GRID_HEIGHT ||
+        size_t frame_width = 0;
+        size_t frame_height = 0;
+        if (!arc_visual_combinator_frame_shape(input, spec, &frame_width, &frame_height) ||
             state->component_count == 0) {
             return 0;
         }
-        arc_init_grid(output, spec->width, spec->height);
+        arc_init_grid(output, frame_width, frame_height);
         for (size_t cell = 0; cell < arc_grid_cells(output); ++cell) {
             output->cells[cell] = spec->background;
         }
@@ -11302,8 +11337,8 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
             size_t out_y = 0;
             if (!arc_visual_count_template_position(spec->y_anchor,
                                                     i,
-                                                    spec->width,
-                                                    spec->height,
+                                                    frame_width,
+                                                    frame_height,
                                                     &out_x,
                                                     &out_y)) {
                 return 0;
@@ -11312,16 +11347,88 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
         }
         return 1;
     }
+    case ARC_VISUAL_STEP_RENDER_ALIGNED_SPANS: {
+        size_t frame_width = 0;
+        size_t frame_height = 0;
+        int mode = spec->y_anchor;
+        if (!arc_visual_combinator_frame_shape(input, spec, &frame_width, &frame_height) ||
+            frame_width != input->width || frame_height != input->height ||
+            spec->color == spec->background ||
+            spec->output_color == spec->background ||
+            mode < ARC_OBJECT_CONNECT_HORIZONTAL || mode > ARC_OBJECT_CONNECT_BOTH) {
+            return 0;
+        }
+        *output = *input;
+        if (mode == ARC_OBJECT_CONNECT_HORIZONTAL ||
+            mode == ARC_OBJECT_CONNECT_BOTH) {
+            for (size_t y = 0; y < input->height; ++y) {
+                int found = 0;
+                size_t min_x = input->width;
+                size_t max_x = 0;
+                for (size_t x = 0; x < input->width; ++x) {
+                    if (input->cells[y * input->width + x] != spec->color) {
+                        continue;
+                    }
+                    if (!found || x < min_x) {
+                        min_x = x;
+                    }
+                    if (!found || x > max_x) {
+                        max_x = x;
+                    }
+                    found = 1;
+                }
+                if (!found || min_x == max_x) {
+                    continue;
+                }
+                for (size_t x = min_x + 1u; x < max_x; ++x) {
+                    size_t cell = y * output->width + x;
+                    if (input->cells[cell] == spec->background) {
+                        output->cells[cell] = spec->output_color;
+                    }
+                }
+            }
+        }
+        if (mode == ARC_OBJECT_CONNECT_VERTICAL ||
+            mode == ARC_OBJECT_CONNECT_BOTH) {
+            for (size_t x = 0; x < input->width; ++x) {
+                int found = 0;
+                size_t min_y = input->height;
+                size_t max_y = 0;
+                for (size_t y = 0; y < input->height; ++y) {
+                    if (input->cells[y * input->width + x] != spec->color) {
+                        continue;
+                    }
+                    if (!found || y < min_y) {
+                        min_y = y;
+                    }
+                    if (!found || y > max_y) {
+                        max_y = y;
+                    }
+                    found = 1;
+                }
+                if (!found || min_y == max_y) {
+                    continue;
+                }
+                for (size_t y = min_y + 1u; y < max_y; ++y) {
+                    size_t cell = y * output->width + x;
+                    if (input->cells[cell] == spec->background) {
+                        output->cells[cell] = spec->output_color;
+                    }
+                }
+            }
+        }
+        return 1;
+    }
     case ARC_VISUAL_STEP_RENDER_COMPONENT_SHAPE_GRID: {
+        size_t frame_width = 0;
+        size_t frame_height = 0;
         size_t min_x = 0;
         size_t min_y = 0;
         size_t max_x = 0;
         size_t max_y = 0;
         size_t starts_x[ARC_MAX_SCENE_OBJECTS];
         size_t starts_y[ARC_MAX_SCENE_OBJECTS];
-        if (spec->width == 0 || spec->height == 0 ||
-            spec->width > ARC_MAX_GRID_WIDTH ||
-            spec->height > ARC_MAX_GRID_HEIGHT ||
+        if (!arc_visual_combinator_frame_shape(input, spec, &frame_width, &frame_height) ||
             state->component_count == 0) {
             return 0;
         }
@@ -11332,7 +11439,7 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
             starts_x[i] = state->component_min_x[i];
             starts_y[i] = state->component_min_y[i];
         }
-        arc_init_grid(output, spec->width, spec->height);
+        arc_init_grid(output, frame_width, frame_height);
         for (size_t cell = 0; cell < arc_grid_cells(output); ++cell) {
             output->cells[cell] = spec->background;
         }
@@ -11345,33 +11452,33 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
                 state->component_max_y[i] - state->component_min_y[i] + 1u;
             switch (spec->y_anchor) {
             case 0:
-                out_x = (state->component_min_x[i] * spec->width) / input->width;
-                out_y = (state->component_min_y[i] * spec->height) / input->height;
+                out_x = (state->component_min_x[i] * frame_width) / input->width;
+                out_y = (state->component_min_y[i] * frame_height) / input->height;
                 break;
             case 1:
                 out_x = ((state->component_min_x[i] + state->component_max_x[i] + 1u) *
-                         spec->width) /
+                         frame_width) /
                         (2u * input->width);
                 out_y = ((state->component_min_y[i] + state->component_max_y[i] + 1u) *
-                         spec->height) /
+                         frame_height) /
                         (2u * input->height);
                 break;
             case 2: {
                 size_t span_x = max_x - min_x + 1u;
                 size_t span_y = max_y - min_y + 1u;
-                out_x = ((state->component_min_x[i] - min_x) * spec->width) / span_x;
-                out_y = ((state->component_min_y[i] - min_y) * spec->height) / span_y;
+                out_x = ((state->component_min_x[i] - min_x) * frame_width) / span_x;
+                out_y = ((state->component_min_y[i] - min_y) * frame_height) / span_y;
                 break;
             }
             case 3:
                 out_x = arc_rank_value_scaled(starts_x,
                                               state->component_count,
                                               state->component_min_x[i],
-                                              spec->width);
+                                              frame_width);
                 out_y = arc_rank_value_scaled(starts_y,
                                               state->component_count,
                                               state->component_min_y[i],
-                                              spec->height);
+                                              frame_height);
                 break;
             case 4:
                 if (object_width == 0 || object_height == 0) {
@@ -11384,17 +11491,17 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
                 out_x = arc_rank_value_scaled(starts_x,
                                               state->component_count,
                                               state->component_min_x[i],
-                                              spec->width);
-                out_y = arc_interval_pack_row(state, i, spec->height);
+                                              frame_width);
+                out_y = arc_interval_pack_row(state, i, frame_height);
                 break;
             default:
                 return 0;
             }
-            if (out_x >= spec->width) {
-                out_x = spec->width - 1u;
+            if (out_x >= frame_width) {
+                out_x = frame_width - 1u;
             }
-            if (out_y >= spec->height) {
-                out_y = spec->height - 1u;
+            if (out_y >= frame_height) {
+                out_y = frame_height - 1u;
             }
             output->cells[out_y * output->width + out_x] =
                 arc_visual_component_classifier_color(spec, input, state, i);
@@ -11402,6 +11509,8 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
         return 1;
     }
     case ARC_VISUAL_STEP_RENDER_COMPONENT_MASK: {
+        size_t frame_width = 0;
+        size_t frame_height = 0;
         size_t selected_index = SIZE_MAX;
         size_t min_x = 0;
         size_t min_y = 0;
@@ -11420,9 +11529,7 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
         uint8_t styled_mask[ARC_MAX_GRID_CELLS];
         size_t local_component[ARC_MAX_GRID_CELLS];
         size_t styled_component[ARC_MAX_GRID_CELLS];
-        if (spec->width == 0 || spec->height == 0 ||
-            spec->width > ARC_MAX_GRID_WIDTH ||
-            spec->height > ARC_MAX_GRID_HEIGHT ||
+        if (!arc_visual_combinator_frame_shape(input, spec, &frame_width, &frame_height) ||
             state->component_count == 0) {
             return 0;
         }
@@ -11462,16 +11569,16 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
             return 0;
         }
         if (arc_visual_component_mask_requires_exact_shape(spec->y_anchor)) {
-            if (render_width != spec->width || render_height != spec->height) {
+            if (render_width != frame_width || render_height != frame_height) {
                 return 0;
             }
         }
         if (spec->y_anchor == 5) {
-            if (render_width > spec->width || render_height > spec->height) {
+            if (render_width > frame_width || render_height > frame_height) {
                 return 0;
             }
-            dest_x = (spec->width - render_width) / 2u;
-            dest_y = (spec->height - render_height) / 2u;
+            dest_x = (frame_width - render_width) / 2u;
+            dest_y = (frame_height - render_height) / 2u;
         }
         for (size_t y = 0; y < source_height; ++y) {
             for (size_t x = 0; x < source_width; ++x) {
@@ -11495,12 +11602,12 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
                                               style_mode,
                                               styled_mask,
                                               styled_component);
-        arc_init_grid(output, spec->width, spec->height);
+        arc_init_grid(output, frame_width, frame_height);
         for (size_t cell = 0; cell < arc_grid_cells(output); ++cell) {
             output->cells[cell] = spec->background;
         }
-        for (size_t out_y = 0; out_y < spec->height; ++out_y) {
-            for (size_t out_x = 0; out_x < spec->width; ++out_x) {
+        for (size_t out_y = 0; out_y < frame_height; ++out_y) {
+            for (size_t out_x = 0; out_x < frame_width; ++out_x) {
                 size_t local_x = out_x;
                 size_t local_y = out_y;
                 size_t source_x = 0;
@@ -11518,8 +11625,8 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
                     local_y = out_y - dest_y;
                 }
                 if (scaled) {
-                    display_x = (local_x * render_width) / spec->width;
-                    display_y = (local_y * render_height) / spec->height;
+                    display_x = (local_x * render_width) / frame_width;
+                    display_y = (local_y * render_height) / frame_height;
                 } else {
                     if (local_x >= render_width || local_y >= render_height) {
                         continue;
@@ -11538,11 +11645,17 @@ static int arc_visual_execute_step(const ARCVisualStep *step,
                 }
                 source_index = source_y * source_width + source_x;
                 if (styled_mask[source_index]) {
-                    output->cells[out_y * output->width + out_x] =
+                    uint8_t paint =
                         arc_visual_component_mask_color(spec,
                                                         input,
                                                         state,
                                                         styled_component[source_index]);
+                    if (style_mode == 7 && spec->output_color != spec->background) {
+                        paint = local_mask[source_index]
+                                    ? state->component_color[styled_component[source_index]]
+                                    : spec->output_color;
+                    }
+                    output->cells[out_y * output->width + out_x] = paint;
                 }
             }
         }
@@ -11653,12 +11766,14 @@ static int arc_apply_sketch_visual_combinator(const ARCSketchProgramSpec *spec,
                                               const ARCGrid *input,
                                               ARCGrid *output)
 {
+    size_t frame_width = 0;
+    size_t frame_height = 0;
     if (spec == NULL || input == NULL || output == NULL ||
-        input->width == 0 || input->height == 0 ||
-        spec->width == 0 || spec->height == 0 ||
-        spec->width > ARC_MAX_GRID_WIDTH || spec->height > ARC_MAX_GRID_HEIGHT) {
+        !arc_visual_combinator_frame_shape(input, spec, &frame_width, &frame_height)) {
         return 0;
     }
+    (void)frame_width;
+    (void)frame_height;
     if (spec->x_anchor == 0) {
         const ARCVisualStep steps[] = {
             {ARC_VISUAL_STEP_SELECT_COMPONENT_ORIGINS},
@@ -11696,6 +11811,16 @@ static int arc_apply_sketch_visual_combinator(const ARCSketchProgramSpec *spec,
         const ARCVisualStep steps[] = {
             {ARC_VISUAL_STEP_SELECT_COMPONENT_ORIGINS},
             {ARC_VISUAL_STEP_RENDER_COMPONENT_MASK},
+        };
+        return arc_visual_program_execute(steps,
+                                          sizeof(steps) / sizeof(steps[0]),
+                                          spec,
+                                          input,
+                                          output);
+    }
+    if (spec->x_anchor == 4) {
+        const ARCVisualStep steps[] = {
+            {ARC_VISUAL_STEP_RENDER_ALIGNED_SPANS},
         };
         return arc_visual_program_execute(steps,
                                           sizeof(steps) / sizeof(steps[0]),
@@ -13724,6 +13849,42 @@ static int arc_hypothesis_template_allowed(const ARCProgramLearnedState *learned
     return strcmp(binding->name, "arc_sketch_program") == 0;
 }
 
+static int arc_candidate_is_visual_program_hypothesis(
+    const ARCTransformCandidate *candidate)
+{
+    return candidate != NULL &&
+           candidate->hypothesis_template_id ==
+               (uint32_t)ARC_HYPOTHESIS_TEMPLATE_SKETCH_PROGRAM_ID;
+}
+
+static int arc_hypothesis_proposal_preferred(
+    const ARCHypothesisProposal *proposal,
+    size_t gain,
+    const ARCHypothesisProposal *best,
+    size_t best_gain,
+    double best_score)
+{
+    if (proposal == NULL) {
+        return 0;
+    }
+    if (best == NULL || gain > best_gain) {
+        return 1;
+    }
+    if (gain < best_gain) {
+        return 0;
+    }
+    int proposal_visual =
+        arc_candidate_is_visual_program_hypothesis(&proposal->candidate);
+    int best_visual = arc_candidate_is_visual_program_hypothesis(&best->candidate);
+    if (proposal_visual != best_visual) {
+        return proposal_visual;
+    }
+    if (proposal->score != best_score) {
+        return proposal->score > best_score;
+    }
+    return strcmp(proposal->candidate.name, best->candidate.name) < 0;
+}
+
 static size_t arc_induce_exact_sketch_prior_hypotheses(
     const ARCTask *task,
     ARCProgramLearnedState *learned,
@@ -13739,7 +13900,8 @@ static size_t arc_induce_exact_sketch_prior_hypotheses(
         return proposal_count;
     }
     const ARCHypothesisTemplateBinding *binding =
-        arc_hypothesis_binding_for_template_id(1036);
+        arc_hypothesis_binding_for_template_id(
+            (uint32_t)ARC_HYPOTHESIS_TEMPLATE_SKETCH_PROGRAM_ID);
     if (binding == NULL || binding->template_fn == NULL ||
         binding->to_candidate == NULL ||
         !arc_hypothesis_template_allowed(learned, binding)) {
@@ -13747,7 +13909,8 @@ static size_t arc_induce_exact_sketch_prior_hypotheses(
     }
     ARCProgramTaskFeatures task_features;
     arc_program_task_features(task, &task_features);
-    size_t template_index = arc_hypothesis_registry_index_for_template_id(1036);
+    size_t template_index = arc_hypothesis_registry_index_for_template_id(
+        (uint32_t)ARC_HYPOTHESIS_TEMPLATE_SKETCH_PROGRAM_ID);
     for (size_t i = 0; i < learned->exact_sketch_prior_count; ++i) {
         const ARCExactSketchPrior *prior = &learned->exact_sketch_priors[i];
         if (prior->certified_count == 0 ||
@@ -13888,9 +14051,13 @@ static size_t arc_select_hypothesis_proposals(const ARCTask *task,
                     continue;
                 }
                 size_t gain = nn_program_coverage_gain(&coverage, i, covered);
-                if (best == (size_t)-1 ||
-                    gain > best_gain ||
-                    (gain == best_gain && valid[i].score > best_score)) {
+                if (arc_hypothesis_proposal_preferred(&valid[i],
+                                                      gain,
+                                                      best == (size_t)-1
+                                                          ? NULL
+                                                          : &valid[best],
+                                                      best_gain,
+                                                      best_score)) {
                     best = i;
                     best_gain = gain;
                     best_score = valid[i].score;
@@ -18068,7 +18235,7 @@ static const ARCVisualOpMetadata *arc_visual_op_metadata_for_op(int op)
             "select_components|normalize_component_origins|classify_component_shape_color|render_component_mask|emit_component_grid",
             "select_components -> normalize_component_origins -> classify_component_shape_color -> render_component_mask -> emit_component_grid",
             "background,color,output_color,width,height,x_anchor,y_anchor,x_offset,y_offset,period",
-            "selector:components,selector:component_predicate,normalizer:object_lattice,normalizer:component_mask,normalizer:component_selector_layout,composer:visual_program,emitter:occupancy_grid,emitter:count_template,emitter:component_shape_grid,emitter:component_mask,classifier:component_shape_color,classifier:marker_glyph_color",
+            "selector:components,selector:component_predicate,normalizer:object_lattice,normalizer:component_mask,normalizer:component_selector_layout,composer:visual_program,composer:aligned_span,emitter:occupancy_grid,emitter:count_template,emitter:component_shape_grid,emitter:component_mask,emitter:aligned_span,classifier:component_shape_color,classifier:marker_glyph_color",
         },
     };
     for (size_t i = 0; i < sizeof(metadata) / sizeof(metadata[0]); ++i) {
@@ -20842,6 +21009,65 @@ static void arc_mine_separator_panel_relation_mask_sketches(
     }
 }
 
+static int arc_task_train_outputs_match_input_shapes(const ARCTask *task)
+{
+    if (task == NULL || task->train_count == 0) {
+        return 0;
+    }
+    for (size_t pair = 0; pair < task->train_count; ++pair) {
+        if (!task->train[pair].has_output ||
+            !arc_grid_same_shape(&task->train[pair].input, &task->train[pair].output)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void arc_append_visual_combinator_frame_variants(
+    const ARCSketchProbeInput *input,
+    const char *task_path,
+    const ARCTask *task,
+    const ARCVisualPipelineSpec *pipeline,
+    int include_input_frame,
+    ARCSketchProbeRecord *records,
+    size_t *record_count,
+    ARCSketchProgramSpec *emitted_specs,
+    size_t *emitted_count,
+    size_t sketches_per_task,
+    ARCSketchProbeSummary *summary,
+    ARCVisualPipelineAttemptLog *attempt_log)
+{
+    ARCVisualPipelineSpec input_frame;
+    arc_sketch_probe_append_visual_pipeline_if_exact(input,
+                                                    task_path,
+                                                    task,
+                                                    pipeline,
+                                                    records,
+                                                    record_count,
+                                                    emitted_specs,
+                                                    emitted_count,
+                                                    sketches_per_task,
+                                                    summary,
+                                                    attempt_log);
+    if (!include_input_frame || pipeline == NULL) {
+        return;
+    }
+    input_frame = *pipeline;
+    input_frame.width = 0;
+    input_frame.height = 0;
+    arc_sketch_probe_append_visual_pipeline_if_exact(input,
+                                                    task_path,
+                                                    task,
+                                                    &input_frame,
+                                                    records,
+                                                    record_count,
+                                                    emitted_specs,
+                                                    emitted_count,
+                                                    sketches_per_task,
+                                                    summary,
+                                                    attempt_log);
+}
+
 static void arc_mine_visual_combinator_sketches(
     const ARCSketchProbeInput *input,
     const char *task_path,
@@ -20859,6 +21085,7 @@ static void arc_mine_visual_combinator_sketches(
     }
     const ARCGrid *first_input = &task->train[0].input;
     const ARCGrid *first_output = &task->train[0].output;
+    int output_uses_input_frame = arc_task_train_outputs_match_input_shapes(task);
     if (first_output->width == 0 || first_output->height == 0 ||
         first_output->width > ARC_MAX_GRID_WIDTH ||
         first_output->height > ARC_MAX_GRID_HEIGHT) {
@@ -20890,6 +21117,10 @@ static void arc_mine_visual_combinator_sketches(
         arc_text_list_contains_token(input->op_hints, "selector:component_predicate", ',') ||
         arc_text_list_contains_token(input->op_hints, "normalizer:component_selector_layout", ',') ||
         arc_text_list_contains_token(input->op_hints, "pin:x_anchor=3", ',');
+    int allow_aligned_span =
+        arc_text_list_contains_token(input->op_hints, "emitter:aligned_span", ',') ||
+        arc_text_list_contains_token(input->op_hints, "composer:aligned_span", ',') ||
+        arc_text_list_contains_token(input->op_hints, "pin:x_anchor=4", ',');
     int allow_component_predicate_mask =
         arc_text_list_contains_token(input->op_hints, "selector:component_predicate", ',') ||
         arc_text_list_contains_token(input->op_hints, "normalizer:component_selector_layout", ',');
@@ -20948,17 +21179,18 @@ static void arc_mine_visual_combinator_sketches(
                     pipeline.x_anchor = 0;
                     pipeline.y_anchor = coordinate_mode;
                     pipeline.period = 0;
-                    arc_sketch_probe_append_visual_pipeline_if_exact(input,
-                                                                    task_path,
-                                                                    task,
-                                                                    &pipeline,
-                                                                    records,
-                                                                    record_count,
-                                                                    emitted_specs,
-                                                                    emitted_count,
-                                                                    sketches_per_task,
-                                                                    summary,
-                                                                    attempt_log);
+                    arc_append_visual_combinator_frame_variants(input,
+                                                                task_path,
+                                                                task,
+                                                                &pipeline,
+                                                                output_uses_input_frame,
+                                                                records,
+                                                                record_count,
+                                                                emitted_specs,
+                                                                emitted_count,
+                                                                sketches_per_task,
+                                                                summary,
+                                                                attempt_log);
                 }
 skip_occupancy_grid:
                 if (!arc_text_list_allows_int_pin(input->op_hints, "x_anchor", 1)) {
@@ -20982,19 +21214,60 @@ skip_occupancy_grid:
                     pipeline.x_anchor = 1;
                     pipeline.y_anchor = pattern_mode;
                     pipeline.period = 0;
-                    arc_sketch_probe_append_visual_pipeline_if_exact(input,
-                                                                    task_path,
-                                                                    task,
-                                                                    &pipeline,
-                                                                    records,
-                                                                    record_count,
-                                                                    emitted_specs,
-                                                                    emitted_count,
-                                                                    sketches_per_task,
-                                                                    summary,
-                                                                    attempt_log);
+                    arc_append_visual_combinator_frame_variants(input,
+                                                                task_path,
+                                                                task,
+                                                                &pipeline,
+                                                                output_uses_input_frame,
+                                                                records,
+                                                                record_count,
+                                                                emitted_specs,
+                                                                emitted_count,
+                                                                sketches_per_task,
+                                                                summary,
+                                                                attempt_log);
                 }
 skip_count_template:
+                if (!allow_aligned_span ||
+                    !output_uses_input_frame ||
+                    color == background ||
+                    !arc_text_list_allows_int_pin(input->op_hints, "x_anchor", 4)) {
+                    goto skip_aligned_span;
+                }
+                for (int span_mode = ARC_OBJECT_CONNECT_HORIZONTAL;
+                     span_mode <= ARC_OBJECT_CONNECT_BOTH;
+                     ++span_mode) {
+                    if (!arc_text_list_allows_int_pin(input->op_hints,
+                                                      "y_anchor",
+                                                      span_mode)) {
+                        continue;
+                    }
+                    ARCVisualPipelineSpec pipeline;
+                    memset(&pipeline, 0, sizeof(pipeline));
+                    pipeline.kind = ARC_VISUAL_PIPELINE_VISUAL_COMBINATOR;
+                    pipeline.selector = ARC_SKETCH_SELECTOR_LATTICE;
+                    pipeline.background = background;
+                    pipeline.color = color;
+                    pipeline.output_color = output_color;
+                    pipeline.width = first_output->width;
+                    pipeline.height = first_output->height;
+                    pipeline.x_anchor = 4;
+                    pipeline.y_anchor = span_mode;
+                    pipeline.period = 0;
+                    arc_append_visual_combinator_frame_variants(input,
+                                                                task_path,
+                                                                task,
+                                                                &pipeline,
+                                                                output_uses_input_frame,
+                                                                records,
+                                                                record_count,
+                                                                emitted_specs,
+                                                                emitted_count,
+                                                                sketches_per_task,
+                                                                summary,
+                                                                attempt_log);
+                }
+skip_aligned_span:
                 if (!arc_text_list_allows_int_pin(input->op_hints, "x_anchor", 2)) {
                     goto skip_component_shape_grid;
                 }
@@ -21037,17 +21310,18 @@ skip_count_template:
                             pipeline.y_anchor = coordinate_mode;
                             pipeline.x_offset = (int)alt_color;
                             pipeline.period = (size_t)classifier_mode;
-                            arc_sketch_probe_append_visual_pipeline_if_exact(input,
-                                                                            task_path,
-                                                                            task,
-                                                                            &pipeline,
-                                                                            records,
-                                                                            record_count,
-                                                                            emitted_specs,
-                                                                            emitted_count,
-                                                                            sketches_per_task,
-                                                                            summary,
-                                                                            attempt_log);
+                            arc_append_visual_combinator_frame_variants(input,
+                                                                        task_path,
+                                                                        task,
+                                                                        &pipeline,
+                                                                        output_uses_input_frame,
+                                                                        records,
+                                                                        record_count,
+                                                                        emitted_specs,
+                                                                        emitted_count,
+                                                                        sketches_per_task,
+                                                                        summary,
+                                                                        attempt_log);
                         }
                     }
                 }
@@ -21127,17 +21401,18 @@ skip_component_shape_grid:
                                             continue;
                                         }
                                     }
-                                    arc_sketch_probe_append_visual_pipeline_if_exact(input,
-                                                                                    task_path,
-                                                                                    task,
-                                                                                    &pipeline,
-                                                                                    records,
-                                                                                    record_count,
-                                                                                    emitted_specs,
-                                                                                    emitted_count,
-                                                                                    sketches_per_task,
-                                                                                    summary,
-                                                                                    attempt_log);
+                                    arc_append_visual_combinator_frame_variants(input,
+                                                                                task_path,
+                                                                                task,
+                                                                                &pipeline,
+                                                                                output_uses_input_frame,
+                                                                                records,
+                                                                                record_count,
+                                                                                emitted_specs,
+                                                                                emitted_count,
+                                                                                sketches_per_task,
+                                                                                summary,
+                                                                                attempt_log);
                                 }
                             }
                         }

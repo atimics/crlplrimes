@@ -10,14 +10,15 @@
 #include <time.h>
 
 enum {
-    HU_FEATURE_COUNT = 56,
+    HU_FEATURE_COUNT = 62,
     HU_MAX_POEMS = 10000,
     HU_MAX_LINE_WORDS = 32,
     HU_MAX_WORD_LEN = 64,
     HU_MAX_VOCAB = 30000,
     HU_ADJ_BUCKETS = 524288,
     HU_MAX_ADJ_EDGES = 400000,
-    HU_FEATURE_ENCODER_VERSION = 3,
+    HU_DEFAULT_SPLICE_SCAN_LIMIT = 512,
+    HU_FEATURE_ENCODER_VERSION = 4,
     HU_CORRUPT_LINE_SHUFFLE = 0,
     HU_CORRUPT_LINE_SPLICE = 1,
     HU_CORRUPT_SYLLABLE_BREAK = 2,
@@ -91,7 +92,9 @@ typedef struct {
     size_t epochs;
     size_t max_poems;
     size_t trace_limit;
+    size_t splice_scan_limit;
     size_t plausible_negative_extra_updates;
+    size_t hard_negative_extra_updates;
     double learning_rate;
     unsigned int seed;
 } HUConfig;
@@ -124,6 +127,24 @@ typedef struct {
     double exact_syllable_ratio;
     double plan_score;
 } HUCoherenceMetrics;
+
+typedef struct {
+    int corrupt_line;
+    int source_line;
+    long long source_poem_index;
+    int real_line_words;
+    int corrupt_line_words;
+    int line_word_delta;
+    int real_line_syllables;
+    int corrupt_line_syllables;
+    int line_syllable_delta;
+    unsigned int real_line_topic_mask;
+    unsigned int corrupt_line_topic_mask;
+    double replacement_line_similarity;
+    double left_neighbor_similarity_delta;
+    double right_neighbor_similarity_delta;
+    double local_neighbor_fit_delta;
+} HUCorruptionMeta;
 
 static const HUVocab *g_sort_vocab;
 
@@ -555,6 +576,23 @@ static int is_hard_negative_corruption(int type)
            type == HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE;
 }
 
+static int is_weighted_hard_negative_corruption(int type)
+{
+    return type == HU_CORRUPT_LINE_SPLICE || type == HU_CORRUPT_WORD_SALAD;
+}
+
+static size_t scan_limit_for_corpus(const HUCorpus *corpus, size_t requested)
+{
+    if (corpus->count <= 1) {
+        return 0;
+    }
+    size_t available = corpus->count - 1u;
+    if (requested == 0 || requested > available) {
+        return available;
+    }
+    return requested;
+}
+
 static void copy_poem(HUPoem *dst, const HUPoem *src)
 {
     memcpy(dst, src, sizeof(*dst));
@@ -784,6 +822,7 @@ static size_t select_splice_source(const HUCorpus *corpus,
                                    size_t poem_index,
                                    int line,
                                    int require_same_season,
+                                   size_t scan_limit,
                                    uint64_t mix)
 {
     const HUPoem *real = &corpus->poems[poem_index];
@@ -794,7 +833,8 @@ static size_t select_splice_source(const HUCorpus *corpus,
     if (corpus->count <= 1) {
         return best;
     }
-    for (size_t offset = 1; offset < corpus->count; ++offset) {
+    size_t candidates_to_scan = scan_limit_for_corpus(corpus, scan_limit);
+    for (size_t offset = 1; offset <= candidates_to_scan; ++offset) {
         size_t candidate = (poem_index + offset + (size_t)(mix % corpus->count)) % corpus->count;
         if (candidate == poem_index) {
             continue;
@@ -811,7 +851,7 @@ static size_t select_splice_source(const HUCorpus *corpus,
         }
     }
     if (best == poem_index && require_same_season) {
-        return select_splice_source(corpus, vocab, poem_index, line, 0, mix);
+        return select_splice_source(corpus, vocab, poem_index, line, 0, scan_limit, mix);
     }
     return best;
 }
@@ -820,6 +860,7 @@ static size_t select_plausible_splice_source(const HUCorpus *corpus,
                                              const HUVocab *vocab,
                                              const HUAdjacency *adjacency,
                                              size_t poem_index,
+                                             size_t scan_limit,
                                              uint64_t mix,
                                              int *line_out)
 {
@@ -839,7 +880,8 @@ static size_t select_plausible_splice_source(const HUCorpus *corpus,
         return best;
     }
 
-    for (size_t offset = 1; offset < corpus->count; ++offset) {
+    size_t candidates_to_scan = scan_limit_for_corpus(corpus, scan_limit);
+    for (size_t offset = 1; offset <= candidates_to_scan; ++offset) {
         size_t candidate = (poem_index + offset + (size_t)(mix % corpus->count)) % corpus->count;
         if (candidate == poem_index) {
             continue;
@@ -897,6 +939,7 @@ static size_t select_plausible_splice_source(const HUCorpus *corpus,
 static void build_splice_cache(const HUCorpus *corpus,
                                const HUVocab *vocab,
                                const HUAdjacency *adjacency,
+                               size_t scan_limit,
                                unsigned int seed,
                                HUSpliceCache *cache)
 {
@@ -906,14 +949,14 @@ static void build_splice_cache(const HUCorpus *corpus,
             (uint64_t)HU_CORRUPT_TOPIC_SPLICE * 7919ull;
         int topic_line = (int)((topic_mix >> 10) % 3u);
         cache->topic_splice_source[poem_index] =
-            select_splice_source(corpus, vocab, poem_index, topic_line, 0, topic_mix);
+            select_splice_source(corpus, vocab, poem_index, topic_line, 0, scan_limit, topic_mix);
 
         uint64_t same_season_mix =
             (uint64_t)seed + poem_index * 1103515245ull +
             (uint64_t)HU_CORRUPT_SAME_SEASON_SPLICE * 7919ull;
         int same_season_line = (int)((same_season_mix >> 14) % 3u);
         cache->same_season_splice_source[poem_index] = select_splice_source(
-            corpus, vocab, poem_index, same_season_line, 1, same_season_mix);
+            corpus, vocab, poem_index, same_season_line, 1, scan_limit, same_season_mix);
 
         uint64_t plausible_mix =
             (uint64_t)seed + poem_index * 1103515245ull +
@@ -923,6 +966,7 @@ static void build_splice_cache(const HUCorpus *corpus,
                                            vocab,
                                            adjacency,
                                            poem_index,
+                                           scan_limit,
                                            plausible_mix,
                                            &cache->plausible_splice_line[poem_index]);
     }
@@ -1007,7 +1051,7 @@ static void make_corruption(const HUCorpus *corpus,
             int line = (int)((mix >> 10) % 3u);
             size_t other = splice_cache != NULL
                                ? splice_cache->topic_splice_source[poem_index]
-                               : select_splice_source(corpus, vocab, poem_index, line, 0, mix);
+                               : select_splice_source(corpus, vocab, poem_index, line, 0, 0, mix);
             if (other != poem_index) {
                 copy_line(out, line, &corpus->poems[other], line);
             }
@@ -1017,7 +1061,7 @@ static void make_corruption(const HUCorpus *corpus,
             int line = (int)((mix >> 14) % 3u);
             size_t other = splice_cache != NULL
                                ? splice_cache->same_season_splice_source[poem_index]
-                               : select_splice_source(corpus, vocab, poem_index, line, 1, mix);
+                               : select_splice_source(corpus, vocab, poem_index, line, 1, 0, mix);
             if (other != poem_index) {
                 copy_line(out, line, &corpus->poems[other], line);
             }
@@ -1030,7 +1074,7 @@ static void make_corruption(const HUCorpus *corpus,
                 line = splice_cache->plausible_splice_line[poem_index];
                 other = splice_cache->plausible_splice_source[poem_index];
             } else {
-                other = select_splice_source(corpus, vocab, poem_index, line, 1, mix);
+                other = select_splice_source(corpus, vocab, poem_index, line, 1, 0, mix);
             }
             if (other != poem_index) {
                 copy_line(out, line, &corpus->poems[other], line);
@@ -1040,6 +1084,107 @@ static void make_corruption(const HUCorpus *corpus,
         default:
             break;
     }
+}
+
+static void init_corruption_meta(HUCorruptionMeta *meta)
+{
+    memset(meta, 0, sizeof(*meta));
+    meta->corrupt_line = -1;
+    meta->source_line = -1;
+    meta->source_poem_index = -1;
+}
+
+static void populate_corruption_meta(const HUCorpus *corpus,
+                                     const HUVocab *vocab,
+                                     const HUSpliceCache *splice_cache,
+                                     size_t poem_index,
+                                     int type,
+                                     unsigned int seed,
+                                     const HUPoem *real,
+                                     const HUPoem *corrupt,
+                                     HUCorruptionMeta *meta)
+{
+    init_corruption_meta(meta);
+    if (corpus == NULL || vocab == NULL || real == NULL || corrupt == NULL ||
+        poem_index >= corpus->count) {
+        return;
+    }
+
+    uint64_t mix = (uint64_t)seed + poem_index * 1103515245ull + (uint64_t)type * 7919ull;
+    int line = -1;
+    size_t source_poem = poem_index;
+    int source_line = -1;
+    switch (type) {
+        case HU_CORRUPT_LINE_SPLICE:
+            if (corpus->count > 1) {
+                source_poem =
+                    (poem_index + 1u + (size_t)(mix % (corpus->count - 1u))) % corpus->count;
+                line = (int)((mix >> 12) % 3u);
+                source_line = line;
+            }
+            break;
+        case HU_CORRUPT_TOPIC_SPLICE:
+            line = (int)((mix >> 10) % 3u);
+            source_line = line;
+            if (splice_cache != NULL) {
+                source_poem = splice_cache->topic_splice_source[poem_index];
+            }
+            break;
+        case HU_CORRUPT_SAME_SEASON_SPLICE:
+            line = (int)((mix >> 14) % 3u);
+            source_line = line;
+            if (splice_cache != NULL) {
+                source_poem = splice_cache->same_season_splice_source[poem_index];
+            }
+            break;
+        case HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE:
+            if (splice_cache != NULL) {
+                line = splice_cache->plausible_splice_line[poem_index];
+                source_poem = splice_cache->plausible_splice_source[poem_index];
+            } else {
+                line = (int)((mix >> 18) % 3u);
+            }
+            source_line = line;
+            break;
+        default:
+            break;
+    }
+
+    if (line < 0 || line >= 3 || source_poem == poem_index) {
+        return;
+    }
+
+    meta->corrupt_line = line;
+    meta->source_line = source_line;
+    meta->source_poem_index = (long long)source_poem;
+    meta->real_line_words = (int)real->line_counts[line];
+    meta->corrupt_line_words = (int)corrupt->line_counts[line];
+    meta->line_word_delta = meta->corrupt_line_words - meta->real_line_words;
+    meta->real_line_syllables = line_syllable_count(vocab, real, line);
+    meta->corrupt_line_syllables = line_syllable_count(vocab, corrupt, line);
+    meta->line_syllable_delta = meta->corrupt_line_syllables - meta->real_line_syllables;
+    meta->real_line_topic_mask = line_topic_mask(vocab, real, line);
+    meta->corrupt_line_topic_mask = line_topic_mask(vocab, corrupt, line);
+    meta->replacement_line_similarity = line_coherence_similarity(vocab, real, line, corrupt, line);
+
+    double neighbor_delta_sum = 0.0;
+    size_t neighbor_delta_count = 0;
+    if (line > 0) {
+        double real_left = line_coherence_similarity(vocab, real, line - 1, real, line);
+        double corrupt_left = line_coherence_similarity(vocab, corrupt, line - 1, corrupt, line);
+        meta->left_neighbor_similarity_delta = real_left - corrupt_left;
+        neighbor_delta_sum += meta->left_neighbor_similarity_delta;
+        neighbor_delta_count += 1;
+    }
+    if (line < 2) {
+        double real_right = line_coherence_similarity(vocab, real, line, real, line + 1);
+        double corrupt_right = line_coherence_similarity(vocab, corrupt, line, corrupt, line + 1);
+        meta->right_neighbor_similarity_delta = real_right - corrupt_right;
+        neighbor_delta_sum += meta->right_neighbor_similarity_delta;
+        neighbor_delta_count += 1;
+    }
+    meta->local_neighbor_fit_delta =
+        neighbor_delta_count > 0 ? neighbor_delta_sum / (double)neighbor_delta_count : 0.0;
 }
 
 static uint64_t hash_poem(const HUPoem *poem)
@@ -1256,6 +1401,20 @@ static void fill_features(const HUVocab *vocab,
     features[53] = (nn_real)coherence.topic_core_ratio;
     features[54] = (nn_real)(1.0 - coherence.topic_drift);
     features[55] = (nn_real)coherence.plan_score;
+    double min_adjacent_similarity = coherence.line_similarity01 < coherence.line_similarity12
+                                         ? coherence.line_similarity01
+                                         : coherence.line_similarity12;
+    double max_adjacent_similarity = coherence.line_similarity01 > coherence.line_similarity12
+                                         ? coherence.line_similarity01
+                                         : coherence.line_similarity12;
+    features[56] = (nn_real)min_adjacent_similarity;
+    features[57] = (nn_real)max_adjacent_similarity;
+    features[58] =
+        (nn_real)fabs(coherence.line_similarity01 - coherence.line_similarity12);
+    features[59] = (nn_real)(coherence.line_similarity01 * coherence.line_similarity12);
+    features[60] = (nn_real)(coherence.adjacency_ratio * coherence.bigram_ratio);
+    features[61] =
+        (nn_real)(coherence.exact_syllable_ratio * coherence.adjacency_ratio);
 }
 
 static void fill_pair_features(const HUVocab *vocab,
@@ -1308,6 +1467,7 @@ static int write_trace_row(FILE *trace,
                            size_t poem_index,
                            const nn_real *scores,
                            const nn_real *probabilities,
+                           const HUCorruptionMeta *meta,
                            const char *model_hash)
 {
     HUCoherenceMetrics real_metrics;
@@ -1343,6 +1503,17 @@ static int write_trace_row(FILE *trace,
                    "\"corrupt_bigram_ratio\":%.9g,"
                    "\"real_exact_syllable_ratio\":%.9g,"
                    "\"corrupt_exact_syllable_ratio\":%.9g,"
+                   "\"corrupt_line\":%d,"
+                   "\"source_poem_index\":%lld,"
+                   "\"source_line\":%d,"
+                   "\"line_word_delta\":%d,"
+                   "\"line_syllable_delta\":%d,"
+                   "\"real_line_topic_mask\":%u,"
+                   "\"corrupt_line_topic_mask\":%u,"
+                   "\"replacement_line_similarity\":%.9g,"
+                   "\"left_neighbor_similarity_delta\":%.9g,"
+                   "\"right_neighbor_similarity_delta\":%.9g,"
+                   "\"local_neighbor_fit_delta\":%.9g,"
                    "\"adjacency_hash\":\"%016llx\"}\n",
                    poem_index,
                    corruption_name(type),
@@ -1372,6 +1543,17 @@ static int write_trace_row(FILE *trace,
                    corrupt_metrics.bigram_ratio,
                    real_metrics.exact_syllable_ratio,
                    corrupt_metrics.exact_syllable_ratio,
+                   meta != NULL ? meta->corrupt_line : -1,
+                   meta != NULL ? meta->source_poem_index : -1ll,
+                   meta != NULL ? meta->source_line : -1,
+                   meta != NULL ? meta->line_word_delta : 0,
+                   meta != NULL ? meta->line_syllable_delta : 0,
+                   meta != NULL ? meta->real_line_topic_mask : 0u,
+                   meta != NULL ? meta->corrupt_line_topic_mask : 0u,
+                   meta != NULL ? meta->replacement_line_similarity : 0.0,
+                   meta != NULL ? meta->left_neighbor_similarity_delta : 0.0,
+                   meta != NULL ? meta->right_neighbor_similarity_delta : 0.0,
+                   meta != NULL ? meta->local_neighbor_fit_delta : 0.0,
                    (unsigned long long)adjacency->hash) > 0;
 }
 
@@ -1423,6 +1605,16 @@ static HUEval evaluate_split(NeuralNet *net,
                 eval.by_type_correct[type] += 1;
             }
             if (trace != NULL && (config->trace_limit == 0 || traced < config->trace_limit)) {
+                HUCorruptionMeta meta;
+                populate_corruption_meta(corpus,
+                                         vocab,
+                                         splice_cache,
+                                         p,
+                                         type,
+                                         config->seed,
+                                         real,
+                                         &corrupt,
+                                         &meta);
                 (void)write_trace_row(trace,
                                       vocab,
                                       adjacency,
@@ -1432,6 +1624,7 @@ static HUEval evaluate_split(NeuralNet *net,
                                       p,
                                       scores,
                                       probabilities,
+                                      &meta,
                                       model_hash);
                 traced += 1;
             }
@@ -1445,7 +1638,9 @@ static void usage(const char *argv0)
     fprintf(stderr,
             "usage: %s [--corpus path] [--epochs N] [--lr R] [--seed N]\n"
             "       [--max-poems N] [--trace path] [--trace-limit N] [--save path]\n"
-            "       [--plausible-negative-extra-updates N]\n",
+            "       [--splice-scan-limit N]\n"
+            "       [--plausible-negative-extra-updates N]\n"
+            "       [--hard-negative-extra-updates N]\n",
             argv0);
 }
 
@@ -1457,7 +1652,9 @@ static int parse_config(int argc, char **argv, HUConfig *config)
     config->epochs = 8;
     config->max_poems = 0;
     config->trace_limit = 2000;
+    config->splice_scan_limit = HU_DEFAULT_SPLICE_SCAN_LIMIT;
     config->plausible_negative_extra_updates = 1;
+    config->hard_negative_extra_updates = 0;
     config->learning_rate = 0.006;
     config->seed = 20240518u;
     for (int i = 1; i < argc; ++i) {
@@ -1479,10 +1676,20 @@ static int parse_config(int argc, char **argv, HUConfig *config)
             if (!nn_parse_size_nonnegative_text(argv[++i], &config->trace_limit)) {
                 return 0;
             }
+        } else if (strcmp(argv[i], "--splice-scan-limit") == 0 && i + 1 < argc) {
+            if (!nn_parse_size_nonnegative_text(argv[++i], &config->splice_scan_limit)) {
+                return 0;
+            }
         } else if (strcmp(argv[i], "--plausible-negative-extra-updates") == 0 &&
                    i + 1 < argc) {
             if (!nn_parse_size_nonnegative_text(argv[++i],
                                                 &config->plausible_negative_extra_updates)) {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--hard-negative-extra-updates") == 0 &&
+                   i + 1 < argc) {
+            if (!nn_parse_size_nonnegative_text(argv[++i],
+                                                &config->hard_negative_extra_updates)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--lr") == 0 && i + 1 < argc) {
@@ -1528,7 +1735,8 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
     static HUSpliceCache splice_cache;
-    build_splice_cache(&corpus, &vocab, &adjacency, config.seed, &splice_cache);
+    build_splice_cache(
+        &corpus, &vocab, &adjacency, config.splice_scan_limit, config.seed, &splice_cache);
 
     const size_t layers[] = {HU_FEATURE_COUNT, 64, 32, 1};
     NNConfig nn_config;
@@ -1546,7 +1754,7 @@ int main(int argc, char **argv)
 
     printf("haiku_understanding corpus=%s poems=%zu train=%zu valid=%zu ignored_stanzas=%zu "
            "ignored_words=%zu vocab=%zu features=%d parameters=%zu adjacency_edges=%zu "
-           "adjacency_hash=%016llx corruptions=%d\n",
+           "adjacency_hash=%016llx corruptions=%d splice_scan_limit=%zu\n",
            config.corpus_path,
            corpus.count,
            train_count,
@@ -1558,18 +1766,23 @@ int main(int argc, char **argv)
            nn_parameter_count(net),
            adjacency.count,
            (unsigned long long)adjacency.hash,
-           HU_CORRUPT_COUNT);
+           HU_CORRUPT_COUNT,
+           scan_limit_for_corpus(&corpus, config.splice_scan_limit));
 
     double training_seconds = 0.0;
     size_t total_updates = 0;
     size_t mined_plausible_negative_examples = 0;
     size_t mined_plausible_negative_updates = 0;
+    size_t mined_hard_negative_examples = 0;
+    size_t mined_hard_negative_updates = 0;
     for (size_t epoch = 1; epoch <= config.epochs; ++epoch) {
         double started = (double)clock() / (double)CLOCKS_PER_SEC;
         double loss_sum = 0.0;
         size_t updates = 0;
-        size_t epoch_mined = 0;
-        size_t epoch_mined_updates = 0;
+        size_t epoch_plausible_mined = 0;
+        size_t epoch_plausible_mined_updates = 0;
+        size_t epoch_hard_mined = 0;
+        size_t epoch_hard_mined_updates = 0;
         for (size_t p = 0; p < train_count; ++p) {
             const HUPoem *real = &corpus.poems[p];
             for (int type = 0; type < HU_CORRUPT_COUNT; ++type) {
@@ -1583,8 +1796,19 @@ int main(int argc, char **argv)
                            config.learning_rate,
                            &loss_sum,
                            &updates);
-                if (type == HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE &&
-                    config.plausible_negative_extra_updates > 0) {
+                size_t extra_updates = 0;
+                size_t *epoch_mined = NULL;
+                size_t *epoch_mined_updates = NULL;
+                if (type == HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE) {
+                    extra_updates = config.plausible_negative_extra_updates;
+                    epoch_mined = &epoch_plausible_mined;
+                    epoch_mined_updates = &epoch_plausible_mined_updates;
+                } else if (is_weighted_hard_negative_corruption(type)) {
+                    extra_updates = config.hard_negative_extra_updates;
+                    epoch_mined = &epoch_hard_mined;
+                    epoch_mined_updates = &epoch_hard_mined_updates;
+                }
+                if (extra_updates > 0) {
                     nn_real scores[2];
                     nn_real probabilities[2];
                     if (score_pair(net,
@@ -1594,11 +1818,11 @@ int main(int argc, char **argv)
                                    &corrupt,
                                    scores,
                                    probabilities) &&
-                        scores[0] <= scores[1] + (nn_real)0.05) {
-                        epoch_mined += 1;
-                        for (size_t extra = 0;
-                             extra < config.plausible_negative_extra_updates;
-                             ++extra) {
+                        scores[0] <= scores[1] + (type == HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE
+                                                      ? (nn_real)0.05
+                                                      : (nn_real)0.0)) {
+                        *epoch_mined += 1;
+                        for (size_t extra = 0; extra < extra_updates; ++extra) {
                             size_t before = updates;
                             train_pair(net,
                                        &vocab,
@@ -1608,7 +1832,7 @@ int main(int argc, char **argv)
                                        config.learning_rate,
                                        &loss_sum,
                                        &updates);
-                            epoch_mined_updates += updates - before;
+                            *epoch_mined_updates += updates - before;
                         }
                     }
                 }
@@ -1617,15 +1841,20 @@ int main(int argc, char **argv)
         double elapsed = (double)clock() / (double)CLOCKS_PER_SEC - started;
         training_seconds += elapsed;
         total_updates += updates;
-        mined_plausible_negative_examples += epoch_mined;
-        mined_plausible_negative_updates += epoch_mined_updates;
+        mined_plausible_negative_examples += epoch_plausible_mined;
+        mined_plausible_negative_updates += epoch_plausible_mined_updates;
+        mined_hard_negative_examples += epoch_hard_mined;
+        mined_hard_negative_updates += epoch_hard_mined_updates;
         printf("epoch %zu loss=%.4f updates=%zu mined_plausible=%zu "
-               "mined_updates=%zu %.0f pairs/s\n",
+               "mined_plausible_updates=%zu mined_hard=%zu "
+               "mined_hard_updates=%zu %.0f pairs/s\n",
                epoch,
                updates > 0 ? loss_sum / (double)updates : 0.0,
                updates,
-               epoch_mined,
-               epoch_mined_updates,
+               epoch_plausible_mined,
+               epoch_plausible_mined_updates,
+               epoch_hard_mined,
+               epoch_hard_mined_updates,
                elapsed > 0.0 ? (double)updates / elapsed : 0.0);
     }
 
@@ -1635,7 +1864,7 @@ int main(int argc, char **argv)
         nn_checkpoint_meta_init(&meta, HU_FEATURE_ENCODER_VERSION);
         if (!nn_checkpoint_meta_set_notes(&meta,
                                           "haiku_understanding real-vs-corrupt scorer") ||
-            !nn_checkpoint_meta_set_feature_set(&meta, "haiku_understanding_v3")) {
+            !nn_checkpoint_meta_set_feature_set(&meta, "haiku_understanding_v4")) {
             fprintf(stderr, "checkpoint metadata is too long\n");
             nn_free(net);
             return EXIT_FAILURE;
@@ -1808,9 +2037,13 @@ int main(int argc, char **argv)
     printf("{\"schema\":\"crlp.haiku_understanding.summary.v1\",\"poems\":%zu,"
            "\"train_pairs\":%zu,\"valid_pairs\":%zu,\"train_top1\":%.6f,"
            "\"valid_top1\":%.6f,\"valid_nll\":%.6f,\"updates\":%zu,"
+           "\"splice_scan_limit\":%zu,"
            "\"plausible_negative_extra_updates\":%zu,"
+           "\"hard_negative_extra_updates\":%zu,"
            "\"mined_plausible_negative_examples\":%zu,"
            "\"mined_plausible_negative_updates\":%zu,"
+           "\"mined_hard_negative_examples\":%zu,"
+           "\"mined_hard_negative_updates\":%zu,"
            "\"vocab_entries\":%zu,\"adjacency_edges\":%zu,"
            "\"adjacency_transitions\":%zu,\"adjacency_hash\":\"%016llx\","
            "\"feature_encoder_version\":%u,\"model_hash\":\"%s\","
@@ -1837,9 +2070,13 @@ int main(int argc, char **argv)
            valid_acc,
            valid_nll,
            total_updates,
+           scan_limit_for_corpus(&corpus, config.splice_scan_limit),
            config.plausible_negative_extra_updates,
+           config.hard_negative_extra_updates,
            mined_plausible_negative_examples,
            mined_plausible_negative_updates,
+           mined_hard_negative_examples,
+           mined_hard_negative_updates,
            vocab.count,
            adjacency.count,
            adjacency.transitions,

@@ -13,7 +13,7 @@ LDFLAGS ?=
 LDLIBS ?= -lm
 
 BUILD_DIR := build/$(REAL)
-NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h include/nn_program.h include/nn_hypothesis.h include/nn_protocol.h include/nn_json.h include/nn_text.h include/nn_grammar_discovery.h
+NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h include/nn_bitgrid.h include/nn_tilebot.h include/nn_layer.h include/nn_program.h include/nn_hypothesis.h include/nn_protocol.h include/nn_json.h include/nn_text.h include/nn_grammar_discovery.h include/nn_paper.h
 PRIME_GAP_TASK_HEADERS := include/nn_tasks_prime_gap.h src/prime_gap/internal.h
 PRIME_GAP_MODULE_SOURCES := $(wildcard src/prime_gap/*.c)
 PRIME_GAP_TASK_OBJS := $(patsubst src/prime_gap/%.c,$(BUILD_DIR)/obj/prime_gap/%.o,$(PRIME_GAP_MODULE_SOURCES))
@@ -22,15 +22,22 @@ PRIME_GAP_SANITIZE_OBJS := $(patsubst src/prime_gap/%.c,$(BUILD_DIR)/obj/prime_g
 NN_OBJ := $(BUILD_DIR)/nn.o
 NN_EXPERIMENT_OBJ := $(BUILD_DIR)/nn_experiment.o
 NN_SYMBOLIC_OBJ := $(BUILD_DIR)/nn_symbolic.o
+NN_BITGRID_OBJ := $(BUILD_DIR)/nn_bitgrid.o
+NN_TILEBOT_OBJ := $(BUILD_DIR)/nn_tilebot.o
+NN_LAYER_OBJ := $(BUILD_DIR)/nn_layer.o
 NN_PROGRAM_OBJ := $(BUILD_DIR)/nn_program.o
 NN_HYPOTHESIS_OBJ := $(BUILD_DIR)/nn_hypothesis.o
 NN_PROTOCOL_OBJ := $(BUILD_DIR)/nn_protocol.o
 NN_JSON_OBJ := $(BUILD_DIR)/nn_json.o
 NN_TEXT_OBJ := $(BUILD_DIR)/nn_text.o
 NN_GRAMMAR_DISCOVERY_OBJ := $(BUILD_DIR)/nn_grammar_discovery.o
+NN_PAPER_OBJ := $(BUILD_DIR)/nn_paper.o
 NN_TEST_OBJ := $(BUILD_DIR)/nn_test.o
 NN_EXPERIMENT_TEST_OBJ := $(BUILD_DIR)/nn_experiment_test.o
 NN_SYMBOLIC_TEST_OBJ := $(BUILD_DIR)/nn_symbolic_test.o
+NN_BITGRID_TEST_OBJ := $(BUILD_DIR)/nn_bitgrid_test.o
+NN_TILEBOT_TEST_OBJ := $(BUILD_DIR)/nn_tilebot_test.o
+NN_LAYER_TEST_OBJ := $(BUILD_DIR)/nn_layer_test.o
 NN_PROGRAM_TEST_OBJ := $(BUILD_DIR)/nn_program_test.o
 NN_HYPOTHESIS_TEST_OBJ := $(BUILD_DIR)/nn_hypothesis_test.o
 NN_PROTOCOL_TEST_OBJ := $(BUILD_DIR)/nn_protocol_test.o
@@ -39,15 +46,23 @@ NN_TEXT_TEST_OBJ := $(BUILD_DIR)/nn_text_test.o
 NN_SANITIZE_OBJ := $(BUILD_DIR)/nn_sanitize.o
 NN_EXPERIMENT_SANITIZE_OBJ := $(BUILD_DIR)/nn_experiment_sanitize.o
 NN_SYMBOLIC_SANITIZE_OBJ := $(BUILD_DIR)/nn_symbolic_sanitize.o
+NN_BITGRID_SANITIZE_OBJ := $(BUILD_DIR)/nn_bitgrid_sanitize.o
+NN_TILEBOT_SANITIZE_OBJ := $(BUILD_DIR)/nn_tilebot_sanitize.o
+NN_LAYER_SANITIZE_OBJ := $(BUILD_DIR)/nn_layer_sanitize.o
 NN_PROGRAM_SANITIZE_OBJ := $(BUILD_DIR)/nn_program_sanitize.o
 NN_HYPOTHESIS_SANITIZE_OBJ := $(BUILD_DIR)/nn_hypothesis_sanitize.o
 NN_PROTOCOL_SANITIZE_OBJ := $(BUILD_DIR)/nn_protocol_sanitize.o
 NN_JSON_SANITIZE_OBJ := $(BUILD_DIR)/nn_json_sanitize.o
 NN_TEXT_SANITIZE_OBJ := $(BUILD_DIR)/nn_text_sanitize.o
-NN_OBJS := $(NN_OBJ) $(NN_EXPERIMENT_OBJ) $(NN_SYMBOLIC_OBJ) $(NN_PROGRAM_OBJ) $(NN_HYPOTHESIS_OBJ) $(NN_PROTOCOL_OBJ) $(NN_JSON_OBJ) $(NN_TEXT_OBJ)
-NN_TEST_OBJS := $(NN_TEST_OBJ) $(NN_EXPERIMENT_TEST_OBJ) $(NN_SYMBOLIC_TEST_OBJ) $(NN_PROGRAM_TEST_OBJ) $(NN_HYPOTHESIS_TEST_OBJ) $(NN_PROTOCOL_TEST_OBJ) $(NN_JSON_TEST_OBJ) $(NN_TEXT_TEST_OBJ)
-NN_SANITIZE_OBJS := $(NN_SANITIZE_OBJ) $(NN_EXPERIMENT_SANITIZE_OBJ) $(NN_SYMBOLIC_SANITIZE_OBJ) $(NN_PROGRAM_SANITIZE_OBJ) $(NN_HYPOTHESIS_SANITIZE_OBJ) $(NN_PROTOCOL_SANITIZE_OBJ) $(NN_JSON_SANITIZE_OBJ) $(NN_TEXT_SANITIZE_OBJ)
+NN_OBJS := $(NN_OBJ) $(NN_EXPERIMENT_OBJ) $(NN_SYMBOLIC_OBJ) $(NN_BITGRID_OBJ) $(NN_TILEBOT_OBJ) $(NN_LAYER_OBJ) $(NN_PROGRAM_OBJ) $(NN_HYPOTHESIS_OBJ) $(NN_PROTOCOL_OBJ) $(NN_JSON_OBJ) $(NN_TEXT_OBJ)
+NN_TEST_OBJS := $(NN_TEST_OBJ) $(NN_EXPERIMENT_TEST_OBJ) $(NN_SYMBOLIC_TEST_OBJ) $(NN_BITGRID_TEST_OBJ) $(NN_TILEBOT_TEST_OBJ) $(NN_LAYER_TEST_OBJ) $(NN_PROGRAM_TEST_OBJ) $(NN_HYPOTHESIS_TEST_OBJ) $(NN_PROTOCOL_TEST_OBJ) $(NN_JSON_TEST_OBJ) $(NN_TEXT_TEST_OBJ)
+NN_SANITIZE_OBJS := $(NN_SANITIZE_OBJ) $(NN_EXPERIMENT_SANITIZE_OBJ) $(NN_SYMBOLIC_SANITIZE_OBJ) $(NN_BITGRID_SANITIZE_OBJ) $(NN_TILEBOT_SANITIZE_OBJ) $(NN_LAYER_SANITIZE_OBJ) $(NN_PROGRAM_SANITIZE_OBJ) $(NN_HYPOTHESIS_SANITIZE_OBJ) $(NN_PROTOCOL_SANITIZE_OBJ) $(NN_JSON_SANITIZE_OBJ) $(NN_TEXT_SANITIZE_OBJ)
 XOR_EXAMPLE := $(BUILD_DIR)/xor
+BITWISE_RECURSIVE := $(BUILD_DIR)/bitwise_recursive
+TILE_RECURSIVE := $(BUILD_DIR)/tile_recursive
+TILE_FEATURE_ENTROPY := $(BUILD_DIR)/tile_feature_entropy
+LIFE_CURRICULUM := $(BUILD_DIR)/life_curriculum
+LAYER_DISCOVERY := $(BUILD_DIR)/layer_discovery
 ACTION_SCORE_EXAMPLE := $(BUILD_DIR)/action_score
 PRIME_GAP_EXAMPLE := $(BUILD_DIR)/prime_gap
 PRIME_REPLAY := $(BUILD_DIR)/prime_replay
@@ -241,11 +256,21 @@ HAIKU_UNDERSTANDING_HF_EPOCHS ?= 4
 HAIKU_UNDERSTANDING_SYNTHETIC_EPOCHS ?= 4
 HAIKU_UNDERSTANDING_LEARNING_RATE ?= 0.006
 HAIKU_UNDERSTANDING_TRACE_LIMIT ?= 2000
+HAIKU_UNDERSTANDING_HF_TRACE_LIMIT ?= 0
+HAIKU_UNDERSTANDING_SPLICE_SCAN_LIMIT ?= 512
+HAIKU_UNDERSTANDING_HARD_NEGATIVE_EXTRA_UPDATES ?= 0
+HAIKU_COHERENCE_DIR ?= $(BUILD_DIR)/haiku_coherence_hard_negatives
+HAIKU_COHERENCE_TRACE ?= $(HAIKU_UNDERSTANDING_DIR)/smoke_trace.jsonl
+HAIKU_COHERENCE_REPORT ?= $(HAIKU_COHERENCE_DIR)/hard_negative_rows.jsonl
+HAIKU_COHERENCE_HF_DICTIONARY_DIR ?= $(BUILD_DIR)/haiku_coherence_hard_negatives_hf_dictionary
+HAIKU_COHERENCE_HF_DICTIONARY_TRACE ?= $(HAIKU_UNDERSTANDING_DIR)/trace.hf.dictionary.jsonl
+HAIKU_COHERENCE_HF_DICTIONARY_REPORT ?= $(HAIKU_COHERENCE_HF_DICTIONARY_DIR)/hard_negative_rows.jsonl
 NEURAL_GRAMMAR_DISCOVERY_DIR ?= $(BUILD_DIR)/neural_grammar_discovery
 NEURAL_GRAMMAR_DISCOVERY_DOMAINS ?= arc,haiku,program_synthesis,grid_path,signal_mining
 NEURAL_GRAMMAR_DISCOVERY_ARC_PROOF ?= $(HYPOTHESIS_LIBRARY_NEURAL_FAILURE_PROOF_DIR)/task_proof_rows.jsonl
 NEURAL_GRAMMAR_DISCOVERY_HAIKU_WORD_TRACE ?= $(HAIKU_WORD_LM_DIR)/smoke_trace.jsonl
 NEURAL_GRAMMAR_DISCOVERY_HAIKU_UNDERSTANDING_TRACE ?= $(HAIKU_UNDERSTANDING_DIR)/smoke_trace.jsonl
+NEURAL_GRAMMAR_DISCOVERY_HAIKU_COHERENCE_REPORT ?= $(HAIKU_COHERENCE_REPORT)
 NEURAL_GRAMMAR_DISCOVERY_PROGRAM_SYNTHESIS_TRACE ?= $(NEURAL_GRAMMAR_DISCOVERY_DIR)/program_synthesis_source.jsonl
 NEURAL_GRAMMAR_DISCOVERY_GRID_TRACE ?= $(BUILD_DIR)/grid_path.jsonl
 NEURAL_GRAMMAR_DISCOVERY_SIGNAL_MINING_TRACE ?= $(BUILD_DIR)/signal_mining_smoke/trace.jsonl
@@ -261,6 +286,8 @@ LEARNED_GRAMMAR_COVERAGE_REPORT ?= $(LEARNED_GRAMMAR_COVERAGE_DIR)/coverage.json
 LEARNED_GRAMMAR_COVERAGE_EXTENDED_REPORT ?= $(LEARNED_GRAMMAR_COVERAGE_DIR)/coverage_extended.jsonl
 LEARNED_GRAMMAR_COVERAGE_BUDGET ?= data/learned_grammar_coverage_budgets.jsonl
 LEARNED_GRAMMAR_COVERAGE_BUDGET_ARG = $(if $(strip $(LEARNED_GRAMMAR_COVERAGE_BUDGET)),--budget "$(LEARNED_GRAMMAR_COVERAGE_BUDGET)",)
+LEARNED_GRAMMAR_COVERAGE_HAIKU_COHERENCE_REPORT ?= $(HAIKU_COHERENCE_REPORT)
+LEARNED_GRAMMAR_COVERAGE_HAIKU_COHERENCE_HF_DICTIONARY_REPORT ?= $(HAIKU_COHERENCE_HF_DICTIONARY_REPORT)
 LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR ?= $(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)
 LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS ?= 64
 LEARNED_GRAMMAR_COVERAGE_ARC_PUBLIC_TRAIN_LOG ?= $(LEARNED_GRAMMAR_COVERAGE_DIR)/arc_agi_public_train.jsonl
@@ -441,9 +468,9 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run action-score experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune python-check benchmark test sanitize check experimental-check clean
+.PHONY: all run action-score bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune python-check benchmark test sanitize check experimental-check clean
 
-all: $(XOR_EXAMPLE) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(BENCHMARK)
+all: $(XOR_EXAMPLE) $(BITWISE_RECURSIVE) $(TILE_RECURSIVE) $(TILE_FEATURE_ENTROPY) $(LIFE_CURRICULUM) $(LAYER_DISCOVERY) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(BENCHMARK)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -456,6 +483,15 @@ $(NN_EXPERIMENT_OBJ): src/nn_experiment.c include/nn_experiment.h | $(BUILD_DIR)
 
 $(NN_SYMBOLIC_OBJ): src/nn_symbolic.c include/nn_symbolic.h include/nn_core.h include/nn_experiment.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_symbolic.c -o $@
+
+$(NN_BITGRID_OBJ): src/nn_bitgrid.c include/nn_bitgrid.h include/nn_symbolic.h include/nn_core.h include/nn_train.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_bitgrid.c -o $@
+
+$(NN_TILEBOT_OBJ): src/nn_tilebot.c include/nn_tilebot.h include/nn_symbolic.h include/nn_core.h include/nn_train.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_tilebot.c -o $@
+
+$(NN_LAYER_OBJ): src/nn_layer.c include/nn_layer.h include/nn_bitgrid.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_layer.c -o $@
 
 $(NN_PROGRAM_OBJ): src/nn_program.c include/nn_program.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_program.c -o $@
@@ -475,6 +511,9 @@ $(NN_TEXT_OBJ): src/nn_text.c include/nn_text.h include/nn_core.h | $(BUILD_DIR)
 $(NN_GRAMMAR_DISCOVERY_OBJ): src/nn_grammar_discovery.c include/nn_grammar_discovery.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_grammar_discovery.c -o $@
 
+$(NN_PAPER_OBJ): src/nn_paper.c include/nn_paper.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_paper.c -o $@
+
 $(NN_TEST_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn.c -o $@
 
@@ -483,6 +522,15 @@ $(NN_EXPERIMENT_TEST_OBJ): src/nn_experiment.c include/nn_experiment.h | $(BUILD
 
 $(NN_SYMBOLIC_TEST_OBJ): src/nn_symbolic.c include/nn_symbolic.h include/nn_core.h include/nn_experiment.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_symbolic.c -o $@
+
+$(NN_BITGRID_TEST_OBJ): src/nn_bitgrid.c include/nn_bitgrid.h include/nn_symbolic.h include/nn_core.h include/nn_train.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_bitgrid.c -o $@
+
+$(NN_TILEBOT_TEST_OBJ): src/nn_tilebot.c include/nn_tilebot.h include/nn_symbolic.h include/nn_core.h include/nn_train.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_tilebot.c -o $@
+
+$(NN_LAYER_TEST_OBJ): src/nn_layer.c include/nn_layer.h include/nn_bitgrid.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_layer.c -o $@
 
 $(NN_PROGRAM_TEST_OBJ): src/nn_program.c include/nn_program.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_program.c -o $@
@@ -507,6 +555,15 @@ $(NN_EXPERIMENT_SANITIZE_OBJ): src/nn_experiment.c include/nn_experiment.h | $(B
 
 $(NN_SYMBOLIC_SANITIZE_OBJ): src/nn_symbolic.c include/nn_symbolic.h include/nn_core.h include/nn_experiment.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_symbolic.c -o $@
+
+$(NN_BITGRID_SANITIZE_OBJ): src/nn_bitgrid.c include/nn_bitgrid.h include/nn_symbolic.h include/nn_core.h include/nn_train.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_bitgrid.c -o $@
+
+$(NN_TILEBOT_SANITIZE_OBJ): src/nn_tilebot.c include/nn_tilebot.h include/nn_symbolic.h include/nn_core.h include/nn_train.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_tilebot.c -o $@
+
+$(NN_LAYER_SANITIZE_OBJ): src/nn_layer.c include/nn_layer.h include/nn_bitgrid.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_layer.c -o $@
 
 $(NN_PROGRAM_SANITIZE_OBJ): src/nn_program.c include/nn_program.h include/nn_symbolic.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_program.c -o $@
@@ -537,6 +594,21 @@ $(BUILD_DIR)/obj/prime_gap_sanitize/%.o: src/prime_gap/%.c $(NN_HEADERS) $(PRIME
 
 $(XOR_EXAMPLE): examples/xor.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/xor.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(BITWISE_RECURSIVE): examples/bitwise_recursive.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/bitwise_recursive.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(TILE_RECURSIVE): examples/tile_recursive.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/tile_recursive.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(TILE_FEATURE_ENTROPY): examples/tile_feature_entropy.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/tile_feature_entropy.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(LIFE_CURRICULUM): examples/life_curriculum.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/life_curriculum.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(LAYER_DISCOVERY): examples/layer_discovery.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/layer_discovery.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(ACTION_SCORE_EXAMPLE): examples/action_score.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/action_score.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
@@ -583,8 +655,8 @@ $(MODULAR_GATE_SEARCH): examples/modular_gate_search.c $(NN_OBJS) $(NN_HEADERS) 
 $(ARC_AGI): examples/arc_agi.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/arc_agi.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(NN_GRAMMAR_DISCOVERY_RUNTIME): examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) include/nn_grammar_discovery.h | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+$(NN_GRAMMAR_DISCOVERY_RUNTIME): examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_PAPER_OBJ) include/nn_grammar_discovery.h include/nn_paper.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_PAPER_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(SIGNAL_FLIGHT): examples/signal_flight.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/signal_flight.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
@@ -610,15 +682,30 @@ run: $(XOR_EXAMPLE)
 action-score: $(ACTION_SCORE_EXAMPLE)
 	./$(ACTION_SCORE_EXAMPLE)
 
+bitwise-recursive: $(BITWISE_RECURSIVE)
+	./$(BITWISE_RECURSIVE)
+
+tile-recursive: $(TILE_RECURSIVE)
+	./$(TILE_RECURSIVE)
+
+tile-feature-entropy: $(TILE_FEATURE_ENTROPY)
+	./$(TILE_FEATURE_ENTROPY)
+
+life-curriculum: $(LIFE_CURRICULUM)
+	./$(LIFE_CURRICULUM)
+
+layer-discovery: $(LAYER_DISCOVERY)
+	./$(LAYER_DISCOVERY)
+
 haiku-corpus-synthetic:
 	mkdir -p $(dir $(HAIKU_CORPUS_SUMMARY))
 	$(PYTHON) scripts/generate_haiku_corpus.py --word-list $(HAIKU_LM_LEXICON_WORD_LIST) --output $(HAIKU_CORPUS_SYNTHETIC) --count $(HAIKU_CORPUS_COUNT) --seed $(HAIKU_CORPUS_SEED) --summary $(HAIKU_CORPUS_SUMMARY) --vocab-output $(HAIKU_CORPUS_VOCAB)
 
 haiku-corpus-hf:
-	$(PYTHON) scripts/clean_haiku_hf_corpus.py --input $(HAIKU_HF_RAW) --output $(HAIKU_HF_CLEAN) --vocab-output $(HAIKU_HF_VOCAB) --manifest $(HAIKU_HF_MANIFEST) --word-list $(HAIKU_LM_LEXICON_WORD_LIST) --filter-word-list $(HAIKU_HF_FILTER_WORD_LIST) --max-poems $(HAIKU_HF_MAX_POEMS)
+	@if [ -f "$(HAIKU_HF_CLEAN)" ] && [ -f "$(HAIKU_HF_VOCAB)" ] && [ -f "$(HAIKU_HF_MANIFEST)" ]; then echo "using existing cleaned HF corpus: $(HAIKU_HF_CLEAN)"; else $(PYTHON) scripts/clean_haiku_hf_corpus.py --input "$(HAIKU_HF_RAW)" --output "$(HAIKU_HF_CLEAN)" --vocab-output "$(HAIKU_HF_VOCAB)" --manifest "$(HAIKU_HF_MANIFEST)" --word-list "$(HAIKU_LM_LEXICON_WORD_LIST)" --filter-word-list $(HAIKU_HF_FILTER_WORD_LIST) --max-poems $(HAIKU_HF_MAX_POEMS); fi
 
 haiku-corpus-hf-dictionary:
-	$(PYTHON) scripts/clean_haiku_hf_corpus.py --input $(HAIKU_HF_RAW) --output $(HAIKU_HF_DICTIONARY_CLEAN) --vocab-output $(HAIKU_HF_DICTIONARY_VOCAB) --manifest $(HAIKU_HF_DICTIONARY_MANIFEST) --word-list $(HAIKU_LM_LEXICON_WORD_LIST) --filter-word-list 1 --max-poems $(HAIKU_HF_MAX_POEMS)
+	@if [ -f "$(HAIKU_HF_DICTIONARY_CLEAN)" ] && [ -f "$(HAIKU_HF_DICTIONARY_VOCAB)" ] && [ -f "$(HAIKU_HF_DICTIONARY_MANIFEST)" ]; then echo "using existing cleaned HF dictionary corpus: $(HAIKU_HF_DICTIONARY_CLEAN)"; else $(PYTHON) scripts/clean_haiku_hf_corpus.py --input "$(HAIKU_HF_RAW)" --output "$(HAIKU_HF_DICTIONARY_CLEAN)" --vocab-output "$(HAIKU_HF_DICTIONARY_VOCAB)" --manifest "$(HAIKU_HF_DICTIONARY_MANIFEST)" --word-list "$(HAIKU_LM_LEXICON_WORD_LIST)" --filter-word-list 1 --max-poems $(HAIKU_HF_MAX_POEMS); fi
 
 haiku-lm: $(HAIKU_LM)
 	mkdir -p $(HAIKU_LM_DIR)
@@ -662,23 +749,32 @@ haiku-word-lm-hf-dictionary: $(HAIKU_WORD_LM) haiku-corpus-hf-dictionary
 
 haiku-understanding: $(HAIKU_UNDERSTANDING)
 	mkdir -p $(HAIKU_UNDERSTANDING_DIR)
-	./$(HAIKU_UNDERSTANDING) --corpus $(HAIKU_LM_CORPUS) --epochs $(HAIKU_UNDERSTANDING_EPOCHS) --lr $(HAIKU_UNDERSTANDING_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --trace-limit $(HAIKU_UNDERSTANDING_TRACE_LIMIT) --trace $(HAIKU_UNDERSTANDING_DIR)/trace.jsonl --save $(HAIKU_UNDERSTANDING_DIR)/haiku_understanding.nnckpt
+	./$(HAIKU_UNDERSTANDING) --corpus $(HAIKU_LM_CORPUS) --epochs $(HAIKU_UNDERSTANDING_EPOCHS) --lr $(HAIKU_UNDERSTANDING_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --splice-scan-limit $(HAIKU_UNDERSTANDING_SPLICE_SCAN_LIMIT) --hard-negative-extra-updates $(HAIKU_UNDERSTANDING_HARD_NEGATIVE_EXTRA_UPDATES) --trace-limit $(HAIKU_UNDERSTANDING_TRACE_LIMIT) --trace $(HAIKU_UNDERSTANDING_DIR)/trace.jsonl --save $(HAIKU_UNDERSTANDING_DIR)/haiku_understanding.nnckpt
 
 haiku-understanding-smoke: $(HAIKU_UNDERSTANDING)
 	mkdir -p $(HAIKU_UNDERSTANDING_DIR)
-	./$(HAIKU_UNDERSTANDING) --corpus $(HAIKU_LM_CORPUS) --epochs 4 --lr $(HAIKU_UNDERSTANDING_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --trace-limit 200 --trace $(HAIKU_UNDERSTANDING_DIR)/smoke_trace.jsonl --save $(HAIKU_UNDERSTANDING_DIR)/smoke.nnckpt
+	./$(HAIKU_UNDERSTANDING) --corpus $(HAIKU_LM_CORPUS) --epochs 4 --lr $(HAIKU_UNDERSTANDING_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --splice-scan-limit $(HAIKU_UNDERSTANDING_SPLICE_SCAN_LIMIT) --hard-negative-extra-updates $(HAIKU_UNDERSTANDING_HARD_NEGATIVE_EXTRA_UPDATES) --trace-limit 200 --trace $(HAIKU_UNDERSTANDING_DIR)/smoke_trace.jsonl --save $(HAIKU_UNDERSTANDING_DIR)/smoke.nnckpt
 
 haiku-understanding-synthetic: $(HAIKU_UNDERSTANDING) haiku-corpus-synthetic
 	mkdir -p $(HAIKU_UNDERSTANDING_DIR)
-	./$(HAIKU_UNDERSTANDING) --corpus $(HAIKU_CORPUS_SYNTHETIC) --epochs $(HAIKU_UNDERSTANDING_SYNTHETIC_EPOCHS) --lr $(HAIKU_UNDERSTANDING_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --trace-limit $(HAIKU_UNDERSTANDING_TRACE_LIMIT) --trace $(HAIKU_UNDERSTANDING_DIR)/trace.synthetic.jsonl --save $(HAIKU_UNDERSTANDING_DIR)/haiku_understanding.synthetic.nnckpt
+	./$(HAIKU_UNDERSTANDING) --corpus $(HAIKU_CORPUS_SYNTHETIC) --epochs $(HAIKU_UNDERSTANDING_SYNTHETIC_EPOCHS) --lr $(HAIKU_UNDERSTANDING_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --splice-scan-limit $(HAIKU_UNDERSTANDING_SPLICE_SCAN_LIMIT) --hard-negative-extra-updates $(HAIKU_UNDERSTANDING_HARD_NEGATIVE_EXTRA_UPDATES) --trace-limit $(HAIKU_UNDERSTANDING_TRACE_LIMIT) --trace $(HAIKU_UNDERSTANDING_DIR)/trace.synthetic.jsonl --save $(HAIKU_UNDERSTANDING_DIR)/haiku_understanding.synthetic.nnckpt
 
 haiku-understanding-hf: $(HAIKU_UNDERSTANDING) haiku-corpus-hf
 	mkdir -p $(HAIKU_UNDERSTANDING_DIR)
-	./$(HAIKU_UNDERSTANDING) --corpus $(HAIKU_HF_CLEAN) --epochs $(HAIKU_UNDERSTANDING_HF_EPOCHS) --lr $(HAIKU_UNDERSTANDING_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --trace-limit $(HAIKU_UNDERSTANDING_TRACE_LIMIT) --trace $(HAIKU_UNDERSTANDING_DIR)/trace.hf.jsonl --save $(HAIKU_UNDERSTANDING_DIR)/haiku_understanding.hf.nnckpt
+	./$(HAIKU_UNDERSTANDING) --corpus $(HAIKU_HF_CLEAN) --epochs $(HAIKU_UNDERSTANDING_HF_EPOCHS) --lr $(HAIKU_UNDERSTANDING_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --splice-scan-limit $(HAIKU_UNDERSTANDING_SPLICE_SCAN_LIMIT) --hard-negative-extra-updates $(HAIKU_UNDERSTANDING_HARD_NEGATIVE_EXTRA_UPDATES) --trace-limit $(HAIKU_UNDERSTANDING_HF_TRACE_LIMIT) --trace $(HAIKU_UNDERSTANDING_DIR)/trace.hf.jsonl --save $(HAIKU_UNDERSTANDING_DIR)/haiku_understanding.hf.nnckpt
 
 haiku-understanding-hf-dictionary: $(HAIKU_UNDERSTANDING) haiku-corpus-hf-dictionary
 	mkdir -p $(HAIKU_UNDERSTANDING_DIR)
-	./$(HAIKU_UNDERSTANDING) --corpus $(HAIKU_HF_DICTIONARY_CLEAN) --epochs $(HAIKU_UNDERSTANDING_HF_EPOCHS) --lr $(HAIKU_UNDERSTANDING_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --trace-limit $(HAIKU_UNDERSTANDING_TRACE_LIMIT) --trace $(HAIKU_UNDERSTANDING_DIR)/trace.hf.dictionary.jsonl --save $(HAIKU_UNDERSTANDING_DIR)/haiku_understanding.hf.dictionary.nnckpt
+	./$(HAIKU_UNDERSTANDING) --corpus $(HAIKU_HF_DICTIONARY_CLEAN) --epochs $(HAIKU_UNDERSTANDING_HF_EPOCHS) --lr $(HAIKU_UNDERSTANDING_LEARNING_RATE) --seed $(HAIKU_LM_SEED) --splice-scan-limit $(HAIKU_UNDERSTANDING_SPLICE_SCAN_LIMIT) --hard-negative-extra-updates $(HAIKU_UNDERSTANDING_HARD_NEGATIVE_EXTRA_UPDATES) --trace-limit $(HAIKU_UNDERSTANDING_HF_TRACE_LIMIT) --trace $(HAIKU_UNDERSTANDING_DIR)/trace.hf.dictionary.jsonl --save $(HAIKU_UNDERSTANDING_DIR)/haiku_understanding.hf.dictionary.nnckpt
+
+haiku-coherence-hard-negatives: $(NN_GRAMMAR_DISCOVERY_RUNTIME) haiku-understanding-smoke
+	mkdir -p $(HAIKU_COHERENCE_DIR)
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --haiku-coherence-trace "$(HAIKU_COHERENCE_TRACE)" --haiku-coherence-output-dir "$(HAIKU_COHERENCE_DIR)"
+
+haiku-coherence-hard-negatives-hf-dictionary: $(NN_GRAMMAR_DISCOVERY_RUNTIME) $(HAIKU_UNDERSTANDING_DIR)/trace.hf.dictionary.jsonl
+	@if [ ! -f "$(HAIKU_COHERENCE_HF_DICTIONARY_TRACE)" ]; then echo "missing HAIKU_COHERENCE_HF_DICTIONARY_TRACE=$(HAIKU_COHERENCE_HF_DICTIONARY_TRACE); run haiku-understanding-hf-dictionary or override this variable with an existing trace"; exit 2; fi
+	mkdir -p $(HAIKU_COHERENCE_HF_DICTIONARY_DIR)
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --haiku-coherence-trace "$(HAIKU_COHERENCE_HF_DICTIONARY_TRACE)" --haiku-coherence-output-dir "$(HAIKU_COHERENCE_HF_DICTIONARY_DIR)"
 
 experiment-schemas: $(PRIME_GAP_EXAMPLE) $(GRID_PATH) $(DELAYED_CLAIM) $(PROGRAM_SYNTHESIS) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING)
 	./$(PRIME_GAP_EXAMPLE) --schema
@@ -928,39 +1024,39 @@ hypothesis-library-public-report: hypothesis-library-public-filter
 hypothesis-library-public-triage: hypothesis-library-public-report
 	$(PYTHON) scripts/arc_public_coverage_triage.py --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --diagnostics $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR)/diagnostics.jsonl --buckets $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR)/arc_public_diagnostics_buckets.jsonl --output-dir $(HYPOTHESIS_LIBRARY_PUBLIC_TRIAGE_DIR) --top-k $(HYPOTHESIS_LIBRARY_PUBLIC_REPORT_TOP_K)
 
-hypothesis-library-neural-discovery: $(ARC_AGI) hypothesis-library-public-triage
-	$(PYTHON) scripts/arc_neural_discovery.py --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --diagnostics $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR)/diagnostics.jsonl --output-dir $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR) --clusters $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_CLUSTERS) --top-k $(HYPOTHESIS_LIBRARY_PUBLIC_REPORT_TOP_K) --verify-representatives $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_VERIFY) --mutations-per-cluster $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_MUTATIONS_PER_CLUSTER) --mutation-representatives $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_MUTATION_VERIFY)
+hypothesis-library-neural-discovery: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME) hypothesis-library-public-triage
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-neural-discovery --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --diagnostics $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR)/diagnostics.jsonl --output-dir $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR) --clusters $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_CLUSTERS) --top-k $(HYPOTHESIS_LIBRARY_PUBLIC_REPORT_TOP_K) --verify-representatives $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_VERIFY) --mutations-per-cluster $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_MUTATIONS_PER_CLUSTER) --mutation-representatives $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_MUTATION_VERIFY)
 
-hypothesis-library-neural-failure-proof: $(ARC_AGI) hypothesis-library-neural-discovery
-	$(PYTHON) scripts/arc_neural_failure_proof.py --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --mutation-verification $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR)/mutation_verification.jsonl --candidate-sketches $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR)/candidate_sketches.jsonl --triage $(HYPOTHESIS_LIBRARY_PUBLIC_TRIAGE_DIR)/coverage_triage.jsonl --output-dir $(HYPOTHESIS_LIBRARY_NEURAL_FAILURE_PROOF_DIR)
+hypothesis-library-neural-failure-proof: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME) hypothesis-library-neural-discovery
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-neural-failure-proof --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --mutation-verification $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR)/mutation_verification.jsonl --candidate-sketches $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR)/candidate_sketches.jsonl --triage $(HYPOTHESIS_LIBRARY_PUBLIC_TRIAGE_DIR)/coverage_triage.jsonl --output-dir $(HYPOTHESIS_LIBRARY_NEURAL_FAILURE_PROOF_DIR)
 
 .PHONY: neural-grammar-discovery
-neural-grammar-discovery: $(NN_GRAMMAR_DISCOVERY_RUNTIME) $(ARC_AGI) hypothesis-library-neural-failure-proof haiku-word-lm-smoke haiku-understanding-smoke program-synthesis-sketch-source grid-path-trace signal-mining-smoke
-	$(PYTHON) scripts/neural_grammar_discovery.py --domains $(NEURAL_GRAMMAR_DISCOVERY_DOMAINS) --arc-failure-proof $(NEURAL_GRAMMAR_DISCOVERY_ARC_PROOF) --arc-heldout-triage $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_TRIAGE) --arc-heldout-limit $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_LIMIT) --arc-heldout-per-family $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_PER_FAMILY) --arc-heldout-compare-limit $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_COMPARE_LIMIT) --arc-heldout-op-hints-per-task $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_OP_HINTS_PER_TASK) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --arc-agi ./$(ARC_AGI) --arc-probe-compare-limit $(NEURAL_GRAMMAR_DISCOVERY_ARC_PROBE_COMPARE_LIMIT) --haiku-word-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_WORD_TRACE) --haiku-understanding-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_UNDERSTANDING_TRACE) --program-synthesis-trace $(NEURAL_GRAMMAR_DISCOVERY_PROGRAM_SYNTHESIS_TRACE) --grid-path-trace $(NEURAL_GRAMMAR_DISCOVERY_GRID_TRACE) --signal-mining-trace $(NEURAL_GRAMMAR_DISCOVERY_SIGNAL_MINING_TRACE) --output-dir $(NEURAL_GRAMMAR_DISCOVERY_DIR) --runtime ./$(NN_GRAMMAR_DISCOVERY_RUNTIME)
+neural-grammar-discovery: $(NN_GRAMMAR_DISCOVERY_RUNTIME) $(ARC_AGI) hypothesis-library-neural-failure-proof haiku-word-lm-smoke haiku-understanding-smoke haiku-coherence-hard-negatives program-synthesis-sketch-source grid-path-trace signal-mining-smoke
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --neural-grammar-discovery --domains $(NEURAL_GRAMMAR_DISCOVERY_DOMAINS) --arc-failure-proof $(NEURAL_GRAMMAR_DISCOVERY_ARC_PROOF) --arc-heldout-triage $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_TRIAGE) --arc-heldout-limit $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_LIMIT) --arc-heldout-per-family $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_PER_FAMILY) --arc-heldout-compare-limit $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_COMPARE_LIMIT) --arc-heldout-op-hints-per-task $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_OP_HINTS_PER_TASK) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --arc-agi ./$(ARC_AGI) --arc-probe-compare-limit $(NEURAL_GRAMMAR_DISCOVERY_ARC_PROBE_COMPARE_LIMIT) --haiku-word-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_WORD_TRACE) --haiku-understanding-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_UNDERSTANDING_TRACE) --haiku-coherence-hard-negatives $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_COHERENCE_REPORT) --program-synthesis-trace $(NEURAL_GRAMMAR_DISCOVERY_PROGRAM_SYNTHESIS_TRACE) --grid-path-trace $(NEURAL_GRAMMAR_DISCOVERY_GRID_TRACE) --signal-mining-trace $(NEURAL_GRAMMAR_DISCOVERY_SIGNAL_MINING_TRACE) --output-dir $(NEURAL_GRAMMAR_DISCOVERY_DIR) --runtime ./$(NN_GRAMMAR_DISCOVERY_RUNTIME)
 
 arc-ranker-benchmark: $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	@if [ ! -f "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" ]; then echo "missing ARC_RANKER_BENCHMARK_ATTEMPTS=$(ARC_RANKER_BENCHMARK_ATTEMPTS); run make neural-grammar-discovery first or set ARC_RANKER_BENCHMARK_ATTEMPTS=/path/to/arc_visual_pipeline_neural_attempts.tsv"; exit 2; fi
-	$(PYTHON) scripts/arc_ranker_benchmark.py --runtime ./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --attempts-tsv "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" --output-dir "$(ARC_RANKER_BENCHMARK_DIR)" --report "$(ARC_RANKER_BENCHMARK_REPORT)" --epochs "$(ARC_RANKER_BENCHMARK_EPOCHS)" --max-per-task "$(ARC_RANKER_BENCHMARK_MAX_PER_TASK)"
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-ranker-benchmark --attempts-tsv "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" --output-dir "$(ARC_RANKER_BENCHMARK_DIR)" --report "$(ARC_RANKER_BENCHMARK_REPORT)" --epochs "$(ARC_RANKER_BENCHMARK_EPOCHS)" --max-per-task "$(ARC_RANKER_BENCHMARK_MAX_PER_TASK)"
 
 arc-ranker-failure-report: arc-ranker-benchmark
-	$(PYTHON) scripts/arc_ranker_failure_report.py --attempts-tsv "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" --proposals "$(ARC_RANKER_FAILURE_PROPOSALS)" --summary "$(ARC_RANKER_FAILURE_SUMMARY)" --output "$(ARC_RANKER_FAILURE_REPORT)" --markdown "$(ARC_RANKER_FAILURE_MARKDOWN)"
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-ranker-failure-report --attempts-tsv "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" --proposals "$(ARC_RANKER_FAILURE_PROPOSALS)" --summary "$(ARC_RANKER_FAILURE_SUMMARY)" --output "$(ARC_RANKER_FAILURE_REPORT)" --markdown "$(ARC_RANKER_FAILURE_MARKDOWN)"
 
 arc-synthetic-shape-curriculum: $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	@if [ ! -f "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" ]; then echo "missing ARC_RANKER_BENCHMARK_ATTEMPTS=$(ARC_RANKER_BENCHMARK_ATTEMPTS); run make neural-grammar-discovery first or set ARC_RANKER_BENCHMARK_ATTEMPTS=/path/to/arc_visual_pipeline_neural_attempts.tsv"; exit 2; fi
-	$(PYTHON) scripts/arc_synthetic_shape_curriculum.py --attempts-tsv "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" --output-dir "$(ARC_SYNTHETIC_SHAPE_CURRICULUM_DIR)" --synthetic-attempts "$(ARC_SYNTHETIC_SHAPE_ATTEMPTS)" --combined-attempts "$(ARC_SYNTHETIC_SHAPE_COMBINED_ATTEMPTS)" --summary "$(ARC_SYNTHETIC_SHAPE_SUMMARY)" --max-grid-size "$(ARC_SYNTHETIC_SHAPE_MAX_GRID_SIZE)" --ops "$(ARC_SYNTHETIC_SHAPE_OPS)" --negative-kinds "$(ARC_SYNTHETIC_SHAPE_NEGATIVE_KINDS)" --op-mode "$(ARC_SYNTHETIC_SHAPE_OP_MODE)" --max-accepted "$(ARC_SYNTHETIC_SHAPE_MAX_ACCEPTED)"
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-synthetic-shape-curriculum --attempts-tsv "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" --output-dir "$(ARC_SYNTHETIC_SHAPE_CURRICULUM_DIR)" --synthetic-attempts "$(ARC_SYNTHETIC_SHAPE_ATTEMPTS)" --combined-attempts "$(ARC_SYNTHETIC_SHAPE_COMBINED_ATTEMPTS)" --summary "$(ARC_SYNTHETIC_SHAPE_SUMMARY)" --max-grid-size "$(ARC_SYNTHETIC_SHAPE_MAX_GRID_SIZE)" --ops "$(ARC_SYNTHETIC_SHAPE_OPS)" --negative-kinds "$(ARC_SYNTHETIC_SHAPE_NEGATIVE_KINDS)" --op-mode "$(ARC_SYNTHETIC_SHAPE_OP_MODE)" --max-accepted "$(ARC_SYNTHETIC_SHAPE_MAX_ACCEPTED)"
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-pipeline-attempts "$(ARC_SYNTHETIC_SHAPE_COMBINED_ATTEMPTS)" --arc-pipeline-proposals-output "$(ARC_SYNTHETIC_SHAPE_PROPOSALS)" --arc-pipeline-summary-output "$(ARC_SYNTHETIC_SHAPE_RANKER_SUMMARY)" --arc-pipeline-cache "$(ARC_SYNTHETIC_SHAPE_CACHE)" --arc-pipeline-max-per-task "$(ARC_SYNTHETIC_SHAPE_RANKER_MAX_PER_TASK)" --epochs "$(ARC_SYNTHETIC_SHAPE_RANKER_EPOCHS)" --learning-rate "$(ARC_SYNTHETIC_SHAPE_RANKER_LEARNING_RATE)"
-	$(PYTHON) scripts/arc_ranker_failure_report.py --attempts-tsv "$(ARC_SYNTHETIC_SHAPE_COMBINED_ATTEMPTS)" --proposals "$(ARC_SYNTHETIC_SHAPE_PROPOSALS)" --summary "$(ARC_SYNTHETIC_SHAPE_RANKER_SUMMARY)" --output "$(ARC_SYNTHETIC_SHAPE_FAILURE_REPORT)" --markdown "$(ARC_SYNTHETIC_SHAPE_FAILURE_MARKDOWN)"
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-ranker-failure-report --attempts-tsv "$(ARC_SYNTHETIC_SHAPE_COMBINED_ATTEMPTS)" --proposals "$(ARC_SYNTHETIC_SHAPE_PROPOSALS)" --summary "$(ARC_SYNTHETIC_SHAPE_RANKER_SUMMARY)" --output "$(ARC_SYNTHETIC_SHAPE_FAILURE_REPORT)" --markdown "$(ARC_SYNTHETIC_SHAPE_FAILURE_MARKDOWN)"
 
 arc-synthetic-shape-probe: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2; fi
 	@if [ ! -f "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" ]; then echo "missing ARC_RANKER_BENCHMARK_ATTEMPTS=$(ARC_RANKER_BENCHMARK_ATTEMPTS); run make arc-ranker-benchmark first or set ARC_RANKER_BENCHMARK_ATTEMPTS=/path/to/arc_visual_pipeline_neural_attempts.tsv"; exit 2; fi
 	@if [ ! -f "$(ARC_RANKER_FAILURE_REPORT)" ]; then echo "missing ARC_RANKER_FAILURE_REPORT=$(ARC_RANKER_FAILURE_REPORT); run make arc-ranker-failure-report first"; exit 2; fi
 	mkdir -p $(ARC_SYNTHETIC_SHAPE_PROBE_DIR)
-	$(PYTHON) scripts/arc_synthetic_shape_probe_candidates.py --failure-report "$(ARC_RANKER_FAILURE_REPORT)" --public-arc-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" --candidate-tsv "$(ARC_SYNTHETIC_SHAPE_PROBE_CANDIDATES)" --examples "$(ARC_SYNTHETIC_SHAPE_PROBE_EXAMPLES)" --summary "$(ARC_SYNTHETIC_SHAPE_PROBE_CANDIDATE_SUMMARY)" --max-rows-per-task "$(ARC_SYNTHETIC_SHAPE_PROBE_MAX_ROWS_PER_TASK)" --max-tasks "$(ARC_SYNTHETIC_SHAPE_PROBE_MAX_TASKS)" --profile "$(ARC_SYNTHETIC_SHAPE_PROBE_PROFILE)"
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-synthetic-shape-probe-candidates --failure-report "$(ARC_RANKER_FAILURE_REPORT)" --public-arc-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" --candidate-tsv "$(ARC_SYNTHETIC_SHAPE_PROBE_CANDIDATES)" --examples "$(ARC_SYNTHETIC_SHAPE_PROBE_EXAMPLES)" --summary "$(ARC_SYNTHETIC_SHAPE_PROBE_CANDIDATE_SUMMARY)" --max-rows-per-task "$(ARC_SYNTHETIC_SHAPE_PROBE_MAX_ROWS_PER_TASK)" --max-tasks "$(ARC_SYNTHETIC_SHAPE_PROBE_MAX_TASKS)" --profile "$(ARC_SYNTHETIC_SHAPE_PROBE_PROFILE)"
 	./$(ARC_AGI) --arc-sketch-probe-candidates "$(ARC_SYNTHETIC_SHAPE_PROBE_CANDIDATES)" --public-arc-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" --arc-sketch-probe-sources "$(ARC_SYNTHETIC_SHAPE_PROBE_SOURCES)" --arc-sketch-probe-prior "$(ARC_SYNTHETIC_SHAPE_PROBE_PRIOR)" --arc-sketch-probe-attempts "$(ARC_SYNTHETIC_SHAPE_PROBE_ATTEMPTS)" --arc-sketches-per-task "$(ARC_SYNTHETIC_SHAPE_PROBE_SKETCHES_PER_TASK)"
-	$(PYTHON) scripts/arc_append_probe_attempts_tsv.py --base-attempts-tsv "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" --probe-attempts-jsonl "$(ARC_SYNTHETIC_SHAPE_PROBE_ATTEMPTS)" --combined-attempts-tsv "$(ARC_SYNTHETIC_SHAPE_PROBE_COMBINED_ATTEMPTS)" --summary "$(ARC_SYNTHETIC_SHAPE_PROBE_APPEND_SUMMARY)" --split-name target
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-append-probe-attempts-tsv --base-attempts-tsv "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" --probe-attempts-jsonl "$(ARC_SYNTHETIC_SHAPE_PROBE_ATTEMPTS)" --combined-attempts-tsv "$(ARC_SYNTHETIC_SHAPE_PROBE_COMBINED_ATTEMPTS)" --summary "$(ARC_SYNTHETIC_SHAPE_PROBE_APPEND_SUMMARY)" --split-name target
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-pipeline-attempts "$(ARC_SYNTHETIC_SHAPE_PROBE_COMBINED_ATTEMPTS)" --arc-pipeline-proposals-output "$(ARC_SYNTHETIC_SHAPE_PROBE_PROPOSALS)" --arc-pipeline-summary-output "$(ARC_SYNTHETIC_SHAPE_PROBE_RANKER_SUMMARY)" --arc-pipeline-cache "$(ARC_SYNTHETIC_SHAPE_PROBE_CACHE)" --arc-pipeline-max-per-task "$(ARC_SYNTHETIC_SHAPE_PROBE_RANKER_MAX_PER_TASK)" --epochs "$(ARC_SYNTHETIC_SHAPE_PROBE_RANKER_EPOCHS)" --learning-rate "$(ARC_SYNTHETIC_SHAPE_PROBE_RANKER_LEARNING_RATE)"
-	$(PYTHON) scripts/arc_ranker_failure_report.py --attempts-tsv "$(ARC_SYNTHETIC_SHAPE_PROBE_COMBINED_ATTEMPTS)" --proposals "$(ARC_SYNTHETIC_SHAPE_PROBE_PROPOSALS)" --summary "$(ARC_SYNTHETIC_SHAPE_PROBE_RANKER_SUMMARY)" --output "$(ARC_SYNTHETIC_SHAPE_PROBE_FAILURE_REPORT)" --markdown "$(ARC_SYNTHETIC_SHAPE_PROBE_FAILURE_MARKDOWN)"
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-ranker-failure-report --attempts-tsv "$(ARC_SYNTHETIC_SHAPE_PROBE_COMBINED_ATTEMPTS)" --proposals "$(ARC_SYNTHETIC_SHAPE_PROBE_PROPOSALS)" --summary "$(ARC_SYNTHETIC_SHAPE_PROBE_RANKER_SUMMARY)" --output "$(ARC_SYNTHETIC_SHAPE_PROBE_FAILURE_REPORT)" --markdown "$(ARC_SYNTHETIC_SHAPE_PROBE_FAILURE_MARKDOWN)"
 
 paper-grade-evidence-core: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit multitask-adapter-heads experiment-matrix
 	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR)
@@ -1048,15 +1144,16 @@ signal-shadow-replay-audit:
 experiment-matrix: paper-support
 	$(PYTHON) scripts/experiment_matrix.py
 
-learned-grammar-coverage: $(ARC_AGI) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING)
+learned-grammar-coverage: $(ARC_AGI) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	mkdir -p $(LEARNED_GRAMMAR_COVERAGE_DIR)
 	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 14 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 13 > $(LEARNED_GRAMMAR_COVERAGE_ARC_LOG)
 	$(MAKE) haiku-word-lm-smoke
-	$(MAKE) haiku-understanding-smoke
-	$(PYTHON) scripts/learned_grammar_coverage.py \
+	$(MAKE) haiku-coherence-hard-negatives
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --learned-grammar-coverage \
 		--arc-log "fixture_regression=$(LEARNED_GRAMMAR_COVERAGE_ARC_LOG)" \
 		--haiku-word-trace "smoke_trace=$(HAIKU_WORD_LM_DIR)/smoke_trace.jsonl" \
 		--haiku-understanding-trace "smoke_trace=$(HAIKU_UNDERSTANDING_DIR)/smoke_trace.jsonl" \
+		--haiku-coherence-report "smoke_trace=$(LEARNED_GRAMMAR_COVERAGE_HAIKU_COHERENCE_REPORT)" \
 		$(LEARNED_GRAMMAR_COVERAGE_BUDGET_ARG) \
 		--output "$(LEARNED_GRAMMAR_COVERAGE_REPORT)" \
 		--fail-on-regression
@@ -1067,7 +1164,7 @@ learned-grammar-coverage-public: $(ARC_AGI)
 	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/training" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 > $(LEARNED_GRAMMAR_COVERAGE_ARC_PUBLIC_TRAIN_LOG)
 	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 > $(LEARNED_GRAMMAR_COVERAGE_ARC_PUBLIC_EVAL_LOG)
 
-learned-grammar-coverage-arc-visual-compare: $(ARC_AGI)
+learned-grammar-coverage-arc-visual-compare: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2; fi
 	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR); run neural-grammar-discovery first"; exit 2; fi
 	mkdir -p $(LEARNED_GRAMMAR_COVERAGE_DIR)
@@ -1078,7 +1175,7 @@ learned-grammar-coverage-arc-visual-compare: $(ARC_AGI)
 	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/training" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only --hypothesis-library-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" > $(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PUBLIC_TRAIN_LOG)
 	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 > $(LEARNED_GRAMMAR_COVERAGE_ARC_PUBLIC_EVAL_LOG)
 	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only --hypothesis-library-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" > $(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PUBLIC_EVAL_LOG)
-	$(PYTHON) scripts/arc_visual_curriculum.py \
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-visual-curriculum \
 		--visual-only-log "fixture_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_FIXTURE_LOG)" \
 		--visual-only-log "public_train_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PUBLIC_TRAIN_LOG)" \
 		--visual-only-log "public_eval_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PUBLIC_EVAL_LOG)" \
@@ -1087,7 +1184,7 @@ learned-grammar-coverage-arc-visual-compare: $(ARC_AGI)
 		--examples "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_EXAMPLES)" \
 		--summary "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_SUMMARY)"
 	./$(ARC_AGI) --arc-sketch-probe-candidates "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_CANDIDATES)" --public-arc-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" --arc-sketch-probe-sources "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_SOURCES)" --arc-sketch-probe-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_PRIOR)" --arc-sketch-probe-attempts "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_ATTEMPTS)" --arc-sketches-per-task 64
-	$(PYTHON) scripts/arc_visual_curriculum.py \
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-visual-curriculum \
 		--visual-only-log "fixture_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_FIXTURE_LOG)" \
 		--visual-only-log "public_train_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PUBLIC_TRAIN_LOG)" \
 		--visual-only-log "public_eval_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PUBLIC_EVAL_LOG)" \
@@ -1099,7 +1196,7 @@ learned-grammar-coverage-arc-visual-compare: $(ARC_AGI)
 	awk 'NR==1 || FNR>1' "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_PRIOR)" > "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)"
 	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/training" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only --hypothesis-library-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)" > $(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_PUBLIC_TRAIN_LOG)
 	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only --hypothesis-library-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)" > $(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_PUBLIC_EVAL_LOG)
-	$(PYTHON) scripts/learned_grammar_coverage.py \
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --learned-grammar-coverage \
 		--arc-log "fixture_baseline=$(LEARNED_GRAMMAR_COVERAGE_ARC_LOG)" \
 		--arc-log "fixture_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_FIXTURE_LOG)" \
 		--arc-log "public_train_baseline=$(LEARNED_GRAMMAR_COVERAGE_ARC_PUBLIC_TRAIN_LOG)" \
@@ -1110,12 +1207,13 @@ learned-grammar-coverage-arc-visual-compare: $(ARC_AGI)
 		--arc-log "public_eval_curriculum_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_PUBLIC_EVAL_LOG)" \
 		--output "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_COMPARE_REPORT)"
 
-arc-visual-active-curriculum: $(ARC_AGI)
+arc-visual-active-curriculum: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2; fi
 	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR); run neural-grammar-discovery first"; exit 2; fi
 	mkdir -p $(ARC_VISUAL_ACTIVE_CURRICULUM_DIR)
 	$(PYTHON) scripts/arc_visual_active_curriculum.py \
 		--arc-agi ./$(ARC_AGI) \
+		--runtime ./$(NN_GRAMMAR_DISCOVERY_RUNTIME) \
 		--public-arc-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" \
 		--seed-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" \
 		--output-dir "$(ARC_VISUAL_ACTIVE_CURRICULUM_DIR)" \
@@ -1143,12 +1241,12 @@ arc-visual-capacity-sweep: $(NN_GRAMMAR_DISCOVERY_RUNTIME) $(ARC_AGI)
 		--output "$(ARC_VISUAL_CAPACITY_SWEEP_REPORT)" \
 		--markdown "$(ARC_VISUAL_CAPACITY_SWEEP_MARKDOWN)"
 
-arc-visual-hole-proposer: $(ARC_AGI)
+arc-visual-hole-proposer: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2; fi
 	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_ATTEMPTS)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_ATTEMPTS=$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_ATTEMPTS); run learned-grammar-coverage-arc-visual-compare first"; exit 2; fi
 	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR=$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR); run learned-grammar-coverage-arc-visual-compare first"; exit 2; fi
 	mkdir -p $(ARC_VISUAL_HOLE_PROPOSER_DIR)
-	$(PYTHON) scripts/arc_visual_hole_proposer.py \
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-visual-hole-proposer \
 		--visual-only-log "public_train_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PUBLIC_TRAIN_LOG)" \
 		--visual-only-log "public_train_curriculum_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_PUBLIC_TRAIN_LOG)" \
 		--visual-only-log "public_eval_curriculum_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_PUBLIC_EVAL_LOG)" \
@@ -1161,7 +1259,7 @@ arc-visual-hole-proposer: $(ARC_AGI)
 	awk 'NR==1 || FNR>1' "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)" "$(ARC_VISUAL_HOLE_PROPOSER_PRIOR)" > "$(ARC_VISUAL_HOLE_PROPOSER_COMBINED_PRIOR)"
 	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/training" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only --hypothesis-library-prior "$(ARC_VISUAL_HOLE_PROPOSER_COMBINED_PRIOR)" > $(ARC_VISUAL_HOLE_PROPOSER_PUBLIC_TRAIN_LOG)
 	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only --hypothesis-library-prior "$(ARC_VISUAL_HOLE_PROPOSER_COMBINED_PRIOR)" > $(ARC_VISUAL_HOLE_PROPOSER_PUBLIC_EVAL_LOG)
-	$(PYTHON) scripts/learned_grammar_coverage.py \
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --learned-grammar-coverage \
 		--arc-log "public_train_curriculum_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_PUBLIC_TRAIN_LOG)" \
 		--arc-log "public_train_hole_proposer_visual_only=$(ARC_VISUAL_HOLE_PROPOSER_PUBLIC_TRAIN_LOG)" \
 		--arc-log "public_eval_curriculum_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_PUBLIC_EVAL_LOG)" \
@@ -1180,8 +1278,8 @@ $(HAIKU_UNDERSTANDING_DIR)/trace.hf.jsonl:
 $(HAIKU_UNDERSTANDING_DIR)/trace.hf.dictionary.jsonl:
 	$(MAKE) haiku-understanding-hf-dictionary
 
-learned-grammar-coverage-extended: learned-grammar-coverage learned-grammar-coverage-public $(HAIKU_WORD_LM_DIR)/trace.hf.jsonl $(HAIKU_WORD_LM_DIR)/trace.hf.dictionary.jsonl $(HAIKU_UNDERSTANDING_DIR)/trace.hf.jsonl $(HAIKU_UNDERSTANDING_DIR)/trace.hf.dictionary.jsonl
-	$(PYTHON) scripts/learned_grammar_coverage.py \
+learned-grammar-coverage-extended: learned-grammar-coverage learned-grammar-coverage-public $(HAIKU_WORD_LM_DIR)/trace.hf.jsonl $(HAIKU_WORD_LM_DIR)/trace.hf.dictionary.jsonl $(HAIKU_UNDERSTANDING_DIR)/trace.hf.jsonl $(HAIKU_UNDERSTANDING_DIR)/trace.hf.dictionary.jsonl haiku-coherence-hard-negatives-hf-dictionary $(NN_GRAMMAR_DISCOVERY_RUNTIME)
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --learned-grammar-coverage \
 		--arc-log "fixture_regression=$(LEARNED_GRAMMAR_COVERAGE_ARC_LOG)" \
 		--arc-log "public_train=$(LEARNED_GRAMMAR_COVERAGE_ARC_PUBLIC_TRAIN_LOG)" \
 		--arc-log "public_eval=$(LEARNED_GRAMMAR_COVERAGE_ARC_PUBLIC_EVAL_LOG)" \
@@ -1191,6 +1289,8 @@ learned-grammar-coverage-extended: learned-grammar-coverage learned-grammar-cove
 		--haiku-understanding-trace "smoke_trace=$(HAIKU_UNDERSTANDING_DIR)/smoke_trace.jsonl" \
 		--haiku-understanding-trace "hf=$(HAIKU_UNDERSTANDING_DIR)/trace.hf.jsonl" \
 		--haiku-understanding-trace "hf_dictionary=$(HAIKU_UNDERSTANDING_DIR)/trace.hf.dictionary.jsonl" \
+		--haiku-coherence-report "smoke_trace=$(LEARNED_GRAMMAR_COVERAGE_HAIKU_COHERENCE_REPORT)" \
+		--haiku-coherence-report "hf_dictionary=$(LEARNED_GRAMMAR_COVERAGE_HAIKU_COHERENCE_HF_DICTIONARY_REPORT)" \
 		$(LEARNED_GRAMMAR_COVERAGE_BUDGET_ARG) \
 		--output "$(LEARNED_GRAMMAR_COVERAGE_EXTENDED_REPORT)" \
 		--fail-on-regression
@@ -1215,9 +1315,9 @@ protocol-operator-promotion: protocol-spine
 		--min-domains $(PROTOCOL_OPERATOR_MIN_DOMAINS) \
 		--min-support-rows $(PROTOCOL_OPERATOR_MIN_SUPPORT_ROWS)
 
-experiment-health: learned-grammar-coverage numeric-certificate-report paper-support
+experiment-health: learned-grammar-coverage numeric-certificate-report paper-support $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	mkdir -p $(EXPERIMENT_HEALTH_DIR)
-	$(PYTHON) scripts/experiment_health.py \
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --experiment-health \
 		--coverage "$(LEARNED_GRAMMAR_COVERAGE_REPORT)" \
 		--numeric-summary "$(NUMERIC_CERTIFICATE_DIR)/summary.jsonl" \
 		--numeric-report "$(NUMERIC_CERTIFICATE_REPORT)" \
@@ -1231,9 +1331,9 @@ experiment-health: learned-grammar-coverage numeric-certificate-report paper-sup
 		--operator-promotions "$(PROTOCOL_OPERATOR_REPORT)" \
 		--output "$(EXPERIMENT_HEALTH_REPORT)"
 
-experiment-health-extended: learned-grammar-coverage-extended numeric-certificate-report paper-support
+experiment-health-extended: learned-grammar-coverage-extended numeric-certificate-report paper-support $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	mkdir -p $(EXPERIMENT_HEALTH_DIR)
-	$(PYTHON) scripts/experiment_health.py \
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --experiment-health \
 		--coverage "$(LEARNED_GRAMMAR_COVERAGE_EXTENDED_REPORT)" \
 		--numeric-summary "$(NUMERIC_CERTIFICATE_DIR)/summary.jsonl" \
 		--numeric-report "$(NUMERIC_CERTIFICATE_REPORT)" \
@@ -1344,24 +1444,24 @@ experimental-results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME
 paper-pdf: experiment-matrix paper/paper.typ
 	cd paper && typst compile paper.typ paper.pdf
 
-paper-data:
-	$(PYTHON) paper/scripts/extract_learning_curves.py > paper/data.json
+paper-data: $(NN_GRAMMAR_DISCOVERY_RUNTIME) $(ARC_AGI) $(PRIME_GAP_EXAMPLE)
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --paper-data --paper-data-output paper/data.json --paper-data-typ paper/data.typ --comparison "$(RESULTS_DIR)/comparison.jsonl" --prime-gap-trace "$(BUILD_DIR)/traces/prime_gap.jsonl" --grid-path-trace "$(BUILD_DIR)/grid_path.jsonl" --delayed-claim-trace "$(BUILD_DIR)/delayed_claim.jsonl" --arc-agi ./$(ARC_AGI) --prime-gap ./$(PRIME_GAP_EXAMPLE)
 
-paper-claims:
-	$(PYTHON) scripts/derive_paper_claims.py
+paper-claims: $(NN_GRAMMAR_DISCOVERY_RUNTIME)
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --paper-claims --claims paper/claims.yaml --output-dir paper/generated --paper paper/paper.typ --agent-candidates-dir paper/agent_candidates
 
 paper-agent-propose: paper-claims
 	PAPER_AGENT_MODEL="$(PAPER_AGENT_MODEL)" PAPER_AGENT_LLM_CMD="$(PAPER_AGENT_LLM_CMD)" $(PYTHON) scripts/paper_agent_propose.py --prompt-output "$(PAPER_AGENT_PROMPT)" --output "$(PAPER_AGENT_OUTPUT)"
 	@if [ -n "$(PAPER_AGENT_LLM_CMD)" ]; then $(MAKE) paper-claims; fi
 
-paper-pre-commit:
-	$(PYTHON) scripts/pre_commit_paper_claims.py
+paper-pre-commit: $(NN_GRAMMAR_DISCOVERY_RUNTIME)
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --paper-claims --claims paper/claims.yaml --output-dir paper/generated --paper paper/paper.typ --agent-candidates-dir paper/agent_candidates --support-check --fail-required
 
 install-hooks:
 	git config core.hooksPath .githooks
 
-paper-support: trace-determinism-compare
-	$(PYTHON) scripts/derive_paper_claims.py --support-check
+paper-support: trace-determinism-compare $(NN_GRAMMAR_DISCOVERY_RUNTIME)
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --paper-claims --claims paper/claims.yaml --output-dir paper/generated --paper paper/paper.typ --agent-candidates-dir paper/agent_candidates --support-check --fail-required
 
 editorial-pr-check:
 	$(PYTHON) scripts/check_editorial_pr.py
@@ -1372,7 +1472,7 @@ neurosymbolic-tune: all
 	$(PYTHON) scripts/neurosymbolic_tuning.py --output-dir $(TUNING_DIR) --real $(REAL) --skip-build
 
 python-check:
-	$(PYTHON) -m compileall -q scripts paper/scripts
+	$(PYTHON) -m compileall -q scripts
 
 test: $(TEST_RUNNER)
 	./$(TEST_RUNNER)
@@ -1384,7 +1484,7 @@ check: python-check trace-determinism-compare paper-support test sanitize action
 	$(MAKE) test REAL=double
 	$(MAKE) numeric-certificate-mandatory
 
-experimental-check: program-synthesis program-synthesis-baselines arc-agi arc-agi-induction-smoke multitask-domain haiku-word-lm-smoke haiku-understanding-smoke learned-grammar-coverage
+experimental-check: program-synthesis program-synthesis-baselines arc-agi arc-agi-induction-smoke multitask-domain haiku-word-lm-smoke haiku-understanding-smoke haiku-coherence-hard-negatives learned-grammar-coverage
 
 clean:
 	rm -rf $(BUILD_DIR)

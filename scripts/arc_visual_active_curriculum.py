@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -176,8 +175,8 @@ def run_iteration(args: argparse.Namespace, iteration: int, prior: Path) -> tupl
     attempts_jsonl = iter_dir / "arc_visual_curriculum_attempts.jsonl"
 
     curriculum_cmd = [
-        sys.executable,
-        str(args.curriculum_script),
+        str(args.runtime),
+        "--arc-visual-curriculum",
         "--visual-only-log",
         f"public_train_visual_only={train_log}",
         "--visual-only-log",
@@ -212,8 +211,8 @@ def run_iteration(args: argparse.Namespace, iteration: int, prior: Path) -> tupl
     export_status = run_to_log(export_cmd, export_log)
 
     summary_cmd = [
-        sys.executable,
-        str(args.curriculum_script),
+        str(args.runtime),
+        "--arc-visual-curriculum",
         "--visual-only-log",
         f"public_train_visual_only={train_log}",
         "--visual-only-log",
@@ -313,11 +312,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed-prior", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--summary", type=Path, required=True)
-    parser.add_argument(
-        "--curriculum-script",
-        type=Path,
-        default=Path("scripts/arc_visual_curriculum.py"),
-    )
+    parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--max-tasks", type=int, default=64)
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--sketches-per-task", type=int, default=64)

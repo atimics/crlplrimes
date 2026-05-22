@@ -118,7 +118,7 @@ The loop is split so deterministic gates are cheap and LLM proposal is explicit:
 | Moment | Command | Purpose |
 | --- | --- | --- |
 | Proposal pass | `make paper-agent-propose` | Read `paper/generated/paper_agent_trace.jsonl` and write a prompt for the next LLM proposal pass. If `PAPER_AGENT_LLM_CMD` is set, run that command and normalize JSONL candidates into `paper/agent_candidates/llm_proposals.jsonl`. |
-| Local commit gate | `make paper-pre-commit` or the tracked `.githooks/pre-commit` hook | Run only `scripts/derive_paper_claims.py` when staged paper claim inputs changed. The hook fails if generated paper artifacts change, so the author reviews and stages them deliberately. |
+| Local commit gate | `make paper-pre-commit` or the tracked `.githooks/pre-commit` hook | Run the C neural grammar discovery runtime in paper-claim mode. The hook fails if required generated paper support becomes unsupported, so the author reviews and stages regenerated artifacts deliberately. |
 | Hook install | `make install-hooks` | Set `core.hooksPath=.githooks` for this checkout. |
 | PR / CI gate | `make paper-support` and `make paper-ci` | Re-run deterministic support checks, editorial checks, and PDF compilation. |
 

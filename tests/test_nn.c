@@ -478,6 +478,522 @@ static int test_symbolic_rule_coverage_and_residual_summary(void)
     return ok;
 }
 
+static int test_bitgrid_patterns_and_truth_masks(void)
+{
+    NNBitGrid one = {0};
+    NNBitGrid two_a = {0};
+    NNBitGrid two_b = {0};
+    NNBitGrid three_a = {0};
+    NNBitGrid three_b = {0};
+    char buffer[16];
+    uint8_t out = 0;
+
+    int ok = nn_bitgrid_init(&one, 1u, 1u) &&
+             nn_bitgrid_init(&two_a, 2u, 1u) &&
+             nn_bitgrid_init(&two_b, 2u, 1u) &&
+             nn_bitgrid_init(&three_a, 3u, 1u) &&
+             nn_bitgrid_init(&three_b, 3u, 1u);
+    ok = ok && nn_bitgrid_fill_alternating(&one, 0u) &&
+         nn_bitgrid_write_pattern(&one, buffer, sizeof(buffer)) &&
+         strcmp(buffer, "0") == 0;
+    ok = ok && nn_bitgrid_fill_alternating(&two_a, 0u) &&
+         nn_bitgrid_write_pattern(&two_a, buffer, sizeof(buffer)) &&
+         strcmp(buffer, "01") == 0;
+    ok = ok && nn_bitgrid_fill_alternating(&two_b, 1u) &&
+         nn_bitgrid_write_pattern(&two_b, buffer, sizeof(buffer)) &&
+         strcmp(buffer, "10") == 0;
+    ok = ok && nn_bitgrid_fill_alternating(&three_a, 0u) &&
+         nn_bitgrid_write_pattern(&three_a, buffer, sizeof(buffer)) &&
+         strcmp(buffer, "010") == 0;
+    ok = ok && nn_bitgrid_fill_alternating(&three_b, 1u) &&
+         nn_bitgrid_write_pattern(&three_b, buffer, sizeof(buffer)) &&
+         strcmp(buffer, "101") == 0 &&
+         nn_bitgrid_hamming_distance(&three_a, &three_b) == 3u;
+
+    ok = ok && nn_bitwise_truth_mask_eval(NN_BITWISE_XOR, 0u, 0u, &out) && out == 0u &&
+         nn_bitwise_truth_mask_eval(NN_BITWISE_XOR, 0u, 1u, &out) && out == 1u &&
+         nn_bitwise_truth_mask_eval(NN_BITWISE_XOR, 1u, 0u, &out) && out == 1u &&
+         nn_bitwise_truth_mask_eval(NN_BITWISE_XOR, 1u, 1u, &out) && out == 0u &&
+         strcmp(nn_bitwise_truth_mask_name(NN_BITWISE_XOR), "xor") == 0 &&
+         strcmp(nn_bitwise_truth_mask_name(NN_BITWISE_NAND), "nand") == 0;
+
+    nn_bitgrid_free(&one);
+    nn_bitgrid_free(&two_a);
+    nn_bitgrid_free(&two_b);
+    nn_bitgrid_free(&three_a);
+    nn_bitgrid_free(&three_b);
+    return ok;
+}
+
+static int test_bitwise_truth_table_gates_promote_complete_domain(void)
+{
+    NNBitwiseTrainConfig config;
+    nn_bitwise_train_config_init(&config);
+    config.seed = 7319u;
+    config.min_margin = (nn_real)0.05;
+
+    NNBitGrid a = {0};
+    NNBitGrid b = {0};
+    NNBitGrid out_grid = {0};
+    int ok = nn_bitgrid_init(&a, 3u, 1u) &&
+             nn_bitgrid_init(&b, 3u, 1u) &&
+             nn_bitgrid_init(&out_grid, 3u, 1u) &&
+             nn_bitgrid_fill_alternating(&a, 0u) &&
+             nn_bitgrid_fill_alternating(&b, 1u);
+
+    for (uint8_t mask = 0; ok && mask < NN_BITWISE_BINARY_TRUTH_TABLES; ++mask) {
+        NNBitwiseGate gate;
+        nn_bitwise_gate_init(&gate);
+        ok = nn_bitwise_gate_train_truth_table(&gate, mask, &config) &&
+             gate.certificate.status == NN_CERTIFICATE_CERTIFIED &&
+             gate.report.promoted &&
+             gate.report.learned_truth_table &&
+             gate.report.accuracy == 1.0 &&
+             gate.truth_mask == mask &&
+             nn_bitwise_gate_apply(&gate, &a, &b, &out_grid);
+        for (size_t x = 0; ok && x < a.width; ++x) {
+            uint8_t av = 0;
+            uint8_t bv = 0;
+            uint8_t expected = 0;
+            uint8_t actual = 0;
+            ok = nn_bitgrid_get(&a, x, 0u, &av) &&
+                 nn_bitgrid_get(&b, x, 0u, &bv) &&
+                 nn_bitwise_truth_mask_eval(mask, av, bv, &expected) &&
+                 nn_bitgrid_get(&out_grid, x, 0u, &actual) &&
+                 actual == expected;
+        }
+        nn_bitwise_gate_free(&gate);
+    }
+
+    nn_bitgrid_free(&a);
+    nn_bitgrid_free(&b);
+    nn_bitgrid_free(&out_grid);
+    return ok;
+}
+
+static int test_bitwise_tool_policy_solves_verified_grid_transform(void)
+{
+    NNBitwiseTrainConfig gate_config;
+    NNBitwiseToolPolicyConfig policy_config;
+    NNBitwiseGate gates[NN_BITWISE_BINARY_TRUTH_TABLES];
+    NNBitwiseToolPolicy policy;
+    NNBitwiseMacroLibrary library;
+    NNBitwiseChain chain;
+    NNBitGrid x = {0};
+    NNBitGrid y = {0};
+    NNBitGrid target = {0};
+    NNBitGrid inferred = {0};
+    NNBitGrid macro_out = {0};
+    uint8_t required = 0;
+    uint8_t observed = 0;
+
+    nn_bitwise_train_config_init(&gate_config);
+    gate_config.seed = 9901u;
+    gate_config.min_margin = (nn_real)0.05;
+    nn_bitwise_tool_policy_config_init(&policy_config);
+    policy_config.seed = 9902u;
+    nn_bitwise_tool_policy_init(&policy);
+    nn_bitwise_macro_library_init(&library);
+    nn_bitwise_chain_init(&chain);
+    for (size_t i = 0; i < NN_BITWISE_BINARY_TRUTH_TABLES; ++i) {
+        nn_bitwise_gate_init(&gates[i]);
+    }
+
+    uint8_t allowed_ops[] = {
+        NN_BITWISE_AND,
+        NN_BITWISE_OR,
+        NN_BITWISE_XOR,
+        NN_BITWISE_NOT_A,
+    };
+    int ok = 1;
+    for (size_t i = 0; ok && i < sizeof(allowed_ops) / sizeof(allowed_ops[0]); ++i) {
+        ok = nn_bitwise_gate_train_truth_table(&gates[allowed_ops[i]],
+                                               allowed_ops[i],
+                                               &gate_config);
+    }
+
+    ok = ok && nn_bitwise_tool_policy_train(&policy,
+                                            nn_bitwise_default_tool_mask(),
+                                            4u,
+                                            &policy_config) &&
+         policy.oracle_coverage == 1.0 &&
+         nn_bitgrid_init(&x, 2u, 2u) &&
+         nn_bitgrid_init(&y, 2u, 2u) &&
+         nn_bitgrid_init(&target, 2u, 2u) &&
+         nn_bitgrid_init(&inferred, 2u, 2u) &&
+         nn_bitgrid_init(&macro_out, 2u, 2u);
+
+    ok = ok && nn_bitgrid_set(&x, 0u, 0u, 0u) &&
+         nn_bitgrid_set(&y, 0u, 0u, 0u) &&
+         nn_bitgrid_set(&target, 0u, 0u, 0u) &&
+         nn_bitgrid_set(&x, 1u, 0u, 0u) &&
+         nn_bitgrid_set(&y, 1u, 0u, 1u) &&
+         nn_bitgrid_set(&target, 1u, 0u, 1u) &&
+         nn_bitgrid_set(&x, 0u, 1u, 1u) &&
+         nn_bitgrid_set(&y, 0u, 1u, 0u) &&
+         nn_bitgrid_set(&target, 0u, 1u, 1u) &&
+         nn_bitgrid_set(&x, 1u, 1u, 1u) &&
+         nn_bitgrid_set(&y, 1u, 1u, 1u) &&
+         nn_bitgrid_set(&target, 1u, 1u, 0u);
+
+    ok = ok && nn_bitwise_infer_grid_truth_constraints(&x,
+                                                       &y,
+                                                       &target,
+                                                       &required,
+                                                       &observed) &&
+         observed == 0x0fu &&
+         required == NN_BITWISE_XOR &&
+         nn_bitwise_chain_solve_grid_transform(&policy,
+                                               gates,
+                                               &x,
+                                               &y,
+                                               &target,
+                                               &chain) &&
+         chain.solved &&
+         !chain.used_symbolic_fallback &&
+         nn_bitwise_chain_apply(&chain, gates, &x, &y, &inferred) &&
+         nn_bitgrid_hamming_distance(&inferred, &target) == 0u;
+
+    ok = ok && nn_bitwise_macro_library_learn(&library,
+                                              &policy,
+                                              gates,
+                                              0xffffu) &&
+         library.candidate_count == NN_BITWISE_BINARY_TRUTH_TABLES &&
+         library.promoted_count == NN_BITWISE_BINARY_TRUTH_TABLES &&
+         library.fallback_promoted_count == 0u &&
+         library.promoted_truth_masks == 0xffffu;
+    const NNBitwiseMacroTool *xor_macro =
+        nn_bitwise_macro_library_find(&library, NN_BITWISE_XOR);
+    ok = ok && xor_macro != NULL &&
+         xor_macro->certificate.status == NN_CERTIFICATE_CERTIFIED &&
+         nn_bitwise_macro_tool_apply(xor_macro, gates, &x, &y, &macro_out) &&
+         nn_bitgrid_hamming_distance(&macro_out, &target) == 0u;
+
+    for (size_t i = 0; i < NN_BITWISE_BINARY_TRUTH_TABLES; ++i) {
+        nn_bitwise_gate_free(&gates[i]);
+    }
+    nn_bitwise_tool_policy_free(&policy);
+    nn_bitgrid_free(&x);
+    nn_bitgrid_free(&y);
+    nn_bitgrid_free(&target);
+    nn_bitgrid_free(&inferred);
+    nn_bitgrid_free(&macro_out);
+    return ok;
+}
+
+static int test_tilebot_feature_entropy_and_certified_popcount_bot(void)
+{
+    NNTileFeatureScore score;
+    NNTileBotTrainConfig config;
+    NNTileBot bot;
+    nn_tilebot_init(&bot);
+    nn_tilebot_train_config_init(&config);
+    config.hidden_width = 0u;
+    config.max_epochs = 20000u;
+    config.retry_count = 4u;
+    config.learning_rate = (nn_real)0.7;
+    config.min_margin = (nn_real)0.01;
+    config.seed = 2233u;
+
+    int ok = nn_tile_feature_score(NN_TILE_RULE_PARITY,
+                                   NN_TILE_FEATURE_POPCOUNT,
+                                   &score) &&
+             score.bucket_count == 10u &&
+             score.conditional_entropy < 1e-9 &&
+             score.information_gain > 0.99 &&
+             nn_tile_feature_bucket_count(NN_TILE_FEATURE_POPCOUNT) == 10u &&
+             nn_tile_feature_bucket_count(NN_TILE_FEATURE_RAW_BITS) == NN_TILEBOT_ROWS &&
+             nn_tile_feature_bucket_count(NN_TILE_FEATURE_D4_ORBIT) == 102u &&
+             nn_tile_feature_bucket(NN_TILE_FEATURE_D4_ORBIT, 0x01ffu) <
+                 nn_tile_feature_bucket_count(NN_TILE_FEATURE_D4_ORBIT);
+
+    ok = ok && nn_tilebot_train(&bot,
+                                NN_TILE_RULE_PARITY,
+                                NN_TILE_FEATURE_POPCOUNT,
+                                &config) &&
+         bot.certificate.status == NN_CERTIFICATE_CERTIFIED &&
+         bot.report.promoted &&
+         bot.report.correct_rows == NN_TILEBOT_ROWS &&
+         bot.input_width == 10u &&
+         bot.bucket_count == 10u;
+
+    for (uint16_t mask = 0u; ok && mask < NN_TILEBOT_ROWS; ++mask) {
+        uint8_t predicted = 0u;
+        nn_real confidence = (nn_real)0;
+        ok = nn_tilebot_predict(&bot, mask, &predicted, &confidence) &&
+             predicted == nn_tile_rule_eval(NN_TILE_RULE_PARITY, mask) &&
+             confidence == (nn_real)1;
+    }
+
+    nn_tilebot_free(&bot);
+    return ok;
+}
+
+static int test_tilebot_macro_stack_and_life_preimage_stats(void)
+{
+    NNTileRule rules[3] = {
+        NN_TILE_RULE_DILATE,
+        NN_TILE_RULE_MAJORITY,
+        NN_TILE_RULE_ERODE,
+    };
+    NNTileBot bots[3];
+    NNTileBot life_bot;
+    NNTileBotTrainConfig config;
+    NNTileMacroTool macro;
+    NNTileStackEvalReport stack_report;
+    NNTileFeatureScore life_score;
+    NNLifePreimageStats stats;
+    uint8_t input[36] = {
+        0, 1, 0, 0, 1, 0,
+        1, 1, 0, 0, 0, 1,
+        0, 0, 1, 1, 0, 0,
+        0, 1, 1, 0, 1, 0,
+        1, 0, 0, 1, 1, 1,
+        0, 0, 1, 0, 0, 1,
+    };
+    uint8_t exact_a[36];
+    uint8_t exact_b[36];
+    uint8_t macro_out[36];
+    uint64_t prior = UINT64_C(0x0155);
+    uint64_t target = nn_life_step_torus(3u, prior);
+    uint64_t canonical = 0u;
+    uint32_t preimage_count = 0u;
+    uint32_t *preimage_counts = NULL;
+    uint64_t *canonical_table = NULL;
+
+    for (size_t i = 0u; i < 3u; ++i) {
+        nn_tilebot_init(&bots[i]);
+    }
+    nn_tilebot_init(&life_bot);
+    nn_tilebot_train_config_init(&config);
+    config.hidden_width = 0u;
+    config.max_epochs = 20000u;
+    config.retry_count = 4u;
+    config.learning_rate = (nn_real)0.7;
+    config.min_margin = (nn_real)0.01;
+    config.seed = 3719u;
+    nn_tile_macro_init(&macro);
+
+    int ok = 1;
+    for (size_t i = 0u; ok && i < 3u; ++i) {
+        config.seed += 17u;
+        ok = nn_tilebot_train(&bots[i], rules[i], NN_TILE_FEATURE_POPCOUNT, &config) &&
+             bots[i].certificate.status == NN_CERTIFICATE_CERTIFIED &&
+             bots[i].report.correct_rows == NN_TILEBOT_ROWS;
+    }
+
+    ok = ok && nn_tile_macro_promote(&macro, bots, 3u) &&
+         macro.certificate.status == NN_CERTIFICATE_CERTIFIED &&
+         macro.receptive_field_width == 7u;
+    ok = ok && nn_tilebot_eval_stack(bots,
+                                     NULL,
+                                     3u,
+                                     8u,
+                                     8u,
+                                     50u,
+                                     6u,
+                                     12345u,
+                                     NN_TILE_BOUNDARY_TORUS,
+                                     &stack_report) &&
+         stack_report.exact_grids == 6u &&
+         stack_report.correct_cells == stack_report.total_cells &&
+         stack_report.cell_accuracy == 1.0;
+
+    memcpy(exact_a, input, sizeof(input));
+    for (size_t i = 0u; ok && i < 3u; ++i) {
+        ok = nn_tile_apply_rule_grid(rules[i],
+                                     exact_a,
+                                     6u,
+                                     6u,
+                                     NN_TILE_BOUNDARY_TORUS,
+                                     exact_b);
+        if (ok) {
+            memcpy(exact_a, exact_b, sizeof(exact_a));
+        }
+    }
+    ok = ok && nn_tile_macro_apply(&macro,
+                                   input,
+                                   6u,
+                                   6u,
+                                   NN_TILE_BOUNDARY_TORUS,
+                                   macro_out) &&
+         memcmp(exact_a, macro_out, sizeof(exact_a)) == 0;
+
+    ok = ok && nn_tile_feature_score(NN_TILE_RULE_LIFE,
+                                     NN_TILE_FEATURE_LIFE_CENTER_NEIGHBOR_COUNT,
+                                     &life_score) &&
+         life_score.bucket_count == 18u &&
+         life_score.conditional_entropy < 1e-9 &&
+         nn_tilebot_train(&life_bot,
+                          NN_TILE_RULE_LIFE,
+                          NN_TILE_FEATURE_LIFE_CENTER_NEIGHBOR_COUNT,
+                          &config) &&
+         life_bot.certificate.status == NN_CERTIFICATE_CERTIFIED &&
+         life_bot.report.correct_rows == NN_TILEBOT_ROWS;
+    ok = ok && nn_life_preimage_stats_torus(3u, &stats) &&
+         stats.state_count == 512u &&
+         stats.reachable == 128u &&
+         stats.garden_of_eden == 384u &&
+         stats.max_preimages == 302u &&
+         nn_life_canonical_preimage_torus(3u, target, &canonical, &preimage_count) &&
+         preimage_count > 0u &&
+         nn_life_step_torus(3u, canonical) == target &&
+         nn_life_preimage_tables_torus(3u, &preimage_counts, &canonical_table) &&
+         preimage_counts[target] == preimage_count &&
+         canonical_table[target] == canonical;
+
+    for (size_t i = 0u; i < 3u; ++i) {
+        nn_tilebot_free(&bots[i]);
+    }
+    nn_tilebot_free(&life_bot);
+    free(preimage_counts);
+    free(canonical_table);
+    return ok;
+}
+
+static int test_layer_discovery_reconstructs_synthetic_motion(void)
+{
+    NNBitGrid source = {0};
+    NNBitGrid target = {0};
+    NNBitGrid recomposed = {0};
+    NNLayerDiscoveryConfig config;
+    NNLayerDiscoveryResult result;
+    nn_layer_discovery_config_init(&config);
+    nn_layer_discovery_result_init(&result);
+    config.max_translation = 3;
+    config.max_layers = NN_LAYER_MAX_PROPOSALS;
+    config.allow_residual_layer = 0;
+
+    int ok = nn_layer_generate_motion_scene(&source, &target, 18u, 18u, 4u, 3, 424242u) &&
+             nn_layer_discover_motion(&source, &target, &config, &result);
+    size_t moving_layers = 0u;
+    for (size_t i = 0u; ok && i < result.layer_count; ++i) {
+        const NNLayerProposal *layer = &result.layers[i];
+        ok = layer->certificate.status == NN_CERTIFICATE_CERTIFIED &&
+             layer->reconstruction_errors == 0u &&
+             layer->source_cells == layer->target_cells &&
+             layer->description_length > 0.0;
+        if (layer->dx != 0 || layer->dy != 0) {
+            ++moving_layers;
+        }
+    }
+
+    ok = ok && result.layer_count == 4u &&
+         result.certified_layers == result.layer_count &&
+         result.certificate.status == NN_CERTIFICATE_CERTIFIED &&
+         result.source_cells == result.target_cells &&
+         result.reconstruction_errors == 0u &&
+         moving_layers > 0u &&
+         nn_bitgrid_init(&recomposed, source.width, source.height) &&
+         nn_layer_recompose(&result, &recomposed) &&
+         nn_bitgrid_hamming_distance(&recomposed, &target) == 0u;
+
+    nn_bitgrid_free(&recomposed);
+    nn_layer_discovery_result_free(&result);
+    nn_bitgrid_free(&source);
+    nn_bitgrid_free(&target);
+    return ok;
+}
+
+static int test_layer_ranker_learns_verified_translation_proposals(void)
+{
+    NNLayerRankerConfig config;
+    NNLayerRanker ranker;
+    NNBitGrid source = {0};
+    NNBitGrid target = {0};
+    NNLayerDiscoveryConfig discovery_config;
+    NNLayerDiscoveryResult result;
+
+    nn_layer_ranker_config_init(&config);
+    nn_layer_ranker_init(&ranker);
+    nn_layer_discovery_config_init(&discovery_config);
+    nn_layer_discovery_result_init(&result);
+
+    config.seed = 515151u;
+    discovery_config.max_translation = config.max_translation;
+
+    int ok = nn_layer_ranker_train(&ranker, &config) &&
+             ranker.net != NULL &&
+             ranker.report.certified_rate >= 0.95 &&
+             ranker.report.top1_accuracy >= 0.95 &&
+             ranker.report.average_verifier_checks <= 2.0 &&
+             nn_layer_generate_motion_scene(&source,
+                                            &target,
+                                            config.width,
+                                            config.height,
+                                            config.object_count,
+                                            config.max_translation,
+                                            config.seed) &&
+             nn_layer_discover_motion_ranked(&source,
+                                             &target,
+                                             &discovery_config,
+                                             &ranker,
+                                             &result) &&
+             result.certificate.status == NN_CERTIFICATE_CERTIFIED &&
+             result.reconstruction_errors == 0u &&
+             result.certified_layers == result.layer_count &&
+             result.top1_layers == result.layer_count;
+
+    nn_layer_discovery_result_free(&result);
+    nn_bitgrid_free(&source);
+    nn_bitgrid_free(&target);
+    nn_layer_ranker_free(&ranker);
+    return ok;
+}
+
+static int test_layer_task_policy_executes_query_without_target(void)
+{
+    NNLayerTaskPolicyConfig config;
+    NNLayerTaskPolicy policy;
+    NNBitGrid demo_source = {0};
+    NNBitGrid demo_target = {0};
+    NNBitGrid query_source = {0};
+    NNBitGrid query_target = {0};
+    NNBitGrid prediction = {0};
+    int dx = 0;
+    int dy = 0;
+    int predicted_dx = 0;
+    int predicted_dy = 0;
+
+    nn_layer_task_policy_config_init(&config);
+    nn_layer_task_policy_init(&policy);
+    config.seed = 626262u;
+
+    int ok = nn_layer_task_policy_train(&policy, &config) &&
+             policy.net != NULL &&
+             policy.report.exact_rate >= 0.95 &&
+             policy.report.top1_accuracy >= 0.95 &&
+             nn_layer_generate_global_motion_task(&demo_source,
+                                                  &demo_target,
+                                                  &query_source,
+                                                  &query_target,
+                                                  config.width,
+                                                  config.height,
+                                                  config.object_count,
+                                                  config.max_translation,
+                                                  727272u,
+                                                  &dx,
+                                                  &dy) &&
+             nn_layer_task_policy_predict(&policy,
+                                          &demo_source,
+                                          &demo_target,
+                                          &query_source,
+                                          &prediction,
+                                          &predicted_dx,
+                                          &predicted_dy) &&
+             predicted_dx == dx &&
+             predicted_dy == dy &&
+             nn_bitgrid_hamming_distance(&prediction, &query_target) == 0u;
+
+    nn_bitgrid_free(&demo_source);
+    nn_bitgrid_free(&demo_target);
+    nn_bitgrid_free(&query_source);
+    nn_bitgrid_free(&query_target);
+    nn_bitgrid_free(&prediction);
+    nn_layer_task_policy_free(&policy);
+    return ok;
+}
+
 static int test_program_typed_composition_and_canonical_id(void)
 {
     NNProgram components;
@@ -3893,6 +4409,22 @@ int main(void)
           "symbolic domain audits proposer and scorer feature schemas");
     check(test_symbolic_rule_coverage_and_residual_summary(),
           "symbolic coverage tracks residual events");
+    check(test_bitgrid_patterns_and_truth_masks(),
+          "bit-grid patterns and truth masks cover finite binary domain");
+    check(test_bitwise_truth_table_gates_promote_complete_domain(),
+          "bitwise truth-table gates learn and promote complete binary domain");
+    check(test_bitwise_tool_policy_solves_verified_grid_transform(),
+          "bitwise tool policy solves and verifies grid transform");
+    check(test_tilebot_feature_entropy_and_certified_popcount_bot(),
+          "tilebot entropy features promote certified popcount bot");
+    check(test_tilebot_macro_stack_and_life_preimage_stats(),
+          "tilebot macro stack and Life preimage stats are certified");
+    check(test_layer_discovery_reconstructs_synthetic_motion(),
+          "layer discovery reconstructs certified motion layers");
+    check(test_layer_ranker_learns_verified_translation_proposals(),
+          "layer ranker learns verified translation proposals");
+    check(test_layer_task_policy_executes_query_without_target(),
+          "layer task policy executes query without target");
     check(test_program_typed_composition_and_canonical_id(),
           "program layer composes typed transforms with canonical ids");
     check(test_program_feature_encoder(),

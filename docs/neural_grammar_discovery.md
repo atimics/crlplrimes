@@ -1,11 +1,11 @@
 # Neural Grammar Discovery
 
-`scripts/neural_grammar_discovery.py` is the shared engine layer for turning
-neural failure pressure into symbolic grammar-delta candidates and typed
-`GrammarSketch` rows. It is deliberately not a grammar by itself. It emits
-candidate deltas, sketch examples, proposer rows, verifier rows, and promotion
-ledgers that stay empty until a domain adapter compiles a candidate into
-executable grammar and a verifier certifies it.
+`build/float/neural_grammar_discovery_runtime --neural-grammar-discovery` is the
+shared engine layer for turning neural failure pressure into symbolic
+grammar-delta candidates and typed `GrammarSketch` rows. It is deliberately not
+a grammar by itself. It emits candidate deltas, sketch examples, proposer rows,
+verifier rows, and promotion ledgers that stay empty until a domain adapter
+compiles a candidate into executable grammar and a verifier certifies it.
 
 Run the current adapters:
 
@@ -13,6 +13,7 @@ Run the current adapters:
 make neural-grammar-discovery HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR=/path/to/ARC-AGI/data
 make learned-grammar-coverage
 make experiment-health
+make haiku-coherence-hard-negatives-hf-dictionary
 ```
 
 The target consumes:
@@ -23,6 +24,8 @@ The target consumes:
   `build/float/haiku_word_lm_artifacts/smoke_trace.jsonl`
 - haiku understanding traces from
   `build/float/haiku_understanding_artifacts/smoke_trace.jsonl`
+- haiku coherence hard-negative rows from
+  `build/float/haiku_coherence_hard_negatives/hard_negative_rows.jsonl`
 - program-synthesis hypothesis evidence rows from
   `build/float/neural_grammar_discovery/program_synthesis_source.jsonl`
 - grid-path training traces from
@@ -77,15 +80,14 @@ Outputs:
 - `build/float/neural_grammar_discovery/grammar_sketch_memory_summary.jsonl`
 - `build/float/learned_grammar_coverage/coverage.jsonl`
 - `build/float/experiment_health/experiment_health.jsonl`
+- `build/float/haiku_coherence_hard_negatives_hf_dictionary/hard_negative_rows.jsonl`
 
-The Python driver only assembles source rows and reports. Delta compilation,
-delta replay predicates, and the neural-linear sketch proposer run through the
-C runtime at `build/float/neural_grammar_discovery_runtime`, with normalized
-runtime TSVs kept under `build/float/neural_grammar_discovery/runtime/`.
-The C proposer writes a checkpoint containing bias, token vocabulary, token
-weights, epochs seen, and training examples seen. Use
-`--resume-sketch-memory --sketch-memory <path>` to continue from a prior
-checkpoint instead of starting the scorer from zero weights.
+The C driver assembles source rows and reports, then calls the same in-process C
+compilers, replay predicates, ARC visual-program ranker, and neural-linear
+sketch proposer used by the lower-level runtime modes. Normalized runtime TSVs
+are kept under `build/float/neural_grammar_discovery/runtime/`. The C proposer
+writes a checkpoint containing bias, token vocabulary, token weights, epochs
+seen, and training examples seen.
 - `build/float/neural_grammar_discovery/summary.jsonl`
 - `build/float/neural_grammar_discovery/summary.md`
 
@@ -197,9 +199,36 @@ coverage from ranker quality, verifier certification, and held-out/test-pair
 transfer. ARC rows are verifier-backed through `arc_agi`; haiku rows currently
 use the corpus-adjacency and real-vs-corrupt benchmark traces as proxy authority,
 so they may train the proposer but do not support semantic or promotion claims.
+Haiku coherence hard-negative reports enter this surface as
+`haiku_coherence_hard_negatives`, where weak `line_splice` and `word_salad`
+families become diagnostic holes without paper-claim support. The current
+HF-dictionary report is feature-encoder-v4 diagnostic evidence: topic and
+plausible-topic splice families clear the 75% gate, while `line_splice` and
+`word_salad` remain explicit health triage.
 `crlp.experiment_health.v1` rows then fold coverage status, numeric certificate
 rows, coverage holes, verifier deltas, and generated paper-claim support into one
 per-experiment JSONL report.
+
+ARC replacement rows also emit `coverage_hole_summary` and
+`visual_replacement_gaps`. These aggregates preserve the full split that the
+short `coverage_holes` sample can truncate: tasks where a legacy template has a
+train-consistent solution that should be re-expressed as a visual program, tasks
+where neither legacy nor visual candidates solve the train pairs, and tasks where
+a train-consistent visual program exists but loses selection. `experiment_health`
+promotes that aggregate into `arc_visual_replacement_gap_summary`, so the next
+work item is visible without parsing the full ARC trace. When coverage gain ties,
+the C ARC selector now lets the generic `arc_sketch_program` proposal beat a
+legacy hypothesis, so visual programs own equivalent coverage instead of losing
+only on ranker score.
+
+`make haiku-coherence-hard-negatives` adds a narrower diagnostic surface for
+the haiku understanding hard cases: `line_splice`, `word_salad`,
+`topic_splice`, `same_season_splice`, and `plausible_topic_splice`. The report
+rows are ingested as `diagnostic_positive` temporal-frame pressure when the
+neural or symbolic scorer fails, and as controls when the row passes. They carry
+`paper_claim_support=diagnostic_only` and
+`promotion_status=diagnostic_only_no_verifier_certification`, so they cannot
+promote grammar without a later executable haiku compiler and verifier.
 
 The first ARC/haiku promotion paths are intentionally narrow:
 
@@ -236,13 +265,14 @@ The first ARC/haiku promotion paths are intentionally narrow:
 - The visual algebra has a feedback surface, not just static labels. Each
   accepted or rejected attempt is bucketed by `failure_stage` and
   `failure_detail`, for example `renderer_shape`, `selector_or_transform`, or
-  `transform_or_color`. Python scores grammar hints from source attempts using
-  acceptance rate, dense verifier score, and failure-stage penalties, then
-  writes the selected hint evidence into
+  `transform_or_color`. The C discovery driver scores grammar hints from source
+  attempts using acceptance rate, dense verifier score, and failure-stage
+  penalties, then writes the selected hint evidence into
   `arc_sketch_program_heldout_structure_proposals.jsonl`.
 - ARC coverage is now treated as its own frontier. After the first held-out
-  export, Python groups zero-accepted tasks, keeps the best verifier-distance
-  near misses, classifies residuals such as `frame_or_output_shape`,
+  export, the C discovery driver groups zero-accepted tasks, keeps the best
+  verifier-distance near misses, classifies residuals such as
+  `frame_or_output_shape`,
   `selector_or_phase`, `transform_or_color`, and `cell_render_cleanup`, then
   writes `arc_visual_pipeline_coverage_frontier.jsonl`. Those rows generate a
   second-pass repair candidate file with residual-expanded grammar hints. The
@@ -252,7 +282,7 @@ The first ARC/haiku promotion paths are intentionally narrow:
   sketches in `arc_visual_pipeline_repair_sketches.jsonl`. These rows bind the
   best failed parent attempt to C-emitted residual telemetry: first failing
   train pair, expected/produced shape, shape delta, checked cells, mismatch
-  count, and mismatch bbox. Python can name typed holes such as frame
+  count, and mismatch bbox. The C discovery driver can name typed holes such as frame
   normalization, selector phase, color binding, or residual-mask cleanup, but
   promotion still requires an executable `arc_agi` compiler/verifier path.
 - Repair candidates carry provenance through the TSV handoff into C-emitted
@@ -293,10 +323,10 @@ The first ARC/haiku promotion paths are intentionally narrow:
   promotion. The attempt surface covers both newer pipeline-native ops and
   legacy successful sketch ops such as crop, macrocell substitution, lattice
   sampling, component summary, object-mask extraction, projection/compression,
-  and separator mapping. Python trains frequency and nearest-neighbor baselines
-  over those attempt rows using leave-one-task-out scoring. It also writes a
-  normalized runtime TSV and asks the C runtime to train a neural visual-pipeline
-  ranker on source attempts, then score held-out attempts. The ARC exporter
+  and separator mapping. The C discovery driver preserves the frequency and
+  nearest-neighbor baseline artifact contract over those attempt rows. It also
+  writes a normalized runtime TSV and trains the neural visual-pipeline ranker
+  on source attempts, then scores held-out attempts. The ARC exporter
   links accepted attempts to same-task/same-op rejected siblings whose active
   slots differ by one or two values. The runtime uses those verifier-derived
   contrast pairs for a pairwise accepted-over-rejected training pass. Attempt
@@ -338,8 +368,8 @@ The first ARC/haiku promotion paths are intentionally narrow:
   `component_shape_color`. `arc_agi` emits a C-owned `component_inventory`
   object on each attempt row with selected-component counts, bbox dimensions,
   shape counts, output foreground counts, and selector/layout match flags.
-  Python uses that verifier-side inventory first, falling back to its cached
-  parser only for older rows. The runtime also trains a
+  The C discovery driver uses that verifier-side inventory first, falling back
+  to cached parser compatibility only for older rows. The runtime also trains a
   `component_selector_layout` head over those features. These heads are blended
   conservatively into ranking as learned tie-breakers, while the verifier score
   and main visual-pipeline ranker remain dominant.
@@ -380,9 +410,9 @@ The first ARC/haiku promotion paths are intentionally narrow:
   `no_accepted_target_task_count`, `search_space_coverage_rate`,
   `top1_all_task_rate`, and `retained_all_task_rate`; these keep the report from
   looking saturated when the attempted grammar does not contain a solution.
-- Promoted ARC family pressure is exported by `arc_agi` itself. Python writes
-  only promoted-family task rows, invokes the C probe exporter, and consumes the
-  resulting `arc_sketch_program_probe_sources.jsonl` and
+- Promoted ARC family pressure is exported by the C runtime around `arc_agi`.
+  It writes promoted-family task rows, invokes the C probe exporter, and
+  consumes the resulting `arc_sketch_program_probe_sources.jsonl` and
   `arc_sketch_program_probe_prior.tsv`. The exporter emits TSV priors through
   the existing `crlp.arc_neural_discovery.template_probe.v1` and
   `crlp.arc_neural_discovery.slot_probe.v1` contracts only after the C verifier
@@ -395,9 +425,10 @@ The first ARC/haiku promotion paths are intentionally narrow:
 - Held-out ARC candidate rows still use the backward-compatible `op_hints`
   column, but its values are now grammar hints such as `region_extraction`,
   `normalized_bbox_frame`, `projection_transform`, or `separator_panel_frame`.
-  Python computes a shape-conditioned composition proposal from learned source
-  attempt feedback, public task shape/color/separator features, and the promoted
-  family, then writes `arc_sketch_program_heldout_structure_proposals.jsonl`.
+  The C discovery driver computes a shape-conditioned composition proposal from
+  learned source attempt feedback, public task shape/color/separator features,
+  and the promoted family, then writes
+  `arc_sketch_program_heldout_structure_proposals.jsonl`.
   When these learned hints are present, the C exporter bypasses family-specific
   branch dispatch and runs the generic compatible-miner enumerator. Every
   emitted prior row still has to be exact on all train pairs before it can enter

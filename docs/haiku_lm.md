@@ -43,6 +43,7 @@ make haiku-word-lm-synthetic
 make haiku-word-lm-hf
 make haiku-word-lm-hf-dictionary
 make haiku-understanding-smoke
+make haiku-coherence-hard-negatives
 make haiku-understanding-synthetic
 make haiku-understanding-hf
 make haiku-understanding-hf-dictionary
@@ -69,11 +70,19 @@ normalizes to ASCII lowercase, requires exactly three nonempty lines, enforces
 the C verifier's line length and syllable-proxy bounds, deduplicates stanzas,
 writes `data/haiku_open/clean/hf_vocab.txt`, and records source hashes and
 reject counts in `data/haiku_open/clean/hf_manifest.json`. Parquet input
-requires Python with `pandas` and a parquet engine such as `pyarrow`.
+requires Python with `pandas` and a parquet engine such as `pyarrow`, but the
+Makefile reuses existing `data/haiku_open/clean/*` artifacts when present so
+normal C experiment runs do not depend on parquet tooling.
 `make haiku-corpus-hf-dictionary` runs the same cleaner with the
 Scrabble-like list as a hard corpus filter and writes separate
 `hf_dictionary_*` artifacts. The word-action model still derives its active
 vocabulary and adjacency graph from the accepted dataset.
+
+The local raw dataset pool is not exhausted. The HF mirror is imported into the
+current English ASCII corpora. `data/haiku_open/source_manifest.tsv` also lists
+PLOS arthropod haiku workbooks plus public-domain Japanese Basho and Masaoka
+Shiki sources; those need separate text extraction and, for Japanese, a
+different tokenizer/feature path before they are comparable training inputs.
 
 `make haiku-lm-lexicon` defaults to `data/wordlists/enable2k.txt`, a
 public-domain Scrabble-like word-game list documented in
@@ -129,20 +138,22 @@ than an obvious form violation. The candidate features include syllable errors, 
 balance, repetition, stopword/nature/season/abstract word ratios,
 word-frequency priors, train-split adjacency coverage, line-to-line topic
 similarity, poem topic tightness, per-line topic coverage, cross-line content
-reuse, minimum line-pair similarity, line-pair spread, topic-core consistency,
-topic drift, and a symbolic poem-plan score. Feature encoder v3 keeps this as
-a small neurosymbolic verifier: the dense scorer sees explicit poem-level
-coherence aggregates rather than relying on a larger hidden model to infer
-them.
+reuse, minimum line-pair similarity, line-pair spread, adjacent-line fit,
+adjacency/bigram products, topic-core consistency, topic drift, and a symbolic
+poem-plan score. Feature encoder v4 keeps this as a small neurosymbolic
+verifier: the dense scorer sees explicit poem-level coherence aggregates rather
+than relying on a larger hidden model to infer them.
 
 The trace schema is `crlp.haiku_understanding.trace.v1`; rows are extended with
 additive verifier fields such as `real_plan_score`, `corrupt_plan_score`,
 `plan_score_delta`, `symbolic_selected`, topic-tightness deltas, minimum
-line-similarity deltas, line-spread values, and adjacency ratios. The summary
-schema is `crlp.haiku_understanding.summary.v1` and includes neural and
-symbolic top-1 diagnostics by corruption family, `coherence_top1` over the
-topic-splice families, and a `hard_negative_*` cohort for `line_splice`,
-`word_salad`, `topic_splice`, `same_season_splice`, and
+line-similarity deltas, line-spread values, adjacency ratios, and splice
+provenance fields (`corrupt_line`, `source_poem_index`, `source_line`,
+replacement-line similarity, local-neighbor-fit deltas, and line word/syllable
+deltas). The summary schema is `crlp.haiku_understanding.summary.v1` and
+includes neural and symbolic top-1 diagnostics by corruption family,
+`coherence_top1` over the topic-splice families, and a `hard_negative_*` cohort
+for `line_splice`, `word_salad`, `topic_splice`, `same_season_splice`, and
 `plausible_topic_splice`. Plausibility traces also expose bigram and exact
 syllable ratios. The `plausible_negative_*` cohort isolates the form-valid,
 adjacency-plausible coherence failures. This benchmark measures whether the
@@ -155,6 +166,44 @@ example receives `--plausible-negative-extra-updates` additional updates. The
 summary records `mined_plausible_negative_examples` and
 `mined_plausible_negative_updates`, making the curriculum auditable rather than
 silently changing the dataset mix.
+
+The same online loop can target the weakest non-plausible families with
+`--hard-negative-extra-updates`, currently `line_splice` and `word_salad`. The
+Makefile default is conservative (`0`) because the first smoke check improved
+train accuracy but hurt validation hard-negative top-1. When enabled, those
+updates are reported as `mined_hard_negative_examples` and
+`mined_hard_negative_updates`, so family-weighted training pressure remains
+visible in the generated summaries.
+
+HF-scale understanding runs use `--splice-scan-limit` through
+`HAIKU_UNDERSTANDING_SPLICE_SCAN_LIMIT` to bound C-side splice-cache
+construction. The default `512` keeps the import/regeneration path in C while
+avoiding the previous full-corpus quadratic scan before the first training
+status line.
+
+`make haiku-coherence-hard-negatives` is the auditable report layer over the
+understanding trace. It writes
+`build/float/haiku_coherence_hard_negatives/hard_negative_rows.jsonl`,
+`summary.jsonl`, and `summary.md` with schema
+`crlp.haiku_coherence_hard_negative.v1` and
+`crlp.haiku_coherence_hard_negative_summary.v1`. These rows are explicitly
+`diagnostic_only_no_verifier_certification`: neural grammar discovery may use
+them as temporal-frame pressure for hard-negative ranking, but they do not
+support paper claims or promote haiku grammar.
+
+`make haiku-coherence-hard-negatives-hf-dictionary` runs the same report over
+the larger HF-dictionary trace path. The C learned-grammar coverage driver ingests these
+rows with `--haiku-coherence-report`, and the C `experiment-health` driver promotes weak
+hard-negative families such as `line_splice` and `word_salad` into explicit
+diagnostic triage items.
+
+The current HF-dictionary regeneration uses the existing cleaned corpus in C,
+not a parquet-clean dependency path. With feature encoder v4 and
+`--splice-scan-limit 512`, the 8k-poem run writes 12,800 validation trace rows:
+overall validation top-1 is 85.96%, hard-negative top-1 is 79.83%,
+topic-coherence top-1 is 96.10%, and plausible-topic-splice top-1 is 96.31%.
+The remaining weak families are `line_splice` at 40.25% and `word_salad` at
+70.56%, so random line replacement remains the main coherence-label gap.
 
 Next architecture gates before calling this an LLM:
 
