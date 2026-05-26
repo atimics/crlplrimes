@@ -71,6 +71,8 @@ Outputs:
 - `build/float/learned_grammar_coverage/arc_visual_active_curriculum/summary.jsonl`
 - `build/float/learned_grammar_coverage/arc_visual_capacity_sweep/capacity_sweep.jsonl`
 - `build/float/learned_grammar_coverage/arc_visual_capacity_sweep/capacity_sweep.md`
+- `build/float/arc_verified_self_play/summary.jsonl`
+- `build/float/arc_verified_self_play/summary.md`
 - `build/float/neural_grammar_discovery/grammar_sketches.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketch_examples.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketch_proposals.jsonl`
@@ -208,6 +210,15 @@ coverage from ranker quality, verifier certification, and held-out/test-pair
 transfer. ARC rows are verifier-backed through `arc_agi`; haiku rows currently
 use the corpus-adjacency and real-vs-corrupt benchmark traces as proxy authority,
 so they may train the proposer but do not support semantic or promotion claims.
+`make arc-verified-self-play` adds the generator-side ARC pressure test:
+forward-composed visual primitives synthesize tasks with known programs,
+accepted verifier rows, and dense negative siblings; the ranker is then trained
+on the inverse problem of inducing the program from the examples. Its summary
+uses `crlp.arc_verified_self_play.summary.v1` and reports the generated rows
+against the ARC template baseline of 7 certified eval tasks, the 14-task oracle
+ceiling, and the nine zero-coverage miss-taxonomy families. The public-ARC part
+is deliberately a replay requirement, not assumed from synthetic success, so
+distribution mismatch remains visible.
 Haiku coherence hard-negative reports enter this surface as
 `haiku_coherence_hard_negatives`, where weak `line_splice` and `word_salad`
 families become diagnostic holes without paper-claim support. The current

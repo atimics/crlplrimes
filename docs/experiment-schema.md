@@ -197,6 +197,7 @@ cannot silently add verifier-derived inputs. Comparison rows also carry
 11. Verifier-feedback rows may train proposer/ranker ordering, but they are never promotion evidence unless replayed through the task authority. Rejected-candidate reason learning and hypothesis-library feedback are instances of this shared loop.
 12. Learned-grammar coverage is audited before ranker quality. `crlp.learned_grammar_coverage.v1` rows first ask whether the candidate space contains a train-consistent solution, then whether the neural ranker brings it near the top, whether the verifier certifies it, and whether held-out/test-pair transfer survives. ARC rows also report aggregate visual-replacement gaps so legacy-template debt, missing visual candidates, and visual selection failures remain distinct even when sampled coverage holes are truncated. `crlp.experiment_health.v1` rows consolidate those gates with numeric certificate rows, coverage holes, verifier deltas, learning signal, and generated paper-claim support.
 13. Capacity and architecture claims are blocked by the plateau audit. Until `C7.tiny_net_plateau_stop_rule` is supported for the affected task/variant, width and adapter-head rows remain underpowered diagnostics rather than registered architecture conclusions.
+14. Verifiers may be inverted into generators only when the generated row keeps the same authority boundary: forward-composed tasks can provide exact self-play supervision and dense negative siblings, but ARC competence is counted only after the learned prior is replayed through the ARC verifier and compared with the template baseline, oracle ceiling, and miss-taxonomy families.
 
 ## Current Instantiations
 
@@ -216,6 +217,7 @@ Grounding-backed case-study discovery schemas:
 | Task | State | Actions | Grounding operator | Authority | Grammar/certificate | Evidence status |
 | --- | --- | --- | --- | --- | --- | --- |
 | `program_synthesis` | list-routine task with input/output examples | candidate library abstraction | run abstraction on every example | `exact_check` | monomorphic list/int DSL type check | matched-budget scaffold with random, grammar-order, structural, validation-oracle, static neural, and closed-loop rows |
+| `arc_verified_self_play` | generated ARC-like visual tasks from primitive composition | inverse visual-program candidates | forward program construction plus verifier-shaped rejection rows | `exact_check` | primitive contract, slot contract, known output, and negative verifier reason | training-signal diagnostic via `make arc-verified-self-play`; public ARC promotion requires verifier replay against the 7-task template baseline, 14-task oracle ceiling, and nine zero-coverage families |
 
 Corpus-proxy prototypes such as `haiku_word_lm` and `haiku_understanding` use
 the same candidate/grounding/scorer/trace loop but are not production paper

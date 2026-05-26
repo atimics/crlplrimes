@@ -875,7 +875,7 @@ int main(int argc, char **argv) {
                 arc_hole_summary,
                 arc_synthetic_curriculum_max_grid_size,
                 arc_synthetic_curriculum_ops == NULL
-                    ? "masked_or_normalized_crop,crop,recolor_crop,macrocell_substitute,component_color_summary,visual_combinator,separator_panel_map"
+                    ? "object_motion,recolor,tile_scale,fill_or_complete,symmetry,masked_or_normalized_crop,crop,recolor_crop,macrocell_substitute,component_color_summary,visual_combinator,separator_panel_map"
                     : arc_synthetic_curriculum_ops,
                 arc_synthetic_curriculum_negative_kinds == NULL
                     ? "unsupported_shape,no_train_match"

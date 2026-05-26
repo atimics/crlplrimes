@@ -10858,6 +10858,46 @@ typedef struct {
 } NNGDArcSyntheticShapeSpec;
 
 static const NNGDArcSyntheticShapeSpec nn_gd_arc_synthetic_shape_specs[] = {
+    {"object_motion",
+     "object_motion_pipeline",
+     "select_object -> infer_offset -> translate -> emit_grid",
+     "selector,width,height,x_offset,y_offset,color",
+     "object_motion",
+     "offset_frame",
+     "select_object|infer_offset|translate|emit_grid",
+     "selector:object,transform:translate,emitter:grid"},
+    {"recolor",
+     "recolor_pipeline",
+     "select_mask -> infer_color_map -> recolor -> emit_grid",
+     "selector,color,output_color,background",
+     "color_rewrite",
+     "mask_color_frame",
+     "select_mask|infer_color_map|recolor|emit_grid",
+     "selector:mask,transform:recolor,emitter:grid"},
+    {"tile_scale",
+     "tile_scale_pipeline",
+     "select_motif -> scale_or_tile -> emit_grid",
+     "selector,width,height,period,background,color",
+     "tile_scale",
+     "motif_scale_frame",
+     "select_motif|scale_or_tile|emit_grid",
+     "selector:motif,transform:scale_tile,emitter:grid"},
+    {"fill_or_complete",
+     "fill_or_complete_pipeline",
+     "select_boundary -> infer_fill -> complete_shape -> emit_grid",
+     "selector,background,color,output_color,width,height",
+     "shape_completion",
+     "boundary_fill_frame",
+     "select_boundary|infer_fill|complete_shape|emit_grid",
+     "selector:boundary,transform:fill_complete,emitter:grid"},
+    {"symmetry",
+     "symmetry_pipeline",
+     "select_axis -> reflect_or_rotate -> emit_grid",
+     "selector,orientation,width,height,color",
+     "symmetry_geometry",
+     "axis_geometry_frame",
+     "select_axis|reflect_or_rotate|emit_grid",
+     "selector:axis,transform:symmetry,emitter:grid"},
     {"masked_or_normalized_crop",
      "masked_or_normalized_crop_pipeline",
      "select_mask -> normalize_crop -> emit_grid",
@@ -11468,7 +11508,11 @@ static int nn_gd_arc_synthetic_shape_write_summary(
         return -1;
     }
     fputs("{\"schema\":\"crlp.arc_synthetic_shape_curriculum.v1\","
-          "\"report_version\":1,\"attempts_tsv\":",
+          "\"report_version\":1,\"self_play_mode\":\"verified_forward_generator\","
+          "\"training_target\":\"inverse_program_induction\","
+          "\"authored_task_library\":false,"
+          "\"grounding_authority\":\"exact_check\","
+          "\"attempts_tsv\":",
           fp);
     nn_gd_json_write_string(fp, attempt_rows_path);
     fputs(",\"synthetic_attempts\":", fp);

@@ -46,6 +46,7 @@ Experiment-health artifacts are generated separately from prose claims:
 make learned-grammar-coverage  # ARC/haiku coverage-before-ranking gate
 make learned-grammar-coverage-arc-visual-compare HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR=/path/to/ARC-AGI/data
 make arc-visual-active-curriculum HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR=/path/to/ARC-AGI/data
+make arc-verified-self-play
 make arc-visual-capacity-sweep HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR=/path/to/ARC-AGI/data
 make experiment-health          # per-experiment health JSONL rollup
 ```
@@ -65,6 +66,12 @@ wins.
 coverage stops improving, while `arc_visual_capacity_sweep/capacity_sweep.jsonl`
 checks whether longer ranker training or ARC hidden-size changes move the
 visual-only frontier.
+`build/float/arc_verified_self_play/summary.jsonl` is the inverted-verifier
+experiment: it composes visual primitives forward, emits accepted programs and
+verifier-shaped negative siblings, trains the proposer on the inverse program
+induction problem, and reports against the ARC yardsticks of 7 certified eval
+tasks for the current template baseline, 14 for the oracle ceiling, and the
+nine zero-coverage miss-taxonomy families.
 
 ## Generalized Experiment Schema
 
@@ -858,6 +865,17 @@ signatures, clusters repeated failure shapes, and emits candidate family stubs
 plus pseudo-labels for a future neural family proposer. The output is a search
 agenda, not a certificate; promoted families still need train-pair verification
 and zero-regression public ARC measurement.
+
+`make arc-verified-self-play` makes the verifier/generator inversion explicit.
+It does not read an authored solution library. The generator composes declared
+visual primitives forward, records accepted attempts whose output is known by
+construction, adds verifier-reason negative siblings, and trains the visual
+pipeline proposer on the inverse task of recovering the program from examples.
+The default primitive mix is biased toward the miss taxonomy: object motion,
+recolor, tile/scale, crop/extract, projection/panel, component/counting, fill,
+and symmetry families. The report remains a training-signal diagnostic until
+the resulting prior is replayed through the public ARC verifier and measured
+against the 7-task template baseline and 14-task oracle ceiling.
 
 `multitask_domain` remains the generalization smoke test for the core scorer API. It trains one scalar action scorer over a fixed 96-feature row envelope while shuffling samples from `prime_gap`, `grid_path`, `delayed_claim`, and `arc_agi`.
 

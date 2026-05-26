@@ -72,6 +72,25 @@ feedback instances of the same loop instead of separate substrate prototypes.
 Static proposers may remain baselines, but paper-facing proposer claims should
 compare against the authority-fed feedback version when such rows exist.
 
+## Verified Self-Play
+
+An exact verifier can also run in generator mode. The shared contract is:
+
+```text
+primitive grammar -> forward composition -> known-correct task/output
+                  -> verifier-shaped accepted/rejected rows
+                  -> inverse proposer training
+                  -> public verifier replay before coverage claims
+```
+
+`make arc-verified-self-play` is the current ARC instance. It composes visual
+primitives forward, records accepted programs whose outputs are known by
+construction, and emits negative siblings with the same rejection-reason fields
+used by the ARC visual-pipeline ranker. The row is exact supervision for
+inverse program induction, but not a public ARC score. ARC coverage claims still
+require replay through the ARC verifier and comparison against the declared
+template baseline, oracle ceiling, and miss-taxonomy families.
+
 ## Examples
 
 Signal flight is G2. A sampled state enumerates WASD candidates, the Signal
