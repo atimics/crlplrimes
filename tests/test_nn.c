@@ -1161,6 +1161,9 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
     NNVerifierOutcome delayed_outcome;
     NNVerifierFeedbackSignal feedback_signal = {0};
     NNVerifierFeedbackSignal invalid_signal = {0};
+    NNVerifierOutcome selfplay_outcome;
+    NNVerifiedSelfplaySample selfplay_sample = {0};
+    NNVerifiedSelfplaySample invalid_selfplay_sample = {0};
     NNParsedCandidateRow parsed_row;
     NNParsedVerifierOutcome parsed_outcome;
     NNProtocolFrame frame = {
@@ -1184,6 +1187,19 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
         .failure_stage = "none",
         .residual_class = "covered",
         .domain_payload_schema = "unit.payload.v1",
+    };
+    NNProtocolEvidence selfplay_evidence = {
+        .source_schema = "unit.selfplay_source.v1",
+        .source_artifact = "unit://selfplay",
+        .state_hash = "selfplay_state_hash",
+        .parent_hash = "selfplay_parent",
+        .trace_root = "selfplay_trace",
+        .authority = "exact_check",
+        .signature = "selfplay_sig",
+        .replay_seed = "selfplay_seed",
+        .failure_stage = "accepted",
+        .residual_class = "object_motion_or_copy_extend",
+        .domain_payload_schema = "unit.selfplay_payload.v1",
     };
     char line[2048];
     FILE *fp = tmpfile();
@@ -1239,6 +1255,40 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
     invalid_signal = feedback_signal;
     invalid_signal.target_role = "";
     ok = ok && !nn_protocol_feedback_signal_validate(&invalid_signal);
+    selfplay_outcome = outcome;
+    selfplay_outcome.evidence = &selfplay_evidence;
+    ok = ok && nn_protocol_verified_selfplay_sample_from_outcome(
+                    "arc_agi",
+                    9001,
+                    "object_motion_or_copy_extend",
+                    "select_object|infer_offset|translate|emit_grid",
+                    &selfplay_outcome,
+                    &selfplay_sample);
+    ok = ok && nn_protocol_verified_selfplay_sample_validate(&selfplay_sample);
+    invalid_selfplay_sample = selfplay_sample;
+    invalid_selfplay_sample.authority = "corpus_proxy";
+    ok = ok && !nn_protocol_verified_selfplay_sample_validate(
+                    &invalid_selfplay_sample);
+    invalid_selfplay_sample = selfplay_sample;
+    invalid_selfplay_sample.provenance = "authored_library";
+    ok = ok && !nn_protocol_verified_selfplay_sample_validate(
+                    &invalid_selfplay_sample);
+    invalid_selfplay_sample = selfplay_sample;
+    invalid_selfplay_sample.outcome_status = NN_VERIFIER_REJECTED;
+    ok = ok && !nn_protocol_verified_selfplay_sample_validate(
+                    &invalid_selfplay_sample);
+    invalid_selfplay_sample = selfplay_sample;
+    invalid_selfplay_sample.target_family = "easy_generated_space";
+    ok = ok && !nn_protocol_verified_selfplay_sample_validate(
+                    &invalid_selfplay_sample);
+    invalid_selfplay_sample = selfplay_sample;
+    invalid_selfplay_sample.state_hash = "";
+    ok = ok && !nn_protocol_verified_selfplay_sample_validate(
+                    &invalid_selfplay_sample);
+    invalid_selfplay_sample = selfplay_sample;
+    invalid_selfplay_sample.op_sequence = "";
+    ok = ok && !nn_protocol_verified_selfplay_sample_validate(
+                    &invalid_selfplay_sample);
     invalid_outcome = outcome;
     invalid_outcome.false_rejections = 1;
     ok = ok && !nn_protocol_outcome_validate(&invalid_outcome);
@@ -1264,6 +1314,7 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
                                                   77,
                                                   &delayed_outcome);
         ok = ok && nn_verifier_feedback_signal_write_json(fp, &feedback_signal);
+        ok = ok && nn_verified_selfplay_sample_write_json(fp, &selfplay_sample);
         rewind(fp);
         ok = ok && fgets(line, sizeof(line), fp) != NULL;
         ok = ok && strstr(line, NN_PROTOCOL_CANDIDATE_SCHEMA) != NULL;
@@ -1317,6 +1368,16 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
              strstr(line, "\"training_signal\":\"reason_code_prior\"") != NULL &&
              strstr(line, "\"target_role\":\"proposer\"") != NULL &&
              strstr(line, "\"residual_class\":\"covered\"") != NULL;
+        ok = ok && fgets(line, sizeof(line), fp) != NULL;
+        ok = ok && strstr(line, NN_PROTOCOL_SELFPLAY_SCHEMA) != NULL &&
+             strstr(line, "\"authority\":\"exact_check\"") != NULL &&
+             strstr(line, "\"provenance\":\"selfplay_forward\"") != NULL &&
+             strstr(line, "\"outcome_status\":\"accepted\"") != NULL &&
+             strstr(line,
+                    "\"target_family\":\"object_motion_or_copy_extend\"") != NULL &&
+             strstr(line,
+                    "\"op_sequence\":\"select_object|infer_offset|translate|emit_grid\"") != NULL &&
+             strstr(line, "\"state_hash\":\"selfplay_state_hash\"") != NULL;
         fclose(fp);
     }
     return ok;

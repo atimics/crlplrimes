@@ -86,10 +86,23 @@ primitive grammar -> forward composition -> known-correct task/output
 `make arc-verified-self-play` is the current ARC instance. It composes visual
 primitives forward, records accepted programs whose outputs are known by
 construction, and emits negative siblings with the same rejection-reason fields
-used by the ARC visual-pipeline ranker. The row is exact supervision for
-inverse program induction, but not a public ARC score. ARC coverage claims still
-require replay through the ARC verifier and comparison against the declared
-template baseline, oracle ceiling, and miss-taxonomy families.
+used by the ARC visual-pipeline ranker. It exports only the compiler-backed
+accepted rows as an `arc_sketch_program` prior and reports unmapped generated
+primitive families separately. The row is exact supervision for inverse program
+induction, but not a public ARC score. ARC coverage claims still require
+`make arc-verified-self-play-public`, which downloads/validates the official
+ARC-AGI-1 public JSON corpus when needed, replays the prior through the ARC
+verifier, and compares it against full-program and matched visual-only no-prior
+public replays, the declared template baseline, oracle ceiling, and
+miss-taxonomy families. Runtime compiler traces stay inside that verifier
+boundary: the reference-recolor mask compiler currently promotes only after it
+emits a visual-combinator sketch and the public replay certifies the task.
+The generator prior is an authored prior over primitive pipelines and
+miss-taxonomy families, not an authored solution library. The registered
+`C5.arc_verified_self_play` claim therefore stays underpowered until fixed-budget
+with/without public replay, generated/eval `state_hash` disjointness,
+three-seed evidence, and at least one opened zero-coverage family are present.
+Synthetic inverse-ranker top-1 remains in-distribution training evidence only.
 
 ## Examples
 

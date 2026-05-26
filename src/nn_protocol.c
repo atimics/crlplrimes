@@ -227,6 +227,51 @@ int nn_protocol_feedback_signal_validate(const NNVerifierFeedbackSignal *signal)
     return 1;
 }
 
+static int nn_protocol_selfplay_target_family_is_valid(const char *target_family)
+{
+    static const char *const families[] = {
+        "object_motion_or_copy_extend",
+        "relational_layout_or_counting",
+        "projection_or_panel_selection",
+        "color_remap_or_mode_collapse",
+        "scale_tile_or_expand",
+        "unsupported_parse_or_shape",
+        "shape_completion_or_fill",
+        "segmentation_or_object_extract",
+        "symmetry_or_geometry",
+    };
+    size_t i;
+    if (!nn_protocol_has_text(target_family)) {
+        return 0;
+    }
+    for (i = 0U; i < sizeof(families) / sizeof(families[0]); ++i) {
+        if (strcmp(target_family, families[i]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int nn_protocol_verified_selfplay_sample_validate(const NNVerifiedSelfplaySample *sample)
+{
+    if (sample == NULL ||
+        !nn_protocol_has_text(sample->domain) ||
+        !nn_protocol_has_text(sample->authority) ||
+        strcmp(sample->authority, "exact_check") != 0 ||
+        !nn_protocol_has_text(sample->provenance) ||
+        strcmp(sample->provenance, "selfplay_forward") != 0 ||
+        sample->outcome_status != NN_VERIFIER_ACCEPTED ||
+        !nn_protocol_selfplay_target_family_is_valid(sample->target_family) ||
+        !nn_protocol_has_text(sample->state_hash) ||
+        !nn_protocol_has_text(sample->op_sequence) ||
+        !nn_protocol_has_text(sample->reason_code) ||
+        sample->support == 0u ||
+        !isfinite(sample->utility)) {
+        return 0;
+    }
+    return 1;
+}
+
 int nn_protocol_ranker_decision_validate(const NNRankerDecision *decision)
 {
     if (decision == NULL || decision->candidate_count == 0 ||
@@ -389,6 +434,43 @@ int nn_protocol_feedback_signal_from_outcome(const char *domain,
         nn_protocol_text_or_empty(evidence->source_artifact) :
         "";
     return nn_protocol_feedback_signal_validate(signal);
+}
+
+int nn_protocol_verified_selfplay_sample_from_outcome(
+    const char *domain,
+    uint32_t stable_id,
+    const char *target_family,
+    const char *op_sequence,
+    const NNVerifierOutcome *outcome,
+    NNVerifiedSelfplaySample *sample)
+{
+    const NNProtocolEvidence *evidence;
+    if (sample == NULL || !nn_protocol_outcome_validate(outcome)) {
+        return 0;
+    }
+    evidence = outcome->evidence;
+    sample->domain = nn_protocol_text_or_empty(domain);
+    sample->stable_id = stable_id;
+    sample->authority = evidence != NULL ?
+        nn_protocol_text_or_empty(evidence->authority) :
+        "";
+    sample->provenance = "selfplay_forward";
+    sample->outcome_status = outcome->status;
+    sample->target_family = nn_protocol_text_or_empty(target_family);
+    sample->op_sequence = nn_protocol_text_or_empty(op_sequence);
+    sample->state_hash = evidence != NULL ?
+        nn_protocol_text_or_empty(evidence->state_hash) :
+        "";
+    sample->reason_code = nn_protocol_text_or_empty(outcome->reason_code);
+    sample->utility = outcome->utility;
+    sample->support = outcome->support;
+    sample->source_schema = evidence != NULL ?
+        nn_protocol_text_or_empty(evidence->source_schema) :
+        NN_PROTOCOL_VERIFIER_SCHEMA;
+    sample->source_artifact = evidence != NULL ?
+        nn_protocol_text_or_empty(evidence->source_artifact) :
+        "";
+    return nn_protocol_verified_selfplay_sample_validate(sample);
 }
 
 int nn_protocol_score_candidates(NeuralNet *net,
@@ -677,6 +759,41 @@ int nn_verifier_feedback_signal_write_json(FILE *fp,
     nn_protocol_json_string(fp, signal->target_role);
     nn_protocol_write_optional_string(fp, "source_schema", signal->source_schema);
     nn_protocol_write_optional_string(fp, "source_artifact", signal->source_artifact);
+    fputs("}\n", fp);
+    return ferror(fp) == 0;
+}
+
+int nn_verified_selfplay_sample_write_json(FILE *fp,
+                                           const NNVerifiedSelfplaySample *sample)
+{
+    if (fp == NULL || !nn_protocol_verified_selfplay_sample_validate(sample)) {
+        return 0;
+    }
+    fputs("{\"schema\":", fp);
+    nn_protocol_json_string(fp, NN_PROTOCOL_SELFPLAY_SCHEMA);
+    fputs(",\"domain\":", fp);
+    nn_protocol_json_string(fp, sample->domain);
+    fprintf(fp, ",\"stable_id\":%u", sample->stable_id);
+    fputs(",\"authority\":", fp);
+    nn_protocol_json_string(fp, sample->authority);
+    fputs(",\"provenance\":", fp);
+    nn_protocol_json_string(fp, sample->provenance);
+    fputs(",\"outcome_status\":", fp);
+    nn_protocol_json_string(fp, nn_protocol_status_name(sample->outcome_status));
+    fputs(",\"target_family\":", fp);
+    nn_protocol_json_string(fp, sample->target_family);
+    fputs(",\"op_sequence\":", fp);
+    nn_protocol_json_string(fp, sample->op_sequence);
+    fputs(",\"state_hash\":", fp);
+    nn_protocol_json_string(fp, sample->state_hash);
+    fputs(",\"reason_code\":", fp);
+    nn_protocol_json_string(fp, sample->reason_code);
+    fprintf(fp,
+            ",\"utility\":%.17g,\"support\":%zu",
+            sample->utility,
+            sample->support);
+    nn_protocol_write_optional_string(fp, "source_schema", sample->source_schema);
+    nn_protocol_write_optional_string(fp, "source_artifact", sample->source_artifact);
     fputs("}\n", fp);
     return ferror(fp) == 0;
 }

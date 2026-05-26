@@ -396,6 +396,36 @@
       ]
     },
     {
+      "id": "substrate-arc-verified-self-play",
+      "title": "ARC verified self-play recovers search coverage at fixed budget",
+      "role": "claim_governance",
+      "claim_ids": [
+        "C5.arc_verified_self_play"
+      ],
+      "roadmap_items": [
+        "R-S.2",
+        "R-X4",
+        "R-F.4"
+      ],
+      "command": "make arc-verified-self-play-public",
+      "artifacts": [
+        "build/float/arc_verified_self_play/summary.jsonl",
+        "build/float/arc_verified_self_play/summary.md",
+        "build/float/arc_synthetic_shape_curriculum/synthetic_shape_attempts.tsv"
+      ],
+      "agent_instruction": "Treat self-play as an L1 search-efficiency claim only: fixed primitives, fixed inference budget, public replay, leakage audit, and held-out family movement are required before support.",
+      "success_criteria": [
+        "The with-self-play and without-self-play public replays use the same proposer surface and inference budget.",
+        "Generated self-play rows carry state_hash and provenance selfplay_forward, and public eval hashes are disjoint.",
+        "Certified public eval coverage reaches the template baseline or better and opens at least one currently zero-coverage family at three or more seeds."
+      ],
+      "failure_modes": [
+        "Do not describe in-distribution synthetic top-1 as public ARC evidence.",
+        "Do not credit self-play for coverage movement unless the fixed-budget ablation is present.",
+        "If leakage hashes are missing, keep the claim underpowered even when public replay improves."
+      ]
+    },
+    {
       "id": "application-signal-flight-replay-control",
       "title": "Signal offline replay control vignette",
       "role": "claim_support",
@@ -1264,6 +1294,68 @@
         "C5.held_out_library_feedback",
         "C5.public_arc_library_promotion",
         "C5.artifact_fed_tiny_net_training"
+      ]
+    },
+    {
+      "id": "C5.arc_verified_self_play",
+      "title": "ARC verified self-play is gated as fixed-budget search evidence",
+      "claim_type": "substrate_feedback",
+      "claim_text": "Forward verifier-generated ARC-like tasks can train an inverse proposer, but the supported claim is limited to fixed-primitive search efficiency when public replay recovers oracle coverage under a matched budget.",
+      "builtin_evaluator": "arc_verified_self_play",
+      "required_for_submission": false,
+      "paper_surfaces": [
+        "substrate",
+        "claim_governance",
+        "limitations",
+        "roadmap"
+      ],
+      "roadmap_items": [
+        "R-S.2",
+        "R-X4",
+        "R-F.4"
+      ],
+      "evidence": {
+        "source": "build/float/arc_verified_self_play/summary.jsonl",
+        "secondary_sources": [
+          "build/float/arc_verified_self_play/summary.md",
+          "build/float/arc_verified_self_play/self_play_prior_summary.jsonl",
+          "build/float/arc_synthetic_shape_curriculum/synthetic_shape_summary.jsonl",
+          "build/float/arc_synthetic_shape_curriculum/synthetic_shape_attempts.tsv"
+        ],
+        "command": "make arc-verified-self-play-public",
+        "schemas": [
+          "crlp.arc_verified_self_play.summary.v1",
+          "crlp.arc_verified_self_play.prior.v1",
+          "crlp.arc_synthetic_shape_curriculum.v1",
+          "crlp.protocol.verified_selfplay_sample.v1"
+        ],
+        "filters": {
+          "grounding_authority": "exact_check",
+          "provenance": "selfplay_forward",
+          "template_baseline": 7,
+          "oracle_ceiling": 14
+        }
+      },
+      "decision_rule": {
+        "minimum_seed_count": 3,
+        "supported_if": [
+          "claim_certified_eval_tasks >= claim_template_baseline",
+          "claim_opened_zero_coverage_families >= 1",
+          "claim_seed_count >= 3",
+          "claim_fixed_budget_ablation_available == true",
+          "claim_leakage_gate_passed == true"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Keep self-play as scaffolding until public replay, fixed-budget ablation, leakage disjointness, and per-family movement are all present.",
+        "Report inverse-ranker top-1 only as in-distribution generated-curriculum fit.",
+        "Treat authored primitive pipelines and miss-taxonomy bias as the generator prior, not as authored task-solution knowledge."
+      ],
+      "limitation_when_not_supported": "ARC verified self-play is not yet supported as search-efficiency evidence; it remains an underpowered exact-check substrate until fixed-budget public replay opens a held-out zero-coverage family without leakage.",
+      "derived_claims": [
+        "C5.selfplay_fixed_budget_ablation",
+        "C5.selfplay_leakage_disjointness",
+        "C5.selfplay_zero_family_transfer"
       ]
     },
     {

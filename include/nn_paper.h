@@ -1,6 +1,8 @@
 #ifndef NN_PAPER_H
 #define NN_PAPER_H
 
+#include <stddef.h>
+
 int nn_paper_write_data(const char *json_output_path,
                         const char *typ_output_path,
                         const char *comparison_path,
@@ -17,5 +19,11 @@ int nn_paper_write_claims(const char *claims_path,
                           int support_check,
                           int fail_required,
                           int fail_unlinked_roadmap);
+
+int nn_paper_write_trace_determinism(const char *const *trace_paths,
+                                     size_t trace_path_count,
+                                     const char *output_path,
+                                     const char *canonical_output_path,
+                                     int gate);
 
 #endif

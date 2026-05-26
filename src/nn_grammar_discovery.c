@@ -1,4 +1,5 @@
 #include "nn_grammar_discovery.h"
+#include "nn_protocol.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -33,6 +34,16 @@ typedef struct {
     size_t count;
     size_t capacity;
 } NNGDStringList;
+
+static double nn_gd_wall_seconds(void) {
+#if defined(CLOCK_MONOTONIC)
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
+        return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
+    }
+#endif
+    return (double)time(NULL);
+}
 
 typedef struct {
     size_t *slots;
@@ -11053,9 +11064,45 @@ static const char *nn_gd_arc_synthetic_shape_kind(unsigned grid_w,
     return "rectangle";
 }
 
+static const char *nn_gd_arc_synthetic_shape_target_family(const char *op_name) {
+    if (op_name == NULL) {
+        return "unsupported_parse_or_shape";
+    }
+    if (strcmp(op_name, "object_motion") == 0) {
+        return "object_motion_or_copy_extend";
+    }
+    if (strcmp(op_name, "recolor") == 0 || strcmp(op_name, "recolor_crop") == 0) {
+        return "color_remap_or_mode_collapse";
+    }
+    if (strcmp(op_name, "tile_scale") == 0 ||
+        strcmp(op_name, "macrocell_substitute") == 0) {
+        return "scale_tile_or_expand";
+    }
+    if (strcmp(op_name, "component_color_summary") == 0 ||
+        strcmp(op_name, "visual_combinator") == 0) {
+        return "relational_layout_or_counting";
+    }
+    if (strcmp(op_name, "masked_or_normalized_crop") == 0 ||
+        strcmp(op_name, "crop") == 0) {
+        return "segmentation_or_object_extract";
+    }
+    if (strcmp(op_name, "separator_panel_map") == 0) {
+        return "projection_or_panel_selection";
+    }
+    if (strcmp(op_name, "fill_or_complete") == 0) {
+        return "shape_completion_or_fill";
+    }
+    if (strcmp(op_name, "symmetry") == 0) {
+        return "symmetry_or_geometry";
+    }
+    return "unsupported_parse_or_shape";
+}
+
 static int nn_gd_arc_synthetic_shape_is_string_field(size_t index) {
     return index <= 5U || (index >= 7U && index <= 15U) ||
-           (index >= 17U && index <= 19U) || index == 40U || index == 42U;
+           (index >= 17U && index <= 19U) || index == 40U || index == 42U ||
+           index == NN_GD_ARC_RUNTIME_FIELD_COUNT ||
+           index == NN_GD_ARC_RUNTIME_FIELD_COUNT + 1U;
 }
 
 static void nn_gd_arc_synthetic_shape_hash_part(uint64_t *hash,
@@ -11141,9 +11188,44 @@ static void nn_gd_arc_synthetic_shape_write_row(FILE *fp,
     fputc('\n', fp);
 }
 
+static int nn_gd_arc_synthetic_shape_write_selfplay_sample(
+    FILE *fp,
+    unsigned stable_id,
+    const char *task_id,
+    const char *state_hash,
+    const char *target_family,
+    const NNGDArcSyntheticShapeSpec *spec,
+    double utility) {
+    if (fp == NULL || state_hash == NULL || state_hash[0] == '\0' ||
+        target_family == NULL || target_family[0] == '\0' || spec == NULL) {
+        return -1;
+    }
+    fputs("{\"schema\":", fp);
+    nn_gd_json_write_string(fp, NN_PROTOCOL_SELFPLAY_SCHEMA);
+    fputs(",\"domain\":\"arc_agi\"", fp);
+    fprintf(fp, ",\"stable_id\":%u", stable_id);
+    fputs(",\"authority\":\"exact_check\"", fp);
+    fputs(",\"provenance\":\"selfplay_forward\"", fp);
+    fputs(",\"outcome_status\":\"accepted\"", fp);
+    fputs(",\"target_family\":", fp);
+    nn_gd_json_write_string(fp, target_family);
+    fputs(",\"op_sequence\":", fp);
+    nn_gd_json_write_string(fp, spec->typed_stages);
+    fputs(",\"state_hash\":", fp);
+    nn_gd_json_write_string(fp, state_hash);
+    fputs(",\"reason_code\":\"accepted\"", fp);
+    fprintf(fp, ",\"utility\":%.17g,\"support\":1", utility);
+    fputs(",\"source_schema\":\"crlp.arc_synthetic_shape_curriculum.v1\"", fp);
+    fputs(",\"source_artifact\":", fp);
+    nn_gd_json_write_string(fp, task_id);
+    fputs("}\n", fp);
+    return ferror(fp) ? -1 : 0;
+}
+
 static int nn_gd_arc_synthetic_shape_make_attempt_row(
     FILE *synthetic,
     FILE *combined,
+    FILE *selfplay_samples,
     size_t field_count,
     unsigned attempt_index,
     unsigned grid_w,
@@ -11160,6 +11242,7 @@ static int nn_gd_arc_synthetic_shape_make_attempt_row(
     char task_id[128];
     char attempt_id[128];
     char library_id[128];
+    char state_hash[128];
     char slot_tokens[512];
     const NNGDArcSyntheticShapeSpec *spec =
         nn_gd_arc_synthetic_shape_spec(op_name);
@@ -11177,6 +11260,7 @@ static int nn_gd_arc_synthetic_shape_make_attempt_row(
     double mismatch_ratio;
     const char *contrast_id;
     const char *contrast_kind;
+    const char *target_family;
     long contrast_distance;
     long accepted;
     double utility;
@@ -11186,6 +11270,7 @@ static int nn_gd_arc_synthetic_shape_make_attempt_row(
     if (spec == NULL || field_count > NN_GD_MAX_FIELDS) {
         return -1;
     }
+    target_family = nn_gd_arc_synthetic_shape_target_family(op_name);
     for (i = 0U; i < field_count; ++i) {
         snprintf(values[i],
                  512U,
@@ -11204,6 +11289,16 @@ static int nn_gd_arc_synthetic_shape_make_attempt_row(
              sizeof(library_id),
              "ngd-synth:%016" PRIx64,
              nn_gd_arc_synthetic_shape_hash("library",
+                                            grid_w,
+                                            grid_h,
+                                            shape_w,
+                                            shape_h,
+                                            kind,
+                                            op_name));
+    snprintf(state_hash,
+             sizeof(state_hash),
+             "ngd-state:%016" PRIx64,
+             nn_gd_arc_synthetic_shape_hash("state",
                                             grid_w,
                                             grid_h,
                                             shape_w,
@@ -11428,14 +11523,33 @@ static int nn_gd_arc_synthetic_shape_make_attempt_row(
                                        83U,
                                        area == 1U ? 1L : 0L);
     nn_gd_arc_synthetic_shape_set_long(values, field_count, 84U, 1L);
+    nn_gd_arc_synthetic_shape_set(values,
+                                  field_count,
+                                  NN_GD_ARC_RUNTIME_FIELD_COUNT,
+                                  state_hash);
+    nn_gd_arc_synthetic_shape_set(values,
+                                  field_count,
+                                  NN_GD_ARC_RUNTIME_FIELD_COUNT + 1U,
+                                  "selfplay_forward");
     nn_gd_arc_synthetic_shape_write_row(synthetic, values, field_count);
     nn_gd_arc_synthetic_shape_write_row(combined, values, field_count);
+    if (accepted &&
+        nn_gd_arc_synthetic_shape_write_selfplay_sample(selfplay_samples,
+                                                        attempt_index,
+                                                        task_id,
+                                                        state_hash,
+                                                        target_family,
+                                                        spec,
+                                                        utility) != 0) {
+        return -1;
+    }
     return ferror(synthetic) || ferror(combined) ? -1 : 0;
 }
 
 static int nn_gd_arc_synthetic_shape_copy_original_attempts(
     const char *path,
     FILE *combined,
+    size_t target_field_count,
     NNGDArcHoleCounterList *original_counts) {
     FILE *fp = fopen(path, "r");
     char line[NN_GD_LINE_MAX];
@@ -11450,14 +11564,26 @@ static int nn_gd_arc_synthetic_shape_copy_original_attempts(
         char parse_line[NN_GD_LINE_MAX];
         char *fields[NN_GD_MAX_FIELDS];
         size_t field_count;
+        size_t pad_i;
         char key[128];
         const char *split_name;
+        snprintf(parse_line, sizeof(parse_line), "%s", line);
+        field_count = nn_gd_split_tabs(parse_line, fields, NN_GD_MAX_FIELDS);
+        nn_gd_strip_line_end(line);
         if (fputs(line, combined) == EOF) {
             fclose(fp);
             return -1;
         }
-        snprintf(parse_line, sizeof(parse_line), "%s", line);
-        field_count = nn_gd_split_tabs(parse_line, fields, NN_GD_MAX_FIELDS);
+        for (pad_i = field_count; pad_i < target_field_count; ++pad_i) {
+            if (fputc('\t', combined) == EOF) {
+                fclose(fp);
+                return -1;
+            }
+        }
+        if (fputc('\n', combined) == EOF) {
+            fclose(fp);
+            return -1;
+        }
         split_name = nn_gd_field(fields, field_count, 0U);
         snprintf(key,
                  sizeof(key),
@@ -11481,11 +11607,16 @@ static int nn_gd_arc_synthetic_shape_write_summary(
     const char *attempt_rows_path,
     const char *synthetic_attempts_path,
     const char *combined_attempts_path,
+    const char *selfplay_samples_path,
     unsigned max_grid_size,
     const char *op_mode,
     const NNGDStringList *ops,
     const NNGDStringList *negative_kinds,
     unsigned max_accepted,
+    unsigned max_synthetic_rows,
+    unsigned max_seconds,
+    const char *stop_reason,
+    double elapsed_seconds,
     unsigned synthetic_rows,
     NNGDArcHoleCounterList *synthetic_counts,
     NNGDArcHoleCounterList *op_counts,
@@ -11519,6 +11650,8 @@ static int nn_gd_arc_synthetic_shape_write_summary(
     nn_gd_json_write_string(fp, synthetic_attempts_path);
     fputs(",\"combined_attempts\":", fp);
     nn_gd_json_write_string(fp, combined_attempts_path);
+    fputs(",\"verified_selfplay_samples\":", fp);
+    nn_gd_json_write_string(fp, selfplay_samples_path);
     fprintf(fp, ",\"max_grid_size\":%u,\"op_mode\":", max_grid_size);
     nn_gd_json_write_string(fp, op_mode);
     fputs(",\"ops\":", fp);
@@ -11528,10 +11661,17 @@ static int nn_gd_arc_synthetic_shape_write_summary(
                                       (const char *const *)negative_kinds->items,
                                       negative_kinds->count);
     fprintf(fp,
-            ",\"max_accepted\":%u,\"synthetic_rows\":%u,"
+            ",\"max_accepted\":%u,\"max_synthetic_rows\":%u,"
+            "\"max_seconds\":%u,\"stop_reason\":",
+            max_accepted,
+            max_synthetic_rows,
+            max_seconds);
+    nn_gd_json_write_string(fp, stop_reason == NULL ? "unknown" : stop_reason);
+    fprintf(fp,
+            ",\"elapsed_seconds\":%.3f,\"synthetic_rows\":%u,"
             "\"synthetic_accepted_rows\":%zu,\"synthetic_rejected_rows\":%zu,"
             "\"synthetic_counts\":",
-            max_accepted,
+            elapsed_seconds,
             synthetic_rows,
             accepted_count,
             (size_t)synthetic_rows - accepted_count);
@@ -11540,6 +11680,8 @@ static int nn_gd_arc_synthetic_shape_write_summary(
     nn_gd_arc_hole_write_counter_object(fp, op_counts);
     fputs(",\"synthetic_shape_counts\":", fp);
     nn_gd_arc_hole_write_counter_object(fp, shape_counts);
+    fputs(",\"synthetic_provenance\":\"selfplay_forward\","
+          "\"synthetic_state_hash_column\":\"state_hash\"", fp);
     for (i = 0U; i < original_counts->count; ++i) {
         fputc(',', fp);
         nn_gd_json_write_string(fp, original_counts->items[i].key);
@@ -11562,14 +11704,20 @@ int nn_grammar_discovery_write_arc_synthetic_shape_curriculum(
     const char *ops_csv,
     const char *negative_kinds_csv,
     const char *op_mode,
-    unsigned max_accepted) {
+    unsigned max_accepted,
+    unsigned max_synthetic_rows,
+    unsigned max_seconds) {
     FILE *source = NULL;
     FILE *synthetic = NULL;
     FILE *combined = NULL;
+    FILE *selfplay_samples = NULL;
     char header_line[NN_GD_LINE_MAX];
     char header_parse[NN_GD_LINE_MAX];
+    char output_header[NN_GD_LINE_MAX];
+    char selfplay_samples_path[4096];
     char *header_fields[NN_GD_MAX_FIELDS];
     size_t field_count;
+    size_t synthetic_field_count;
     NNGDStringList ops = {0};
     NNGDStringList negative_kinds = {0};
     NNGDArcHoleCounterList synthetic_counts = {0};
@@ -11584,6 +11732,9 @@ int nn_grammar_discovery_write_arc_synthetic_shape_curriculum(
     int all_ops;
     int stop = 0;
     int status = -1;
+    const char *stop_reason = "exhausted";
+    double start_time = nn_gd_wall_seconds();
+    double end_time = start_time;
     if (attempt_rows_path == NULL || output_dir == NULL ||
         synthetic_attempts_path == NULL || combined_attempts_path == NULL ||
         summary_path == NULL || max_grid_size == 0U || op_mode == NULL ||
@@ -11595,6 +11746,12 @@ int nn_grammar_discovery_write_arc_synthetic_shape_curriculum(
         nn_gd_mkdirs(output_dir) != 0 ||
         nn_gd_mkdir_parent(synthetic_attempts_path) != 0 ||
         nn_gd_mkdir_parent(combined_attempts_path) != 0) {
+        goto done;
+    }
+    if (snprintf(selfplay_samples_path,
+                 sizeof(selfplay_samples_path),
+                 "%s/verified_selfplay_samples.jsonl",
+                 output_dir) >= (int)sizeof(selfplay_samples_path)) {
         goto done;
     }
     source = fopen(attempt_rows_path, "r");
@@ -11609,19 +11766,27 @@ int nn_grammar_discovery_write_arc_synthetic_shape_curriculum(
         strcmp(nn_gd_field(header_fields, field_count, 0U), "split_name") != 0) {
         goto done;
     }
+    synthetic_field_count =
+        field_count + 2U <= NN_GD_MAX_FIELDS ? field_count + 2U : field_count;
     synthetic = fopen(synthetic_attempts_path, "w");
     combined = fopen(combined_attempts_path, "w");
-    if (synthetic == NULL || combined == NULL) {
+    selfplay_samples = fopen(selfplay_samples_path, "w");
+    if (synthetic == NULL || combined == NULL || selfplay_samples == NULL) {
         goto done;
     }
-    fputs(header_line, synthetic);
-    fputs(header_line, combined);
-    if (header_line[strlen(header_line) - 1U] != '\n') {
-        fputc('\n', synthetic);
-        fputc('\n', combined);
+    snprintf(output_header, sizeof(output_header), "%s", header_line);
+    nn_gd_strip_line_end(output_header);
+    fputs(output_header, synthetic);
+    fputs(output_header, combined);
+    if (synthetic_field_count > field_count) {
+        fputs("\tstate_hash\tprovenance", synthetic);
+        fputs("\tstate_hash\tprovenance", combined);
     }
+    fputc('\n', synthetic);
+    fputc('\n', combined);
     if (nn_gd_arc_synthetic_shape_copy_original_attempts(attempt_rows_path,
                                                          combined,
+                                                         synthetic_field_count,
                                                          &original_counts) != 0) {
         goto done;
     }
@@ -11646,6 +11811,21 @@ int nn_grammar_discovery_write_arc_synthetic_shape_curriculum(
                         char accepted_id[128];
                         size_t neg_i;
                         if (max_accepted != 0U && accepted_rows >= max_accepted) {
+                            stop_reason = "max_accepted";
+                            stop = 1;
+                            break;
+                        }
+                        if (max_synthetic_rows != 0U &&
+                            synthetic_rows + 1U + (unsigned)negative_kinds.count >
+                                max_synthetic_rows) {
+                            stop_reason = "max_synthetic_rows";
+                            stop = 1;
+                            break;
+                        }
+                        if (max_seconds != 0U &&
+                            nn_gd_wall_seconds() - start_time >=
+                                (double)max_seconds) {
+                            stop_reason = "max_seconds";
                             stop = 1;
                             break;
                         }
@@ -11662,7 +11842,8 @@ int nn_grammar_discovery_write_arc_synthetic_shape_curriculum(
                         if (nn_gd_arc_synthetic_shape_make_attempt_row(
                                 synthetic,
                                 combined,
-                                field_count,
+                                selfplay_samples,
+                                synthetic_field_count,
                                 attempt_index++,
                                 grid_w,
                                 grid_h,
@@ -11687,7 +11868,8 @@ int nn_grammar_discovery_write_arc_synthetic_shape_curriculum(
                             if (nn_gd_arc_synthetic_shape_make_attempt_row(
                                     synthetic,
                                     combined,
-                                    field_count,
+                                    selfplay_samples,
+                                    synthetic_field_count,
                                     attempt_index++,
                                     grid_w,
                                     grid_h,
@@ -11721,15 +11903,26 @@ int nn_grammar_discovery_write_arc_synthetic_shape_curriculum(
         goto done;
     }
     combined = NULL;
+    if (fclose(selfplay_samples) != 0) {
+        selfplay_samples = NULL;
+        goto done;
+    }
+    selfplay_samples = NULL;
+    end_time = nn_gd_wall_seconds();
     if (nn_gd_arc_synthetic_shape_write_summary(summary_path,
                                                 attempt_rows_path,
                                                 synthetic_attempts_path,
                                                 combined_attempts_path,
+                                                selfplay_samples_path,
                                                 max_grid_size,
                                                 op_mode,
                                                 &ops,
                                                 &negative_kinds,
                                                 max_accepted,
+                                                max_synthetic_rows,
+                                                max_seconds,
+                                                stop_reason,
+                                                end_time - start_time,
                                                 synthetic_rows,
                                                 &synthetic_counts,
                                                 &op_counts,
@@ -11738,10 +11931,11 @@ int nn_grammar_discovery_write_arc_synthetic_shape_curriculum(
         goto done;
     }
     printf("arc-synthetic-shape-curriculum synthetic_rows=%u accepted=%u "
-           "rejected=%u combined=%s summary=%s\n",
+           "rejected=%u stop=%s combined=%s summary=%s\n",
            synthetic_rows,
            accepted_rows,
            synthetic_rows - accepted_rows,
+           stop_reason,
            combined_attempts_path,
            summary_path);
     status = 0;
@@ -11755,6 +11949,9 @@ done:
     }
     if (combined != NULL) {
         fclose(combined);
+    }
+    if (selfplay_samples != NULL) {
+        fclose(selfplay_samples);
     }
     nn_gd_string_list_free(&ops);
     nn_gd_string_list_free(&negative_kinds);
@@ -17144,6 +17341,7 @@ static int nn_gd_health_read_claims(NNGDHealthExperimentList *experiments,
         {"C4.adapter_heads_shared_trunk", {"multitask_domain", NULL, NULL}, 1U},
         {"C5.rejected_candidate_reason_learning", {"modular_gate_search", NULL, NULL}, 1U},
         {"C5.hypothesis_library_promotion", {"arc_agi", NULL, NULL}, 1U},
+        {"C5.arc_verified_self_play", {"arc_agi", NULL, NULL}, 1U},
         {"C7.tiny_net_plateau_stop_rule", {"multitask_domain", NULL, NULL}, 1U},
         {"C8.trace_determinism_audit", {"prime_gap", NULL, NULL}, 1U},
         {"C9.signal_flight_replay_control", {"signal_flight", NULL, NULL}, 1U},

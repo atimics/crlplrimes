@@ -10,7 +10,8 @@ compiles a candidate into executable grammar and a verifier certifies it.
 Run the current adapters:
 
 ```sh
-make neural-grammar-discovery HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR=/path/to/ARC-AGI/data
+make arc-public-data
+make neural-grammar-discovery HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR=build/float/arc_agi_public/data
 make learned-grammar-coverage
 make experiment-health
 make haiku-coherence-hard-negatives-hf-dictionary
@@ -73,6 +74,10 @@ Outputs:
 - `build/float/learned_grammar_coverage/arc_visual_capacity_sweep/capacity_sweep.md`
 - `build/float/arc_verified_self_play/summary.jsonl`
 - `build/float/arc_verified_self_play/summary.md`
+- `build/float/arc_learned_sketch_ops/learned_sketch_ops.jsonl`
+- `build/float/arc_learned_sketch_ops/learned_sketch_op_prior.tsv`
+- `build/float/arc_learned_sketch_ops/summary.jsonl`
+- `build/float/arc_learned_sketch_ops/summary.md`
 - `build/float/neural_grammar_discovery/grammar_sketches.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketch_examples.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketch_proposals.jsonl`
@@ -216,9 +221,47 @@ accepted verifier rows, and dense negative siblings; the ranker is then trained
 on the inverse problem of inducing the program from the examples. Its summary
 uses `crlp.arc_verified_self_play.summary.v1` and reports the generated rows
 against the ARC template baseline of 7 certified eval tasks, the 14-task oracle
-ceiling, and the nine zero-coverage miss-taxonomy families. The public-ARC part
-is deliberately a replay requirement, not assumed from synthetic success, so
-distribution mismatch remains visible.
+ceiling, and the nine zero-coverage miss-taxonomy families. The same target now
+exports compiler-backed accepted self-play attempts as a typed ARC visual prior;
+unmapped generated primitives stay visible as prior-export gaps. The public-ARC
+part is deliberately a replay requirement, not assumed from synthetic success:
+`make arc-verified-self-play-public` downloads and validates the official
+ARC-AGI-1 public JSON corpus under `build/float/arc_agi_public/data` when no
+local public ARC directory is supplied, reruns public train/eval with the
+exported prior, and reports certified-task deltas against the no-prior public
+replays and the declared template/oracle yardsticks. It keeps the full-program
+no-prior public baseline separate from the matched visual-only no-prior baseline
+so prior impact is not confounded with `--arc-visual-only`; promotion/regression
+status is based on that matched visual-only comparison. The public target caps
+its synthetic curriculum at
+`ARC_VERIFIED_SELF_PLAY_PUBLIC_SYNTHETIC_MAX_ACCEPTED=4096` and
+`ARC_VERIFIED_SELF_PLAY_PUBLIC_SYNTHETIC_MAX_SECONDS=60` by default; set both to
+`0` to rerun the uncapped generator. The lower-level generator also accepts
+`ARC_SYNTHETIC_SHAPE_MAX_SYNTHETIC_ROWS` for row-budgeted streaming and reports
+`stop_reason` plus elapsed time in its curriculum summary.
+The self-play claim is registered as `C5.arc_verified_self_play` but starts
+underpowered. The support rule is deliberately narrow: at fixed inference budget,
+public replay must certify at least the template baseline, open at least one
+currently zero-coverage family, pass a generated/eval state-hash leakage audit,
+and do so at three or more seeds. The inverse ranker's `top1_rate` is
+in-distribution on generated rows and cannot substitute for public replay.
+`authored_task_library=false` means no authored solution set is read; the
+primitive pipelines and miss-taxonomy bias remain the authored generation prior.
+The matched visual-only public replays use bounded runtime sketch mining by
+default (`ARC_RUNTIME_SKETCH_MINE_CAP=16`). Setting the cap to `0` disables the
+runtime visual synthesis pass, and induction logs include
+`crlp.arc_program_task.audit.v1` rows that separate visual-program exact winners
+from legacy-template exact winners.
+`make arc-learned-sketch-ops` is the first explicit learned-op pass over that
+surface. It reads the ARC visual-pipeline attempt TSV plus diagnostic and
+compiler-replay traces, groups repeated typed composition signatures into
+`crlp.arc_learned_sketch_op.v1` rows, and exports
+`crlp.arc_learned_sketch_op_prior.v1` priors. Accepted verifier rows can promote
+a sketch-op family; reference-conditioned recolor masks now have an executable
+visual-combinator replay path, which promotes `arc.reference_recolor_mask` when
+the public ARC verifier accepts the emitted sketch. Other object-translate
+near-misses remain candidate pressure until their compiler path exists and
+replays cleanly.
 Haiku coherence hard-negative reports enter this surface as
 `haiku_coherence_hard_negatives`, where weak `line_splice` and `word_salad`
 families become diagnostic holes without paper-claim support. The current

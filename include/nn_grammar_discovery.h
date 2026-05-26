@@ -131,7 +131,9 @@ int nn_grammar_discovery_write_arc_synthetic_shape_curriculum(
     const char *ops_csv,
     const char *negative_kinds_csv,
     const char *op_mode,
-    unsigned max_accepted);
+    unsigned max_accepted,
+    unsigned max_synthetic_rows,
+    unsigned max_seconds);
 
 int nn_grammar_discovery_append_arc_probe_attempts_tsv(
     const char *base_attempts_tsv_path,

@@ -2,11 +2,14 @@
 
 #include "nn_paper.h"
 
+#include "nn.h"
+
 #include <ctype.h>
 #include <errno.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -74,6 +77,12 @@ typedef struct {
     size_t count;
     size_t capacity;
 } PaperRawRows;
+
+typedef struct {
+    char **items;
+    size_t count;
+    size_t capacity;
+} PaperLineList;
 
 typedef struct {
     int present;
@@ -1375,7 +1384,7 @@ done:
     return status;
 }
 
-#define PAPER_CLAIM_COUNT 17U
+#define PAPER_CLAIM_COUNT 18U
 #define PAPER_CLAIM_SUMMARY_SIZE 1536U
 #define PAPER_CLAIM_EXPLANATION_SIZE 1024U
 #define PAPER_CLAIM_CHART_SIZE 4096U
@@ -1619,6 +1628,18 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "rows",
         "live rows",
     },
+    {
+        "C5.arc_verified_self_play",
+        "C5",
+        "ARC verified self-play is a fixed-budget search-efficiency claim",
+        "build/float/arc_verified_self_play/summary.jsonl",
+        0,
+        "Verified self-play may improve ARC proposer search only when fixed-budget public replay recovers certified oracle coverage.",
+        "This claim is registered as underpowered until public eval replay, fixed-budget with/without self-play ablation, leakage disjointness, zero-family opening, and seed-count gates are all present.",
+        "coverage_bar",
+        "certified tasks",
+        "public eval certified tasks",
+    },
 };
 
 static void paper_appendf(char *buffer,
@@ -1669,6 +1690,452 @@ static int paper_json_get_bool(const char *line, const char *key, int *out) {
         return 1;
     }
     return 0;
+}
+
+static void paper_line_list_free(PaperLineList *list) {
+    size_t i;
+    if (list == NULL) {
+        return;
+    }
+    for (i = 0U; i < list->count; ++i) {
+        free(list->items[i]);
+    }
+    free(list->items);
+    memset(list, 0, sizeof(*list));
+}
+
+static int paper_line_list_append_owned(PaperLineList *list, char *line) {
+    char **items;
+    size_t capacity;
+    if (list == NULL || line == NULL) {
+        free(line);
+        return -1;
+    }
+    if (list->count + 1U > list->capacity) {
+        capacity = list->capacity == 0U ? 256U : list->capacity * 2U;
+        items = (char **)realloc(list->items, capacity * sizeof(char *));
+        if (items == NULL) {
+            free(line);
+            return -1;
+        }
+        list->items = items;
+        list->capacity = capacity;
+    }
+    list->items[list->count++] = line;
+    return 0;
+}
+
+static int paper_dyn_appendf(char **buffer,
+                             size_t *used,
+                             size_t *capacity,
+                             const char *fmt,
+                             ...) {
+    va_list args;
+    int needed;
+    char *next;
+    for (;;) {
+        if (*buffer == NULL || *capacity == 0U) {
+            *capacity = 256U;
+            *used = 0U;
+            *buffer = (char *)malloc(*capacity);
+            if (*buffer == NULL) {
+                return -1;
+            }
+            (*buffer)[0] = '\0';
+        }
+        va_start(args, fmt);
+        needed = vsnprintf(*buffer + *used, *capacity - *used, fmt, args);
+        va_end(args);
+        if (needed < 0) {
+            return -1;
+        }
+        if (*used + (size_t)needed < *capacity) {
+            *used += (size_t)needed;
+            return 0;
+        }
+        while (*used + (size_t)needed >= *capacity) {
+            *capacity *= 2U;
+        }
+        next = (char *)realloc(*buffer, *capacity);
+        if (next == NULL) {
+            return -1;
+        }
+        *buffer = next;
+    }
+}
+
+static int paper_trace_canonical_append(PaperLineList *lines,
+                                        const NNParsedTraceRecord *record,
+                                        const uint32_t *action_ids) {
+    char *line = NULL;
+    size_t used = 0U;
+    size_t capacity = 0U;
+    size_t i;
+    int sensitive = fabs((double)record->selected_score_margin) <=
+                    (double)record->rank_score_epsilon;
+    if (paper_dyn_appendf(&line,
+                          &used,
+                          &capacity,
+                          "{\"schema\":\"crlp.trace.semantic.v1\","
+                          "\"source_schema\":\"crlp.trace.v1\","
+                          "\"row_index\":%zu,"
+                          "\"task\":\"%s\","
+                          "\"trace_version\":%u,"
+                          "\"action_id_contract\":\"%s\","
+                          "\"state_hash\":\"%016llx\","
+                          "\"feature_encoder_version\":%u,"
+                          "\"candidate_count\":%zu,"
+                          "\"action_ids\":[",
+                          lines->count,
+                          record->task_name,
+                          (unsigned)record->trace_version,
+                          record->action_id_contract,
+                          (unsigned long long)record->state_hash,
+                          (unsigned)record->feature_encoder_version,
+                          record->candidate_count) != 0) {
+        free(line);
+        return -1;
+    }
+    for (i = 0U; i < record->candidate_count; ++i) {
+        if (paper_dyn_appendf(&line,
+                              &used,
+                              &capacity,
+                              "%s%u",
+                              i == 0U ? "" : ",",
+                              (unsigned)action_ids[i]) != 0) {
+            free(line);
+            return -1;
+        }
+    }
+    if (paper_dyn_appendf(&line,
+                          &used,
+                          &capacity,
+                          "],\"selected_action_id\":%u,"
+                          "\"target_action_id\":%u,"
+                          "\"verifier_result\":\"%s\","
+                          "\"seed\":%llu,"
+                          "\"ranking_policy\":\"%s\","
+                          "\"rank_fp_sensitive\":%s}",
+                          (unsigned)record->selected_action_id,
+                          (unsigned)record->target_action_id,
+                          record->verifier_result,
+                          (unsigned long long)record->seed,
+                          record->ranking_policy,
+                          sensitive ? "true" : "false") != 0) {
+        free(line);
+        return -1;
+    }
+    return paper_line_list_append_owned(lines, line);
+}
+
+static uint64_t paper_trace_hash_lines(const PaperLineList *lines) {
+    uint64_t hash = UINT64_C(1469598103934665603);
+    size_t i;
+    for (i = 0U; i < lines->count; ++i) {
+        const unsigned char *p = (const unsigned char *)lines->items[i];
+        while (*p != '\0') {
+            hash ^= (uint64_t)(*p++);
+            hash *= UINT64_C(1099511628211);
+        }
+        hash ^= (uint64_t)'\n';
+        hash *= UINT64_C(1099511628211);
+    }
+    return hash;
+}
+
+static int paper_trace_lines_equal(const PaperLineList *a, const PaperLineList *b) {
+    size_t i;
+    if (a->count != b->count) {
+        return 0;
+    }
+    for (i = 0U; i < a->count; ++i) {
+        if (strcmp(a->items[i], b->items[i]) != 0) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int paper_trace_write_canonical_file(const char *path,
+                                            const PaperLineList *lines) {
+    FILE *fp;
+    size_t i;
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+    if (paper_mkdir_parent(path) != 0) {
+        return -1;
+    }
+    fp = fopen(path, "w");
+    if (fp == NULL) {
+        return -1;
+    }
+    for (i = 0U; i < lines->count; ++i) {
+        if (fprintf(fp, "%s\n", lines->items[i]) < 0) {
+            fclose(fp);
+            return -1;
+        }
+    }
+    if (fclose(fp) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int paper_trace_audit_one(const char *path,
+                                 PaperLineList *canonical_lines,
+                                 long *row_count_out,
+                                 long *invalid_rows_out,
+                                 long *sensitive_rows_out,
+                                 long *logged_mismatch_out,
+                                 double *min_margin_out,
+                                 double *max_epsilon_out) {
+    FILE *fp;
+    char *line;
+    long row_count = 0;
+    long invalid_rows = 0;
+    long sensitive_rows = 0;
+    long logged_mismatch = 0;
+    double min_margin = 0.0;
+    double max_epsilon = 0.0;
+    int have_margin = 0;
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        return -1;
+    }
+    while ((line = paper_read_line_dynamic(fp)) != NULL) {
+        long candidate_count_long = 0;
+        size_t candidate_count;
+        uint32_t *action_ids = NULL;
+        nn_real *scores = NULL;
+        nn_real *probabilities = NULL;
+        NNParsedTraceRecord record;
+        int logged_sensitive;
+        int computed_sensitive;
+        paper_chomp(line);
+        if (line[0] != '{') {
+            free(line);
+            continue;
+        }
+        if (!paper_json_get_long(line, "candidate_count", &candidate_count_long) ||
+            candidate_count_long <= 0) {
+            ++invalid_rows;
+            free(line);
+            continue;
+        }
+        candidate_count = (size_t)candidate_count_long;
+        action_ids = (uint32_t *)calloc(candidate_count, sizeof(uint32_t));
+        scores = (nn_real *)calloc(candidate_count, sizeof(nn_real));
+        probabilities = (nn_real *)calloc(candidate_count, sizeof(nn_real));
+        if (action_ids == NULL || scores == NULL || probabilities == NULL ||
+            !nn_trace_parse_jsonl(line,
+                                  &record,
+                                  action_ids,
+                                  scores,
+                                  probabilities,
+                                  candidate_count)) {
+            ++invalid_rows;
+            free(action_ids);
+            free(scores);
+            free(probabilities);
+            free(line);
+            continue;
+        }
+        computed_sensitive = fabs((double)record.selected_score_margin) <=
+                             (double)record.rank_score_epsilon;
+        if (computed_sensitive) {
+            ++sensitive_rows;
+        }
+        if (paper_json_get_bool(line, "rank_fp_sensitive", &logged_sensitive) &&
+            logged_sensitive != computed_sensitive) {
+            ++logged_mismatch;
+        }
+        if (!have_margin || (double)record.selected_score_margin < min_margin) {
+            min_margin = (double)record.selected_score_margin;
+            have_margin = 1;
+        }
+        if ((double)record.rank_score_epsilon > max_epsilon) {
+            max_epsilon = (double)record.rank_score_epsilon;
+        }
+        if (paper_trace_canonical_append(canonical_lines, &record, action_ids) != 0) {
+            free(action_ids);
+            free(scores);
+            free(probabilities);
+            free(line);
+            fclose(fp);
+            return -1;
+        }
+        ++row_count;
+        free(action_ids);
+        free(scores);
+        free(probabilities);
+        free(line);
+    }
+    if (fclose(fp) != 0) {
+        return -1;
+    }
+    *row_count_out = row_count;
+    *invalid_rows_out = invalid_rows;
+    *sensitive_rows_out = sensitive_rows;
+    *logged_mismatch_out = logged_mismatch;
+    *min_margin_out = have_margin ? min_margin : 0.0;
+    *max_epsilon_out = max_epsilon;
+    return 0;
+}
+
+int nn_paper_write_trace_determinism(const char *const *trace_paths,
+                                     size_t trace_path_count,
+                                     const char *output_path,
+                                     const char *canonical_output_path,
+                                     int gate) {
+    FILE *fp;
+    PaperLineList *canonical = NULL;
+    long *row_counts = NULL;
+    uint64_t *hashes = NULL;
+    long total_invalid = 0;
+    long total_sensitive = 0;
+    long total_logged_mismatch = 0;
+    int all_equal = 1;
+    int row_counts_equal = 1;
+    int status = -1;
+    size_t i;
+    if (trace_paths == NULL || trace_path_count == 0U || output_path == NULL) {
+        return -1;
+    }
+    if (canonical_output_path != NULL && canonical_output_path[0] != '\0' &&
+        trace_path_count != 1U) {
+        return -1;
+    }
+    canonical = (PaperLineList *)calloc(trace_path_count, sizeof(PaperLineList));
+    row_counts = (long *)calloc(trace_path_count, sizeof(long));
+    hashes = (uint64_t *)calloc(trace_path_count, sizeof(uint64_t));
+    if (canonical == NULL || row_counts == NULL || hashes == NULL ||
+        paper_mkdir_parent(output_path) != 0) {
+        goto cleanup;
+    }
+    fp = fopen(output_path, "w");
+    if (fp == NULL) {
+        goto cleanup;
+    }
+    for (i = 0U; i < trace_path_count; ++i) {
+        long invalid = 0;
+        long sensitive = 0;
+        long logged_mismatch = 0;
+        double min_margin = 0.0;
+        double max_epsilon = 0.0;
+        if (paper_trace_audit_one(trace_paths[i],
+                                  &canonical[i],
+                                  &row_counts[i],
+                                  &invalid,
+                                  &sensitive,
+                                  &logged_mismatch,
+                                  &min_margin,
+                                  &max_epsilon) != 0) {
+            fclose(fp);
+            goto cleanup;
+        }
+        hashes[i] = paper_trace_hash_lines(&canonical[i]);
+        total_invalid += invalid;
+        total_sensitive += sensitive;
+        total_logged_mismatch += logged_mismatch;
+        fputs("{\"schema\":\"crlp.trace_determinism_audit.v1\",", fp);
+        fputs("\"trace_path\":", fp);
+        paper_write_json_string(fp, trace_paths[i]);
+        fprintf(fp,
+                ",\"row_count\":%ld,"
+                "\"semantic_hash\":\"%016llx\","
+                "\"semantic_schema\":\"crlp.trace.semantic.v1\","
+                "\"rank_fp_sensitive_rows\":%ld,"
+                "\"rank_fp_sensitive_rate\":%.15g,"
+                "\"rank_fp_sensitive_logged_mismatches\":%ld,"
+                "\"negative_margin_rows\":%ld,"
+                "\"score_margin_min\":%.15g,"
+                "\"rank_score_epsilon_max\":%.15g,"
+                "\"invalid_rows\":%ld}\n",
+                row_counts[i],
+                (unsigned long long)hashes[i],
+                sensitive,
+                row_counts[i] == 0 ? 0.0 : (double)sensitive / (double)row_counts[i],
+                logged_mismatch,
+                min_margin < 0.0 ? 1L : 0L,
+                min_margin,
+                max_epsilon,
+                invalid);
+    }
+    if (trace_path_count > 1U) {
+        for (i = 1U; i < trace_path_count; ++i) {
+            if (!paper_trace_lines_equal(&canonical[0], &canonical[i])) {
+                all_equal = 0;
+            }
+            if (row_counts[i] != row_counts[0]) {
+                row_counts_equal = 0;
+            }
+        }
+        fputs("{\"schema\":\"crlp.trace_determinism_compare.v1\",", fp);
+        fputs("\"baseline_trace_path\":", fp);
+        paper_write_json_string(fp, trace_paths[0]);
+        fputs(",\"trace_paths\":[", fp);
+        for (i = 0U; i < trace_path_count; ++i) {
+            if (i > 0U) {
+                fputc(',', fp);
+            }
+            paper_write_json_string(fp, trace_paths[i]);
+        }
+        fputs("],\"semantic_hashes\":{", fp);
+        for (i = 0U; i < trace_path_count; ++i) {
+            if (i > 0U) {
+                fputc(',', fp);
+            }
+            paper_write_json_string(fp, trace_paths[i]);
+            fprintf(fp, ":\"%016llx\"", (unsigned long long)hashes[i]);
+        }
+        fputs("},\"row_counts\":{", fp);
+        for (i = 0U; i < trace_path_count; ++i) {
+            if (i > 0U) {
+                fputc(',', fp);
+            }
+            paper_write_json_string(fp, trace_paths[i]);
+            fprintf(fp, ":%ld", row_counts[i]);
+        }
+        fprintf(fp,
+                "},\"all_semantic_hashes_equal\":%s,"
+                "\"row_counts_equal\":%s,"
+                "\"differing_paths\":[]}\n",
+                all_equal ? "true" : "false",
+                row_counts_equal ? "true" : "false");
+    }
+    if (gate) {
+        int passed = total_invalid == 0 && total_sensitive == 0 &&
+                     total_logged_mismatch == 0 && all_equal && row_counts_equal &&
+                     row_counts[0] > 0;
+        fprintf(fp,
+                "{\"schema\":\"crlp.trace_determinism_gate.v1\","
+                "\"passed\":%s,\"failure_count\":%d}\n",
+                passed ? "true" : "false",
+                passed ? 0 : 1);
+        if (!passed) {
+            fclose(fp);
+            goto cleanup;
+        }
+    }
+    if (fclose(fp) != 0) {
+        goto cleanup;
+    }
+    if (canonical_output_path != NULL && canonical_output_path[0] != '\0' &&
+        paper_trace_write_canonical_file(canonical_output_path, &canonical[0]) != 0) {
+        goto cleanup;
+    }
+    status = 0;
+cleanup:
+    if (canonical != NULL) {
+        for (i = 0U; i < trace_path_count; ++i) {
+            paper_line_list_free(&canonical[i]);
+        }
+    }
+    free(canonical);
+    free(row_counts);
+    free(hashes);
+    return status;
 }
 
 static int paper_json_string_equals(const char *line,
@@ -3057,7 +3524,75 @@ static void paper_eval_hypothesis_promotion(PaperClaimResult *claim) {
              no_prior_cert,
              no_prior_utility,
              slot_cert,
-             slot_utility);
+	             slot_utility);
+}
+
+static void paper_eval_arc_verified_self_play(PaperClaimResult *claim) {
+    char *line = NULL;
+    long certified = -1;
+    long template_baseline = 7;
+    long oracle_ceiling = 14;
+    long opened_zero_families = 0;
+    long seed_count = 0;
+    int public_eval = 0;
+    int fixed_budget = 0;
+    int leakage_gate = 0;
+    if (paper_read_first_jsonl(claim->spec->source, &line) <= 0) {
+        snprintf(claim->status, sizeof(claim->status), "%s", "underpowered");
+        snprintf(claim->summary,
+                 sizeof(claim->summary),
+                 "ARC verified self-play is registered but underpowered: missing %s, so no public replay, fixed-budget ablation, leakage audit, or zero-family opening can be credited.",
+                 claim->spec->source);
+        snprintf(claim->chart_rows,
+                 sizeof(claim->chart_rows),
+                 "((label: \"template\", value: 7), (label: \"self-play\", value: 0), (label: \"oracle\", value: 14))");
+        return;
+    }
+    (void)paper_json_get_long(line, "claim_certified_eval_tasks", &certified);
+    (void)paper_json_get_long(line, "claim_template_baseline", &template_baseline);
+    (void)paper_json_get_long(line, "claim_oracle_ceiling", &oracle_ceiling);
+    (void)paper_json_get_long(line,
+                              "claim_opened_zero_coverage_families",
+                              &opened_zero_families);
+    (void)paper_json_get_long(line, "claim_seed_count", &seed_count);
+    (void)paper_json_get_bool(line, "claim_public_eval_replay_available", &public_eval);
+    (void)paper_json_get_bool(line,
+                              "claim_fixed_budget_ablation_available",
+                              &fixed_budget);
+    (void)paper_json_get_bool(line, "claim_leakage_gate_passed", &leakage_gate);
+    snprintf(claim->status,
+             sizeof(claim->status),
+             "%s",
+             certified >= template_baseline && opened_zero_families >= 1 &&
+                     seed_count >= 3 && public_eval && fixed_budget && leakage_gate
+                 ? "supported"
+                 : "underpowered");
+    claim->sample_count = seed_count;
+    claim->learned_top1 =
+        certified >= 0 && oracle_ceiling > 0 ? (double)certified / (double)oracle_ceiling
+                                             : 0.0;
+    claim->hand_top1 =
+        oracle_ceiling > 0 ? (double)template_baseline / (double)oracle_ceiling : 0.0;
+    snprintf(claim->summary,
+             sizeof(claim->summary),
+             "ARC verified self-play is %s: certified eval=%ld, template=%ld, oracle=%ld, opened zero-coverage families=%ld, seeds=%ld, public replay=%s, fixed-budget ablation=%s, leakage gate=%s. The claim remains L1 search efficiency, not new primitive capability.",
+             strcmp(claim->status, "supported") == 0 ? "supported" : "underpowered",
+             certified,
+             template_baseline,
+             oracle_ceiling,
+             opened_zero_families,
+             seed_count,
+             public_eval ? "yes" : "no",
+             fixed_budget ? "yes" : "no",
+             leakage_gate ? "yes" : "no");
+    snprintf(claim->chart_rows,
+             sizeof(claim->chart_rows),
+             "((label: \"template\", value: %ld), (label: \"self-play\", value: %ld), (label: \"oracle\", value: %ld), (label: \"opened families\", value: %ld))",
+             template_baseline,
+             certified < 0 ? 0 : certified,
+             oracle_ceiling,
+             opened_zero_families);
+    free(line);
 }
 
 static void paper_eval_tiny_net(PaperClaimResult *claim) {
@@ -3270,6 +3805,7 @@ static void paper_evaluate_claims(PaperClaimResult claims[PAPER_CLAIM_COUNT]) {
     paper_eval_dataset_engine(&claims[14]);
     paper_eval_signal_replay(&claims[15]);
     paper_eval_signal_live(&claims[16]);
+    paper_eval_arc_verified_self_play(&claims[17]);
 }
 
 static void paper_count_claim_statuses(const PaperClaimResult claims[PAPER_CLAIM_COUNT],

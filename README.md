@@ -44,10 +44,13 @@ Experiment-health artifacts are generated separately from prose claims:
 
 ```sh
 make learned-grammar-coverage  # ARC/haiku coverage-before-ranking gate
-make learned-grammar-coverage-arc-visual-compare HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR=/path/to/ARC-AGI/data
-make arc-visual-active-curriculum HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR=/path/to/ARC-AGI/data
+make arc-public-data            # downloads official ARC-AGI-1 public JSON data under build/
+make learned-grammar-coverage-arc-visual-compare HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR=build/float/arc_agi_public/data
+make arc-visual-active-curriculum HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR=build/float/arc_agi_public/data
 make arc-verified-self-play
-make arc-visual-capacity-sweep HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR=/path/to/ARC-AGI/data
+make arc-verified-self-play-public
+make arc-learned-sketch-ops
+make arc-visual-capacity-sweep HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR=build/float/arc_agi_public/data
 make experiment-health          # per-experiment health JSONL rollup
 ```
 
@@ -71,7 +74,10 @@ experiment: it composes visual primitives forward, emits accepted programs and
 verifier-shaped negative siblings, trains the proposer on the inverse program
 induction problem, and reports against the ARC yardsticks of 7 certified eval
 tasks for the current template baseline, 14 for the oracle ceiling, and the
-nine zero-coverage miss-taxonomy families.
+nine zero-coverage miss-taxonomy families. The registered claim
+`C5.arc_verified_self_play` starts underpowered: support requires fixed-budget
+public replay with and without the self-play prior, at least one currently
+zero-coverage family opened, three seeds, and a state-hash leakage audit.
 
 ## Generalized Experiment Schema
 
@@ -871,11 +877,49 @@ It does not read an authored solution library. The generator composes declared
 visual primitives forward, records accepted attempts whose output is known by
 construction, adds verifier-reason negative siblings, and trains the visual
 pipeline proposer on the inverse task of recovering the program from examples.
-The default primitive mix is biased toward the miss taxonomy: object motion,
-recolor, tile/scale, crop/extract, projection/panel, component/counting, fill,
-and symmetry families. The report remains a training-signal diagnostic until
-the resulting prior is replayed through the public ARC verifier and measured
-against the 7-task template baseline and 14-task oracle ceiling.
+The generated-task prior is still authored: the primitive pipelines and
+miss-taxonomy bias define the self-play distribution. That prior is reported as
+generator knowledge rather than as discovered task-solution knowledge.
+It also exports the compiler-backed accepted attempts as an
+`arc_sketch_program` prior, while explicitly counting generated primitives that
+do not yet have an executable public-ARC compiler. The default primitive mix is
+biased toward the miss taxonomy: object motion, recolor, tile/scale,
+crop/extract, projection/panel, component/counting, fill, and symmetry
+families. The report remains a training-signal diagnostic until
+`make arc-verified-self-play-public` first downloads and validates the official
+ARC-AGI-1 public JSON corpus into `build/float/arc_agi_public/data` when no
+local `ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR` is supplied, then replays the
+exported prior through the public ARC verifier and measures certified eval
+coverage against the 7-task template baseline, 14-task oracle ceiling, and the
+no-prior public replays. The report separates the full-program no-prior
+baseline from the matched visual-only no-prior baseline, and promotion/regression
+status is based on the matched visual-only comparison. Its self-play curriculum
+is capped by
+`ARC_VERIFIED_SELF_PLAY_PUBLIC_SYNTHETIC_MAX_ACCEPTED=4096` and
+`ARC_VERIFIED_SELF_PLAY_PUBLIC_SYNTHETIC_MAX_SECONDS=60` by default; set the
+accepted cap to `0` and the seconds cap to `0` for the uncapped synthetic run.
+Matched visual-only ARC replays also use bounded runtime sketch mining by
+default (`ARC_RUNTIME_SKETCH_MINE_CAP=16`). Set that cap to `0` to disable
+runtime sketch induction and recover the static visual-only baseline; induction
+runs emit `crlp.arc_program_task.audit.v1` rows so exact winners can be checked
+as visual-program candidates instead of legacy templates.
+The inverse-proposer `top1_rate` in the self-play report is in-distribution on
+generated rows. It is a training sanity check, not public ARC evidence. Once
+public replay is supplied, generated `state_hash` rows with
+`provenance=selfplay_forward` must be disjoint from eval hashes before coverage
+movement can support the claim.
+The lower-level generator also accepts `ARC_SYNTHETIC_SHAPE_MAX_ACCEPTED`,
+`ARC_SYNTHETIC_SHAPE_MAX_SYNTHETIC_ROWS`, and `ARC_SYNTHETIC_SHAPE_MAX_SECONDS`,
+and records `stop_reason` plus elapsed time in
+`build/float/arc_synthetic_shape_curriculum/synthetic_shape_summary.jsonl`.
+
+`make arc-learned-sketch-ops` mines those verifier attempt rows into typed
+learned sketch-op families under `build/float/arc_learned_sketch_ops/`. Exact
+accepted rows can promote a reusable prior. Diagnostic object-translate
+near-misses now feed a small compiler-replay path for reference-conditioned
+recolor masks; the current public eval replay promotes `arc.reference_recolor_mask`
+from the `009d5c81` compiler trace while leaving unresolved motion/refinement
+near-misses as candidates.
 
 `multitask_domain` remains the generalization smoke test for the core scorer API. It trains one scalar action scorer over a fixed 96-feature row envelope while shuffling samples from `prime_gap`, `grid_path`, `delayed_claim`, and `arc_agi`.
 

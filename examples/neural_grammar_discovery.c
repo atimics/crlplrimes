@@ -105,7 +105,8 @@ static void usage(const char *argv0) {
             "[--arc-synthetic-shape-curriculum --attempts-tsv PATH "
             "--output-dir DIR --synthetic-attempts PATH --combined-attempts PATH "
             "--summary PATH --max-grid-size N --ops CSV "
-            "--negative-kinds CSV --op-mode cycle|all --max-accepted N] "
+            "--negative-kinds CSV --op-mode cycle|all --max-accepted N "
+            "--max-synthetic-rows N --max-seconds N] "
             "[--arc-append-probe-attempts-tsv --base-attempts-tsv PATH "
             "--probe-attempts-jsonl PATH --combined-attempts-tsv PATH "
             "--summary PATH --split-name NAME] "
@@ -119,6 +120,10 @@ static void usage(const char *argv0) {
             "[--paper-claims --claims PATH --output-dir DIR --paper PATH "
             "--agent-candidates-dir DIR --support-check --fail-required "
             "--fail-unlinked-roadmap] "
+            "[--trace-determinism-audit --trace-input PATH --output PATH "
+            "--canonical-output PATH] "
+            "[--trace-determinism-compare --trace-input PATH ... --output PATH "
+            "--gate] "
             "[--neural-grammar-discovery --domains CSV --output-dir DIR "
             "--runtime PATH --arc-agi PATH --public-arc-dir DIR "
             "--arc-failure-proof PATH --arc-heldout-triage PATH "
@@ -208,6 +213,10 @@ int main(int argc, char **argv) {
         arg_value(argc, argv, "--op-mode");
     const char *arc_synthetic_curriculum_max_accepted_arg =
         arg_value(argc, argv, "--max-accepted");
+    const char *arc_synthetic_curriculum_max_rows_arg =
+        arg_value(argc, argv, "--max-synthetic-rows");
+    const char *arc_synthetic_curriculum_max_seconds_arg =
+        arg_value(argc, argv, "--max-seconds");
     const char *arc_ranker_benchmark_report = arg_value(argc, argv, "--report");
     const char *arc_ranker_failure_proposals =
         arg_value(argc, argv, "--proposals");
@@ -228,6 +237,9 @@ int main(int argc, char **argv) {
     const char *paper_claims_paper_path = arg_value(argc, argv, "--paper");
     const char *paper_agent_candidates_dir =
         arg_value(argc, argv, "--agent-candidates-dir");
+    const char *trace_determinism_output = arg_value(argc, argv, "--output");
+    const char *trace_determinism_canonical =
+        arg_value(argc, argv, "--canonical-output");
     const char *arc_neural_diagnostics =
         arg_value(argc, argv, "--diagnostics");
     const char *arc_neural_clusters_arg =
@@ -316,6 +328,8 @@ int main(int argc, char **argv) {
         count_arg_values(argc, argv, "--haiku-understanding-trace");
     size_t coverage_haiku_coherence_count =
         count_arg_values(argc, argv, "--haiku-coherence-report");
+    size_t trace_determinism_input_count =
+        count_arg_values(argc, argv, "--trace-input");
     const char **arc_pipeline_dedupe_attempts_inputs = NULL;
     const char **arc_pipeline_source_attempts_jsonl = NULL;
     const char **arc_pipeline_target_attempts_jsonl = NULL;
@@ -326,6 +340,7 @@ int main(int argc, char **argv) {
     const char **coverage_haiku_word_traces = NULL;
     const char **coverage_haiku_understanding_traces = NULL;
     const char **coverage_haiku_coherence_reports = NULL;
+    const char **trace_determinism_inputs = NULL;
     const char *arc_pipeline_max_per_task_arg =
         arg_value(argc, argv, "--arc-pipeline-max-per-task");
     const char *arc_hole_nearest_signatures_arg =
@@ -393,6 +408,14 @@ int main(int argc, char **argv) {
             : (unsigned)strtoul(arc_synthetic_curriculum_max_accepted_arg,
                                 NULL,
                                 10);
+    unsigned arc_synthetic_curriculum_max_rows =
+        arc_synthetic_curriculum_max_rows_arg == NULL
+            ? 0U
+            : (unsigned)strtoul(arc_synthetic_curriculum_max_rows_arg, NULL, 10);
+    unsigned arc_synthetic_curriculum_max_seconds =
+        arc_synthetic_curriculum_max_seconds_arg == NULL
+            ? 0U
+            : (unsigned)strtoul(arc_synthetic_curriculum_max_seconds_arg, NULL, 10);
     int arc_visual_hole_requested = has_arg(argc, argv, "--arc-visual-hole-proposer");
     int arc_visual_curriculum_requested =
         has_arg(argc, argv, "--arc-visual-curriculum");
@@ -408,6 +431,9 @@ int main(int argc, char **argv) {
         has_arg(argc, argv, "--arc-ranker-failure-report");
     int paper_data_requested = has_arg(argc, argv, "--paper-data");
     int paper_claims_requested = has_arg(argc, argv, "--paper-claims");
+    int trace_determinism_requested =
+        has_arg(argc, argv, "--trace-determinism-audit") ||
+        has_arg(argc, argv, "--trace-determinism-compare");
     int neural_grammar_discovery_requested =
         has_arg(argc, argv, "--neural-grammar-discovery");
     int arc_neural_discovery_requested =
@@ -420,6 +446,37 @@ int main(int argc, char **argv) {
 
     if (has_arg(argc, argv, "--help")) {
         usage(argv[0]);
+        return 0;
+    }
+    if (trace_determinism_requested) {
+        trace_determinism_inputs = collect_arg_values_alloc(argc,
+                                                            argv,
+                                                            "--trace-input",
+                                                            trace_determinism_input_count);
+        if (trace_determinism_input_count == 0U ||
+            trace_determinism_inputs == NULL ||
+            trace_determinism_output == NULL) {
+            usage(argv[0]);
+            free(trace_determinism_inputs);
+            return 2;
+        }
+        if (has_arg(argc, argv, "--trace-determinism-audit") &&
+            trace_determinism_input_count != 1U) {
+            usage(argv[0]);
+            free(trace_determinism_inputs);
+            return 2;
+        }
+        if (nn_paper_write_trace_determinism(
+                trace_determinism_inputs,
+                trace_determinism_input_count,
+                trace_determinism_output,
+                trace_determinism_canonical,
+                has_arg(argc, argv, "--gate")) != 0) {
+            fprintf(stderr, "failed to write trace determinism report\n");
+            free(trace_determinism_inputs);
+            return 1;
+        }
+        free(trace_determinism_inputs);
         return 0;
     }
     if (experiment_health_requested) {
@@ -883,7 +940,9 @@ int main(int argc, char **argv) {
                 arc_synthetic_curriculum_op_mode == NULL
                     ? "cycle"
                     : arc_synthetic_curriculum_op_mode,
-                arc_synthetic_curriculum_max_accepted) != 0) {
+                arc_synthetic_curriculum_max_accepted,
+                arc_synthetic_curriculum_max_rows,
+                arc_synthetic_curriculum_max_seconds) != 0) {
             fprintf(stderr, "failed to write ARC synthetic shape curriculum\n");
             free_arc_arg_arrays(arc_pipeline_dedupe_attempts_inputs,
                                 arc_pipeline_source_attempts_jsonl,

@@ -11,6 +11,7 @@ endif
 CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -O3
 LDFLAGS ?=
 LDLIBS ?= -lm
+RETIRED_SCRIPT_TARGET = @echo "$@: retired after script removal; port this workflow into the C runtime before use."; exit 2
 
 BUILD_DIR := build/$(REAL)
 NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h include/nn_bitgrid.h include/nn_tilebot.h include/nn_layer.h include/nn_program.h include/nn_hypothesis.h include/nn_protocol.h include/nn_json.h include/nn_text.h include/nn_dataset.h include/nn_grammar_discovery.h include/nn_paper.h
@@ -121,6 +122,11 @@ HYPOTHESIS_LIBRARY_SPLIT_SWEEP_DIR ?= $(BUILD_DIR)/hypothesis_library_split_swee
 HYPOTHESIS_LIBRARY_FEEDBACK_LOOP_DIR ?= $(BUILD_DIR)/hypothesis_library_feedback_loop
 HYPOTHESIS_LIBRARY_PUBLIC_DIR ?= $(BUILD_DIR)/hypothesis_library_public
 HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR ?=
+ARC_PUBLIC_DATA_DIR ?= $(BUILD_DIR)/arc_agi_public/data
+ARC_PUBLIC_DATA_SUMMARY ?= $(BUILD_DIR)/arc_agi_public/download_summary.jsonl
+ARC_PUBLIC_DATA_ZIP_URL ?= https://github.com/fchollet/ARC-AGI/archive/refs/heads/master.zip
+ARC_PUBLIC_DATA_EXPECTED_TRAINING ?= 400
+ARC_PUBLIC_DATA_EXPECTED_EVALUATION ?= 400
 HYPOTHESIS_LIBRARY_PUBLIC_TRAIN_MAX_TASKS ?= 400
 HYPOTHESIS_LIBRARY_PUBLIC_EVAL_MAX_TASKS ?= 400
 HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR ?= $(BUILD_DIR)/hypothesis_library_public_filter
@@ -303,6 +309,10 @@ LEARNED_GRAMMAR_COVERAGE_HAIKU_COHERENCE_REPORT ?= $(HAIKU_COHERENCE_REPORT)
 LEARNED_GRAMMAR_COVERAGE_HAIKU_COHERENCE_HF_DICTIONARY_REPORT ?= $(HAIKU_COHERENCE_HF_DICTIONARY_REPORT)
 LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR ?= $(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)
 LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS ?= 64
+ARC_RUNTIME_SKETCH_MINE_CAP ?= 16
+ARC_RUNTIME_SKETCH_MINE_ARG = --arc-runtime-sketch-mine-cap $(ARC_RUNTIME_SKETCH_MINE_CAP)
+ARC_GENERATIVE_PRIOR_OP_CAP ?= 2
+ARC_GENERATIVE_PRIOR_OP_ARG = --arc-generative-prior-op-cap $(ARC_GENERATIVE_PRIOR_OP_CAP)
 LEARNED_GRAMMAR_COVERAGE_ARC_PUBLIC_TRAIN_LOG ?= $(LEARNED_GRAMMAR_COVERAGE_DIR)/arc_agi_public_train.jsonl
 LEARNED_GRAMMAR_COVERAGE_ARC_PUBLIC_EVAL_LOG ?= $(LEARNED_GRAMMAR_COVERAGE_DIR)/arc_agi_public_eval.jsonl
 LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR ?= $(NEURAL_GRAMMAR_DISCOVERY_DIR)/arc_sketch_program_heldout_prior.tsv
@@ -354,7 +364,9 @@ ARC_SYNTHETIC_SHAPE_MAX_GRID_SIZE ?= 30
 ARC_SYNTHETIC_SHAPE_OPS ?= object_motion,recolor,tile_scale,fill_or_complete,symmetry,masked_or_normalized_crop,crop,recolor_crop,macrocell_substitute,component_color_summary,visual_combinator,separator_panel_map
 ARC_SYNTHETIC_SHAPE_NEGATIVE_KINDS ?= unsupported_shape,no_train_match
 ARC_SYNTHETIC_SHAPE_OP_MODE ?= cycle
-ARC_SYNTHETIC_SHAPE_MAX_ACCEPTED ?= 0
+ARC_SYNTHETIC_SHAPE_MAX_ACCEPTED ?= 4096
+ARC_SYNTHETIC_SHAPE_MAX_SYNTHETIC_ROWS ?= 0
+ARC_SYNTHETIC_SHAPE_MAX_SECONDS ?= 60
 ARC_SYNTHETIC_SHAPE_RANKER_EPOCHS ?= 8
 ARC_SYNTHETIC_SHAPE_RANKER_LEARNING_RATE ?= 0.08
 ARC_SYNTHETIC_SHAPE_RANKER_MAX_PER_TASK ?= $(ARC_VISUAL_CAPACITY_SWEEP_MAX_PER_TASK)
@@ -382,9 +394,37 @@ ARC_SYNTHETIC_SHAPE_PROBE_RANKER_MAX_PER_TASK ?= $(ARC_VISUAL_CAPACITY_SWEEP_MAX
 ARC_VERIFIED_SELF_PLAY_DIR ?= $(BUILD_DIR)/arc_verified_self_play
 ARC_VERIFIED_SELF_PLAY_SUMMARY ?= $(ARC_VERIFIED_SELF_PLAY_DIR)/summary.jsonl
 ARC_VERIFIED_SELF_PLAY_MARKDOWN ?= $(ARC_VERIFIED_SELF_PLAY_DIR)/summary.md
+ARC_VERIFIED_SELF_PLAY_PRIOR ?= $(ARC_VERIFIED_SELF_PLAY_DIR)/self_play_prior.tsv
+ARC_VERIFIED_SELF_PLAY_PRIOR_SUMMARY ?= $(ARC_VERIFIED_SELF_PLAY_DIR)/self_play_prior_summary.jsonl
+ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR ?= $(ARC_VERIFIED_SELF_PLAY_DIR)/self_play_generative_prior.tsv
+ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR_SUMMARY ?= $(ARC_VERIFIED_SELF_PLAY_DIR)/self_play_generative_prior_summary.jsonl
 ARC_VERIFIED_SELF_PLAY_MISS_TAXONOMY ?= results/2026-05-17-arc-evidence-surface/arc_eval_miss_taxonomy.csv
+ARC_VERIFIED_SELF_PLAY_BUDGET_CURVES ?= results/2026-05-17-arc-evidence-surface/arc_budget_curves.csv
 ARC_VERIFIED_SELF_PLAY_TEMPLATE_BASELINE ?= 7
 ARC_VERIFIED_SELF_PLAY_ORACLE_CEILING ?= 14
+ARC_VERIFIED_SELF_PLAY_SEED_COUNT ?= 1
+ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR ?= $(if $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR),$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR),$(ARC_PUBLIC_DATA_DIR))
+ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS ?= $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS)
+ARC_VERIFIED_SELF_PLAY_PUBLIC_BASELINE_TRAIN_LOG ?= $(ARC_VERIFIED_SELF_PLAY_DIR)/public_train_baseline.jsonl
+ARC_VERIFIED_SELF_PLAY_PUBLIC_BASELINE_EVAL_LOG ?= $(ARC_VERIFIED_SELF_PLAY_DIR)/public_eval_baseline.jsonl
+ARC_VERIFIED_SELF_PLAY_PUBLIC_VISUAL_BASELINE_TRAIN_LOG ?= $(ARC_VERIFIED_SELF_PLAY_DIR)/public_train_visual_baseline.jsonl
+ARC_VERIFIED_SELF_PLAY_PUBLIC_VISUAL_BASELINE_EVAL_LOG ?= $(ARC_VERIFIED_SELF_PLAY_DIR)/public_eval_visual_baseline.jsonl
+ARC_VERIFIED_SELF_PLAY_PUBLIC_TRAIN_LOG ?= $(ARC_VERIFIED_SELF_PLAY_DIR)/public_train_self_play.jsonl
+ARC_VERIFIED_SELF_PLAY_PUBLIC_EVAL_LOG ?= $(ARC_VERIFIED_SELF_PLAY_DIR)/public_eval_self_play.jsonl
+ARC_VERIFIED_SELF_PLAY_PUBLIC_SYNTHETIC_MAX_ACCEPTED ?= 4096
+ARC_VERIFIED_SELF_PLAY_PUBLIC_SYNTHETIC_MAX_ROWS ?= 0
+ARC_VERIFIED_SELF_PLAY_PUBLIC_SYNTHETIC_MAX_SECONDS ?= 60
+ARC_LEARNED_SKETCH_OPS_DIR ?= $(BUILD_DIR)/arc_learned_sketch_ops
+ARC_LEARNED_SKETCH_OPS_OPERATORS ?= $(ARC_LEARNED_SKETCH_OPS_DIR)/learned_sketch_ops.jsonl
+ARC_LEARNED_SKETCH_OPS_PRIOR ?= $(ARC_LEARNED_SKETCH_OPS_DIR)/learned_sketch_op_prior.tsv
+ARC_LEARNED_SKETCH_OPS_SUMMARY ?= $(ARC_LEARNED_SKETCH_OPS_DIR)/summary.jsonl
+ARC_LEARNED_SKETCH_OPS_MARKDOWN ?= $(ARC_LEARNED_SKETCH_OPS_DIR)/summary.md
+ARC_LEARNED_SKETCH_OPS_ATTEMPTS ?= $(ARC_SYNTHETIC_SHAPE_COMBINED_ATTEMPTS)
+ARC_LEARNED_SKETCH_OPS_TRACE ?= $(ARC_VERIFIED_SELF_PLAY_PUBLIC_EVAL_LOG)
+ARC_LEARNED_SKETCH_OPS_MIN_ACCEPTED ?= 1
+ARC_LEARNED_SKETCH_OPS_MIN_TASKS ?= 1
+ARC_LEARNED_SKETCH_OPS_NEAR_MISS_SCORE ?= 0.75
+ARC_LEARNED_SKETCH_OPS_DIAGNOSTIC_SCORE ?= 0.90
 ARC_VISUAL_HOLE_PROPOSER_DIR ?= $(LEARNED_GRAMMAR_COVERAGE_DIR)/arc_visual_hole_proposer
 ARC_VISUAL_HOLE_PROPOSER_CANDIDATES ?= $(ARC_VISUAL_HOLE_PROPOSER_DIR)/arc_visual_hole_candidates.tsv
 ARC_VISUAL_HOLE_PROPOSER_EXAMPLES ?= $(ARC_VISUAL_HOLE_PROPOSER_DIR)/arc_visual_hole_examples.jsonl
@@ -487,7 +527,7 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run action-score dataset-action-score dataset-action-score-smoke dataset-action-score-replay-smoke dataset-action-score-adapter-smoke dataset-action-score-multitarget-smoke dataset-action-score-bitwise-smoke dataset-action-score-bitwise-macro-smoke dataset-action-score-haiku-smoke dataset-action-score-grid-smoke dataset-action-score-delayed-claim-smoke dataset-action-score-prime-gap-smoke dataset-action-score-arc-smoke dataset-action-score-program-smoke dataset-action-score-signal-smoke dataset-action-score-rest-smoke dataset-action-score-engine-evidence bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-rule-search haiku-rule-search-baselines haiku-rule-search-smoke haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-verified-self-play arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune python-check benchmark test sanitize check experimental-check clean
+.PHONY: all run action-score dataset-action-score dataset-action-score-smoke dataset-action-score-replay-smoke dataset-action-score-adapter-smoke dataset-action-score-multitarget-smoke dataset-action-score-bitwise-smoke dataset-action-score-bitwise-macro-smoke dataset-action-score-haiku-smoke dataset-action-score-grid-smoke dataset-action-score-delayed-claim-smoke dataset-action-score-prime-gap-smoke dataset-action-score-arc-smoke dataset-action-score-program-smoke dataset-action-score-signal-smoke dataset-action-score-rest-smoke dataset-action-score-engine-evidence bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-public-data arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-rule-search haiku-rule-search-baselines haiku-rule-search-smoke haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-verified-self-play arc-verified-self-play-public arc-learned-sketch-ops arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune source-policy-check benchmark test sanitize check experimental-check clean
 
 all: $(XOR_EXAMPLE) $(BITWISE_RECURSIVE) $(TILE_RECURSIVE) $(TILE_FEATURE_ENTROPY) $(LIFE_CURRICULUM) $(LAYER_DISCOVERY) $(ACTION_SCORE_EXAMPLE) $(DATASET_ACTION_SCORE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(HAIKU_RULE_SEARCH) $(BENCHMARK)
 
@@ -533,7 +573,7 @@ $(NN_DATASET_OBJ): src/nn_dataset.c include/nn_dataset.h include/nn_core.h | $(B
 $(NN_GRAMMAR_DISCOVERY_OBJ): src/nn_grammar_discovery.c include/nn_grammar_discovery.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_grammar_discovery.c -o $@
 
-$(NN_PAPER_OBJ): src/nn_paper.c include/nn_paper.h | $(BUILD_DIR)
+$(NN_PAPER_OBJ): src/nn_paper.c include/nn_paper.h include/nn.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_paper.c -o $@
 
 $(NN_TEST_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
@@ -689,8 +729,8 @@ $(MODULAR_GATE_SEARCH): examples/modular_gate_search.c $(NN_OBJS) $(NN_HEADERS) 
 $(ARC_AGI): examples/arc_agi.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/arc_agi.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(NN_GRAMMAR_DISCOVERY_RUNTIME): examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_PAPER_OBJ) include/nn_grammar_discovery.h include/nn_paper.h | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_PAPER_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+$(NN_GRAMMAR_DISCOVERY_RUNTIME): examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_TEXT_OBJ) include/nn_grammar_discovery.h include/nn_paper.h include/nn.h include/nn_text.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_TEXT_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(SIGNAL_FLIGHT): examples/signal_flight.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/signal_flight.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
@@ -802,14 +842,13 @@ layer-discovery: $(LAYER_DISCOVERY)
 	./$(LAYER_DISCOVERY)
 
 haiku-corpus-synthetic:
-	mkdir -p $(dir $(HAIKU_CORPUS_SUMMARY))
-	$(PYTHON) scripts/generate_haiku_corpus.py --word-list $(HAIKU_LM_LEXICON_WORD_LIST) --output $(HAIKU_CORPUS_SYNTHETIC) --count $(HAIKU_CORPUS_COUNT) --seed $(HAIKU_CORPUS_SEED) --summary $(HAIKU_CORPUS_SUMMARY) --vocab-output $(HAIKU_CORPUS_VOCAB)
+	@if [ -f "$(HAIKU_CORPUS_SYNTHETIC)" ] && [ -f "$(HAIKU_CORPUS_VOCAB)" ]; then echo "using existing synthetic corpus: $(HAIKU_CORPUS_SYNTHETIC)"; else echo "missing synthetic corpus artifacts; port corpus generation into C before refreshing them"; exit 2; fi
 
 haiku-corpus-hf:
-	@if [ -f "$(HAIKU_HF_CLEAN)" ] && [ -f "$(HAIKU_HF_VOCAB)" ] && [ -f "$(HAIKU_HF_MANIFEST)" ]; then echo "using existing cleaned HF corpus: $(HAIKU_HF_CLEAN)"; else $(PYTHON) scripts/clean_haiku_hf_corpus.py --input "$(HAIKU_HF_RAW)" --output "$(HAIKU_HF_CLEAN)" --vocab-output "$(HAIKU_HF_VOCAB)" --manifest "$(HAIKU_HF_MANIFEST)" --word-list "$(HAIKU_LM_LEXICON_WORD_LIST)" --filter-word-list $(HAIKU_HF_FILTER_WORD_LIST) --max-poems $(HAIKU_HF_MAX_POEMS); fi
+	@if [ -f "$(HAIKU_HF_CLEAN)" ] && [ -f "$(HAIKU_HF_VOCAB)" ] && [ -f "$(HAIKU_HF_MANIFEST)" ]; then echo "using existing cleaned HF corpus: $(HAIKU_HF_CLEAN)"; else echo "missing cleaned HF corpus artifacts; port corpus cleaning into C before refreshing them"; exit 2; fi
 
 haiku-corpus-hf-dictionary:
-	@if [ -f "$(HAIKU_HF_DICTIONARY_CLEAN)" ] && [ -f "$(HAIKU_HF_DICTIONARY_VOCAB)" ] && [ -f "$(HAIKU_HF_DICTIONARY_MANIFEST)" ]; then echo "using existing cleaned HF dictionary corpus: $(HAIKU_HF_DICTIONARY_CLEAN)"; else $(PYTHON) scripts/clean_haiku_hf_corpus.py --input "$(HAIKU_HF_RAW)" --output "$(HAIKU_HF_DICTIONARY_CLEAN)" --vocab-output "$(HAIKU_HF_DICTIONARY_VOCAB)" --manifest "$(HAIKU_HF_DICTIONARY_MANIFEST)" --word-list "$(HAIKU_LM_LEXICON_WORD_LIST)" --filter-word-list 1 --max-poems $(HAIKU_HF_MAX_POEMS); fi
+	@if [ -f "$(HAIKU_HF_DICTIONARY_CLEAN)" ] && [ -f "$(HAIKU_HF_DICTIONARY_VOCAB)" ] && [ -f "$(HAIKU_HF_DICTIONARY_MANIFEST)" ]; then echo "using existing cleaned HF dictionary corpus: $(HAIKU_HF_DICTIONARY_CLEAN)"; else echo "missing cleaned HF dictionary corpus artifacts; port corpus cleaning into C before refreshing them"; exit 2; fi
 
 haiku-lm: $(HAIKU_LM)
 	mkdir -p $(HAIKU_LM_DIR)
@@ -956,44 +995,32 @@ prime-gap-regularization-sweep: $(PRIME_GAP_EXAMPLE)
 	./$(PRIME_GAP_EXAMPLE) 1000000 3000000 2 1 15000 15000 1.20 0.12
 
 prime-gap-experiments: $(PRIME_GAP_EXAMPLE)
-	$(PYTHON) scripts/prime_gap_experiments.py \
-		--binary ./$(PRIME_GAP_EXAMPLE) \
-		--output-dir $(PRIME_GAP_REPORT_DIR) \
-		--supervised-epochs $(PRIME_GAP_EXPERIMENT_EPOCHS) \
-		--regularization-grid $(PRIME_GAP_EXPERIMENT_GRID) \
-		--seeds $(PRIME_GAP_EXPERIMENT_SEEDS) \
-		--max-train-states $(PRIME_GAP_EXPERIMENT_MAX_TRAIN) \
-		--max-test-states $(PRIME_GAP_EXPERIMENT_MAX_TEST)
+	$(RETIRED_SCRIPT_TARGET)
 
 prime-gate-seed-audit: $(PRIME_GAP_EXAMPLE) $(PRIME_RULE_SEARCH) $(PRIME_REPLAY) $(PRIME_COMPARE)
-	$(PYTHON) scripts/prime_gate_seed_audit.py \
-		--prime-gap ./$(PRIME_GAP_EXAMPLE) \
-		--prime-rule-search ./$(PRIME_RULE_SEARCH) \
-		--prime-replay ./$(PRIME_REPLAY) \
-		--prime-compare ./$(PRIME_COMPARE) \
-		--output-dir $(PRIME_GATE_SEED_AUDIT_DIR) \
-		--seeds $(PRIME_GATE_SEED_AUDIT_SEEDS)
+	$(RETIRED_SCRIPT_TARGET)
 
-trace-determinism-audit: prime-gap-trace
-	$(PYTHON) scripts/trace_determinism_audit.py \
-		--input $(BUILD_DIR)/traces/prime_gap.jsonl \
+trace-determinism-audit: prime-gap-trace $(NN_GRAMMAR_DISCOVERY_RUNTIME)
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --trace-determinism-audit \
+		--trace-input $(BUILD_DIR)/traces/prime_gap.jsonl \
 		--output $(TRACE_DETERMINISM_AUDIT) \
 		--canonical-output $(TRACE_DETERMINISM_CANONICAL)
 
-trace-determinism-compare:
+trace-determinism-compare: $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	$(MAKE) trace-determinism-audit REAL=float
 	$(MAKE) trace-determinism-audit REAL=double
 	mkdir -p $(RESULTS_DIR)
-	$(PYTHON) scripts/trace_determinism_audit.py \
-		build/float/traces/prime_gap.jsonl \
-		build/double/traces/prime_gap.jsonl \
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --trace-determinism-compare \
+		--trace-input build/float/traces/prime_gap.jsonl \
+		--trace-input build/double/traces/prime_gap.jsonl \
 		--output $(TRACE_DETERMINISM_COMPARE)
 	cp build/float/traces/prime_gap.semantic.jsonl $(TRACE_DETERMINISM_RESULTS_CANONICAL)
 
-trace-determinism-ci: trace-determinism-compare
-	$(PYTHON) scripts/trace_determinism_audit.py \
-		build/float/traces/prime_gap.jsonl \
-		build/double/traces/prime_gap.jsonl \
+trace-determinism-ci: $(NN_GRAMMAR_DISCOVERY_RUNTIME)
+	$(MAKE) trace-determinism-compare
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --trace-determinism-compare \
+		--trace-input build/float/traces/prime_gap.jsonl \
+		--trace-input build/double/traces/prime_gap.jsonl \
 		--gate \
 		--output $(TRACE_DETERMINISM_CI)
 
@@ -1161,7 +1188,7 @@ arc-ranker-failure-report: arc-ranker-benchmark
 
 arc-synthetic-shape-curriculum: $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	@if [ ! -f "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" ]; then echo "missing ARC_RANKER_BENCHMARK_ATTEMPTS=$(ARC_RANKER_BENCHMARK_ATTEMPTS); run make neural-grammar-discovery first or set ARC_RANKER_BENCHMARK_ATTEMPTS=/path/to/arc_visual_pipeline_neural_attempts.tsv"; exit 2; fi
-	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-synthetic-shape-curriculum --attempts-tsv "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" --output-dir "$(ARC_SYNTHETIC_SHAPE_CURRICULUM_DIR)" --synthetic-attempts "$(ARC_SYNTHETIC_SHAPE_ATTEMPTS)" --combined-attempts "$(ARC_SYNTHETIC_SHAPE_COMBINED_ATTEMPTS)" --summary "$(ARC_SYNTHETIC_SHAPE_SUMMARY)" --max-grid-size "$(ARC_SYNTHETIC_SHAPE_MAX_GRID_SIZE)" --ops "$(ARC_SYNTHETIC_SHAPE_OPS)" --negative-kinds "$(ARC_SYNTHETIC_SHAPE_NEGATIVE_KINDS)" --op-mode "$(ARC_SYNTHETIC_SHAPE_OP_MODE)" --max-accepted "$(ARC_SYNTHETIC_SHAPE_MAX_ACCEPTED)"
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-synthetic-shape-curriculum --attempts-tsv "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" --output-dir "$(ARC_SYNTHETIC_SHAPE_CURRICULUM_DIR)" --synthetic-attempts "$(ARC_SYNTHETIC_SHAPE_ATTEMPTS)" --combined-attempts "$(ARC_SYNTHETIC_SHAPE_COMBINED_ATTEMPTS)" --summary "$(ARC_SYNTHETIC_SHAPE_SUMMARY)" --max-grid-size "$(ARC_SYNTHETIC_SHAPE_MAX_GRID_SIZE)" --ops "$(ARC_SYNTHETIC_SHAPE_OPS)" --negative-kinds "$(ARC_SYNTHETIC_SHAPE_NEGATIVE_KINDS)" --op-mode "$(ARC_SYNTHETIC_SHAPE_OP_MODE)" --max-accepted "$(ARC_SYNTHETIC_SHAPE_MAX_ACCEPTED)" --max-synthetic-rows "$(ARC_SYNTHETIC_SHAPE_MAX_SYNTHETIC_ROWS)" --max-seconds "$(ARC_SYNTHETIC_SHAPE_MAX_SECONDS)"
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-pipeline-attempts "$(ARC_SYNTHETIC_SHAPE_COMBINED_ATTEMPTS)" --arc-pipeline-proposals-output "$(ARC_SYNTHETIC_SHAPE_PROPOSALS)" --arc-pipeline-summary-output "$(ARC_SYNTHETIC_SHAPE_RANKER_SUMMARY)" --arc-pipeline-cache "$(ARC_SYNTHETIC_SHAPE_CACHE)" --arc-pipeline-max-per-task "$(ARC_SYNTHETIC_SHAPE_RANKER_MAX_PER_TASK)" --epochs "$(ARC_SYNTHETIC_SHAPE_RANKER_EPOCHS)" --learning-rate "$(ARC_SYNTHETIC_SHAPE_RANKER_LEARNING_RATE)"
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-ranker-failure-report --attempts-tsv "$(ARC_SYNTHETIC_SHAPE_COMBINED_ATTEMPTS)" --proposals "$(ARC_SYNTHETIC_SHAPE_PROPOSALS)" --summary "$(ARC_SYNTHETIC_SHAPE_RANKER_SUMMARY)" --output "$(ARC_SYNTHETIC_SHAPE_FAILURE_REPORT)" --markdown "$(ARC_SYNTHETIC_SHAPE_FAILURE_MARKDOWN)"
 
@@ -1176,16 +1203,88 @@ arc-synthetic-shape-probe: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-pipeline-attempts "$(ARC_SYNTHETIC_SHAPE_PROBE_COMBINED_ATTEMPTS)" --arc-pipeline-proposals-output "$(ARC_SYNTHETIC_SHAPE_PROBE_PROPOSALS)" --arc-pipeline-summary-output "$(ARC_SYNTHETIC_SHAPE_PROBE_RANKER_SUMMARY)" --arc-pipeline-cache "$(ARC_SYNTHETIC_SHAPE_PROBE_CACHE)" --arc-pipeline-max-per-task "$(ARC_SYNTHETIC_SHAPE_PROBE_RANKER_MAX_PER_TASK)" --epochs "$(ARC_SYNTHETIC_SHAPE_PROBE_RANKER_EPOCHS)" --learning-rate "$(ARC_SYNTHETIC_SHAPE_PROBE_RANKER_LEARNING_RATE)"
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-ranker-failure-report --attempts-tsv "$(ARC_SYNTHETIC_SHAPE_PROBE_COMBINED_ATTEMPTS)" --proposals "$(ARC_SYNTHETIC_SHAPE_PROBE_PROPOSALS)" --summary "$(ARC_SYNTHETIC_SHAPE_PROBE_RANKER_SUMMARY)" --output "$(ARC_SYNTHETIC_SHAPE_PROBE_FAILURE_REPORT)" --markdown "$(ARC_SYNTHETIC_SHAPE_PROBE_FAILURE_MARKDOWN)"
 
+arc-public-data:
+	$(PYTHON) scripts/arc_public_data.py \
+		--data-dir "$(ARC_PUBLIC_DATA_DIR)" \
+		--summary "$(ARC_PUBLIC_DATA_SUMMARY)" \
+		--zip-url "$(ARC_PUBLIC_DATA_ZIP_URL)" \
+		--expected-training "$(ARC_PUBLIC_DATA_EXPECTED_TRAINING)" \
+		--expected-evaluation "$(ARC_PUBLIC_DATA_EXPECTED_EVALUATION)"
+
 arc-verified-self-play: arc-synthetic-shape-curriculum
 	mkdir -p $(ARC_VERIFIED_SELF_PLAY_DIR)
+	$(PYTHON) scripts/arc_self_play_prior.py \
+		--attempts "$(ARC_SYNTHETIC_SHAPE_ATTEMPTS)" \
+		--output "$(ARC_VERIFIED_SELF_PLAY_PRIOR)" \
+		--summary "$(ARC_VERIFIED_SELF_PLAY_PRIOR_SUMMARY)" \
+		--generative-output "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR)" \
+		--generative-summary "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR_SUMMARY)"
 	$(PYTHON) scripts/arc_verified_self_play.py \
 		--curriculum-summary "$(ARC_SYNTHETIC_SHAPE_SUMMARY)" \
 		--ranker-summary "$(ARC_SYNTHETIC_SHAPE_RANKER_SUMMARY)" \
+		--self-play-prior "$(ARC_VERIFIED_SELF_PLAY_PRIOR)" \
+		--prior-summary "$(ARC_VERIFIED_SELF_PLAY_PRIOR_SUMMARY)" \
+		--generative-prior "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR)" \
+		--generative-prior-summary "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR_SUMMARY)" \
 		--miss-taxonomy "$(ARC_VERIFIED_SELF_PLAY_MISS_TAXONOMY)" \
+		--synthetic-attempts "$(ARC_SYNTHETIC_SHAPE_ATTEMPTS)" \
+		--budget-curves "$(ARC_VERIFIED_SELF_PLAY_BUDGET_CURVES)" \
+		--seed-count "$(ARC_VERIFIED_SELF_PLAY_SEED_COUNT)" \
 		--output "$(ARC_VERIFIED_SELF_PLAY_SUMMARY)" \
 		--markdown "$(ARC_VERIFIED_SELF_PLAY_MARKDOWN)" \
 		--template-baseline "$(ARC_VERIFIED_SELF_PLAY_TEMPLATE_BASELINE)" \
 		--oracle-ceiling "$(ARC_VERIFIED_SELF_PLAY_ORACLE_CEILING)"
+
+arc-verified-self-play-public: $(ARC_AGI)
+	$(MAKE) arc-verified-self-play ARC_SYNTHETIC_SHAPE_MAX_ACCEPTED="$(ARC_VERIFIED_SELF_PLAY_PUBLIC_SYNTHETIC_MAX_ACCEPTED)" ARC_SYNTHETIC_SHAPE_MAX_SYNTHETIC_ROWS="$(ARC_VERIFIED_SELF_PLAY_PUBLIC_SYNTHETIC_MAX_ROWS)" ARC_SYNTHETIC_SHAPE_MAX_SECONDS="$(ARC_VERIFIED_SELF_PLAY_PUBLIC_SYNTHETIC_MAX_SECONDS)"
+	mkdir -p $(ARC_VERIFIED_SELF_PLAY_DIR)
+	$(PYTHON) scripts/arc_public_data.py \
+		--data-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)" \
+		--summary "$(ARC_VERIFIED_SELF_PLAY_DIR)/public_data_summary.jsonl" \
+		--zip-url "$(ARC_PUBLIC_DATA_ZIP_URL)" \
+		--expected-training "$(ARC_PUBLIC_DATA_EXPECTED_TRAINING)" \
+		--expected-evaluation "$(ARC_PUBLIC_DATA_EXPECTED_EVALUATION)"
+	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/training" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_BASELINE_TRAIN_LOG)
+	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_BASELINE_EVAL_LOG)
+	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/training" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_VISUAL_BASELINE_TRAIN_LOG)
+	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_VISUAL_BASELINE_EVAL_LOG)
+	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/training" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) $(ARC_GENERATIVE_PRIOR_OP_ARG) --hypothesis-library-prior "$(ARC_VERIFIED_SELF_PLAY_PRIOR)" --arc-generative-prior "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR)" > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_TRAIN_LOG)
+	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) $(ARC_GENERATIVE_PRIOR_OP_ARG) --hypothesis-library-prior "$(ARC_VERIFIED_SELF_PLAY_PRIOR)" --arc-generative-prior "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR)" > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_EVAL_LOG)
+	$(PYTHON) scripts/arc_verified_self_play.py \
+		--curriculum-summary "$(ARC_SYNTHETIC_SHAPE_SUMMARY)" \
+		--ranker-summary "$(ARC_SYNTHETIC_SHAPE_RANKER_SUMMARY)" \
+		--self-play-prior "$(ARC_VERIFIED_SELF_PLAY_PRIOR)" \
+		--prior-summary "$(ARC_VERIFIED_SELF_PLAY_PRIOR_SUMMARY)" \
+		--generative-prior "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR)" \
+		--generative-prior-summary "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR_SUMMARY)" \
+		--public-train-baseline-summary "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_BASELINE_TRAIN_LOG)" \
+		--public-eval-baseline-summary "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_BASELINE_EVAL_LOG)" \
+		--public-train-visual-baseline-summary "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_VISUAL_BASELINE_TRAIN_LOG)" \
+		--public-eval-visual-baseline-summary "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_VISUAL_BASELINE_EVAL_LOG)" \
+		--public-train-summary "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_TRAIN_LOG)" \
+		--public-eval-summary "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_EVAL_LOG)" \
+		--miss-taxonomy "$(ARC_VERIFIED_SELF_PLAY_MISS_TAXONOMY)" \
+		--synthetic-attempts "$(ARC_SYNTHETIC_SHAPE_ATTEMPTS)" \
+		--budget-curves "$(ARC_VERIFIED_SELF_PLAY_BUDGET_CURVES)" \
+		--seed-count "$(ARC_VERIFIED_SELF_PLAY_SEED_COUNT)" \
+		--output "$(ARC_VERIFIED_SELF_PLAY_SUMMARY)" \
+		--markdown "$(ARC_VERIFIED_SELF_PLAY_MARKDOWN)" \
+		--template-baseline "$(ARC_VERIFIED_SELF_PLAY_TEMPLATE_BASELINE)" \
+		--oracle-ceiling "$(ARC_VERIFIED_SELF_PLAY_ORACLE_CEILING)"
+
+arc-learned-sketch-ops: arc-verified-self-play-public
+	mkdir -p $(ARC_LEARNED_SKETCH_OPS_DIR)
+	$(PYTHON) scripts/arc_learned_sketch_ops.py \
+		--attempts "$(ARC_LEARNED_SKETCH_OPS_ATTEMPTS)" \
+		--object-translate-trace "$(ARC_LEARNED_SKETCH_OPS_TRACE)" \
+		--operators "$(ARC_LEARNED_SKETCH_OPS_OPERATORS)" \
+		--prior "$(ARC_LEARNED_SKETCH_OPS_PRIOR)" \
+		--summary "$(ARC_LEARNED_SKETCH_OPS_SUMMARY)" \
+		--markdown "$(ARC_LEARNED_SKETCH_OPS_MARKDOWN)" \
+		--min-accepted "$(ARC_LEARNED_SKETCH_OPS_MIN_ACCEPTED)" \
+		--min-tasks "$(ARC_LEARNED_SKETCH_OPS_MIN_TASKS)" \
+		--near-miss-score "$(ARC_LEARNED_SKETCH_OPS_NEAR_MISS_SCORE)" \
+		--diagnostic-score "$(ARC_LEARNED_SKETCH_OPS_DIAGNOSTIC_SCORE)"
 
 paper-grade-evidence-core: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit multitask-adapter-heads experiment-matrix
 	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR)
@@ -1299,11 +1398,11 @@ learned-grammar-coverage-arc-visual-compare: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_R
 	mkdir -p $(LEARNED_GRAMMAR_COVERAGE_DIR)
 	mkdir -p $(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_DIR)
 	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 14 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 13 > $(LEARNED_GRAMMAR_COVERAGE_ARC_LOG)
-	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 14 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only --hypothesis-library-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" > $(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_FIXTURE_LOG)
+	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 14 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) --hypothesis-library-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" > $(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_FIXTURE_LOG)
 	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/training" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 > $(LEARNED_GRAMMAR_COVERAGE_ARC_PUBLIC_TRAIN_LOG)
-	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/training" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only --hypothesis-library-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" > $(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PUBLIC_TRAIN_LOG)
+	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/training" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) --hypothesis-library-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" > $(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PUBLIC_TRAIN_LOG)
 	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 > $(LEARNED_GRAMMAR_COVERAGE_ARC_PUBLIC_EVAL_LOG)
-	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only --hypothesis-library-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" > $(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PUBLIC_EVAL_LOG)
+	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) --hypothesis-library-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" > $(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PUBLIC_EVAL_LOG)
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-visual-curriculum \
 		--visual-only-log "fixture_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_FIXTURE_LOG)" \
 		--visual-only-log "public_train_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PUBLIC_TRAIN_LOG)" \
@@ -1323,8 +1422,8 @@ learned-grammar-coverage-arc-visual-compare: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_R
 		--examples "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_EXAMPLES)" \
 		--summary "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_SUMMARY)"
 	awk 'NR==1 || FNR>1' "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_PRIOR)" > "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)"
-	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/training" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only --hypothesis-library-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)" > $(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_PUBLIC_TRAIN_LOG)
-	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only --hypothesis-library-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)" > $(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_PUBLIC_EVAL_LOG)
+	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/training" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) --hypothesis-library-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)" > $(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_PUBLIC_TRAIN_LOG)
+	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) --hypothesis-library-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)" > $(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_PUBLIC_EVAL_LOG)
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --learned-grammar-coverage \
 		--arc-log "fixture_baseline=$(LEARNED_GRAMMAR_COVERAGE_ARC_LOG)" \
 		--arc-log "fixture_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_FIXTURE_LOG)" \
@@ -1386,8 +1485,8 @@ arc-visual-hole-proposer: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 		--summary "$(ARC_VISUAL_HOLE_PROPOSER_SUMMARY)"
 	./$(ARC_AGI) --arc-sketch-probe-candidates "$(ARC_VISUAL_HOLE_PROPOSER_CANDIDATES)" --public-arc-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" --arc-sketch-probe-sources "$(ARC_VISUAL_HOLE_PROPOSER_SOURCES)" --arc-sketch-probe-prior "$(ARC_VISUAL_HOLE_PROPOSER_PRIOR)" --arc-sketch-probe-attempts "$(ARC_VISUAL_HOLE_PROPOSER_ATTEMPTS)" --arc-sketches-per-task 64
 	awk 'NR==1 || FNR>1' "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)" "$(ARC_VISUAL_HOLE_PROPOSER_PRIOR)" > "$(ARC_VISUAL_HOLE_PROPOSER_COMBINED_PRIOR)"
-	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/training" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only --hypothesis-library-prior "$(ARC_VISUAL_HOLE_PROPOSER_COMBINED_PRIOR)" > $(ARC_VISUAL_HOLE_PROPOSER_PUBLIC_TRAIN_LOG)
-	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only --hypothesis-library-prior "$(ARC_VISUAL_HOLE_PROPOSER_COMBINED_PRIOR)" > $(ARC_VISUAL_HOLE_PROPOSER_PUBLIC_EVAL_LOG)
+	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/training" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) --hypothesis-library-prior "$(ARC_VISUAL_HOLE_PROPOSER_COMBINED_PRIOR)" > $(ARC_VISUAL_HOLE_PROPOSER_PUBLIC_TRAIN_LOG)
+	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) --hypothesis-library-prior "$(ARC_VISUAL_HOLE_PROPOSER_COMBINED_PRIOR)" > $(ARC_VISUAL_HOLE_PROPOSER_PUBLIC_EVAL_LOG)
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --learned-grammar-coverage \
 		--arc-log "public_train_curriculum_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_PUBLIC_TRAIN_LOG)" \
 		--arc-log "public_train_hole_proposer_visual_only=$(ARC_VISUAL_HOLE_PROPOSER_PUBLIC_TRAIN_LOG)" \
