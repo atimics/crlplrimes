@@ -1516,9 +1516,9 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "C4",
         "Capacity sweep does not explain away the ARC fixed-task gap",
         "results/2026-05-17-multitask-roadmap/rmt6_capacity_sweep_deltas.csv",
-        1,
-        "The capacity sweep does not make the shared ARC fixed-task gap disappear.",
-        "This keeps the architecture roadmap disciplined: capacity changes the ARC gap, but does not monotonically close it, so adapters or ordering should not be claimed until the tiny-net plateau check is done.",
+        0,
+        "The capacity sweep remains diagnostic until the C7 plateau audit is ready.",
+        "C7 is the blocking gate for capacity claims: width deltas stay in limitations until the affected task and variant rows are audit-ready.",
         "delta_bar",
         "pp",
         "shared minus single top-1",
@@ -1529,8 +1529,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "Shared trunk plus domain heads is gated as architecture evidence",
         "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_deltas.csv",
         0,
-        "Shared trunk plus task heads should pass the registered architecture promotion gate before being presented as the default recipe.",
-        "The adapter-head result is treated as an architecture gate, not a broad one-model claim. A shared trunk plus domain heads is promoted only if it helps fixed ARC without erasing delayed-claim transfer, materially regressing grid_path, or losing same-envelope ARC OOD against the matched single-task baseline.",
+        "Shared trunk plus task heads must pass C7 before being presented as the default recipe.",
+        "The adapter-head result is treated as an architecture gate, not a broad one-model claim. C7 must be ready before a shared trunk plus domain heads can be promoted.",
         "delta_bar",
         "pp",
         "task-head top-1 delta",
@@ -1565,7 +1565,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "Tiny-net architecture claims are gated by plateau audits",
         "results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl",
         0,
-        "Architecture claims remain underpowered until the tiny-net plateau audit is complete.",
+        "Capacity and architecture claims remain underpowered until the tiny-net plateau audit is complete.",
         "",
         "",
         "",
@@ -2594,6 +2594,61 @@ static void paper_eval_delayed_transfer(PaperClaimResult *claim) {
              claim_top1);
 }
 
+static int paper_tiny_net_plateau_audit_ready(long *rows_out,
+                                              long *plateau_rows_out,
+                                              long *verdict_rows_out,
+                                              long *audit_ready_out) {
+    FILE *fp;
+    char *line;
+    long rows = 0;
+    long plateau_rows = 0;
+    long verdict_rows = paper_count_jsonl_rows(
+        "results/2026-05-17-multitask-roadmap/tiny_net_audit_verdict.jsonl");
+    long audit_ready = 0;
+
+    fp = fopen("results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl",
+               "r");
+    if (fp != NULL) {
+        while ((line = paper_read_line_dynamic(fp)) != NULL) {
+            int plateau = 0;
+            ++rows;
+            if (paper_json_get_bool(line, "plateau_detected", &plateau) && plateau) {
+                ++plateau_rows;
+            }
+            free(line);
+        }
+        fclose(fp);
+    }
+
+    fp = fopen("results/2026-05-17-multitask-roadmap/tiny_net_audit_verdict.jsonl",
+               "r");
+    if (fp != NULL) {
+        while ((line = paper_read_line_dynamic(fp)) != NULL) {
+            int ready = 0;
+            if (paper_json_get_bool(line, "audit_ready", &ready) && ready) {
+                ++audit_ready;
+            }
+            free(line);
+        }
+        fclose(fp);
+    }
+
+    if (rows_out != NULL) {
+        *rows_out = rows;
+    }
+    if (plateau_rows_out != NULL) {
+        *plateau_rows_out = plateau_rows;
+    }
+    if (verdict_rows_out != NULL) {
+        *verdict_rows_out = verdict_rows < 0 ? 0 : verdict_rows;
+    }
+    if (audit_ready_out != NULL) {
+        *audit_ready_out = audit_ready;
+    }
+    return rows > 0 && plateau_rows == rows && verdict_rows > 0 &&
+           audit_ready == verdict_rows;
+}
+
 static void paper_eval_capacity(PaperClaimResult *claim) {
     FILE *fp;
     char *header_line;
@@ -2608,6 +2663,14 @@ static void paper_eval_capacity(PaperClaimResult *claim) {
     double claim_delta_max = -1.0e9;
     int arc_rows = 0;
     int all_arc_trail = 1;
+    long plateau_rows_total = 0;
+    long plateau_rows_ready = 0;
+    long verdict_rows_total = 0;
+    long verdict_rows_ready = 0;
+    int plateau_ready = paper_tiny_net_plateau_audit_ready(&plateau_rows_total,
+                                                           &plateau_rows_ready,
+                                                           &verdict_rows_total,
+                                                           &verdict_rows_ready);
     claim->chart_rows[0] = '\0';
     fp = fopen(claim->spec->source, "r");
     if (fp == NULL) {
@@ -2723,14 +2786,30 @@ static void paper_eval_capacity(PaperClaimResult *claim) {
     snprintf(claim->status,
              sizeof(claim->status),
              "%s",
-             all_arc_trail && claim_delta_min > 0.0 ? "supported" : "contradicted");
-    snprintf(claim->summary,
-             sizeof(claim->summary),
-             "making the shared model wider does not simply fix ARC: the best fixed-ARC shared row is %s at %.2f%%, but every shared ARC row trails single-task; delayed_claim deltas remain +%.2fpp to +%.2fpp.",
-             best_hidden,
-             100.0 * best_arc_shared,
-             100.0 * claim_delta_min,
-             100.0 * claim_delta_max);
+             plateau_ready ?
+                 (all_arc_trail && claim_delta_min > 0.0 ? "supported" : "contradicted") :
+                 "underpowered");
+    if (plateau_ready) {
+        snprintf(claim->summary,
+                 sizeof(claim->summary),
+                 "making the shared model wider does not simply fix ARC: the best fixed-ARC shared row is %s at %.2f%%, but every shared ARC row trails single-task; delayed_claim deltas remain +%.2fpp to +%.2fpp.",
+                 best_hidden,
+                 100.0 * best_arc_shared,
+                 100.0 * claim_delta_min,
+                 100.0 * claim_delta_max);
+    } else {
+        snprintf(claim->summary,
+                 sizeof(claim->summary),
+                 "C7 blocks this capacity claim until plateau audit is ready: the sweep's best fixed-ARC shared row is %s at %.2f%% and delayed_claim deltas are +%.2fpp to +%.2fpp, but only %ld/%ld plateau rows and %ld/%ld domain/variant verdicts are audit-ready.",
+                 best_hidden,
+                 100.0 * best_arc_shared,
+                 100.0 * claim_delta_min,
+                 100.0 * claim_delta_max,
+                 plateau_rows_ready,
+                 plateau_rows_total,
+                 verdict_rows_ready,
+                 verdict_rows_total);
+    }
     (void)best_arc_delta;
 }
 
@@ -2749,6 +2828,14 @@ static void paper_eval_adapter(PaperClaimResult *claim) {
     double grid_delta = 0.0;
     double ood_delta = 0.0;
     double ood_nll_delta = 0.0;
+    long plateau_rows_total = 0;
+    long plateau_rows_ready = 0;
+    long verdict_rows_total = 0;
+    long verdict_rows_ready = 0;
+    int plateau_ready = paper_tiny_net_plateau_audit_ready(&plateau_rows_total,
+                                                           &plateau_rows_ready,
+                                                           &verdict_rows_total,
+                                                           &verdict_rows_ready);
     if (paper_csv_load_matching_row(claim->spec->source, cols, fixed_arc_v, 2U, &fixed_arc) <= 0 ||
         paper_csv_load_matching_row(claim->spec->source, cols, delayed_v, 2U, &delayed) <= 0 ||
         paper_csv_load_matching_row(claim->spec->source, cols, grid_v, 2U, &grid) <= 0 ||
@@ -2773,18 +2860,35 @@ static void paper_eval_adapter(PaperClaimResult *claim) {
     snprintf(claim->status,
              sizeof(claim->status),
              "%s",
-             fixed_delta > 0.0 && delayed_delta >= -0.005 && grid_delta >= -0.005 &&
-                     ood_delta >= 0.0
-                 ? "supported"
-                 : "contradicted");
-    snprintf(claim->summary,
-             sizeof(claim->summary),
-             "task-specific heads help some rows and hurt others: fixed ARC heads-flat delta %+.2fpp; delayed_claim heads-flat %+.2fpp; grid_path heads-flat %+.2fpp; ARC OOD heads-single %+.2fpp top-1 and %.4f NLL.",
-             100.0 * fixed_delta,
-             100.0 * delayed_delta,
-             100.0 * grid_delta,
-             100.0 * ood_delta,
-             ood_nll_delta);
+             plateau_ready ?
+                 (fixed_delta > 0.0 && delayed_delta >= -0.005 &&
+                          grid_delta >= -0.005 && ood_delta >= 0.0
+                      ? "supported"
+                      : "contradicted") :
+                 "underpowered");
+    if (plateau_ready) {
+        snprintf(claim->summary,
+                 sizeof(claim->summary),
+                 "task-specific heads help some rows and hurt others: fixed ARC heads-flat delta %+.2fpp; delayed_claim heads-flat %+.2fpp; grid_path heads-flat %+.2fpp; ARC OOD heads-single %+.2fpp top-1 and %.4f NLL.",
+                 100.0 * fixed_delta,
+                 100.0 * delayed_delta,
+                 100.0 * grid_delta,
+                 100.0 * ood_delta,
+                 ood_nll_delta);
+    } else {
+        snprintf(claim->summary,
+                 sizeof(claim->summary),
+                 "C7 blocks this adapter-head architecture claim until plateau audit is ready: fixed ARC heads-flat delta %+.2fpp; delayed_claim heads-flat %+.2fpp; grid_path heads-flat %+.2fpp; ARC OOD heads-single %+.2fpp top-1 and %.4f NLL, with only %ld/%ld plateau rows and %ld/%ld domain/variant verdicts audit-ready.",
+                 100.0 * fixed_delta,
+                 100.0 * delayed_delta,
+                 100.0 * grid_delta,
+                 100.0 * ood_delta,
+                 ood_nll_delta,
+                 plateau_rows_ready,
+                 plateau_rows_total,
+                 verdict_rows_ready,
+                 verdict_rows_total);
+    }
     snprintf(claim->chart_rows,
              sizeof(claim->chart_rows),
              "((label: \"fixed ARC vs flat\", value: %.15g), (label: \"delayed vs flat\", value: %.15g), (label: \"grid vs flat\", value: %.15g), (label: \"ARC OOD vs single\", value: %.15g))",
@@ -2957,42 +3061,21 @@ static void paper_eval_hypothesis_promotion(PaperClaimResult *claim) {
 }
 
 static void paper_eval_tiny_net(PaperClaimResult *claim) {
-    FILE *fp;
-    char *line;
     long rows = 0;
     long plateau_rows = 0;
-    long verdict_rows = paper_count_jsonl_rows(
-        "results/2026-05-17-multitask-roadmap/tiny_net_audit_verdict.jsonl");
+    long verdict_rows = 0;
     long audit_ready = 0;
-    fp = fopen(claim->spec->source, "r");
-    if (fp == NULL) {
+    int ready = paper_tiny_net_plateau_audit_ready(&rows,
+                                                   &plateau_rows,
+                                                   &verdict_rows,
+                                                   &audit_ready);
+    if (rows == 0) {
         return;
-    }
-    while ((line = paper_read_line_dynamic(fp)) != NULL) {
-        int plateau = 0;
-        ++rows;
-        if (paper_json_get_bool(line, "plateau_detected", &plateau) && plateau) {
-            ++plateau_rows;
-        }
-        free(line);
-    }
-    fclose(fp);
-    fp = fopen("results/2026-05-17-multitask-roadmap/tiny_net_audit_verdict.jsonl", "r");
-    if (fp != NULL) {
-        while ((line = paper_read_line_dynamic(fp)) != NULL) {
-            int ready = 0;
-            if (paper_json_get_bool(line, "audit_ready", &ready) && ready) {
-                ++audit_ready;
-            }
-            free(line);
-        }
-        fclose(fp);
     }
     snprintf(claim->status,
              sizeof(claim->status),
              "%s",
-             rows > 0 && plateau_rows == rows && audit_ready == verdict_rows ? "supported"
-                                                                              : "underpowered");
+             ready ? "supported" : "underpowered");
     snprintf(claim->summary,
              sizeof(claim->summary),
              "tiny-net plateau audit covers 4 capacities, 4 domains, and variants shared, shared_task_heads, single_task; %ld/%ld required rows meet the plateau threshold and %ld/%ld domain/variant verdicts are audit-ready.",

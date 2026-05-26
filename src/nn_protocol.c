@@ -121,6 +121,19 @@ int nn_protocol_status_from_name(const char *name, NNVerifierOutcomeStatus *out_
     return 0;
 }
 
+static int nn_protocol_status_is_valid(NNVerifierOutcomeStatus status)
+{
+    switch (status) {
+    case NN_VERIFIER_ACCEPTED:
+    case NN_VERIFIER_UNSAFE:
+    case NN_VERIFIER_NO_SUPPORT:
+    case NN_VERIFIER_SAFE_DUPLICATE:
+    case NN_VERIFIER_REJECTED:
+        return 1;
+    }
+    return 0;
+}
+
 int nn_protocol_status_is_safe(NNVerifierOutcomeStatus status)
 {
     return status == NN_VERIFIER_ACCEPTED ||
@@ -171,7 +184,8 @@ int nn_protocol_candidate_batch_validate(const NNCandidateRow *rows,
 
 int nn_protocol_outcome_validate(const NNVerifierOutcome *outcome)
 {
-    if (outcome == NULL || !isfinite(outcome->utility) ||
+    if (outcome == NULL || !nn_protocol_status_is_valid(outcome->status) ||
+        !isfinite(outcome->utility) ||
         !isfinite(outcome->cost) || outcome->cost < 0.0) {
         return 0;
     }
@@ -187,6 +201,27 @@ int nn_protocol_outcome_validate(const NNVerifierOutcome *outcome)
     case NN_VERIFIER_REJECTED:
         break;
     default:
+        return 0;
+    }
+    return 1;
+}
+
+int nn_protocol_feedback_signal_validate(const NNVerifierFeedbackSignal *signal)
+{
+    if (signal == NULL ||
+        !nn_protocol_has_text(signal->domain) ||
+        !nn_protocol_has_text(signal->grounding_authority) ||
+        !nn_protocol_status_is_valid(signal->outcome_status) ||
+        !nn_protocol_has_text(signal->reason_code) ||
+        !nn_protocol_has_text(signal->training_signal) ||
+        !nn_protocol_has_text(signal->target_role) ||
+        !isfinite(signal->utility) ||
+        !isfinite(signal->cost) ||
+        signal->cost < 0.0) {
+        return 0;
+    }
+    if (nn_protocol_status_is_safe(signal->outcome_status) &&
+        signal->false_rejections != 0u) {
         return 0;
     }
     return 1;
@@ -318,6 +353,42 @@ int nn_protocol_outcome_safe_duplicate(size_t support,
     outcome->proof_kind = "safe_duplicate";
     outcome->evidence = NULL;
     return 1;
+}
+
+int nn_protocol_feedback_signal_from_outcome(const char *domain,
+                                             uint32_t stable_id,
+                                             const char *grounding_authority,
+                                             const NNVerifierOutcome *outcome,
+                                             const char *training_signal,
+                                             const char *target_role,
+                                             NNVerifierFeedbackSignal *signal)
+{
+    const NNProtocolEvidence *evidence;
+    if (signal == NULL || !nn_protocol_outcome_validate(outcome)) {
+        return 0;
+    }
+    evidence = outcome->evidence;
+    signal->domain = nn_protocol_text_or_empty(domain);
+    signal->stable_id = stable_id;
+    signal->grounding_authority = nn_protocol_text_or_empty(grounding_authority);
+    signal->outcome_status = outcome->status;
+    signal->reason_code = nn_protocol_text_or_empty(outcome->reason_code);
+    signal->residual_class = evidence != NULL ?
+        nn_protocol_text_or_empty(evidence->residual_class) :
+        "";
+    signal->utility = outcome->utility;
+    signal->cost = outcome->cost;
+    signal->support = outcome->support;
+    signal->false_rejections = outcome->false_rejections;
+    signal->training_signal = nn_protocol_text_or_empty(training_signal);
+    signal->target_role = nn_protocol_text_or_empty(target_role);
+    signal->source_schema = evidence != NULL ?
+        nn_protocol_text_or_empty(evidence->source_schema) :
+        NN_PROTOCOL_VERIFIER_SCHEMA;
+    signal->source_artifact = evidence != NULL ?
+        nn_protocol_text_or_empty(evidence->source_artifact) :
+        "";
+    return nn_protocol_feedback_signal_validate(signal);
 }
 
 int nn_protocol_score_candidates(NeuralNet *net,
@@ -574,6 +645,40 @@ int nn_verifier_outcome_parse_jsonl(const char *line,
                                    outcome->domain_payload_schema,
                                    sizeof(outcome->domain_payload_schema));
     return 1;
+}
+
+int nn_verifier_feedback_signal_write_json(FILE *fp,
+                                           const NNVerifierFeedbackSignal *signal)
+{
+    if (fp == NULL || !nn_protocol_feedback_signal_validate(signal)) {
+        return 0;
+    }
+    fputs("{\"schema\":", fp);
+    nn_protocol_json_string(fp, NN_PROTOCOL_FEEDBACK_SCHEMA);
+    fputs(",\"domain\":", fp);
+    nn_protocol_json_string(fp, signal->domain);
+    fprintf(fp, ",\"stable_id\":%u", signal->stable_id);
+    fputs(",\"grounding_authority\":", fp);
+    nn_protocol_json_string(fp, signal->grounding_authority);
+    fputs(",\"outcome_status\":", fp);
+    nn_protocol_json_string(fp, nn_protocol_status_name(signal->outcome_status));
+    fputs(",\"reason_code\":", fp);
+    nn_protocol_json_string(fp, signal->reason_code);
+    nn_protocol_write_optional_string(fp, "residual_class", signal->residual_class);
+    fprintf(fp,
+            ",\"utility\":%.17g,\"support\":%zu,\"false_rejections\":%zu,\"cost\":%.17g",
+            signal->utility,
+            signal->support,
+            signal->false_rejections,
+            signal->cost);
+    fputs(",\"training_signal\":", fp);
+    nn_protocol_json_string(fp, signal->training_signal);
+    fputs(",\"target_role\":", fp);
+    nn_protocol_json_string(fp, signal->target_role);
+    nn_protocol_write_optional_string(fp, "source_schema", signal->source_schema);
+    nn_protocol_write_optional_string(fp, "source_artifact", signal->source_artifact);
+    fputs("}\n", fp);
+    return ferror(fp) == 0;
 }
 
 int nn_ranker_decision_write_json(FILE *fp, const NNRankerDecision *decision)

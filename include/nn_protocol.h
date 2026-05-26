@@ -10,6 +10,7 @@
 
 #define NN_PROTOCOL_CANDIDATE_SCHEMA "crlp.protocol.candidate_row.v1"
 #define NN_PROTOCOL_VERIFIER_SCHEMA "crlp.protocol.verifier_outcome.v1"
+#define NN_PROTOCOL_FEEDBACK_SCHEMA "crlp.protocol.verifier_feedback_signal.v1"
 #define NN_PROTOCOL_RANKER_SCHEMA "crlp.protocol.ranker_decision.v1"
 #define NN_PROTOCOL_RULE_SCHEMA "crlp.protocol.discovered_rule.v1"
 #define NN_PROTOCOL_LIBRARY_SCHEMA "crlp.protocol.library_promotion.v1"
@@ -71,6 +72,23 @@ typedef struct {
     const char *proof_kind;
     const NNProtocolEvidence *evidence;
 } NNVerifierOutcome;
+
+typedef struct {
+    const char *domain;
+    uint32_t stable_id;
+    const char *grounding_authority;
+    NNVerifierOutcomeStatus outcome_status;
+    const char *reason_code;
+    const char *residual_class;
+    double utility;
+    double cost;
+    size_t support;
+    size_t false_rejections;
+    const char *training_signal;
+    const char *target_role;
+    const char *source_schema;
+    const char *source_artifact;
+} NNVerifierFeedbackSignal;
 
 typedef struct {
     const char *task_name;
@@ -179,6 +197,7 @@ int nn_protocol_candidate_batch_validate(const NNCandidateRow *rows,
                                          size_t count,
                                          size_t expected_feature_count);
 int nn_protocol_outcome_validate(const NNVerifierOutcome *outcome);
+int nn_protocol_feedback_signal_validate(const NNVerifierFeedbackSignal *signal);
 int nn_protocol_ranker_decision_validate(const NNRankerDecision *decision);
 
 int nn_protocol_candidate_from_action(const char *domain,
@@ -197,6 +216,13 @@ int nn_protocol_outcome_safe_duplicate(size_t support,
                                        double utility,
                                        const char *reason_code,
                                        NNVerifierOutcome *outcome);
+int nn_protocol_feedback_signal_from_outcome(const char *domain,
+                                             uint32_t stable_id,
+                                             const char *grounding_authority,
+                                             const NNVerifierOutcome *outcome,
+                                             const char *training_signal,
+                                             const char *target_role,
+                                             NNVerifierFeedbackSignal *signal);
 int nn_protocol_score_candidates(NeuralNet *net,
                                  const NNCandidateRow *rows,
                                  size_t count,
@@ -211,6 +237,8 @@ int nn_verifier_outcome_write_json(FILE *fp,
                                    const NNVerifierOutcome *outcome);
 int nn_verifier_outcome_parse_jsonl(const char *line,
                                     NNParsedVerifierOutcome *outcome);
+int nn_verifier_feedback_signal_write_json(FILE *fp,
+                                           const NNVerifierFeedbackSignal *signal);
 int nn_ranker_decision_write_json(FILE *fp, const NNRankerDecision *decision);
 int nn_discovered_rule_write_json(FILE *fp, const NNDiscoveredRuleRecord *record);
 int nn_library_promotion_write_json(FILE *fp, const NNLibraryPromotionRecord *record);

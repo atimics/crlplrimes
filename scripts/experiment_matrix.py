@@ -162,14 +162,98 @@ PROTOCOL_DETAILS = {
     },
 }
 
+AUTHORITY_DETAILS = {
+    "prime_gap": {
+        "grounding_authority": "exact_check",
+        "authority_claim_scope": "zero-false-rejection gates and exact residual ranking inside the next-prime support",
+    },
+    "grid_path": {
+        "grounding_authority": "exact_check",
+        "authority_claim_scope": "shortest-path successor and certificate claims inside generated grids",
+    },
+    "delayed_claim": {
+        "grounding_authority": "deterministic_replay",
+        "authority_claim_scope": "simulator-certified utility and safety under the delayed-claim generator",
+    },
+    "rejected_candidate_learning": {
+        "grounding_authority": "exact_check",
+        "authority_claim_scope": "reason-code feedback on arithmetic/modular verifier rows; replay stress rows are limitations only",
+    },
+    "hypothesis_library_feedback": {
+        "grounding_authority": "exact_check",
+        "authority_claim_scope": "train-pair exactness and held-out fixture certification under the typed hypothesis grammar",
+    },
+    "multitask_tiny_net": {
+        "grounding_authority": "mixed_diagnostic",
+        "authority_claim_scope": "diagnostic scorer rows only; not aggregated into an authority-level leaderboard",
+    },
+    "arc_agi_evidence_surface": {
+        "grounding_authority": "corpus_proxy",
+        "authority_claim_scope": "public-corpus coverage and failure taxonomy, not broad exact ARC competence",
+    },
+    "signal_flight": {
+        "grounding_authority": "deterministic_replay",
+        "authority_claim_scope": "simulator replay, rollout replay, protocol-compatible live telemetry, and guarded safety evidence",
+    },
+}
+
+
+ROLE_DETAILS = {
+    "prime_gap": {
+        "neural_scorer_role": "score residual actions and certified filters after the gate defines the target",
+        "neural_proposer_role": "static proposer is a negative baseline; closed-loop and unified proposer rows must be compared to grammar order",
+        "headline_baseline": "scorer baseline is the certified gate; proposer baseline is grammar order plus verifier-feedback variants",
+    },
+    "grid_path": {
+        "neural_scorer_role": "rank legal residual moves under exact shortest-path labels",
+        "neural_proposer_role": "budgeted rule-order diagnostics only",
+        "headline_baseline": "BFS successor and cheap symbolic gates",
+    },
+    "delayed_claim": {
+        "neural_scorer_role": "rank utility after simulator safety dominates the decision",
+        "neural_proposer_role": "consume simulator/gate rejection reasons as scoped feedback",
+        "headline_baseline": "deterministic clean threshold and margin gates",
+    },
+    "rejected_candidate_learning": {
+        "neural_scorer_role": "train residual ordering from rejected verifier outcomes",
+        "neural_proposer_role": "feed reason codes and residual classes into the next proposal pass",
+        "headline_baseline": "unguided model_score versus reason_prior and trained_residual",
+    },
+    "hypothesis_library_feedback": {
+        "neural_scorer_role": "rank bounded program candidates after template certification",
+        "neural_proposer_role": "turn zero-false-rejection templates into slot priors for the next search",
+        "headline_baseline": "no_prior and grammar-order tight-budget selection",
+    },
+    "multitask_tiny_net": {
+        "neural_scorer_role": "shared residual scorer with per-domain diagnostics",
+        "neural_proposer_role": "none promoted; architecture rows are blocked by the plateau audit",
+        "headline_baseline": "single-task scorer and C7 plateau audit",
+    },
+    "arc_agi_evidence_surface": {
+        "neural_scorer_role": "rank bounded candidates and expose calibration/coverage gaps",
+        "neural_proposer_role": "grow certified transform/program grammar coverage rather than claim scorer capacity fixes",
+        "headline_baseline": "corpus loader coverage and train-pair certified transform rows",
+    },
+    "signal_flight": {
+        "neural_scorer_role": "rank bounded WASD/control candidates beside heuristic control",
+        "neural_proposer_role": "control-target hypotheses remain replay-gated before action ranking",
+        "headline_baseline": "heuristic controller, simulator replay, and live guardrails",
+    },
+}
+
 
 REQUIRED_PROTOCOL_FIELDS = (
     "data_domain",
+    "grounding_authority",
+    "authority_claim_scope",
     "grammar",
     "candidate_set",
     "verifier",
     "certificate_gate",
     "scorer_role",
+    "neural_scorer_role",
+    "neural_proposer_role",
+    "headline_baseline",
     "trace_artifact",
     "examples",
     "result_table",
@@ -192,11 +276,18 @@ def claim_index(claims_path: Path) -> dict[str, dict[str, Any]]:
 def add_status(row: dict[str, Any], claims: dict[str, dict[str, Any]]) -> dict[str, Any]:
     protocol = {
         "data_domain": row["domain"],
+        "grounding_authority": "unclassified",
+        "authority_claim_scope": "unclassified",
         "grammar": "domain-local candidate grammar",
         "examples": [],
         "result_table": row["result"],
         "takeaway": row["claim"],
+        "neural_scorer_role": row.get("scorer_role", ""),
+        "neural_proposer_role": "not declared",
+        "headline_baseline": "not declared",
     }
+    protocol.update(AUTHORITY_DETAILS.get(str(row["domain"]), {}))
+    protocol.update(ROLE_DETAILS.get(str(row["domain"]), {}))
     protocol.update(PROTOCOL_DETAILS.get(str(row["domain"]), {}))
     protocol.setdefault("result_table", row["result"])
     enriched = {**protocol, **row}
@@ -250,6 +341,8 @@ def validate_rows(rows: list[dict[str, Any]]) -> None:
         missing = [field for field in REQUIRED_PROTOCOL_FIELDS if not row.get(field)]
         if missing:
             raise ValueError(f"{row.get('domain', '<unknown>')} missing protocol fields: {missing}")
+        if row.get("grounding_authority") == "unclassified":
+            raise ValueError(f"{row.get('domain', '<unknown>')} missing grounding authority")
         examples = row.get("examples")
         if not isinstance(examples, list) or not (2 <= len(examples) <= 4):
             raise ValueError(f"{row.get('domain', '<unknown>')} must have 2-4 protocol examples")
@@ -273,15 +366,42 @@ def write_markdown(path: Path, rows: list[dict[str, Any]]) -> None:
         "",
         "The evidence families are frozen to these rows. New domains belong in roadmap notes until this matrix is deliberately revised.",
         "",
-        "| Domain/data | Grammar | Candidate set | Verifier/gate | Scorer role | Trace artifact | Result table | Takeaway | Limitation |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "Authority is a hard reporting axis. Exact checks, deterministic replay, corpus proxies, and mixed diagnostics are not collapsed into a single score.",
+        "",
+        "| Domain/data | Authority | Grammar | Candidate set | Verifier/gate | Neural role split | Headline baseline | Trace artifact | Result table | Takeaway | Limitation |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
         lines.append(
-            "| `{domain}`: {data_domain} | {grammar} | {candidate_set} | {verifier}; {certificate_gate} | {scorer_role} | `{trace_artifact}` | {result_table} | {takeaway} | {limitation} |".format(
+            "| `{domain}`: {data_domain} | `{grounding_authority}`: {authority_claim_scope} | {grammar} | {candidate_set} | {verifier}; {certificate_gate} | scorer: {neural_scorer_role}; proposer: {neural_proposer_role} | {headline_baseline} | `{trace_artifact}` | {result_table} | {takeaway} | {limitation} |".format(
                 **{key: md_cell(value) for key, value in row.items()}
             )
         )
+    lines.extend(["", "## Authority Leaderboards", ""])
+    for authority in ("exact_check", "deterministic_replay", "corpus_proxy", "human_review"):
+        authority_rows = [row for row in rows if row.get("grounding_authority") == authority]
+        lines.extend([f"### `{authority}`", ""])
+        if authority_rows:
+            for row in authority_rows:
+                lines.append(
+                    f"- `{row['domain']}`: {text_list(row['result_table'])}"
+                )
+        else:
+            lines.append("- No frozen rows.")
+        lines.append("")
+    mixed_rows = [
+        row for row in rows
+        if row.get("grounding_authority") not in {
+            "exact_check",
+            "deterministic_replay",
+            "corpus_proxy",
+            "human_review",
+        }
+    ]
+    lines.extend(["### `mixed_diagnostic`", ""])
+    for row in mixed_rows:
+        lines.append(f"- `{row['domain']}`: {text_list(row['authority_claim_scope'])}")
+    lines.append("")
     lines.extend(["", "## Repeated Protocol Rows", ""])
     for row in rows:
         lines.extend(
@@ -289,13 +409,17 @@ def write_markdown(path: Path, rows: list[dict[str, Any]]) -> None:
                 f"### `{row['domain']}`",
                 "",
                 f"1. Domain/data: {text_list(row['data_domain'])}",
-                f"2. Grammar: {text_list(row['grammar'])}",
-                f"3. Candidate set: {text_list(row['candidate_set'])}",
-                f"4. Verifier/gate: {text_list(row['verifier'])}; {text_list(row['certificate_gate'])}",
-                f"5. Examples: {text_list(row['examples'])}",
-                f"6. Result table: {text_list(row['result_table'])}",
-                f"7. Takeaway: {text_list(row['takeaway'])}",
-                f"8. Limitation: {text_list(row['limitation'])}",
+                f"2. Authority: `{row['grounding_authority']}` - {text_list(row['authority_claim_scope'])}",
+                f"3. Grammar: {text_list(row['grammar'])}",
+                f"4. Candidate set: {text_list(row['candidate_set'])}",
+                f"5. Verifier/gate: {text_list(row['verifier'])}; {text_list(row['certificate_gate'])}",
+                f"6. Neural scorer role: {text_list(row['neural_scorer_role'])}",
+                f"7. Neural proposer role: {text_list(row['neural_proposer_role'])}",
+                f"8. Headline baseline: {text_list(row['headline_baseline'])}",
+                f"9. Examples: {text_list(row['examples'])}",
+                f"10. Result table: {text_list(row['result_table'])}",
+                f"11. Takeaway: {text_list(row['takeaway'])}",
+                f"12. Limitation: {text_list(row['limitation'])}",
                 "",
             ]
         )
@@ -317,11 +441,16 @@ def write_typst(path: Path, rows: list[dict[str, Any]]) -> None:
         "domain",
         "domain_display",
         "data_domain",
+        "grounding_authority",
+        "authority_claim_scope",
         "grammar",
         "candidate_set",
         "verifier",
         "certificate_gate",
         "scorer_role",
+        "neural_scorer_role",
+        "neural_proposer_role",
+        "headline_baseline",
         "trace_artifact",
         "examples",
         "result_table",

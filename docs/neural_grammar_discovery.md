@@ -78,6 +78,9 @@ Outputs:
 - `build/float/neural_grammar_discovery/promoted_grammar_sketches.jsonl`
 - `build/float/neural_grammar_discovery/grammar_sketch_memory.tsv`
 - `build/float/neural_grammar_discovery/grammar_sketch_memory_summary.jsonl`
+- `build/float/neural_grammar_discovery/runtime/neural_sketch_proposals.jsonl`
+- `build/float/neural_grammar_discovery/runtime/closed_loop_sketch_proposals.jsonl`
+- `build/float/neural_grammar_discovery/closed_loop_sketch_summary.jsonl`
 - `build/float/learned_grammar_coverage/coverage.jsonl`
 - `build/float/dataset_action_score_artifacts/engine_evidence.jsonl`
 - `build/float/experiment_health/experiment_health.jsonl`
@@ -171,6 +174,11 @@ The first proposer stage is intentionally simple:
 - `neural_linear_sketch_proposer` trains a tiny logistic ranker over sketch,
   composition, and neural-frame tokens, then emits proposal scores over the same
   sketch surface.
+- `closed_loop_sketch_composer` keeps the neural-linear rows as the static
+  baseline, then selects sketches one at a time, updates residual/domain overlap
+  from the selected set, and re-scores the remaining sketches. Its output is the
+  public `grammar_sketch_proposals.jsonl` surface, while the static neural rows
+  remain in `runtime/neural_sketch_proposals.jsonl` for matched comparison.
 
 Promotion requires all of the following:
 

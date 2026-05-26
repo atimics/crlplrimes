@@ -1159,6 +1159,8 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
     NNVerifierOutcome invalid_outcome;
     NNCertificate delayed_certificate;
     NNVerifierOutcome delayed_outcome;
+    NNVerifierFeedbackSignal feedback_signal = {0};
+    NNVerifierFeedbackSignal invalid_signal = {0};
     NNParsedCandidateRow parsed_row;
     NNParsedVerifierOutcome parsed_outcome;
     NNProtocolFrame frame = {
@@ -1227,6 +1229,16 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
          nn_protocol_outcome_validate(&outcome);
     outcome.evidence = &evidence;
     ok = ok && nn_protocol_outcome_validate(&outcome);
+    ok = ok && nn_protocol_feedback_signal_from_outcome("prime_gap",
+                                                        row.stable_id,
+                                                        "exact_check",
+                                                        &outcome,
+                                                        "reason_code_prior",
+                                                        "proposer",
+                                                        &feedback_signal);
+    invalid_signal = feedback_signal;
+    invalid_signal.target_role = "";
+    ok = ok && !nn_protocol_feedback_signal_validate(&invalid_signal);
     invalid_outcome = outcome;
     invalid_outcome.false_rejections = 1;
     ok = ok && !nn_protocol_outcome_validate(&invalid_outcome);
@@ -1251,6 +1263,7 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
                                                   "delayed_claim",
                                                   77,
                                                   &delayed_outcome);
+        ok = ok && nn_verifier_feedback_signal_write_json(fp, &feedback_signal);
         rewind(fp);
         ok = ok && fgets(line, sizeof(line), fp) != NULL;
         ok = ok && strstr(line, NN_PROTOCOL_CANDIDATE_SCHEMA) != NULL;
@@ -1297,6 +1310,13 @@ static int test_protocol_candidate_and_outcome_json_contract(void)
              parsed_outcome.status == NN_VERIFIER_UNSAFE &&
              parsed_outcome.false_rejections == 2 &&
              strcmp(parsed_outcome.domain, "delayed_claim") == 0;
+        ok = ok && fgets(line, sizeof(line), fp) != NULL;
+        ok = ok && strstr(line, NN_PROTOCOL_FEEDBACK_SCHEMA) != NULL &&
+             strstr(line, "\"grounding_authority\":\"exact_check\"") != NULL &&
+             strstr(line, "\"outcome_status\":\"accepted\"") != NULL &&
+             strstr(line, "\"training_signal\":\"reason_code_prior\"") != NULL &&
+             strstr(line, "\"target_role\":\"proposer\"") != NULL &&
+             strstr(line, "\"residual_class\":\"covered\"") != NULL;
         fclose(fp);
     }
     return ok;

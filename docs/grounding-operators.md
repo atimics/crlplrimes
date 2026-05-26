@@ -8,6 +8,7 @@ compiler may audit.
 ```text
 state/data -> candidate grammar -> candidate set
            -> grounding operator -> outcome/certificate/proxy row
+           -> verifier feedback signal -> proposer/ranker training row
            -> neural scorer/ranker -> trace -> claim gate
 ```
 
@@ -46,6 +47,30 @@ the current verifier-named compatibility fields:
 - `trace_schema`: the row schema for scorer decisions.
 - `claim_scope`: the strongest wording permitted by the authority level.
 - `known_non_claims`: common overclaims the row must not support.
+
+## Verifier Feedback Signal
+
+The shared feedback primitive is `crlp.protocol.verifier_feedback_signal.v1`.
+It is the stable adapter between an authority outcome and the next proposer
+training pass:
+
+```text
+crlp.protocol.verifier_outcome.v1
+  -> crlp.protocol.verifier_feedback_signal.v1
+  -> proposer/ranker training rows
+```
+
+The feedback row carries `grounding_authority`, `outcome_status`,
+`reason_code`, optional `residual_class`, utility/cost/support counts, a
+`training_signal` label, and a `target_role` such as `proposer` or `ranker`.
+The row may shape future candidate ordering, but it does not promote a
+candidate by itself. Promotion still requires the original domain authority:
+exact verifier, deterministic replay, corpus proxy, or review gate.
+
+This makes rejected-candidate reason learning and certified hypothesis-library
+feedback instances of the same loop instead of separate substrate prototypes.
+Static proposers may remain baselines, but paper-facing proposer claims should
+compare against the authority-fed feedback version when such rows exist.
 
 ## Examples
 

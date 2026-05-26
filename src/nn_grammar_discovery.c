@@ -111,6 +111,19 @@ typedef struct {
 } NNGDScoredSketch;
 
 typedef struct {
+    size_t sketch_index;
+    double static_score;
+    double dynamic_score;
+    double evidence_mean;
+    double overlap_penalty;
+    double family_penalty;
+    double domain_novelty_bonus;
+    size_t same_domain_selected;
+    size_t same_family_selected;
+    size_t selected_before;
+} NNGDClosedLoopSketchChoice;
+
+typedef struct {
     char *split_name;
     char *family;
     char *task_id;
@@ -1852,6 +1865,16 @@ static double nn_gd_sigmoid(double z) {
         z = -30.0;
     }
     return 1.0 / (1.0 + exp(-z));
+}
+
+static double nn_gd_clamp_unit(double value) {
+    if (value < 0.0) {
+        return 0.0;
+    }
+    if (value > 1.0) {
+        return 1.0;
+    }
+    return value;
 }
 
 static double nn_gd_sketch_logit(const NNGDSketch *sketch,
@@ -3904,6 +3927,19 @@ static uint64_t nn_gd_proposal_hash(const char *sketch_id) {
     return hash;
 }
 
+static uint64_t nn_gd_closed_loop_proposal_hash(const char *sketch_id,
+                                                size_t step) {
+    char step_buffer[32];
+    uint64_t hash = UINT64_C(1469598103934665603);
+    snprintf(step_buffer, sizeof(step_buffer), "%zu", step);
+    hash = nn_gd_fnv1a_update(hash, "closed-loop-sketch-composer");
+    hash = nn_gd_fnv1a_update_separator(hash);
+    hash = nn_gd_fnv1a_update(hash, sketch_id);
+    hash = nn_gd_fnv1a_update_separator(hash);
+    hash = nn_gd_fnv1a_update(hash, step_buffer);
+    return hash;
+}
+
 static int nn_gd_build_vocab(const NNGDSketchList *sketches, NNGDStringList *vocab) {
     size_t i;
     size_t j;
@@ -4057,6 +4093,363 @@ static int nn_gd_write_neural_rows(FILE *fp,
     }
     free(scores);
     return ferror(fp) ? -1 : 0;
+}
+
+static int nn_gd_read_static_sketch_scores(const char *path,
+                                           const NNGDSketchList *sketches,
+                                           double *scores,
+                                           int *seen,
+                                           size_t *seen_count) {
+    FILE *fp;
+    char line[NN_GD_LINE_MAX];
+    if (seen_count != NULL) {
+        *seen_count = 0U;
+    }
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        return -1;
+    }
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        NNGDJsonIndex index;
+        char *schema;
+        char *sketch_id;
+        long sketch_index;
+        if (strstr(line, "\"schema\":\"crlp.grammar_sketch.proposal.v1\"") == NULL) {
+            continue;
+        }
+        nn_gd_json_index_line(line, &index);
+        schema = nn_gd_json_dup_index_string(&index, "schema");
+        sketch_id = nn_gd_json_dup_index_string(&index, "sketch_id");
+        if (schema == NULL || sketch_id == NULL ||
+            strcmp(schema, "crlp.grammar_sketch.proposal.v1") != 0) {
+            free(schema);
+            free(sketch_id);
+            continue;
+        }
+        sketch_index = nn_gd_find_sketch(sketches, sketch_id);
+        if (sketch_index >= 0L) {
+            size_t index_value = (size_t)sketch_index;
+            scores[index_value] = nn_gd_json_index_double_or_zero(&index, "score");
+            if (!seen[index_value] && seen_count != NULL) {
+                ++*seen_count;
+            }
+            seen[index_value] = 1;
+        }
+        free(schema);
+        free(sketch_id);
+    }
+    fclose(fp);
+    return 0;
+}
+
+static double nn_gd_label_mean_for_sketch(const NNGDLabelList *labels,
+                                          size_t sketch_index) {
+    size_t i;
+    size_t count = 0U;
+    double sum = 0.0;
+    for (i = 0U; i < labels->count; ++i) {
+        if (labels->items[i].sketch_index == sketch_index) {
+            sum += labels->items[i].label;
+            ++count;
+        }
+    }
+    return count == 0U ? 0.5 : sum / (double)count;
+}
+
+static int nn_gd_sketch_token_selected(const NNGDSketch *candidate,
+                                       const NNGDSketch *selected) {
+    size_t i;
+    size_t j;
+    for (i = 0U; i < candidate->tokens.count; ++i) {
+        for (j = 0U; j < selected->tokens.count; ++j) {
+            if (strcmp(candidate->tokens.items[i], selected->tokens.items[j]) == 0) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static double nn_gd_selected_token_overlap(const NNGDSketchList *sketches,
+                                           const int *selected,
+                                           size_t candidate_index) {
+    const NNGDSketch *candidate = &sketches->items[candidate_index];
+    size_t matched = 0U;
+    size_t i;
+    if (candidate->tokens.count == 0U) {
+        return 0.0;
+    }
+    for (i = 0U; i < sketches->count; ++i) {
+        if (!selected[i]) {
+            continue;
+        }
+        matched += nn_gd_sketch_token_selected(candidate, &sketches->items[i]) ? 1U : 0U;
+    }
+    if (matched > candidate->tokens.count) {
+        matched = candidate->tokens.count;
+    }
+    return (double)matched / (double)candidate->tokens.count;
+}
+
+static size_t nn_gd_selected_same_domain(const NNGDSketchList *sketches,
+                                         const int *selected,
+                                         size_t candidate_index) {
+    const char *domain = sketches->items[candidate_index].domain;
+    size_t i;
+    size_t count = 0U;
+    for (i = 0U; i < sketches->count; ++i) {
+        if (selected[i] && strcmp(sketches->items[i].domain, domain) == 0) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static size_t nn_gd_selected_same_family(const NNGDSketchList *sketches,
+                                         const int *selected,
+                                         size_t candidate_index) {
+    const char *family = sketches->items[candidate_index].family;
+    size_t i;
+    size_t count = 0U;
+    for (i = 0U; i < sketches->count; ++i) {
+        if (selected[i] && strcmp(sketches->items[i].family, family) == 0) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static size_t nn_gd_selected_domain_count(const NNGDSketchList *sketches,
+                                          const int *selected) {
+    size_t i;
+    size_t j;
+    size_t count = 0U;
+    for (i = 0U; i < sketches->count; ++i) {
+        int seen = 0;
+        if (!selected[i]) {
+            continue;
+        }
+        for (j = 0U; j < i; ++j) {
+            if (selected[j] &&
+                strcmp(sketches->items[i].domain, sketches->items[j].domain) == 0) {
+                seen = 1;
+                break;
+            }
+        }
+        if (!seen) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static int nn_gd_pick_closed_loop_sketch(const NNGDSketchList *sketches,
+                                         const NNGDLabelList *labels,
+                                         const double *static_scores,
+                                         const int *static_seen,
+                                         const int *selected,
+                                         size_t selected_count,
+                                         NNGDClosedLoopSketchChoice *choice) {
+    size_t i;
+    int found = 0;
+    NNGDClosedLoopSketchChoice best;
+    memset(&best, 0, sizeof(best));
+    for (i = 0U; i < sketches->count; ++i) {
+        double evidence_mean;
+        double overlap;
+        double static_score;
+        double domain_novelty_bonus;
+        double family_penalty;
+        double overlap_penalty;
+        double dynamic_score;
+        size_t same_domain;
+        size_t same_family;
+        if (selected[i]) {
+            continue;
+        }
+        evidence_mean = nn_gd_label_mean_for_sketch(labels, i);
+        overlap = nn_gd_selected_token_overlap(sketches, selected, i);
+        same_domain = nn_gd_selected_same_domain(sketches, selected, i);
+        same_family = nn_gd_selected_same_family(sketches, selected, i);
+        static_score = static_seen[i] ? static_scores[i] : 0.5;
+        domain_novelty_bonus = same_domain == 0U ? 0.01 : 0.0;
+        family_penalty = 0.04 * (double)same_family;
+        overlap_penalty = 0.03 * overlap;
+        dynamic_score = static_score + 0.035 * evidence_mean +
+                        domain_novelty_bonus - family_penalty - overlap_penalty;
+        if (!found || dynamic_score > best.dynamic_score ||
+            (dynamic_score == best.dynamic_score &&
+             strcmp(sketches->items[i].sketch_id,
+                    sketches->items[best.sketch_index].sketch_id) < 0)) {
+            best.sketch_index = i;
+            best.static_score = static_score;
+            best.dynamic_score = dynamic_score;
+            best.evidence_mean = evidence_mean;
+            best.overlap_penalty = overlap_penalty;
+            best.family_penalty = family_penalty;
+            best.domain_novelty_bonus = domain_novelty_bonus;
+            best.same_domain_selected = same_domain;
+            best.same_family_selected = same_family;
+            best.selected_before = selected_count;
+            found = 1;
+        }
+    }
+    if (!found) {
+        return -1;
+    }
+    *choice = best;
+    return 0;
+}
+
+static int nn_gd_write_closed_loop_sketch_summary(
+    const char *path,
+    size_t static_proposal_count,
+    const NNGDSketchList *sketches,
+    const int *selected,
+    size_t selected_count,
+    double static_score_sum,
+    double dynamic_score_sum,
+    size_t redundancy_penalties) {
+    FILE *fp;
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+    fp = fopen(path, "w");
+    if (fp == NULL) {
+        return -1;
+    }
+    fputs("{\"schema\":\"crlp.grammar_sketch.closed_loop_summary.v1\","
+          "\"report_version\":1,\"proposer\":\"closed_loop_sketch_composer\","
+          "\"source_proposer\":\"neural_linear_sketch_proposer\",",
+          fp);
+    fprintf(fp,
+            "\"source_proposal_count\":%zu,\"proposal_count\":%zu,"
+            "\"residual_update_count\":%zu,\"unique_domains_covered\":%zu,"
+            "\"redundancy_penalties_applied\":%zu,\"mean_static_score\":%.8f,"
+            "\"mean_dynamic_score\":%.8f,"
+            "\"verifier_role\":\"proposals_only_verifier_still_gates_promotion\"}\n",
+            static_proposal_count,
+            selected_count,
+            selected_count,
+            nn_gd_selected_domain_count(sketches, selected),
+            redundancy_penalties,
+            selected_count == 0U ? 0.0 : static_score_sum / (double)selected_count,
+            selected_count == 0U ? 0.0 : dynamic_score_sum / (double)selected_count);
+    if (ferror(fp)) {
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    return 0;
+}
+
+static int nn_gd_write_closed_loop_sketch_rows(
+    const char *path,
+    const NNGDSketchList *sketches,
+    const NNGDLabelList *labels,
+    const double *static_scores,
+    const int *static_seen,
+    size_t static_proposal_count,
+    const char *summary_output_path) {
+    FILE *fp;
+    int *selected = NULL;
+    size_t selected_count = 0U;
+    size_t redundancy_penalties = 0U;
+    double static_score_sum = 0.0;
+    double dynamic_score_sum = 0.0;
+    int status = -1;
+    fp = fopen(path, "w");
+    if (fp == NULL) {
+        return -1;
+    }
+    selected = (int *)calloc(sketches->count == 0U ? 1U : sketches->count,
+                             sizeof(int));
+    if (selected == NULL) {
+        goto done;
+    }
+    while (selected_count < sketches->count) {
+        NNGDClosedLoopSketchChoice choice;
+        const NNGDSketch *sketch;
+        uint64_t proposal_hash;
+        double emitted_score;
+        if (nn_gd_pick_closed_loop_sketch(sketches,
+                                          labels,
+                                          static_scores,
+                                          static_seen,
+                                          selected,
+                                          selected_count,
+                                          &choice) != 0) {
+            goto done;
+        }
+        sketch = &sketches->items[choice.sketch_index];
+        emitted_score = nn_gd_clamp_unit(choice.dynamic_score);
+        proposal_hash = nn_gd_closed_loop_proposal_hash(sketch->sketch_id,
+                                                        selected_count);
+        if (choice.overlap_penalty > 0.0 || choice.family_penalty > 0.0) {
+            ++redundancy_penalties;
+        }
+        fputs("{\"schema\":\"crlp.grammar_sketch.proposal.v1\","
+              "\"report_version\":2,\"proposal_id\":\"gspcl:",
+              fp);
+        fprintf(fp, "%016" PRIx64, proposal_hash);
+        fputs("\",\"proposer\":\"closed_loop_sketch_composer\","
+              "\"static_proposer\":\"neural_linear_sketch_proposer\","
+              "\"sketch_id\":",
+              fp);
+        nn_gd_json_write_string(fp, sketch->sketch_id);
+        fputs(",\"domain\":", fp);
+        nn_gd_json_write_string(fp, sketch->domain);
+        fputs(",\"family\":", fp);
+        nn_gd_json_write_string(fp, sketch->family);
+        fprintf(fp,
+                ",\"score\":%.8f,\"static_score\":%.8f,"
+                "\"rank_features\":{\"source_score\":%.8f,"
+                "\"dynamic_score_raw\":%.8f,"
+                "\"evidence_mean\":%.8f,\"domain_novelty_bonus\":%.8f,"
+                "\"family_penalty\":%.8f,\"overlap_penalty\":%.8f,"
+                "\"same_domain_selected\":%zu,\"same_family_selected\":%zu,"
+                "\"selected_before\":%zu,\"source_proposal_seen\":%s},"
+                "\"closed_loop_context\":{\"step\":%zu,"
+                "\"residual_update\":\"select_then_recompute\","
+                "\"conditioning\":\"accepted_sketches_and_residual_overlap\","
+                "\"verifier_gate\":\"promotion_requires_domain_replay\"},"
+                "\"rank\":%zu}\n",
+                emitted_score,
+                choice.static_score,
+                choice.static_score,
+                choice.dynamic_score,
+                choice.evidence_mean,
+                choice.domain_novelty_bonus,
+                choice.family_penalty,
+                choice.overlap_penalty,
+                choice.same_domain_selected,
+                choice.same_family_selected,
+                choice.selected_before,
+                static_seen[choice.sketch_index] ? "true" : "false",
+                selected_count + 1U,
+                selected_count + 1U);
+        selected[choice.sketch_index] = 1;
+        ++selected_count;
+        static_score_sum += choice.static_score;
+        dynamic_score_sum += emitted_score;
+    }
+    if (ferror(fp) ||
+        nn_gd_write_closed_loop_sketch_summary(summary_output_path,
+                                               static_proposal_count,
+                                               sketches,
+                                               selected,
+                                               selected_count,
+                                               static_score_sum,
+                                               dynamic_score_sum,
+                                               redundancy_penalties) != 0) {
+        goto done;
+    }
+    status = 0;
+
+done:
+    free(selected);
+    fclose(fp);
+    return status;
 }
 
 static int nn_gd_arc_attempt_list_reserve(NNGDArcPipelineAttemptList *list,
@@ -12652,6 +13045,56 @@ done:
     return status;
 }
 
+int nn_grammar_discovery_write_closed_loop_sketch_proposals(
+    const char *sketches_path,
+    const char *examples_path,
+    const char *static_proposals_path,
+    const char *proposals_output_path,
+    const char *summary_output_path) {
+    NNGDSketchList sketches = {0};
+    NNGDLabelList labels = {0};
+    double *static_scores = NULL;
+    int *static_seen = NULL;
+    size_t static_proposal_count = 0U;
+    int status = -1;
+
+    if (nn_gd_read_sketches(sketches_path, &sketches) != 0 ||
+        nn_gd_read_labels(examples_path, &sketches, &labels) != 0) {
+        goto done;
+    }
+    static_scores = (double *)calloc(sketches.count == 0U ? 1U : sketches.count,
+                                     sizeof(double));
+    static_seen = (int *)calloc(sketches.count == 0U ? 1U : sketches.count,
+                                sizeof(int));
+    if (static_scores == NULL || static_seen == NULL) {
+        goto done;
+    }
+    if (nn_gd_read_static_sketch_scores(static_proposals_path,
+                                        &sketches,
+                                        static_scores,
+                                        static_seen,
+                                        &static_proposal_count) != 0) {
+        goto done;
+    }
+    if (nn_gd_write_closed_loop_sketch_rows(proposals_output_path,
+                                            &sketches,
+                                            &labels,
+                                            static_scores,
+                                            static_seen,
+                                            static_proposal_count,
+                                            summary_output_path) != 0) {
+        goto done;
+    }
+    status = 0;
+
+done:
+    free(static_scores);
+    free(static_seen);
+    nn_gd_label_list_free(&labels);
+    nn_gd_sketch_list_free(&sketches);
+    return status;
+}
+
 static int nn_gd_write_arc_visual_pipeline_ranker_indexed(
     NNGDArcPipelineAttemptList *attempts,
     const NNGDStringList *vocab,
@@ -14677,6 +15120,8 @@ static int nn_gd_ngd_write_summary(const char *summary_path,
             "\"arc_visual_pipeline_neural_proposal_count\":%d,"
             "\"grammar_sketch_count\":%zu,\"grammar_sketch_example_count\":%zu,"
             "\"neural_frame_example_count\":%zu,\"neural_frame_sequence_count\":1,"
+            "\"grammar_sketch_static_proposal_count\":%zu,"
+            "\"grammar_sketch_closed_loop_proposal_count\":%zu,"
             "\"grammar_sketch_proposal_count\":%zu,"
             "\"grammar_sketch_verification_count\":%zu,"
             "\"promoted_grammar_sketch_count\":%zu,",
@@ -14718,6 +15163,8 @@ static int nn_gd_ngd_write_summary(const char *summary_path,
             sketch_count,
             sketch_count,
             sketch_count,
+            sketch_count,
+            sketch_count,
             promoted_sketch_count);
     fputs("\"arc_visual_pipeline_coverage_frontier_summary\":{\"schema\":\"crlp.neural_grammar_discovery.arc_visual_pipeline_coverage_frontier_summary.v1\",\"coverage_rate\":1.0},",
           fp);
@@ -14738,9 +15185,12 @@ static int nn_gd_ngd_write_summary(const char *summary_path,
           fp);
     fputs("\"grammar_sketch_examples_by_outcome\":{\"accepted\":", fp);
     fprintf(fp,
-            "%zu},\"grammar_sketch_proposals_by_proposer\":{\"neural_linear_sketch_proposer\":%zu},"
+            "%zu},\"grammar_sketch_proposals_by_proposer\":{"
+            "\"neural_linear_sketch_proposer\":%zu,"
+            "\"closed_loop_sketch_composer\":%zu},"
             "\"grammar_sketch_by_verifier_status\":{\"existing_domain_surface_replayed\":%zu},"
             "\"source_artifacts\":{",
+            sketch_count,
             sketch_count,
             sketch_count,
             sketch_count);
@@ -14770,7 +15220,7 @@ static int nn_gd_ngd_write_summary(const char *summary_path,
     fclose(fp);
     return nn_gd_ngd_write_text(
         markdown_path,
-        "# Neural Grammar Discovery\n\nThe C runtime now owns the top-level neural grammar discovery driver. It writes candidate deltas, compiled/verifier ledgers, ARC visual-program priors, neural-ranker artifacts, grammar sketches, sketch proposals, and summary health rows without invoking Python orchestration.\n\n## Current Bootstrap Surface\n\n- Delta candidates are emitted from the requested domain traces.\n- Symbolic verification still gates promotion.\n- ARC visual-program attempts and priors are emitted as C-owned artifacts for downstream coverage and health checks.\n- Grammar sketch examples include `crlp.neural_frame.v1` context so temporal/composition pressure remains an engine feature.\n");
+        "# Neural Grammar Discovery\n\nThe C runtime now owns the top-level neural grammar discovery driver. It writes candidate deltas, compiled/verifier ledgers, ARC visual-program priors, neural-ranker artifacts, grammar sketches, sketch proposals, and summary health rows without invoking Python orchestration.\n\n## Current Bootstrap Surface\n\n- Delta candidates are emitted from the requested domain traces.\n- Symbolic verification still gates promotion.\n- ARC visual-program attempts and priors are emitted as C-owned artifacts for downstream coverage and health checks.\n- Grammar sketch examples include `crlp.neural_frame.v1` context so temporal/composition pressure remains an engine feature.\n- The public sketch proposal surface is a closed-loop composer pass over the static neural sketch proposer: select a sketch, update residual/domain overlap, then rescore the remaining sketches while leaving promotion under verifier control.\n");
 }
 
 int nn_grammar_discovery_write_neural_grammar_discovery_report(
@@ -14816,6 +15266,8 @@ int nn_grammar_discovery_write_neural_grammar_discovery_report(
     char sketch_example_tsv[4096];
     char sketch_memory[4096];
     char neural_sketch_proposals[4096];
+    char closed_loop_sketch_proposals[4096];
+    char closed_loop_sketch_summary[4096];
     char grammar_sketch_proposals[4096];
     char grammar_sketch_memory_summary[4096];
     char sketch_verification_jsonl[4096];
@@ -15149,6 +15601,14 @@ int nn_grammar_discovery_write_neural_grammar_discovery_report(
                             sizeof(neural_sketch_proposals),
                             runtime_dir,
                             "neural_sketch_proposals.jsonl") != 0 ||
+        nn_gd_ngd_join_path(closed_loop_sketch_proposals,
+                            sizeof(closed_loop_sketch_proposals),
+                            runtime_dir,
+                            "closed_loop_sketch_proposals.jsonl") != 0 ||
+        nn_gd_ngd_join_path(closed_loop_sketch_summary,
+                            sizeof(closed_loop_sketch_summary),
+                            output_dir,
+                            "closed_loop_sketch_summary.jsonl") != 0 ||
         nn_gd_ngd_join_path(grammar_sketch_proposals,
                             sizeof(grammar_sketch_proposals),
                             output_dir,
@@ -15213,7 +15673,13 @@ int nn_grammar_discovery_write_neural_grammar_discovery_report(
                                                            sketch_memory,
                                                            64U,
                                                            0.08) != 0 ||
-        nn_gd_ngd_copy_file(neural_sketch_proposals,
+        nn_grammar_discovery_write_closed_loop_sketch_proposals(
+            sketch_tsv,
+            sketch_example_tsv,
+            neural_sketch_proposals,
+            closed_loop_sketch_proposals,
+            closed_loop_sketch_summary) != 0 ||
+        nn_gd_ngd_copy_file(closed_loop_sketch_proposals,
                             grammar_sketch_proposals) != 0 ||
         nn_gd_ngd_write_sketch_verifications(sketch_verification_jsonl,
                                              promoted_sketches_jsonl,

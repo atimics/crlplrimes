@@ -97,6 +97,7 @@ The canonical JSONL row schemas are:
 
 - `crlp.protocol.candidate_row.v1`
 - `crlp.protocol.verifier_outcome.v1`
+- `crlp.protocol.verifier_feedback_signal.v1`
 - `crlp.protocol.ranker_decision.v1`
 - `crlp.protocol.discovered_rule.v1`
 - `crlp.protocol.library_promotion.v1`
@@ -110,6 +111,11 @@ trace/root hash, source artifact, authority, signature, replay seed,
 failure-stage, residual-class, and domain payload schema. That gives ARC exact
 prediction rows, Signal replay rows, and future signed cargo/handoff rows the
 same outer contract while leaving the domain payloads domain-owned.
+Verifier feedback signal rows are the shared bridge from authority outcomes to
+later proposer/ranker supervision. They carry the authority level, outcome
+status, reason code, residual class, utility/cost/support counts, and declared
+target role, but they cannot promote a rule or candidate without the original
+domain grounding operator.
 
 Schema fields describe the intended formal contract. The evidence-status section
 below is the controlling source for which production binaries currently execute
@@ -188,7 +194,9 @@ cannot silently add verifier-derived inputs. Comparison rows also carry
 8. Every replay claim uses stable action ids.
 9. Trace-producing rankers declare their deterministic ranking policy and emit action-id plus score-margin guards so float-sensitive ties are visible instead of silently changing replay semantics.
 10. Numeric training claims must distinguish semantic certification from local optimizer hygiene. `crlp.numeric_step_certificate.v1` rows may certify that supervised or KL/entropy policy updates stayed finite and within declared parameter/logit/margin bounds, and `crlp.neuron_contract.v1` rows may certify interval bounds for dense neurons. Shared supervised calls emit rows at update granularity, env guard variables can tighten finite, parameter, logit, delta, margin, and shrink-step bounds for a run, and `crlp.numeric_certificate_budget.v1` rows define the per-target p99/max envelopes that `make check` enforces. They do not promote a candidate, rule, or program without the domain grounding operator.
-11. Learned-grammar coverage is audited before ranker quality. `crlp.learned_grammar_coverage.v1` rows first ask whether the candidate space contains a train-consistent solution, then whether the neural ranker brings it near the top, whether the verifier certifies it, and whether held-out/test-pair transfer survives. ARC rows also report aggregate visual-replacement gaps so legacy-template debt, missing visual candidates, and visual selection failures remain distinct even when sampled coverage holes are truncated. `crlp.experiment_health.v1` rows consolidate those gates with numeric certificate rows, coverage holes, verifier deltas, learning signal, and generated paper-claim support.
+11. Verifier-feedback rows may train proposer/ranker ordering, but they are never promotion evidence unless replayed through the task authority. Rejected-candidate reason learning and hypothesis-library feedback are instances of this shared loop.
+12. Learned-grammar coverage is audited before ranker quality. `crlp.learned_grammar_coverage.v1` rows first ask whether the candidate space contains a train-consistent solution, then whether the neural ranker brings it near the top, whether the verifier certifies it, and whether held-out/test-pair transfer survives. ARC rows also report aggregate visual-replacement gaps so legacy-template debt, missing visual candidates, and visual selection failures remain distinct even when sampled coverage holes are truncated. `crlp.experiment_health.v1` rows consolidate those gates with numeric certificate rows, coverage holes, verifier deltas, learning signal, and generated paper-claim support.
+13. Capacity and architecture claims are blocked by the plateau audit. Until `C7.tiny_net_plateau_stop_rule` is supported for the affected task/variant, width and adapter-head rows remain underpowered diagnostics rather than registered architecture conclusions.
 
 ## Current Instantiations
 

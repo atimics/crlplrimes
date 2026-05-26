@@ -273,13 +273,14 @@
       "artifacts": [
         "results/2026-05-17-multitask-roadmap/rmt6_capacity_sweep_deltas.csv"
       ],
-      "agent_instruction": "Use the capacity sweep as a boundary condition for architecture claims; do not claim adapters or width solve ARC until tested.",
+      "agent_instruction": "Use the capacity sweep as diagnostic evidence only until C7 is supported; do not register width or adapter conclusions while the plateau audit is underpowered.",
       "success_criteria": [
         "The sweep reports at least four capacities and keeps delayed_claim deltas visible next to ARC deltas.",
         "The generated claim says whether ARC improves monotonically with width."
       ],
       "failure_modes": [
-        "If capacity alone closes the ARC gap, the roadmap should prioritize plateau validation before adapter heads."
+        "If capacity alone closes the ARC gap, the roadmap should prioritize plateau validation before adapter heads.",
+        "If C7 is underpowered, this claim must remain underpowered even when the sweep has a directional result."
       ]
     },
     {
@@ -300,13 +301,14 @@
         "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_deltas.csv",
         "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_decision.jsonl"
       ],
-      "agent_instruction": "Treat shared trunk plus domain heads as an architecture gate: promote it only if fixed ARC improves without losing delayed-claim transfer, grid-path performance, or same-envelope ARC OOD.",
+      "agent_instruction": "Treat shared trunk plus domain heads as an architecture gate that is blocked by C7: promote it only if the plateau audit is ready and fixed ARC improves without losing delayed-claim transfer, grid-path performance, or same-envelope ARC OOD.",
       "success_criteria": [
         "The artifact includes fixed ARC, ARC OOD, delayed_claim, grid_path, and prime_gap rows for shared, shared_task_heads, and single_task.",
         "The generated decision row says promote_shared_trunk_heads only when every gate passes."
       ],
       "failure_modes": [
-        "If task heads help fixed ARC but hurt OOD or transfer, keep the architecture as diagnostic evidence."
+        "If task heads help fixed ARC but hurt OOD or transfer, keep the architecture as diagnostic evidence.",
+        "If C7 is underpowered, this claim must remain underpowered regardless of directional deltas."
       ]
     },
     {
@@ -945,9 +947,9 @@
       "id": "C4.multitask_capacity_tradeoff",
       "title": "Capacity sweep does not explain away the ARC fixed-task gap",
       "claim_type": "capacity_boundary",
-      "claim_text": "A four-capacity sweep changes the fixed ARC shared-vs-single gap but does not monotonically close it, while delayed_claim remains non-negative across capacities.",
+      "claim_text": "A four-capacity sweep can register as a capacity claim only after C7 confirms the affected tiny-net rows are plateaued; before that, it remains diagnostic evidence.",
       "builtin_evaluator": "multitask_capacity_sweep",
-      "required_for_submission": true,
+      "required_for_submission": false,
       "paper_surfaces": [
         "multitask_capacity",
         "claim_support_chart",
@@ -992,6 +994,7 @@
       "decision_rule": {
         "minimum_seed_count": 3,
         "supported_if": [
+          "C7.tiny_net_plateau_stop_rule is supported for the affected task/variant rows",
           "all ARC capacity rows have seeds >= 3",
           "max ARC shared-minus-single top1 delta < 0",
           "min delayed_claim shared-minus-single top1 delta >= 0",
@@ -999,6 +1002,7 @@
         ]
       },
       "residual_when_not_supported": [
+        "If the plateau audit is underpowered, keep the capacity sweep out of supported architecture claims.",
         "If wider trunks close the fixed ARC gap, prioritize R-F.1/R-F.5 plateau checks before adapter heads.",
         "If delayed_claim turns negative at any capacity, narrow or remove the delayed-claim multitask support claim."
       ],
@@ -1012,7 +1016,7 @@
       "id": "C4.adapter_heads_shared_trunk",
       "title": "Shared trunk plus domain heads is gated as architecture evidence",
       "claim_type": "architecture_boundary",
-      "claim_text": "A single compact shared trunk with small domain-specific heads is considered the promoted architecture only if it improves fixed ARC versus the flat shared scorer while preserving delayed-claim transfer, grid-path performance, and ARC OOD relative to single-task.",
+      "claim_text": "A single compact shared trunk with small domain-specific heads can be considered the promoted architecture only after C7 is ready and the heads improve fixed ARC versus the flat shared scorer while preserving delayed-claim transfer, grid-path performance, and ARC OOD relative to single-task.",
       "builtin_evaluator": "adapter_heads_shared_trunk",
       "required_for_submission": false,
       "paper_surfaces": [
@@ -1076,6 +1080,7 @@
       "decision_rule": {
         "minimum_seed_count": 3,
         "supported_if": [
+          "C7.tiny_net_plateau_stop_rule is supported for the affected task/variant rows",
           "shared_task_heads fixed ARC top1 > flat_shared fixed ARC top1",
           "shared_task_heads delayed_claim top1 is no worse than flat_shared by more than 0.5pp",
           "shared_task_heads grid_path top1 is no worse than flat_shared by more than 0.5pp",
@@ -1088,6 +1093,7 @@
         ]
       },
       "residual_when_not_supported": [
+        "If the plateau audit is underpowered, keep shared trunk plus domain heads as diagnostic evidence.",
         "Keep shared trunk plus domain heads as a diagnostic architecture rather than the default.",
         "Avoid broad all-task competence language; report the fixed ARC, OOD, delayed-claim, grid, and prime rows separately.",
         "Use the flat shared scorer as the interference control until the gates pass."
@@ -1264,7 +1270,7 @@
       "id": "C7.tiny_net_plateau_stop_rule",
       "title": "Tiny-net architecture claims are gated by plateau audits",
       "claim_type": "method_claim",
-      "claim_text": "Before increasing neural capacity, the generated evidence reports a same-ladder tiny-net audit with learning curves, restart variance, best checkpoint, plateau detection, parameter count, FLOPs, and width-help verdicts for each core task.",
+      "claim_text": "Before registering neural capacity or architecture claims, the generated evidence reports a same-ladder tiny-net audit with learning curves, restart variance, best checkpoint, plateau detection, parameter count, FLOPs, and width-help verdicts for each core task.",
       "builtin_evaluator": "tiny_net_plateau_audit",
       "required_for_submission": false,
       "paper_surfaces": [
