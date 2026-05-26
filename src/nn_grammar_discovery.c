@@ -16798,6 +16798,10 @@ static int nn_gd_health_read_engine_evidence(NNGDHealthExperimentList *experimen
         char *rule_search_schema;
         char *replay_schema;
         NNGDHealthExperiment *experiment;
+        int complete_candidate_groups;
+        int has_verifier_targets;
+        int has_checkpoint_identity;
+        int smoke_promotion_ready;
         nn_gd_json_index_line(line, &index);
         schema = nn_gd_json_dup_index_string(&index, "schema");
         if (schema == NULL ||
@@ -16824,10 +16828,38 @@ static int nn_gd_health_read_engine_evidence(NNGDHealthExperimentList *experimen
         }
         ++experiment->evidence_rows;
         ++experiment->engine_evidence_rows;
+        complete_candidate_groups =
+            nn_gd_json_get_bool(line, "complete_candidate_groups");
+        has_verifier_targets =
+            nn_gd_json_get_bool(line, "has_verifier_targets");
+        has_checkpoint_identity =
+            nn_gd_json_get_bool(line, "has_checkpoint_identity");
+        smoke_promotion_ready =
+            nn_gd_json_get_bool(line, "smoke_promotion_ready");
         if (nn_gd_health_add_evidence_gate(experiment,
                                            "dataset_engine_evidence_surface",
                                            1,
                                            1) != 0 ||
+            nn_gd_health_add_evidence_gate(
+                experiment,
+                "dataset_engine_candidate_group_contract",
+                complete_candidate_groups,
+                1) != 0 ||
+            nn_gd_health_add_evidence_gate(
+                experiment,
+                "dataset_engine_verifier_target_contract",
+                has_verifier_targets,
+                1) != 0 ||
+            nn_gd_health_add_evidence_gate(
+                experiment,
+                "dataset_engine_checkpoint_identity",
+                has_checkpoint_identity,
+                1) != 0 ||
+            nn_gd_health_add_evidence_gate(
+                experiment,
+                "dataset_engine_promoted_smoke",
+                smoke_promotion_ready,
+                1) != 0 ||
             nn_gd_health_add_evidence_gate(
                 experiment,
                 "dataset_engine_rule_search_schema_declared",
@@ -16839,6 +16871,18 @@ static int nn_gd_health_read_engine_evidence(NNGDHealthExperimentList *experimen
                 "dataset_engine_replay_schema_declared",
                 replay_schema != NULL && strcmp(replay_schema, "none") != 0,
                 0) != 0) {
+            free(replay_schema);
+            free(rule_search_schema);
+            free(experiment_name);
+            free(schema);
+            free(line);
+            fclose(fp);
+            return -1;
+        }
+        if (!smoke_promotion_ready &&
+            nn_gd_health_add_triage(experiment,
+                                    "P1",
+                                    "engine_smoke_promotion_gap") != 0) {
             free(replay_schema);
             free(rule_search_schema);
             free(experiment_name);

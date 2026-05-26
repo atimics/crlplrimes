@@ -293,6 +293,14 @@ dataset, not truth. Claim scope changes with that authority level.
     depending on which operator produced the outcome row.],
 ) <tab:grounding-authority>
 
+The weaker operators do not inherit the authority of stronger ones. If `O_T` is learned,
+sampled, corpus-derived, or human-adjudicated, the checked object is the declared estimator
+or review process: its split, seed, rubric, artifact hash, and acceptance rule. The claim
+compiler may then certify conformance to that operator, not correctness in the underlying
+open domain. A human-reviewed claim therefore remains review-gated assistance; a
+corpus-proxy claim remains corpus fit; neither becomes an exact-verifier claim by passing
+through the same trace format.
+
 The task-independent rules are short. Enumerate candidates before checking them. Say where
 features came from. Treat checker-derived quantities as labels, rewards, diagnostics, or
 gates unless a schema explicitly allows them as model inputs. Let rules enter the gate only
@@ -315,6 +323,14 @@ corpus-valid continuations, or equal-utility actions need not be collapsed into 
 single gold row. Domain adapters own state generation, feature encoding, candidate
 enumeration, and verifier labeling. The shared engine owns softmax ranking, trace emission,
 checkpointing, numeric summaries, and common engine-evidence rows.
+
+The row contract also has a scaling boundary. It assumes the adapter can present a bounded
+candidate set for each state. Continuous-control, robotics, or multi-agent environments must
+therefore add a discretizer, sampler, motion-primitive library, or replayable proposal
+generator before they fit the runner. The guarantee is then over the enumerated candidate set
+and declared support, not over every action in the unconstrained environment. If the adapter
+cannot make that support explicit, the shared engine is instrumentation rather than a
+verified-search guarantee.
 
 The generated engine claim is:
 #claim_C8_dataset_engine_evidence_surface_summary
@@ -467,6 +483,12 @@ priors, and checked on held-out tasks under the same tight budget. The supported
 
 Together these rows are the protocol's feedback mechanism. Rejections and certifications are not
 after-the-fact diagnostics; they are reusable artifacts that change the next proposal pass.
+They are also artifact-bounded, not an online self-modifying policy. Promotion uses frozen
+artifact identity, split and seed labels, zero-false-rejection gates, held-out checks, and
+semantic trace hashes. Continuous monitoring can rebuild summaries and limitation
+candidates, but a changed checkpoint or trace snapshot creates a new artifact identity rather
+than silently updating an existing claim. This keeps feedback useful while making policy
+drift and rebuild cost visible in the evidence surface.
 
 = Boundary Evidence
 
@@ -579,6 +601,14 @@ claims come from repository artifacts checked before compilation.
   neural improvement over the heuristic baseline.
 + *Corpus proxies are weaker than verifiers.* The haiku task can ground train-split
   adjacency, shape, and corruption discrimination. It cannot ground truth or semantics.
++ *Candidate-row scalability depends on bounded support.* Continuous action spaces and
+  multi-agent settings need an explicit enumerator, sampler, or replayable proposal surface
+  before the protocol applies. Without that surface, the engine can log and compare runs but
+  cannot make verifier-grounded guarantees over the unconstrained action space.
++ *Feedback is artifact-bounded.* Rejected rows and certified hypotheses can train later
+  rankers, but claim promotion depends on frozen traces, held-out checks, semantic hashes,
+  and regenerated support reports. Online policy drift is evidence to audit, not a silent
+  update to an existing claim.
 + *Engine ports are not domain promotions.* The dataset-first runner proves a shared row,
   replay, checkpoint, and evidence contract across smoke adapters. It does not replace the
   richer domain CLIs, rule searches, replay reports, or paper evidence needed to promote a

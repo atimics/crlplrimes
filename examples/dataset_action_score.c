@@ -324,6 +324,31 @@ static int append_engine_evidence(const char *path,
     double test_top5 = test_metrics->groups > 0
                            ? (double)test_metrics->top5 / (double)test_metrics->groups
                            : 0.0;
+    int complete_candidate_groups =
+        train_metrics->groups > 0 && valid_metrics->groups > 0 &&
+        test_metrics->groups > 0 && train_metrics->rows >= train_metrics->groups &&
+        valid_metrics->rows >= valid_metrics->groups &&
+        test_metrics->rows >= test_metrics->groups;
+    int has_verifier_targets = train_metrics->targets > 0 &&
+                               valid_metrics->targets > 0 &&
+                               test_metrics->targets > 0;
+    int has_checkpoint_identity =
+        model_hash != NULL && model_hash[0] != '\0' &&
+        checkpoint_path != NULL && checkpoint_path[0] != '\0';
+    int has_rule_search_schema = rule_schema != NULL && strcmp(rule_schema, "none") != 0;
+    int has_replay_schema = replay_schema != NULL && strcmp(replay_schema, "none") != 0;
+    int test_top5_gate = test_top5 >= 0.80;
+    int test_top1_floor = test_top1 >= 0.60;
+    int smoke_promotion_ready = complete_candidate_groups && has_verifier_targets &&
+                                has_checkpoint_identity && has_rule_search_schema &&
+                                has_replay_schema && test_top5_gate && test_top1_floor;
+    const char *target_label_contract =
+        experiment != NULL && experiment->label_mode == NN_DATASET_LABEL_MULTI_TARGET
+            ? "multi_target_verifier_positive"
+            : "single_target_verifier_positive";
+    const char *safe_model_hash = model_hash != NULL ? model_hash : "none";
+    const char *safe_checkpoint_path =
+        checkpoint_path != NULL ? checkpoint_path : "none";
     fprintf(fp,
             "{\"schema\":\"%s\",\"task\":\"%s\",\"experiment\":\"%s\","
             "\"domain\":\"%s\",\"feature_set\":\"%s\",\"verifier\":\"%s\","
@@ -331,11 +356,25 @@ static int append_engine_evidence(const char *path,
             "\"replay\":%s,\"evidence\":true},"
             "\"rule_search_schema\":\"%s\",\"replay_schema\":\"%s\","
             "\"train_groups\":%zu,\"valid_groups\":%zu,\"test_groups\":%zu,"
+            "\"train_rows\":%zu,\"valid_rows\":%zu,\"test_rows\":%zu,"
+            "\"train_targets\":%zu,\"valid_targets\":%zu,\"test_targets\":%zu,"
             "\"train_top1\":%.8f,\"valid_top1\":%.8f,\"test_top1\":%.8f,"
-            "\"test_top5\":%.8f,\"test_mean_targets\":%.8f,"
+            "\"test_top5\":%.8f,\"test_mean_candidates\":%.8f,"
+            "\"test_mean_targets\":%.8f,"
             "\"parameters\":%zu,\"forward_flops\":%zu,"
             "\"model_hash\":\"%s\",\"checkpoint_path\":\"%s\","
-            "\"evidence_level\":\"dataset_engine_smoke\"}\n",
+            "\"evidence_level\":\"dataset_engine_smoke\","
+            "\"promotion_level\":\"dataset_engine_promoted_smoke\","
+            "\"candidate_group_contract\":\"complete_grouped_candidates\","
+            "\"target_label_contract\":\"%s\","
+            "\"complete_candidate_groups\":%s,"
+            "\"has_verifier_targets\":%s,"
+            "\"has_checkpoint_identity\":%s,"
+            "\"has_rule_search_schema\":%s,"
+            "\"has_replay_schema\":%s,"
+            "\"test_top5_gate\":%s,"
+            "\"test_top1_floor\":%s,"
+            "\"smoke_promotion_ready\":%s}\n",
             evidence_schema,
             config->task_name,
             config->replay_trace_path != NULL
@@ -357,15 +396,31 @@ static int append_engine_evidence(const char *path,
             train_metrics->groups,
             valid_metrics->groups,
             test_metrics->groups,
+            train_metrics->rows,
+            valid_metrics->rows,
+            test_metrics->rows,
+            train_metrics->targets,
+            valid_metrics->targets,
+            test_metrics->targets,
             train_top1,
             valid_top1,
             test_top1,
             test_top5,
+            test_metrics->mean_candidates,
             test_metrics->mean_targets,
             nn_parameter_count(net),
             nn_forward_flop_count(net),
-            model_hash,
-            checkpoint_path != NULL ? checkpoint_path : "none");
+            safe_model_hash,
+            safe_checkpoint_path,
+            target_label_contract,
+            complete_candidate_groups ? "true" : "false",
+            has_verifier_targets ? "true" : "false",
+            has_checkpoint_identity ? "true" : "false",
+            has_rule_search_schema ? "true" : "false",
+            has_replay_schema ? "true" : "false",
+            test_top5_gate ? "true" : "false",
+            test_top1_floor ? "true" : "false",
+            smoke_promotion_ready ? "true" : "false");
     int ok = ferror(fp) == 0;
     fclose(fp);
     return ok;

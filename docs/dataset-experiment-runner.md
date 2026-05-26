@@ -234,6 +234,10 @@ checkpoint identity. Evidence runs are reproducible by default: if `--evidence`
 is provided without `--save`, the runner derives a checkpoint path beside the
 evidence file from the task name, saves the model, hashes the exact checkpoint
 bytes, and writes both `model_hash` and `checkpoint_path` into the evidence row.
+The row also promotes smoke from "adapter ran" to an auditable contract:
+`complete_candidate_groups`, `has_verifier_targets`,
+`has_checkpoint_identity`, rule/replay schema presence, and minimal top-k
+floors must all hold before `smoke_promotion_ready` is true.
 
 ```sh
 make dataset-action-score-engine-evidence

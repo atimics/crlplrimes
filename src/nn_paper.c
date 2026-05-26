@@ -2112,6 +2112,10 @@ static void paper_eval_dataset_engine(PaperClaimResult *claim) {
     char domains[16][64];
     long rows = 0;
     long all_capability_rows = 0;
+    long promoted_smoke_rows = 0;
+    long candidate_contract_rows = 0;
+    long verifier_contract_rows = 0;
+    long checkpoint_identity_rows = 0;
     long multi_target_rows = 0;
     size_t domain_count = 0U;
     double min_test_top1 = 1.0;
@@ -2129,10 +2133,26 @@ static void paper_eval_dataset_engine(PaperClaimResult *claim) {
             int rule_cap = 0;
             int replay_cap = 0;
             int evidence_cap = 0;
+            int promoted_smoke = 0;
+            int candidate_contract = 0;
+            int verifier_contract = 0;
+            int checkpoint_identity = 0;
             int has_dataset = paper_json_get_bool(line, "dataset", &dataset_cap);
             int has_rule = paper_json_get_bool(line, "rule_search", &rule_cap);
             int has_replay = paper_json_get_bool(line, "replay", &replay_cap);
             int has_evidence = paper_json_get_bool(line, "evidence", &evidence_cap);
+            int has_promoted_smoke =
+                paper_json_get_bool(line, "smoke_promotion_ready", &promoted_smoke);
+            int has_candidate_contract =
+                paper_json_get_bool(line,
+                                    "complete_candidate_groups",
+                                    &candidate_contract);
+            int has_verifier_contract =
+                paper_json_get_bool(line, "has_verifier_targets", &verifier_contract);
+            int has_checkpoint_identity =
+                paper_json_get_bool(line,
+                                    "has_checkpoint_identity",
+                                    &checkpoint_identity);
             ++rows;
             if (domain != NULL && domain[0] != '\0' && domain_count < 16U &&
                 !paper_string_seen(domains, domain_count, domain)) {
@@ -2142,6 +2162,18 @@ static void paper_eval_dataset_engine(PaperClaimResult *claim) {
             if (has_dataset && dataset_cap && has_rule && rule_cap && has_replay &&
                 replay_cap && has_evidence && evidence_cap) {
                 ++all_capability_rows;
+            }
+            if (has_promoted_smoke && promoted_smoke) {
+                ++promoted_smoke_rows;
+            }
+            if (has_candidate_contract && candidate_contract) {
+                ++candidate_contract_rows;
+            }
+            if (has_verifier_contract && verifier_contract) {
+                ++verifier_contract_rows;
+            }
+            if (has_checkpoint_identity && checkpoint_identity) {
+                ++checkpoint_identity_rows;
             }
             if (paper_json_get_double(line, "test_mean_targets", &mean_targets) &&
                 mean_targets > 1.0) {
@@ -2165,22 +2197,34 @@ static void paper_eval_dataset_engine(PaperClaimResult *claim) {
     snprintf(claim->status,
              sizeof(claim->status),
              "%s",
-             rows >= 8 && domain_count >= 7U && all_capability_rows == rows ? "supported"
-                                                                            : "underpowered");
+             rows >= 8 && domain_count >= 7U && all_capability_rows == rows &&
+                     promoted_smoke_rows == rows && candidate_contract_rows == rows &&
+                     verifier_contract_rows == rows && checkpoint_identity_rows == rows
+                 ? "supported"
+                 : "underpowered");
     snprintf(claim->summary,
              sizeof(claim->summary),
-             "the dataset-first engine evidence surface has %ld smoke rows across %zu domains, with %ld/%ld rows declaring dataset, rule-search, replay, and evidence capabilities; %ld rows expose multi-target verifier labels, and the weakest smoke test top-1 is %.2f%%. These rows are infrastructure evidence, not promoted domain-result claims.",
+             "the dataset-first engine evidence surface has %ld promoted-smoke rows across %zu domains; %ld/%ld rows declare dataset, rule-search, replay, and evidence capabilities, %ld/%ld pass candidate-group, verifier-target, and checkpoint-identity contracts, %ld rows expose multi-target verifier labels, and the weakest smoke test top-1 is %.2f%%. These rows are infrastructure evidence, not promoted domain-result claims.",
              rows,
              domain_count,
              all_capability_rows,
+             rows,
+             promoted_smoke_rows < candidate_contract_rows
+                 ? promoted_smoke_rows
+                 : (candidate_contract_rows < verifier_contract_rows
+                        ? candidate_contract_rows
+                        : (verifier_contract_rows < checkpoint_identity_rows
+                               ? verifier_contract_rows
+                               : checkpoint_identity_rows)),
              rows,
              multi_target_rows,
              have_test ? 100.0 * min_test_top1 : 0.0);
     snprintf(claim->chart_rows,
              sizeof(claim->chart_rows),
-             "((label: \"engine rows\", value: %ld), (label: \"domains\", value: %zu), (label: \"all caps\", value: %ld), (label: \"multi-target\", value: %ld))",
+             "((label: \"engine rows\", value: %ld), (label: \"domains\", value: %zu), (label: \"promoted smoke\", value: %ld), (label: \"all caps\", value: %ld), (label: \"multi-target\", value: %ld))",
              rows,
              domain_count,
+             promoted_smoke_rows,
              all_capability_rows,
              multi_target_rows);
 }

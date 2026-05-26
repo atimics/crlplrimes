@@ -1419,6 +1419,7 @@
           "at least eight crlp.engine_evidence.v1 rows exist",
           "registered smoke rows span at least seven domains",
           "every row declares dataset, rule_search, replay, and evidence capabilities",
+          "every row passes the promoted-smoke candidate-group, verifier-target, and checkpoint-identity gates",
           "the claim is interpreted as infrastructure evidence rather than a replacement for richer domain-specific reports"
         ]
       },
