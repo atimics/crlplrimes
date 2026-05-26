@@ -4,6 +4,7 @@
 
 #include "nn.h"
 #include "nn_json.h"
+#include "nn_paper.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -4480,6 +4481,11 @@ int main(void)
           "trace writer emits parseable jsonl");
     check(test_experiment_schema_json_contract(),
           "experiment schema emits parseable task contract");
+    check(nn_paper_test_claim_governance_contract(
+              NN_REAL_IS_FLOAT ? "build/float/paper_claim_governance_test"
+                               : "build/double/paper_claim_governance_test",
+              "paper/claims.yaml"),
+          "paper claim governance checks staleness and registry alignment");
     check(test_json_cursor_contract(),
           "json cursor parses strings, values, and unsigned integers");
     check(test_text_helpers_contract(),

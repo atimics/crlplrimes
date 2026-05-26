@@ -34,11 +34,16 @@ The paper-support compiler is the framework boundary between result rows and
 PDF claims:
 
 ```sh
+make results         # refresh canonical headline comparison artifacts under results/latest
 make paper-claims    # derive claim states and generated paper artifacts
-make paper-support   # fail if a required claim is stale/missing/unsupported
+make paper-support   # refresh support-owned audits, then fail stale/missing/unsupported claims
 make paper-pdf       # runs paper-support before compiling paper/paper.pdf
 make paper-ci        # check editorial PR boundaries and compile the paper
 ```
+
+`paper-support` checks canonical headline artifacts but does not run the full
+promoted-result refresh. Run `make results` when headline comparison rows under
+`results/latest` need regeneration.
 
 Experiment-health artifacts are generated separately from prose claims:
 

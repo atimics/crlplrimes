@@ -26,4 +26,9 @@ int nn_paper_write_trace_determinism(const char *const *trace_paths,
                                      const char *canonical_output_path,
                                      int gate);
 
+#ifdef NN_ENABLE_TEST_API
+int nn_paper_test_claim_governance_contract(const char *work_dir,
+                                            const char *claims_path);
+#endif
+
 #endif

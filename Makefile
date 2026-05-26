@@ -45,6 +45,7 @@ NN_PROTOCOL_TEST_OBJ := $(BUILD_DIR)/nn_protocol_test.o
 NN_JSON_TEST_OBJ := $(BUILD_DIR)/nn_json_test.o
 NN_TEXT_TEST_OBJ := $(BUILD_DIR)/nn_text_test.o
 NN_DATASET_TEST_OBJ := $(BUILD_DIR)/nn_dataset_test.o
+NN_PAPER_TEST_OBJ := $(BUILD_DIR)/nn_paper_test.o
 NN_SANITIZE_OBJ := $(BUILD_DIR)/nn_sanitize.o
 NN_EXPERIMENT_SANITIZE_OBJ := $(BUILD_DIR)/nn_experiment_sanitize.o
 NN_SYMBOLIC_SANITIZE_OBJ := $(BUILD_DIR)/nn_symbolic_sanitize.o
@@ -57,9 +58,10 @@ NN_PROTOCOL_SANITIZE_OBJ := $(BUILD_DIR)/nn_protocol_sanitize.o
 NN_JSON_SANITIZE_OBJ := $(BUILD_DIR)/nn_json_sanitize.o
 NN_TEXT_SANITIZE_OBJ := $(BUILD_DIR)/nn_text_sanitize.o
 NN_DATASET_SANITIZE_OBJ := $(BUILD_DIR)/nn_dataset_sanitize.o
+NN_PAPER_SANITIZE_OBJ := $(BUILD_DIR)/nn_paper_sanitize.o
 NN_OBJS := $(NN_OBJ) $(NN_EXPERIMENT_OBJ) $(NN_SYMBOLIC_OBJ) $(NN_BITGRID_OBJ) $(NN_TILEBOT_OBJ) $(NN_LAYER_OBJ) $(NN_PROGRAM_OBJ) $(NN_HYPOTHESIS_OBJ) $(NN_PROTOCOL_OBJ) $(NN_JSON_OBJ) $(NN_TEXT_OBJ) $(NN_DATASET_OBJ)
-NN_TEST_OBJS := $(NN_TEST_OBJ) $(NN_EXPERIMENT_TEST_OBJ) $(NN_SYMBOLIC_TEST_OBJ) $(NN_BITGRID_TEST_OBJ) $(NN_TILEBOT_TEST_OBJ) $(NN_LAYER_TEST_OBJ) $(NN_PROGRAM_TEST_OBJ) $(NN_HYPOTHESIS_TEST_OBJ) $(NN_PROTOCOL_TEST_OBJ) $(NN_JSON_TEST_OBJ) $(NN_TEXT_TEST_OBJ) $(NN_DATASET_TEST_OBJ)
-NN_SANITIZE_OBJS := $(NN_SANITIZE_OBJ) $(NN_EXPERIMENT_SANITIZE_OBJ) $(NN_SYMBOLIC_SANITIZE_OBJ) $(NN_BITGRID_SANITIZE_OBJ) $(NN_TILEBOT_SANITIZE_OBJ) $(NN_LAYER_SANITIZE_OBJ) $(NN_PROGRAM_SANITIZE_OBJ) $(NN_HYPOTHESIS_SANITIZE_OBJ) $(NN_PROTOCOL_SANITIZE_OBJ) $(NN_JSON_SANITIZE_OBJ) $(NN_TEXT_SANITIZE_OBJ) $(NN_DATASET_SANITIZE_OBJ)
+NN_TEST_OBJS := $(NN_TEST_OBJ) $(NN_EXPERIMENT_TEST_OBJ) $(NN_SYMBOLIC_TEST_OBJ) $(NN_BITGRID_TEST_OBJ) $(NN_TILEBOT_TEST_OBJ) $(NN_LAYER_TEST_OBJ) $(NN_PROGRAM_TEST_OBJ) $(NN_HYPOTHESIS_TEST_OBJ) $(NN_PROTOCOL_TEST_OBJ) $(NN_JSON_TEST_OBJ) $(NN_TEXT_TEST_OBJ) $(NN_DATASET_TEST_OBJ) $(NN_PAPER_TEST_OBJ)
+NN_SANITIZE_OBJS := $(NN_SANITIZE_OBJ) $(NN_EXPERIMENT_SANITIZE_OBJ) $(NN_SYMBOLIC_SANITIZE_OBJ) $(NN_BITGRID_SANITIZE_OBJ) $(NN_TILEBOT_SANITIZE_OBJ) $(NN_LAYER_SANITIZE_OBJ) $(NN_PROGRAM_SANITIZE_OBJ) $(NN_HYPOTHESIS_SANITIZE_OBJ) $(NN_PROTOCOL_SANITIZE_OBJ) $(NN_JSON_SANITIZE_OBJ) $(NN_TEXT_SANITIZE_OBJ) $(NN_DATASET_SANITIZE_OBJ) $(NN_PAPER_SANITIZE_OBJ)
 XOR_EXAMPLE := $(BUILD_DIR)/xor
 BITWISE_RECURSIVE := $(BUILD_DIR)/bitwise_recursive
 TILE_RECURSIVE := $(BUILD_DIR)/tile_recursive
@@ -620,6 +622,9 @@ $(NN_TEXT_TEST_OBJ): src/nn_text.c include/nn_text.h include/nn_core.h | $(BUILD
 $(NN_DATASET_TEST_OBJ): src/nn_dataset.c include/nn_dataset.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_dataset.c -o $@
 
+$(NN_PAPER_TEST_OBJ): src/nn_paper.c include/nn_paper.h include/nn.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_paper.c -o $@
+
 $(NN_SANITIZE_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn.c -o $@
 
@@ -655,6 +660,9 @@ $(NN_TEXT_SANITIZE_OBJ): src/nn_text.c include/nn_text.h include/nn_core.h | $(B
 
 $(NN_DATASET_SANITIZE_OBJ): src/nn_dataset.c include/nn_dataset.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_dataset.c -o $@
+
+$(NN_PAPER_SANITIZE_OBJ): src/nn_paper.c include/nn_paper.h include/nn.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_paper.c -o $@
 
 $(BUILD_DIR)/obj/prime_gap/%.o: src/prime_gap/%.c $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
@@ -1571,7 +1579,7 @@ paper-claims: $(NN_GRAMMAR_DISCOVERY_RUNTIME) dataset-action-score-engine-eviden
 paper-agent-propose: paper-claims
 	$(RETIRED_SCRIPT_TARGET)
 
-paper-pre-commit: $(NN_GRAMMAR_DISCOVERY_RUNTIME) dataset-action-score-engine-evidence
+paper-pre-commit: trace-determinism-compare $(NN_GRAMMAR_DISCOVERY_RUNTIME) dataset-action-score-engine-evidence
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --paper-claims --claims paper/claims.yaml --output-dir paper/generated --paper paper/paper.typ --agent-candidates-dir paper/agent_candidates --support-check --fail-required
 
 install-hooks:
@@ -1598,9 +1606,10 @@ test: $(TEST_RUNNER)
 sanitize: $(SANITIZE_TEST_RUNNER)
 	./$(SANITIZE_TEST_RUNNER)
 
-check: source-policy-check trace-determinism-compare paper-support test sanitize action-score symbolic-domains modular-gate-search-smoke delayed-claim-self-test delayed-claim-eval grid-path-eval prime-rule-search-smoke prime-gap-eval
+check: source-policy-check test sanitize action-score symbolic-domains modular-gate-search-smoke delayed-claim-self-test delayed-claim-eval grid-path-eval prime-rule-search-smoke prime-gap-eval
 	$(MAKE) test REAL=double
 	$(MAKE) numeric-certificate-mandatory
+	$(MAKE) paper-support
 
 experimental-check: program-synthesis program-synthesis-baselines arc-agi arc-agi-induction-smoke multitask-domain haiku-word-lm-smoke haiku-understanding-smoke haiku-coherence-hard-negatives haiku-rule-search-smoke learned-grammar-coverage
 

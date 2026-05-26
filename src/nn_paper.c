@@ -16,6 +16,10 @@
 #include <sys/stat.h>
 #include <time.h>
 
+#ifdef NN_ENABLE_TEST_API
+#include <utime.h>
+#endif
+
 #define PAPER_CURVE_WINDOW 50U
 #define PAPER_ARC_EPOCH_COUNT 4U
 #define PAPER_PRIME_EPOCHS 8U
@@ -1401,6 +1405,8 @@ typedef struct {
     const char *chart_kind;
     const char *chart_unit;
     const char *chart_y_label;
+    const char *freshness_prerequisite;
+    const char *refresh_command;
 } PaperClaimSpec;
 
 typedef struct {
@@ -1436,6 +1442,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "",
         "",
+        "results/latest/commands.txt",
+        "make results",
     },
     {
         "C1.prime_gate_delta_ci",
@@ -1448,6 +1456,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "",
         "",
+        "results/latest/comparison.canonical.jsonl",
+        "make prime-gate-seed-audit",
     },
     {
         "C2.prime_proposer_fixed_budget",
@@ -1460,6 +1470,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "",
         "",
+        "results/latest/commands.txt",
+        "make results",
     },
     {
         "C4.arc_ood_shared_vs_single",
@@ -1472,6 +1484,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "delta_bar",
         "pp",
         "shared minus single top-1",
+        "",
+        "",
     },
     {
         "C1.arc_gate_scorer_invariance",
@@ -1484,6 +1498,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "coverage_bar",
         "correct cells",
         "certified correct cells",
+        "",
+        "",
     },
     {
         "C1.arc_public_evidence_surface",
@@ -1496,6 +1512,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "coverage_bar",
         "correct cells",
         "evaluation correct cells",
+        "",
+        "",
     },
     {
         "C3.arc_ood_calibration_tradeoff",
@@ -1508,6 +1526,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "delta_bar",
         "pp",
         "shared ECE improvement vs single",
+        "",
+        "",
     },
     {
         "C4.delayed_claim_sibling_transfer",
@@ -1520,6 +1540,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "delta_bar",
         "pp",
         "top-1 delta vs claim-only",
+        "",
+        "",
     },
     {
         "C4.multitask_capacity_tradeoff",
@@ -1532,6 +1554,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "delta_bar",
         "pp",
         "shared minus single top-1",
+        "",
+        "",
     },
     {
         "C4.adapter_heads_shared_trunk",
@@ -1544,6 +1568,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "delta_bar",
         "pp",
         "task-head top-1 delta",
+        "",
+        "",
     },
     {
         "C5.rejected_candidate_reason_learning",
@@ -1556,6 +1582,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "coverage_bar",
         "validation utility",
         "budget-8 validation utility",
+        "",
+        "",
     },
     {
         "C5.hypothesis_library_promotion",
@@ -1568,6 +1596,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "coverage_bar",
         "budget-1 certifications",
         "certified tasks",
+        "",
+        "",
     },
     {
         "C7.tiny_net_plateau_stop_rule",
@@ -1576,6 +1606,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl",
         0,
         "Capacity and architecture claims remain underpowered until the tiny-net plateau audit is complete.",
+        "",
+        "",
         "",
         "",
         "",
@@ -1592,6 +1624,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "",
         "",
+        "build/double/traces/prime_gap.jsonl",
+        "make trace-determinism-compare",
     },
     {
         "C8.dataset_engine_evidence_surface",
@@ -1604,6 +1638,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "coverage_bar",
         "rows",
         "engine evidence rows",
+        "build/float/dataset_action_score",
+        "make dataset-action-score-engine-evidence",
     },
     {
         "C9.signal_flight_replay_control",
@@ -1616,6 +1652,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "coverage_bar",
         "utility",
         "selected utility",
+        "",
+        "",
     },
     {
         "C9.signal_live_neural_active",
@@ -1628,6 +1666,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "coverage_bar",
         "rows",
         "live rows",
+        "",
+        "",
     },
     {
         "C5.arc_verified_self_play",
@@ -1640,6 +1680,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "coverage_bar",
         "certified tasks",
         "public eval certified tasks",
+        "",
+        "",
     },
 };
 
@@ -1675,6 +1717,321 @@ static void paper_claim_init(PaperClaimResult *claim, const PaperClaimSpec *spec
     claim->spec = spec;
     paper_claim_set_missing(claim);
     snprintf(claim->explanation, sizeof(claim->explanation), "%s", spec->explanation_text);
+}
+
+static int paper_claim_has_text(const char *text) {
+    return text != NULL && text[0] != '\0';
+}
+
+static int paper_path_mtime(const char *path, time_t *out_mtime) {
+    struct stat st;
+    if (!paper_claim_has_text(path) || out_mtime == NULL || stat(path, &st) != 0) {
+        return 0;
+    }
+    *out_mtime = st.st_mtime;
+    return 1;
+}
+
+static void paper_claim_set_stale(PaperClaimResult *claim,
+                                  const char *freshness_prerequisite,
+                                  const char *refresh_command,
+                                  int prerequisite_missing) {
+    const char *command = paper_claim_has_text(refresh_command)
+                              ? refresh_command
+                              : "the registered refresh command";
+    snprintf(claim->status, sizeof(claim->status), "%s", "stale");
+    if (prerequisite_missing) {
+        snprintf(claim->summary,
+                 sizeof(claim->summary),
+                 "cannot verify source freshness for %s because prerequisite %s is missing; rerun `%s`.",
+                 claim->spec->source,
+                 freshness_prerequisite,
+                 command);
+    } else {
+        snprintf(claim->summary,
+                 sizeof(claim->summary),
+                 "source artifact %s is older than freshness prerequisite %s; rerun `%s`.",
+                 claim->spec->source,
+                 freshness_prerequisite,
+                 command);
+    }
+    claim->chart_rows[0] = '\0';
+}
+
+static void paper_apply_staleness_gate(PaperClaimResult claims[PAPER_CLAIM_COUNT]) {
+    const double mtime_slop_seconds = 1.0;
+    size_t i;
+    for (i = 0U; i < PAPER_CLAIM_COUNT; ++i) {
+        time_t source_mtime;
+        time_t prerequisite_mtime;
+        const PaperClaimSpec *spec = claims[i].spec;
+        if (spec == NULL ||
+            !paper_claim_has_text(spec->freshness_prerequisite) ||
+            strcmp(claims[i].status, "supported") != 0) {
+            continue;
+        }
+        if (!paper_path_mtime(spec->source, &source_mtime)) {
+            paper_claim_set_missing(&claims[i]);
+            continue;
+        }
+        if (!paper_path_mtime(spec->freshness_prerequisite, &prerequisite_mtime)) {
+            paper_claim_set_stale(&claims[i],
+                                  spec->freshness_prerequisite,
+                                  spec->refresh_command,
+                                  1);
+            continue;
+        }
+        if (difftime(source_mtime, prerequisite_mtime) < -mtime_slop_seconds) {
+            paper_claim_set_stale(&claims[i],
+                                  spec->freshness_prerequisite,
+                                  spec->refresh_command,
+                                  0);
+        }
+    }
+}
+
+typedef struct {
+    char *source;
+    char *command;
+    char *freshness_prerequisite;
+} PaperClaimRegistryEvidence;
+
+static void paper_claim_registry_evidence_free(PaperClaimRegistryEvidence *evidence) {
+    if (evidence == NULL) {
+        return;
+    }
+    free(evidence->source);
+    free(evidence->command);
+    free(evidence->freshness_prerequisite);
+    memset(evidence, 0, sizeof(*evidence));
+}
+
+static char *paper_read_text_file(const char *path) {
+    FILE *fp;
+    char *content;
+    size_t capacity = 4096U;
+    size_t used = 0U;
+    if (!paper_claim_has_text(path)) {
+        return NULL;
+    }
+    fp = fopen(path, "rb");
+    if (fp == NULL) {
+        return NULL;
+    }
+    content = (char *)malloc(capacity);
+    if (content == NULL) {
+        fclose(fp);
+        return NULL;
+    }
+    for (;;) {
+        size_t available = capacity - used - 1U;
+        size_t read_count;
+        char *next;
+        if (available == 0U) {
+            capacity *= 2U;
+            next = (char *)realloc(content, capacity);
+            if (next == NULL) {
+                free(content);
+                fclose(fp);
+                return NULL;
+            }
+            content = next;
+            available = capacity - used - 1U;
+        }
+        read_count = fread(content + used, 1U, available, fp);
+        used += read_count;
+        if (read_count < available) {
+            if (ferror(fp)) {
+                free(content);
+                fclose(fp);
+                return NULL;
+            }
+            break;
+        }
+    }
+    content[used] = '\0';
+    fclose(fp);
+    return content;
+}
+
+static const char *paper_json_find_key_value_bounded(const char *start,
+                                                     const char *end,
+                                                     const char *key) {
+    char pattern[128];
+    int written;
+    const char *cursor;
+    if (start == NULL || end == NULL || start > end || key == NULL || key[0] == '\0') {
+        return NULL;
+    }
+    written = snprintf(pattern, sizeof(pattern), "\"%s\":", key);
+    if (written <= 0 || (size_t)written >= sizeof(pattern)) {
+        return NULL;
+    }
+    cursor = start;
+    while (cursor < end) {
+        cursor = strstr(cursor, pattern);
+        if (cursor == NULL || cursor >= end) {
+            return NULL;
+        }
+        if (cursor + (size_t)written <= end) {
+            return cursor + (size_t)written;
+        }
+        ++cursor;
+    }
+    return NULL;
+}
+
+static int paper_registry_find_claim_object(const char *content,
+                                            const char *claim_id,
+                                            const char **out_start,
+                                            const char **out_end) {
+    const char *content_end;
+    const char *cursor;
+    if (content == NULL || claim_id == NULL || out_start == NULL || out_end == NULL) {
+        return -1;
+    }
+    content_end = content + strlen(content);
+    cursor = content;
+    while (cursor < content_end) {
+        const char *id_value = paper_json_find_key_value_bounded(cursor, content_end, "id");
+        char *parsed_id;
+        const char *object_start;
+        const char *object_end;
+        if (id_value == NULL) {
+            return 0;
+        }
+        parsed_id = paper_json_dup_string_value(id_value);
+        if (parsed_id == NULL) {
+            return -1;
+        }
+        if (strcmp(parsed_id, claim_id) != 0) {
+            free(parsed_id);
+            cursor = id_value + 1;
+            continue;
+        }
+        free(parsed_id);
+        object_start = id_value;
+        while (object_start > content && *object_start != '{') {
+            --object_start;
+        }
+        if (*object_start != '{') {
+            return -1;
+        }
+        object_end = paper_json_value_end(object_start);
+        if (object_end == NULL || object_end > content_end) {
+            return -1;
+        }
+        *out_start = object_start;
+        *out_end = object_end;
+        return 1;
+    }
+    return 0;
+}
+
+static int paper_registry_read_claim_evidence(const char *content,
+                                              const char *claim_id,
+                                              PaperClaimRegistryEvidence *out) {
+    const char *claim_start;
+    const char *claim_end;
+    const char *evidence_start;
+    const char *evidence_end;
+    int found;
+    if (out == NULL) {
+        return -1;
+    }
+    memset(out, 0, sizeof(*out));
+    found = paper_registry_find_claim_object(content, claim_id, &claim_start, &claim_end);
+    if (found <= 0) {
+        return found;
+    }
+    evidence_start = paper_skip_ws(
+        paper_json_find_key_value_bounded(claim_start, claim_end, "evidence"));
+    if (evidence_start == NULL || *evidence_start != '{') {
+        return -1;
+    }
+    evidence_end = paper_json_value_end(evidence_start);
+    if (evidence_end == NULL || evidence_end > claim_end) {
+        return -1;
+    }
+    out->source = paper_json_dup_string_value(
+        paper_json_find_key_value_bounded(evidence_start, evidence_end, "source"));
+    out->command = paper_json_dup_string_value(
+        paper_json_find_key_value_bounded(evidence_start, evidence_end, "command"));
+    out->freshness_prerequisite = paper_json_dup_string_value(
+        paper_json_find_key_value_bounded(evidence_start,
+                                          evidence_end,
+                                          "freshness_prerequisite"));
+    if (out->source == NULL || out->command == NULL || out->freshness_prerequisite == NULL) {
+        paper_claim_registry_evidence_free(out);
+        return -1;
+    }
+    return paper_claim_has_text(out->source) && paper_claim_has_text(out->command) ? 1 : -1;
+}
+
+static int paper_validate_claim_registry(const char *claims_path,
+                                         char *error,
+                                         size_t error_size) {
+    char *content;
+    size_t i;
+    if (error != NULL && error_size > 0U) {
+        error[0] = '\0';
+    }
+    content = paper_read_text_file(claims_path);
+    if (content == NULL) {
+        snprintf(error, error_size, "cannot read claim registry %s", claims_path);
+        return -1;
+    }
+    for (i = 0U; i < PAPER_CLAIM_COUNT; ++i) {
+        PaperClaimRegistryEvidence evidence;
+        const PaperClaimSpec *spec = &PAPER_CLAIM_SPECS[i];
+        int found = paper_registry_read_claim_evidence(content, spec->id, &evidence);
+        if (found <= 0) {
+            snprintf(error,
+                     error_size,
+                     "claim registry is missing evidence metadata for %s",
+                     spec->id);
+            free(content);
+            return -1;
+        }
+        if (strcmp(evidence.source, spec->source) != 0) {
+            snprintf(error,
+                     error_size,
+                     "claim %s source mismatch: registry=%s runtime=%s",
+                     spec->id,
+                     evidence.source,
+                     spec->source);
+            paper_claim_registry_evidence_free(&evidence);
+            free(content);
+            return -1;
+        }
+        if (paper_claim_has_text(spec->refresh_command) &&
+            strcmp(evidence.command, spec->refresh_command) != 0) {
+            snprintf(error,
+                     error_size,
+                     "claim %s refresh command mismatch: registry=%s runtime=%s",
+                     spec->id,
+                     evidence.command,
+                     spec->refresh_command);
+            paper_claim_registry_evidence_free(&evidence);
+            free(content);
+            return -1;
+        }
+        if (paper_claim_has_text(spec->freshness_prerequisite) &&
+            strcmp(evidence.freshness_prerequisite, spec->freshness_prerequisite) != 0) {
+            snprintf(error,
+                     error_size,
+                     "claim %s freshness prerequisite mismatch: registry=%s runtime=%s",
+                     spec->id,
+                     evidence.freshness_prerequisite,
+                     spec->freshness_prerequisite);
+            paper_claim_registry_evidence_free(&evidence);
+            free(content);
+            return -1;
+        }
+        paper_claim_registry_evidence_free(&evidence);
+    }
+    free(content);
+    return 0;
 }
 
 static int paper_json_get_bool(const char *line, const char *key, int *out) {
@@ -2432,6 +2789,121 @@ static int paper_write_text_file(const char *path, const char *text) {
     fclose(fp);
     return 0;
 }
+
+#ifdef NN_ENABLE_TEST_API
+static int paper_test_set_mtime(const char *path, time_t mtime) {
+    struct utimbuf times;
+    times.actime = mtime;
+    times.modtime = mtime;
+    return utime(path, &times) == 0;
+}
+
+static int paper_test_write_timed_file(const char *path, time_t mtime) {
+    return paper_write_text_file(path, "paper claim governance test fixture\n") == 0 &&
+           paper_test_set_mtime(path, mtime);
+}
+
+static int paper_test_staleness_case(const char *source_path,
+                                     const char *freshness_prerequisite,
+                                     const char *initial_status,
+                                     const char *expected_status,
+                                     const char *expected_summary_substring) {
+    PaperClaimResult claims[PAPER_CLAIM_COUNT];
+    PaperClaimSpec spec = {
+        .id = "T.paper_staleness_fixture",
+        .family = "T",
+        .title = "Paper staleness fixture",
+        .source = source_path,
+        .required = 1,
+        .claim_text = "fixture",
+        .explanation_text = "",
+        .chart_kind = "",
+        .chart_unit = "",
+        .chart_y_label = "",
+        .freshness_prerequisite = freshness_prerequisite,
+        .refresh_command = "make test-refresh",
+    };
+    memset(claims, 0, sizeof(claims));
+    paper_claim_init(&claims[0], &spec);
+    snprintf(claims[0].status, sizeof(claims[0].status), "%s", initial_status);
+    snprintf(claims[0].summary, sizeof(claims[0].summary), "%s", "supported fixture");
+    paper_apply_staleness_gate(claims);
+    return strcmp(claims[0].status, expected_status) == 0 &&
+           (expected_summary_substring == NULL ||
+            strstr(claims[0].summary, expected_summary_substring) != NULL);
+}
+
+int nn_paper_test_claim_governance_contract(const char *work_dir,
+                                            const char *claims_path) {
+    char source_old[4096];
+    char source_new[4096];
+    char prereq_old[4096];
+    char prereq_new[4096];
+    char prereq_missing[4096];
+    char registry_error[512];
+    int written;
+    if (!paper_claim_has_text(work_dir) || !paper_claim_has_text(claims_path)) {
+        return 0;
+    }
+    if (paper_mkdirs(work_dir) != 0) {
+        return 0;
+    }
+    written = snprintf(source_old, sizeof(source_old), "%s/source_old.txt", work_dir);
+    if (written <= 0 || (size_t)written >= sizeof(source_old)) {
+        return 0;
+    }
+    written = snprintf(source_new, sizeof(source_new), "%s/source_new.txt", work_dir);
+    if (written <= 0 || (size_t)written >= sizeof(source_new)) {
+        return 0;
+    }
+    written = snprintf(prereq_old, sizeof(prereq_old), "%s/prereq_old.txt", work_dir);
+    if (written <= 0 || (size_t)written >= sizeof(prereq_old)) {
+        return 0;
+    }
+    written = snprintf(prereq_new, sizeof(prereq_new), "%s/prereq_new.txt", work_dir);
+    if (written <= 0 || (size_t)written >= sizeof(prereq_new)) {
+        return 0;
+    }
+    written = snprintf(prereq_missing,
+                       sizeof(prereq_missing),
+                       "%s/prereq_missing.txt",
+                       work_dir);
+    if (written <= 0 || (size_t)written >= sizeof(prereq_missing)) {
+        return 0;
+    }
+    (void)remove(prereq_missing);
+    if (!paper_test_write_timed_file(source_old, (time_t)1000) ||
+        !paper_test_write_timed_file(source_new, (time_t)1010) ||
+        !paper_test_write_timed_file(prereq_old, (time_t)1000) ||
+        !paper_test_write_timed_file(prereq_new, (time_t)1005)) {
+        return 0;
+    }
+    registry_error[0] = '\0';
+    return paper_validate_claim_registry(claims_path,
+                                         registry_error,
+                                         sizeof(registry_error)) == 0 &&
+           paper_test_staleness_case(source_old,
+                                     prereq_new,
+                                     "supported",
+                                     "stale",
+                                     "older than freshness prerequisite") &&
+           paper_test_staleness_case(source_new,
+                                     prereq_old,
+                                     "supported",
+                                     "supported",
+                                     "supported fixture") &&
+           paper_test_staleness_case(source_new,
+                                     prereq_missing,
+                                     "supported",
+                                     "stale",
+                                     "cannot verify source freshness") &&
+           paper_test_staleness_case(source_old,
+                                     prereq_new,
+                                     "contradicted",
+                                     "contradicted",
+                                     "supported fixture");
+}
+#endif
 
 static void paper_eval_prime_gate_delta(PaperClaimResult *claim) {
     FILE *fp;
@@ -3807,6 +4279,7 @@ static void paper_evaluate_claims(PaperClaimResult claims[PAPER_CLAIM_COUNT]) {
     paper_eval_signal_replay(&claims[15]);
     paper_eval_signal_live(&claims[16]);
     paper_eval_arc_verified_self_play(&claims[17]);
+    paper_apply_staleness_gate(claims);
 }
 
 static void paper_count_claim_statuses(const PaperClaimResult claims[PAPER_CLAIM_COUNT],
@@ -3912,6 +4385,16 @@ static int paper_write_claims_json(const char *path,
                 ",\"required_for_submission\":%s,\"source\":",
                 claims[i].spec->required ? "true" : "false");
         paper_write_json_string(fp, claims[i].spec->source);
+        fputs(",\"freshness_prerequisite\":", fp);
+        paper_write_json_string(fp,
+                                paper_claim_has_text(claims[i].spec->freshness_prerequisite)
+                                    ? claims[i].spec->freshness_prerequisite
+                                    : "");
+        fputs(",\"refresh_command\":", fp);
+        paper_write_json_string(fp,
+                                paper_claim_has_text(claims[i].spec->refresh_command)
+                                    ? claims[i].spec->refresh_command
+                                    : "");
         fputs(",\"metrics\":{\"raw_top1\":", fp);
         paper_write_json_number(fp, claims[i].raw_top1);
         fputs(",\"hand_top1\":", fp);
@@ -4029,6 +4512,16 @@ static int paper_write_claims_typ(const char *path,
         paper_write_typ_string(fp, claims[i].summary);
         fputs(", source: ", fp);
         paper_write_typ_string(fp, claims[i].spec->source);
+        fputs(", freshness_prerequisite: ", fp);
+        paper_write_typ_string(fp,
+                               paper_claim_has_text(claims[i].spec->freshness_prerequisite)
+                                   ? claims[i].spec->freshness_prerequisite
+                                   : "");
+        fputs(", refresh_command: ", fp);
+        paper_write_typ_string(fp,
+                               paper_claim_has_text(claims[i].spec->refresh_command)
+                                   ? claims[i].spec->refresh_command
+                                   : "");
         fputs(", chart_kind: ", fp);
         paper_write_typ_string(fp, claims[i].spec->chart_kind);
         fputs(", chart_rows: ", fp);
@@ -4931,15 +5424,24 @@ int nn_paper_write_claims(const char *claims_path,
     PaperClaimResult claims[PAPER_CLAIM_COUNT];
     char json_path[4096];
     char typ_path[4096];
+    char registry_error[512];
     int ok;
-    (void)claims_path;
     (void)paper_path;
     (void)agent_candidates_dir;
     (void)fail_unlinked_roadmap;
+    if (claims_path == NULL || claims_path[0] == '\0') {
+        claims_path = "paper/claims.yaml";
+    }
     if (output_dir == NULL || output_dir[0] == '\0') {
         output_dir = "paper/generated";
     }
     if (paper_mkdirs(output_dir) != 0) {
+        return -1;
+    }
+    if (paper_validate_claim_registry(claims_path,
+                                      registry_error,
+                                      sizeof(registry_error)) != 0) {
+        fprintf(stderr, "paper claim registry validation failed: %s\n", registry_error);
         return -1;
     }
     paper_evaluate_claims(claims);

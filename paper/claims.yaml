@@ -500,6 +500,7 @@
       "evidence": {
         "source": "results/latest/comparison.canonical.jsonl",
         "command": "make results",
+        "freshness_prerequisite": "results/latest/commands.txt",
         "schemas": [
           "crlp.compare.v1"
         ],
@@ -559,6 +560,7 @@
       "evidence": {
         "source": "results/latest/prime_gate_delta_seed_interval.jsonl",
         "command": "make prime-gate-seed-audit",
+        "freshness_prerequisite": "results/latest/comparison.canonical.jsonl",
         "schemas": [
           "crlp.prime_gate_delta.seed_interval.v1"
         ],
@@ -621,6 +623,7 @@
       "evidence": {
         "source": "results/latest/comparison.canonical.jsonl",
         "command": "make results",
+        "freshness_prerequisite": "results/latest/commands.txt",
         "schemas": [
           "crlp.rule_search.summary.v1"
         ],
@@ -1434,6 +1437,7 @@
       "evidence": {
         "source": "results/latest/trace_determinism.jsonl",
         "command": "make trace-determinism-compare",
+        "freshness_prerequisite": "build/double/traces/prime_gap.jsonl",
         "schemas": [
           "crlp.trace_determinism_audit.v1",
           "crlp.trace_determinism_compare.v1"
@@ -1495,6 +1499,7 @@
       "evidence": {
         "source": "build/float/dataset_action_score_artifacts/engine_evidence.jsonl",
         "command": "make dataset-action-score-engine-evidence",
+        "freshness_prerequisite": "build/float/dataset_action_score",
         "schemas": [
           "crlp.engine_evidence.v1"
         ],

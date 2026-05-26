@@ -29,6 +29,8 @@
 
 #let pct(v) = [#(calc.round(v * 10000) / 100)%]
 
+#let claim_count_label(count, singular, plural) = if count == 1 { singular } else { plural }
+
 #let claim_delta_chart(rows, y-min: -20, y-max: 20, y-label: [Delta]) = cetz.canvas({
   import cetz.draw: *
   plot.plot(
@@ -174,11 +176,11 @@ visual-spatial abstraction provenance; Signal tests bounded WASD control under r
 live telemetry; haiku tests corpus-derived proxy grounding.
 
 At this artifact snapshot, the generated claim compiler reports
-#paper_claim_status_counts.supported supported claims,
-#paper_claim_status_counts.contradicted contradicted claims,
-#paper_claim_status_counts.underpowered underpowered claim,
-#paper_claim_status_counts.missing missing claims, and
-#paper_claim_status_counts.stale stale claims. Contradicted and underpowered rows remain
+#paper_claim_status_counts.supported #claim_count_label(paper_claim_status_counts.supported, [supported claim], [supported claims]),
+#paper_claim_status_counts.contradicted #claim_count_label(paper_claim_status_counts.contradicted, [contradicted claim], [contradicted claims]),
+#paper_claim_status_counts.underpowered #claim_count_label(paper_claim_status_counts.underpowered, [underpowered claim], [underpowered claims]),
+#paper_claim_status_counts.missing #claim_count_label(paper_claim_status_counts.missing, [missing claim], [missing claims]), and
+#paper_claim_status_counts.stale #claim_count_label(paper_claim_status_counts.stale, [stale claim], [stale claims]). Contradicted and underpowered rows remain
 visible because falsifiability is part of the protocol. The fixed-budget proposer row is
 contradicted (#claim_C2_prime_proposer_fixed_budget_summary), and the tiny-net plateau row is
 underpowered (#claim_C7_tiny_net_plateau_stop_rule_summary).
@@ -543,9 +545,14 @@ not a semantic language-understanding result.
 = Claim Governance
 
 Empirical reporting is wired directly to experiment outputs. Result scripts write canonical
-summaries. The claim compiler turns those summaries into Typst macros and limitation
-candidates. The compilation layer uses those macros rather than hand-maintained numbers. If
-an artifact is missing, stale, contradicted, or underpowered, the manuscript compilation
+summaries, and the claim compiler turns registered source artifacts into Typst macros,
+support-surface rows, and limitation candidates. The compilation layer uses those macros
+rather than hand-maintained numbers. `make paper-support` refreshes support-owned audit
+artifacts such as trace determinism and dataset-engine evidence before checking the claim
+registry. It does not silently rerun the full promoted-result snapshot: canonical headline
+rows such as `results/latest/comparison.canonical.jsonl` are refreshed by `make results` and
+then checked by `make paper-support`. If an artifact is missing, stale relative to its
+declared freshness prerequisite, contradicted, or underpowered, the manuscript compilation
 layer will reject the registered claim as supported. The trace determinism row is currently
 supported:
 #claim_C8_trace_determinism_audit_summary
