@@ -345,9 +345,8 @@ Result:
 
 Question: can a shared trunk avoid ARC interference while preserving claim gain?
 
-Status: instrumented as `examples/multitask_domain.c --task-heads` and
-`the retired adapter-head workflow`; canonical R-MT.4 results are not yet
-captured.
+Status: instrumented as `examples/multitask_domain.c --task-heads`; refresh the
+canonical R-MT.4 bundle with `make multitask-adapter-heads`.
 
 Architecture:
 
@@ -591,8 +590,9 @@ Completed instrumentation:
    panel-composition tasks and task-level metadata.
 5. **I-MT.5 epoch and fixed-ARC grid diagnostics.** Adds
    `crlp.multitask.epoch.v1` plus exact-grid/per-cell/per-color ARC fields.
-6. **R-MT.4 adapter-head surface.** Adds `--task-heads` plus
-   `the retired adapter-head workflow`; full roadmap results are pending.
+6. **R-MT.4 adapter-head surface.** Adds `--task-heads` plus the native
+   `make multitask-adapter-heads` report target; full roadmap results are
+   pending.
 
 Completed experiments:
 

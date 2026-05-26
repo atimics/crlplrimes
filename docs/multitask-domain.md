@@ -124,7 +124,7 @@ make multitask-domain
 
 The matrix enumerates every non-empty training subset of the configured domains
 and evaluates all domains each time. With four domains this produces 15 training
-sets per variant. The script scales `--steps-per-epoch` by the number of active
+sets per variant. The C runner scales `--steps-per-epoch` by the number of active
 training domains so each trained domain gets a roughly matched update budget.
 
 Artifacts are written to:
@@ -257,6 +257,5 @@ items local to this document are:
    (cross-listed as R-X4 in the paper Roadmap).
 3. Follow the same-envelope OOD result with curriculum and adapter-head
    experiments before treating the shared scorer as a recipe. The adapter-head
-   path is now instrumented as `--task-heads`, but full R-MT.4 results are not
-   captured in the canonical roadmap bundle until
-   `the retired adapter-head workflow` has been run at the roadmap seed/budget.
+   path is now instrumented as `--task-heads`; refresh the canonical R-MT.4
+   bundle with `make multitask-adapter-heads` at the roadmap seed/budget.

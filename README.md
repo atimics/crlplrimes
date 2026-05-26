@@ -431,7 +431,7 @@ make multitask-domain
 
 `examples/multitask_domain.c` wraps prime-gap, grid-path, delayed-claim, and one ARC-AGI-1 sample into one fixed-width action-row envelope. The ARC sample is training task `0520fde7`, represented as a balanced cell-color action task: given a train/test input grid and an output-cell coordinate, choose the output color from actions `0..9`. ARC rows expose the flattened input grid, the output coordinate, and the candidate action, but not the direct overlap/intersection rule. This is a useful integration test for grid-to-grid symbolic tasks inside the shared action-row envelope.
 
-Use `--tasks prime,grid,claim,arc|all` for combination ablations and `--eval-tasks all` to evaluate held-out domains after training on a subset. A matched per-domain update comparison can scale `--steps-per-epoch` by the number of active domains, for example `--tasks prime --steps-per-epoch 3000`, `--tasks prime,grid --steps-per-epoch 6000`, and `--tasks all --steps-per-epoch 12000`. Capacity and sampling are explicit with `--hidden 64x32` and `--training-order uniform_random|round_robin|arc_heavy|prime_light`; emitted multitask rows include ECE, reliability bins, parameter count, and forward FLOPs. `--task-heads` additionally emits `shared_task_heads` rows from a shared trunk with per-domain scalar heads; `make multitask-domain` captures the R-MT.4 comparison. The remaining feature ablation is explicit: `--no-task-tags` removes the task/domain one-hot fields. The default shared multitask envelope is now the same role-tagged 96-slot envelope used by action and rule candidates, and it excludes prime residue flags so the prime row receives no hand-coded modular predicates.
+Use `--tasks prime,grid,claim,arc|all` for combination ablations and `--eval-tasks all` to evaluate held-out domains after training on a subset. A matched per-domain update comparison can scale `--steps-per-epoch` by the number of active domains, for example `--tasks prime --steps-per-epoch 3000`, `--tasks prime,grid --steps-per-epoch 6000`, and `--tasks all --steps-per-epoch 12000`. Capacity and sampling are explicit with `--hidden 64x32` and `--training-order uniform_random|round_robin|arc_heavy|prime_light`; emitted multitask rows include ECE, reliability bins, parameter count, and forward FLOPs. `--task-heads` additionally emits `shared_task_heads` rows from a shared trunk with per-domain scalar heads; `make multitask-adapter-heads` captures the R-MT.4 comparison. The remaining feature ablation is explicit: `--no-task-tags` removes the task/domain one-hot fields. The default shared multitask envelope is now the same role-tagged 96-slot envelope used by action and rule candidates, and it excludes prime residue flags so the prime row receives no hand-coded modular predicates.
 
 The shared formal-system smoke test trains one certificate-status rule classifier across rule rows from all symbolic domains:
 
@@ -926,10 +926,9 @@ near-misses as candidates.
 ```sh
 make multitask-domain
 make multitask-adapter-heads
-make multitask-domain
 ```
 
-The multitask ARC row uses the same fixed task and adds the optional task tag from the shared envelope. The matrix script enumerates every non-empty task combination, evaluates all domains each time, and writes JSONL/CSV/Markdown summaries under `build/float/multitask_ablation_matrix/`.
+The multitask ARC row uses the same fixed task and adds the optional task tag from the shared envelope. The native adapter-head target writes the R-MT.4 raw JSONL, summary CSVs, decision JSONL, and Markdown report under `results/2026-05-17-multitask-roadmap/`.
 
 Current all-domain top-1 means over three seeds:
 
