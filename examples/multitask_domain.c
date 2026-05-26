@@ -4535,12 +4535,15 @@ static int mt_write_tiny_report_md(const char *path,
 
 static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
 {
-    static const char *domains[] = {"prime_gap", "grid_path", "delayed_claim", "arc_agi"};
-    static const char *models_with_heads[] = {"shared", "shared_task_heads", "single_task"};
-    static const char *models_without_heads[] = {"shared", "single_task"};
-    const char *const *models = base->run_task_head_model ? models_with_heads : models_without_heads;
-    size_t model_count = base->run_task_head_model ? sizeof(models_with_heads) / sizeof(models_with_heads[0])
-                                                   : sizeof(models_without_heads) / sizeof(models_without_heads[0]);
+    uint32_t all_task_mask = mt_task_bit(MT_TASK_PRIME_GAP) |
+                             mt_task_bit(MT_TASK_GRID_PATH) |
+                             mt_task_bit(MT_TASK_DELAYED_CLAIM) |
+                             mt_task_bit(MT_TASK_ARC_AGI);
+    MTTask audit_tasks[MT_TASK_COUNT];
+    const char *domains[MT_TASK_COUNT];
+    const char *models[3];
+    size_t domain_count = 0U;
+    size_t model_count = 0U;
     uint64_t seeds[128];
     MTTinyCapacity capacities[64];
     size_t epoch_grid[128];
@@ -4557,6 +4560,23 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
     FILE *commands = NULL;
     int status = EXIT_FAILURE;
     memset(&rows, 0, sizeof(rows));
+    domain_count = mt_fill_active_tasks(base->eval_task_mask == 0U ? all_task_mask : base->eval_task_mask,
+                                        audit_tasks,
+                                        MT_TASK_COUNT);
+    if (domain_count == 0U) {
+        fputs("tiny-net audit has no eval domains\n", stderr);
+        return EXIT_FAILURE;
+    }
+    for (size_t i = 0U; i < domain_count; ++i) {
+        domains[i] = mt_task_name(audit_tasks[i]);
+    }
+    models[model_count++] = "shared";
+    if (base->run_task_head_model) {
+        models[model_count++] = "shared_task_heads";
+    }
+    if (base->run_task_baselines) {
+        models[model_count++] = "single_task";
+    }
     if (!mt_parse_seed_list(base->report_seeds, seeds, sizeof(seeds) / sizeof(seeds[0]), &seed_count)) {
         fputs("invalid --seeds list\n", stderr);
         return EXIT_FAILURE;
@@ -4603,11 +4623,8 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
                 run.hidden2 = capacities[cap_index].hidden2;
                 run.seed = seeds[seed_index];
                 run.epochs = epoch_grid[epoch_index];
-                run.task_mask = mt_task_bit(MT_TASK_PRIME_GAP) |
-                                mt_task_bit(MT_TASK_GRID_PATH) |
-                                mt_task_bit(MT_TASK_DELAYED_CLAIM) |
-                                mt_task_bit(MT_TASK_ARC_AGI);
-                run.eval_task_mask = run.task_mask;
+                run.task_mask = all_task_mask;
+                run.eval_task_mask = base->eval_task_mask == 0U ? all_task_mask : base->eval_task_mask;
                 run.arc_eval_suite = MT_ARC_EVAL_0520FDE7;
                 run.arc_ood_task = -1;
                 run.report_arc_ood_tasks = 0;
@@ -4616,8 +4633,11 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
                 run.adapter_eval_suite = NULL;
                 run.json_output = raw;
                 run.report_rows = &rows;
+                char eval_task_set[128];
+                mt_task_set_name(run.eval_task_mask, eval_task_set, sizeof(eval_task_set));
                 fprintf(commands,
-                        "multitask_domain --tasks all --eval-tasks all --epochs %zu --steps-per-epoch %zu --eval-samples %zu --hidden %s --seed %llu",
+                        "multitask_domain --tasks all --eval-tasks %s --epochs %zu --steps-per-epoch %zu --eval-samples %zu --hidden %s --seed %llu",
+                        eval_task_set,
                         run.epochs,
                         run.steps_per_epoch,
                         run.eval_samples,
@@ -4625,6 +4645,9 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
                         (unsigned long long)run.seed);
                 if (run.run_task_head_model) {
                     fputs(" --task-heads", commands);
+                }
+                if (!run.run_task_baselines) {
+                    fputs(" --no-task-baselines", commands);
                 }
                 fputc('\n', commands);
                 if (mt_run_once(&run) != EXIT_SUCCESS) {
@@ -4649,7 +4672,7 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
                                capacities,
                                capacity_count,
                                domains,
-                               sizeof(domains) / sizeof(domains[0]),
+                               domain_count,
                                models,
                                model_count,
                                &widths,
@@ -4665,7 +4688,7 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
                                  epoch_grid,
                                  epoch_count,
                                  domains,
-                                 sizeof(domains) / sizeof(domains[0]),
+                                 domain_count,
                                  models,
                                  model_count,
                                  &verdicts,
@@ -4700,7 +4723,7 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
                                 verdicts,
                                 verdict_count,
                                 domains,
-                                sizeof(domains) / sizeof(domains[0]),
+                                domain_count,
                                 models,
                                 model_count) != 0) {
         goto done;
