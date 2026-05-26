@@ -363,9 +363,9 @@ visual reasoning automatic.
 
 ## Protocol Operator Promotion
 
-`scripts/protocol_spine.py` normalizes candidate/outcome evidence into
+`the retired protocol-spine workflow` normalizes candidate/outcome evidence into
 `crlp.protocol.candidate_row.v1` and `crlp.protocol.verifier_outcome.v1`. The
-promotion learner in `scripts/protocol_operator_promotion.py` reads that ledger,
+promotion learner in `the retired protocol-operator promotion workflow` reads that ledger,
 joins rows by domain and stable id, classifies residuals into operator families,
 and emits `crlp.protocol.operator_promotion.v1` records plus a
 `crlp.protocol.operator_prior.v1` TSV.

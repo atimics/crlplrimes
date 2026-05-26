@@ -24,7 +24,7 @@ the PDF compiles.
 
 ## CI Contract
 
-`make paper-ci` runs `scripts/check_editorial_pr.py` and then compiles the paper
+`make paper-ci` runs `the paper-support editorial gate` and then compiles the paper
 through the normal generated-evidence path. On a pull request, the script reads
 the PR type from the template checkbox, labels, or title prefix.
 

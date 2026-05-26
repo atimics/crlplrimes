@@ -82,7 +82,7 @@ Run the adapter-headed comparison path:
 
 ```sh
 ./build/float/multitask_domain --tasks all --eval-tasks all --task-heads
-python3 scripts/multitask_adapter_heads.py
+make multitask-domain
 ```
 
 `--task-heads` leaves the existing `shared` and `single_task` rows intact, then
@@ -119,7 +119,7 @@ include rule-feature leakage-policy fields. It is not captured by the canonical
 Run the repeatable multi-seed matrix:
 
 ```sh
-python3 scripts/multitask_ablation_matrix.py
+make multitask-domain
 ```
 
 The matrix enumerates every non-empty training subset of the configured domains
@@ -184,7 +184,7 @@ Current multitask model kinds are:
 | `shared_task_heads` | shared trunk plus per-domain scalar heads, emitted only with `--task-heads` |
 | `single_task` | matched per-domain baseline with the same hidden shape |
 
-`scripts/neurosymbolic_tuning.py` also recognizes
+`the retired neurosymbolic tuning workflow` also recognizes
 `crlp.multitask.summary.v1` and normalizes its config key as:
 
 ```text
@@ -259,4 +259,4 @@ items local to this document are:
    experiments before treating the shared scorer as a recipe. The adapter-head
    path is now instrumented as `--task-heads`, but full R-MT.4 results are not
    captured in the canonical roadmap bundle until
-   `scripts/multitask_adapter_heads.py` has been run at the roadmap seed/budget.
+   `the retired adapter-head workflow` has been run at the roadmap seed/budget.

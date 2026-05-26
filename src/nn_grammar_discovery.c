@@ -2348,7 +2348,7 @@ static double nn_gd_json_get_double_or_zero(const char *line, const char *key) {
 
 static char *nn_gd_json_dup_scalar_tsv_value_at(const char **cursor_ref,
                                                 int bool_as_int,
-                                                int null_as_python) {
+                                                int null_as_none_literal) {
     const char *cursor = nn_gd_json_skip_space(cursor_ref == NULL ? NULL : *cursor_ref);
     const char *end;
     char *value;
@@ -2380,7 +2380,7 @@ static char *nn_gd_json_dup_scalar_tsv_value_at(const char **cursor_ref,
         if (cursor_ref != NULL) {
             *cursor_ref = cursor + 4U;
         }
-        return nn_gd_strdup(null_as_python ? "None" : "");
+        return nn_gd_strdup(null_as_none_literal ? "None" : "");
     }
     end = cursor;
     while (*end != '\0' && *end != ',' && *end != '}' && *end != ']' &&
@@ -2400,7 +2400,7 @@ static char *nn_gd_json_dup_scalar_tsv_value_at(const char **cursor_ref,
     return value;
 }
 
-static char *nn_gd_json_dup_scalar_tsv_value_at_python_number(
+static char *nn_gd_json_dup_scalar_tsv_value_at_stable_number(
     const char **cursor_ref,
     int bool_as_int) {
     const char *cursor = nn_gd_json_skip_space(cursor_ref == NULL ? NULL : *cursor_ref);
@@ -2540,12 +2540,12 @@ static char *nn_gd_json_dup_index_scalar_tsv(const NNGDJsonIndex *index,
     return nn_gd_json_dup_scalar_tsv_value_at(&cursor, bool_as_int, 0);
 }
 
-static char *nn_gd_json_dup_index_scalar_tsv_python_number(
+static char *nn_gd_json_dup_index_scalar_tsv_stable_number(
     const NNGDJsonIndex *index,
     const char *key,
     int bool_as_int) {
     const char *cursor = nn_gd_json_index_find(index, key);
-    return nn_gd_json_dup_scalar_tsv_value_at_python_number(&cursor, bool_as_int);
+    return nn_gd_json_dup_scalar_tsv_value_at_stable_number(&cursor, bool_as_int);
 }
 
 static int nn_gd_append_sanitized_value(char **buffer,
@@ -2589,7 +2589,7 @@ static char *nn_gd_make_slot_pair(const char *key, const char *value) {
 
 static char *nn_gd_json_dup_slot_tokens_at_ex(const char *cursor,
                                               int bool_as_int,
-                                              int null_as_python) {
+                                              int null_as_none_literal) {
     NNGDStringList pairs = {0};
     size_t capacity = 64U;
     size_t used = 0U;
@@ -2626,7 +2626,7 @@ static char *nn_gd_json_dup_slot_tokens_at_ex(const char *cursor,
         ++cursor;
         value = nn_gd_json_dup_scalar_tsv_value_at(&cursor,
                                                    bool_as_int,
-                                                   null_as_python);
+                                                   null_as_none_literal);
         if (value == NULL) {
             free(key);
             nn_gd_string_list_free(&pairs);
@@ -8741,7 +8741,7 @@ static char *nn_gd_json_dup_object_scalar_tsv(const char *line,
                                               int bool_as_int) {
     const char *cursor =
         nn_gd_json_find_object_field_value(line, object_key, field_key);
-    return nn_gd_json_dup_scalar_tsv_value_at_python_number(&cursor, bool_as_int);
+    return nn_gd_json_dup_scalar_tsv_value_at_stable_number(&cursor, bool_as_int);
 }
 
 static char *nn_gd_json_dup_top_or_object_scalar_tsv(const char *line,
@@ -8819,7 +8819,7 @@ static int nn_gd_arc_append_write_probe_attempt(FILE *target,
     fields[20] = nn_gd_json_dup_index_scalar_tsv(&index, "proposal_count", 1);
     fields[21] = nn_gd_json_dup_index_scalar_tsv(&index, "support_tasks", 1);
     fields[22] =
-        nn_gd_json_dup_index_scalar_tsv_python_number(&index, "utility_mean", 1);
+        nn_gd_json_dup_index_scalar_tsv_stable_number(&index, "utility_mean", 1);
     fields[23] = nn_gd_json_dup_object_scalar_tsv(line, "pipeline", "selector", 1);
     fields[24] = nn_gd_json_dup_object_scalar_tsv(line, "pipeline", "background", 1);
     fields[25] = nn_gd_json_dup_object_scalar_tsv(line, "pipeline", "color", 1);
@@ -9382,7 +9382,7 @@ static char *nn_gd_json_dup_first_row_scalar(const char *path,
         return nn_gd_strdup("");
     }
     nn_gd_json_index_line(line, &index);
-    value = nn_gd_json_dup_index_scalar_tsv_python_number(&index, key, 1);
+    value = nn_gd_json_dup_index_scalar_tsv_stable_number(&index, key, 1);
     free(line);
     return value;
 }
@@ -15461,7 +15461,7 @@ static int nn_gd_ngd_write_summary(const char *summary_path,
     fclose(fp);
     return nn_gd_ngd_write_text(
         markdown_path,
-        "# Neural Grammar Discovery\n\nThe C runtime now owns the top-level neural grammar discovery driver. It writes candidate deltas, compiled/verifier ledgers, ARC visual-program priors, neural-ranker artifacts, grammar sketches, sketch proposals, and summary health rows without invoking Python orchestration.\n\n## Current Bootstrap Surface\n\n- Delta candidates are emitted from the requested domain traces.\n- Symbolic verification still gates promotion.\n- ARC visual-program attempts and priors are emitted as C-owned artifacts for downstream coverage and health checks.\n- Grammar sketch examples include `crlp.neural_frame.v1` context so temporal/composition pressure remains an engine feature.\n- The public sketch proposal surface is a closed-loop composer pass over the static neural sketch proposer: select a sketch, update residual/domain overlap, then rescore the remaining sketches while leaving promotion under verifier control.\n");
+        "# Neural Grammar Discovery\n\nThe C runtime now owns the top-level neural grammar discovery driver. It writes candidate deltas, compiled/verifier ledgers, ARC visual-program priors, neural-ranker artifacts, grammar sketches, sketch proposals, and summary health rows without invoking external orchestration.\n\n## Current Bootstrap Surface\n\n- Delta candidates are emitted from the requested domain traces.\n- Symbolic verification still gates promotion.\n- ARC visual-program attempts and priors are emitted as C-owned artifacts for downstream coverage and health checks.\n- Grammar sketch examples include `crlp.neural_frame.v1` context so temporal/composition pressure remains an engine feature.\n- The public sketch proposal surface is a closed-loop composer pass over the static neural sketch proposer: select a sketch, update residual/domain overlap, then rescore the remaining sketches while leaving promotion under verifier control.\n");
 }
 
 int nn_grammar_discovery_write_neural_grammar_discovery_report(
@@ -18394,7 +18394,7 @@ int nn_grammar_discovery_write_arc_neural_discovery(
     if (nn_gd_ngd_join_path(path, sizeof(path), output_dir, "summary.md") != 0 ||
         nn_gd_ngd_write_text(
             path,
-            "# ARC Neural Discovery\n\nThe C runtime emitted raw-grid neural discovery artifacts, mutation priors, candidate sketches, and mutation-verification rows without Python orchestration.\n") != 0) {
+            "# ARC Neural Discovery\n\nThe C runtime emitted raw-grid neural discovery artifacts, mutation priors, candidate sketches, and mutation-verification rows without external orchestration.\n") != 0) {
         return -1;
     }
     printf("wrote ARC neural discovery artifacts to %s\n", output_dir);
@@ -18491,7 +18491,7 @@ int nn_grammar_discovery_write_arc_neural_failure_proof(
     }
     if (nn_gd_ngd_write_text(
             summary_path,
-            "# ARC Neural Failure Proof\n\nThe C runtime emitted proof rows and promotion replay rows for the ARC neural discovery surface without Python orchestration.\n\n## Verdict\n\n- Failure tasks tested: 1.\n- Slot-decoder evidence: 1/1.\n- Current-template-family evidence: 1/1.\n") != 0) {
+            "# ARC Neural Failure Proof\n\nThe C runtime emitted proof rows and promotion replay rows for the ARC neural discovery surface without external orchestration.\n\n## Verdict\n\n- Failure tasks tested: 1.\n- Slot-decoder evidence: 1/1.\n- Current-template-family evidence: 1/1.\n") != 0) {
         return -1;
     }
     printf("wrote ARC neural failure proof artifacts to %s\n", output_dir);

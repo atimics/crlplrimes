@@ -119,7 +119,7 @@ paper/agent_candidates/*.jsonl
 docs/editorial-agent-prs.md
   repository policy for reviewable editorial-agent work
 
-scripts/check_editorial_pr.py
+the paper-support editorial gate
   CI enforcement for editorial-only PRs and claim-change PR audit fields
 
 docs/meta-paper-agent.md

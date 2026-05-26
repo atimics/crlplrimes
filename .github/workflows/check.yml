@@ -11,7 +11,6 @@ on:
 env:
   CC: gcc-13
   REAL: float
-  PYTHON_VERSION: "3.12"
   TYPST_VERSION: "0.14.2"
 
 jobs:
@@ -27,12 +26,9 @@ jobs:
           sudo apt-get install -y gcc-13 make
           ${CC} --version
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
       - name: Capture environment manifest
-        run: python3 scripts/environment_manifest.py --output environment.json
+        run: |
+          printf '{"schema":"crlp.environment_manifest.v1","cc":"%s","real":"%s"}\n' "$CC" "$REAL" > environment.json
 
       - name: Build all binaries
         run: make -j$(nproc) all

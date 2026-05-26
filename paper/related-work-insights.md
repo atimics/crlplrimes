@@ -313,7 +313,7 @@ clear environment/application scope.
 | AlphaGeometry2 2025 | Search-tree knowledge sharing and broader formalization pipeline. | Use for "formal-search systems are scaling" context and limitations. |
 | GPT-f 2020 | LM-generated proof steps checked by a formal verifier. | Historical ancestor for "model proposes, verifier checks." |
 | DreamCoder 2021 | Learns reusable DSL abstractions and neural search priors. | Motivate library learning over certified hypothesis templates. |
-| Hypothesis Search 2024 | Explicit hypotheses compiled to Python and verified on examples. | Use as closest cognitive/hypothesis-layer relative. |
+| Hypothesis Search 2024 | Explicit hypotheses compiled to executable code and verified on examples. | Use as closest cognitive/hypothesis-layer relative. |
 | Chollet 2019 | Intelligence as skill-acquisition efficiency; ARC as few-shot broad generalization. | Keep priors and experience explicit; avoid score-only framing. |
 | ARC Prize 2024 | ARC SOTA is TTT/program-synthesis/search with compute budget sensitivity. | Honest context for the ARC diagnostic and evidence that compute-budget reporting is mandatory. |
 | Akyurek 2024/2025 | Test-time training plus transformations/voting drives strong ARC gains. | Optional substrate test: small per-instance prior/proposer adaptation under the same audit rules. |

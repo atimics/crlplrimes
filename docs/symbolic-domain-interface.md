@@ -27,7 +27,7 @@ cargo/handoff evidence share one ledger shape without forcing their domain
 payloads into one grammar.
 
 The protocol layer also has an operator-promotion row,
-`crlp.protocol.operator_promotion.v1`. `scripts/protocol_operator_promotion.py`
+`crlp.protocol.operator_promotion.v1`. `the retired protocol-operator promotion workflow`
 mines the ledger for residual families that recur across domains and emits
 operator priors such as temporal composition context, rejection-filter priors,
 support-gap bootstrap, and counterexample repair lanes. Those rows are not

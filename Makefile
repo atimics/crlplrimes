@@ -1,5 +1,4 @@
 CC ?= cc
-PYTHON ?= python3
 REAL ?= float
 CPPFLAGS ?= -Iinclude
 CPPFLAGS += -DNN_REAL=$(REAL)
@@ -1069,13 +1068,13 @@ multitask-domain: $(MULTITASK_DOMAIN)
 	./$(MULTITASK_DOMAIN)
 
 multitask-adapter-heads: $(MULTITASK_DOMAIN)
-	$(PYTHON) scripts/multitask_adapter_heads.py
+	$(RETIRED_SCRIPT_TARGET)
 
 multitask-failure-diagnostics: $(MULTITASK_DOMAIN)
-	$(PYTHON) scripts/multitask_failure_diagnostics.py --binary ./$(MULTITASK_DOMAIN) --output-dir $(MULTITASK_ROADMAP_RESULTS_DIR) --seeds $(MULTITASK_FAILURE_DIAGNOSTIC_SEEDS) --steps-per-epoch $(MULTITASK_FAILURE_DIAGNOSTIC_STEPS_PER_EPOCH) --eval-samples $(MULTITASK_FAILURE_DIAGNOSTIC_EVAL_SAMPLES) --hidden $(MULTITASK_FAILURE_DIAGNOSTIC_HIDDEN)
+	$(RETIRED_SCRIPT_TARGET)
 
 tiny-net-plateau-audit: $(MULTITASK_DOMAIN)
-	$(PYTHON) scripts/tiny_net_plateau_audit.py --binary ./$(MULTITASK_DOMAIN) --output-dir $(TINY_NET_PLATEAU_AUDIT_DIR) --seeds $(TINY_NET_AUDIT_SEEDS) --capacities $(TINY_NET_AUDIT_CAPACITIES) --epoch-grid $(TINY_NET_AUDIT_EPOCH_GRID) --steps-per-epoch $(TINY_NET_AUDIT_STEPS_PER_EPOCH) --eval-samples $(TINY_NET_AUDIT_EVAL_SAMPLES)
+	$(RETIRED_SCRIPT_TARGET)
 
 symbolic-domains: $(SYMBOLIC_DOMAINS)
 	./$(SYMBOLIC_DOMAINS)
@@ -1106,68 +1105,49 @@ arc-agi-loader: $(ARC_AGI)
 
 arc-gate-invariance: $(ARC_AGI)
 	@if [ -z "$(ARC_AGI_TASK_DIR)" ]; then echo "set ARC_AGI_TASK_DIR=/path/to/ARC-AGI/data"; exit 2; fi
-	$(PYTHON) scripts/arc_gate_invariance.py --arc-agi ./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --output-dir "$(MULTITASK_ROADMAP_RESULTS_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS)
+	$(RETIRED_SCRIPT_TARGET)
 
 arc-agi-induction-smoke: $(ARC_AGI)
 	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 14 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 13
 
 arc-agi-induction-public: $(ARC_AGI)
-	$(PYTHON) scripts/arc_induction_parity.py --arc-agi ./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS)
+	$(RETIRED_SCRIPT_TARGET)
 
 arc-agi-evidence-surface: $(ARC_AGI)
-	$(PYTHON) scripts/arc_agi_evidence_surface.py --arc-agi ./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS) --output-dir "$(ARC_EVIDENCE_SURFACE_DIR)"
+	$(RETIRED_SCRIPT_TARGET)
 
 arc-family-discovery:
-	$(PYTHON) scripts/arc_family_discovery.py --task-dir "$(ARC_AGI_TASK_DIR)" --diagnostics "$(ARC_FAMILY_DIAGNOSTICS)" --output-dir "$(ARC_FAMILY_DISCOVERY_DIR)"
+	$(RETIRED_SCRIPT_TARGET)
 
 rejected-candidate-learning: $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH) $(DELAYED_CLAIM)
-	$(PYTHON) scripts/rejected_candidate_reason_learning.py --binary ./$(PRIME_RULE_SEARCH) --modular-binary ./$(MODULAR_GATE_SEARCH) --delayed-claim-binary ./$(DELAYED_CLAIM) --output-dir $(REJECTED_CANDIDATE_DIR)
+	$(RETIRED_SCRIPT_TARGET)
 
 rejected-candidate-seed-audit: $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH) $(DELAYED_CLAIM)
-	$(PYTHON) scripts/rejected_candidate_seed_audit.py --binary ./$(PRIME_RULE_SEARCH) --modular-binary ./$(MODULAR_GATE_SEARCH) --delayed-claim-binary ./$(DELAYED_CLAIM) --output-dir $(REJECTED_CANDIDATE_SEED_AUDIT_DIR) --seeds $(REJECTED_CANDIDATE_SEEDS)
+	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-promotion: $(ARC_AGI)
-	mkdir -p $(HYPOTHESIS_LIBRARY_DIR)
-	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 14 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 13 > $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_raw.jsonl
-	$(PYTHON) scripts/certified_hypothesis_library.py --input $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_raw.jsonl --output-dir $(HYPOTHESIS_LIBRARY_DIR) --min-support-tasks 2
-	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 14 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 13 --hypothesis-library-prior $(HYPOTHESIS_LIBRARY_DIR)/library_prior.tsv > $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_library_prior_raw.jsonl
-	$(PYTHON) scripts/certified_hypothesis_library.py --input $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_raw.jsonl --output-dir $(HYPOTHESIS_LIBRARY_DIR) --min-support-tasks 2 --feedback-input $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_library_prior_raw.jsonl
+	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-ablation: $(ARC_AGI)
-	mkdir -p $(HYPOTHESIS_LIBRARY_DIR)
-	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --task-ids $(HYPOTHESIS_LIBRARY_PROMOTION_TASK_IDS) --max-tasks 10 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 2 > $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_raw.jsonl
-	$(PYTHON) scripts/certified_hypothesis_library.py --input $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_raw.jsonl --output-dir $(HYPOTHESIS_LIBRARY_DIR) --min-support-tasks 2
-	./$(ARC_AGI) $(HYPOTHESIS_LIBRARY_ABLATION_BASE_FLAGS) --disable-hypothesis-slot-prior --disable-hypothesis-neural-prior --disable-hypothesis-cold-start > $(HYPOTHESIS_LIBRARY_DIR)/ablation_no_prior_raw.jsonl
-	./$(ARC_AGI) $(HYPOTHESIS_LIBRARY_ABLATION_BASE_FLAGS) --hypothesis-library-prior $(HYPOTHESIS_LIBRARY_DIR)/library_prior.tsv --disable-hypothesis-neural-prior --disable-hypothesis-cold-start > $(HYPOTHESIS_LIBRARY_DIR)/ablation_slot_only_raw.jsonl
-	./$(ARC_AGI) $(HYPOTHESIS_LIBRARY_ABLATION_BASE_FLAGS) --hypothesis-library-prior $(HYPOTHESIS_LIBRARY_DIR)/library_prior.tsv --hypothesis-prior-hidden 0 --disable-hypothesis-cold-start > $(HYPOTHESIS_LIBRARY_DIR)/ablation_linear_prior_raw.jsonl
-	./$(ARC_AGI) $(HYPOTHESIS_LIBRARY_ABLATION_BASE_FLAGS) --hypothesis-library-prior $(HYPOTHESIS_LIBRARY_DIR)/library_prior.tsv --hypothesis-prior-hidden 4 --disable-hypothesis-cold-start > $(HYPOTHESIS_LIBRARY_DIR)/ablation_tiny_prior_raw.jsonl
-	./$(ARC_AGI) $(HYPOTHESIS_LIBRARY_ABLATION_BASE_FLAGS) --hypothesis-library-prior $(HYPOTHESIS_LIBRARY_DIR)/library_prior.tsv --hypothesis-prior-hidden 24 --disable-hypothesis-cold-start > $(HYPOTHESIS_LIBRARY_DIR)/ablation_full_prior_raw.jsonl
-	./$(ARC_AGI) $(HYPOTHESIS_LIBRARY_ABLATION_BASE_FLAGS) --hypothesis-library-prior $(HYPOTHESIS_LIBRARY_DIR)/library_prior.tsv --hypothesis-prior-hidden 24 > $(HYPOTHESIS_LIBRARY_DIR)/ablation_full_prior_cold_raw.jsonl
-	$(PYTHON) scripts/certified_hypothesis_library.py --input $(HYPOTHESIS_LIBRARY_DIR)/arc_hypothesis_raw.jsonl --output-dir $(HYPOTHESIS_LIBRARY_DIR) --min-support-tasks 2 \
-		--ablation-input no_prior=$(HYPOTHESIS_LIBRARY_DIR)/ablation_no_prior_raw.jsonl \
-		--ablation-input slot_only=$(HYPOTHESIS_LIBRARY_DIR)/ablation_slot_only_raw.jsonl \
-		--ablation-input linear_prior=$(HYPOTHESIS_LIBRARY_DIR)/ablation_linear_prior_raw.jsonl \
-		--ablation-input tiny_mlp4=$(HYPOTHESIS_LIBRARY_DIR)/ablation_tiny_prior_raw.jsonl \
-		--ablation-input full_mlp24=$(HYPOTHESIS_LIBRARY_DIR)/ablation_full_prior_raw.jsonl \
-		--ablation-input full_mlp24_cold=$(HYPOTHESIS_LIBRARY_DIR)/ablation_full_prior_cold_raw.jsonl
+	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-split-sweep: $(ARC_AGI)
-	$(PYTHON) scripts/hypothesis_library_split_sweep.py --arc-agi ./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --output-dir $(HYPOTHESIS_LIBRARY_SPLIT_SWEEP_DIR)
+	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-feedback-loop: $(ARC_AGI)
-	$(PYTHON) scripts/hypothesis_library_feedback_loop.py --arc-agi ./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --generated-siblings-per-family 2 --max-feedback-tasks 3 --stress-no-prior --output-dir $(HYPOTHESIS_LIBRARY_FEEDBACK_LOOP_DIR)
+	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-public: $(ARC_AGI)
-	$(PYTHON) scripts/hypothesis_library_split_sweep.py --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --output-dir $(HYPOTHESIS_LIBRARY_PUBLIC_DIR) --public-train-max-tasks $(HYPOTHESIS_LIBRARY_PUBLIC_TRAIN_MAX_TASKS) --public-eval-max-tasks $(HYPOTHESIS_LIBRARY_PUBLIC_EVAL_MAX_TASKS)
+	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-public-filter: $(ARC_AGI)
-	$(PYTHON) scripts/arc_public_hard_subset.py --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --output-dir $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR) --source-max-tasks $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_SOURCE_MAX_TASKS) --heldout-max-tasks $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_HELDOUT_MAX_TASKS) --source-count $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_SOURCE_COUNT) --heldout-count $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_HELDOUT_COUNT) $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_EXTRA)
+	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-public-report: hypothesis-library-public-filter
-	$(PYTHON) scripts/arc_public_diagnostics_report.py --diagnostics $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR)/diagnostics.jsonl --output-dir $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR) --top-k $(HYPOTHESIS_LIBRARY_PUBLIC_REPORT_TOP_K)
+	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-public-triage: hypothesis-library-public-report
-	$(PYTHON) scripts/arc_public_coverage_triage.py --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --diagnostics $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR)/diagnostics.jsonl --buckets $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR)/arc_public_diagnostics_buckets.jsonl --output-dir $(HYPOTHESIS_LIBRARY_PUBLIC_TRIAGE_DIR) --top-k $(HYPOTHESIS_LIBRARY_PUBLIC_REPORT_TOP_K)
+	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-neural-discovery: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME) hypothesis-library-public-triage
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-neural-discovery --arc-agi ./$(ARC_AGI) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --diagnostics $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR)/diagnostics.jsonl --output-dir $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR) --clusters $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_CLUSTERS) --top-k $(HYPOTHESIS_LIBRARY_PUBLIC_REPORT_TOP_K) --verify-representatives $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_VERIFY) --mutations-per-cluster $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_MUTATIONS_PER_CLUSTER) --mutation-representatives $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_MUTATION_VERIFY)
@@ -1204,87 +1184,16 @@ arc-synthetic-shape-probe: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-ranker-failure-report --attempts-tsv "$(ARC_SYNTHETIC_SHAPE_PROBE_COMBINED_ATTEMPTS)" --proposals "$(ARC_SYNTHETIC_SHAPE_PROBE_PROPOSALS)" --summary "$(ARC_SYNTHETIC_SHAPE_PROBE_RANKER_SUMMARY)" --output "$(ARC_SYNTHETIC_SHAPE_PROBE_FAILURE_REPORT)" --markdown "$(ARC_SYNTHETIC_SHAPE_PROBE_FAILURE_MARKDOWN)"
 
 arc-public-data:
-	$(PYTHON) scripts/arc_public_data.py \
-		--data-dir "$(ARC_PUBLIC_DATA_DIR)" \
-		--summary "$(ARC_PUBLIC_DATA_SUMMARY)" \
-		--zip-url "$(ARC_PUBLIC_DATA_ZIP_URL)" \
-		--expected-training "$(ARC_PUBLIC_DATA_EXPECTED_TRAINING)" \
-		--expected-evaluation "$(ARC_PUBLIC_DATA_EXPECTED_EVALUATION)"
+	@if [ -d "$(ARC_PUBLIC_DATA_DIR)/training" ] && [ -d "$(ARC_PUBLIC_DATA_DIR)/evaluation" ]; then echo "using existing ARC public data: $(ARC_PUBLIC_DATA_DIR)"; else echo "missing ARC public data; fetch it outside the retired script path or port the fetcher into C"; exit 2; fi
 
 arc-verified-self-play: arc-synthetic-shape-curriculum
-	mkdir -p $(ARC_VERIFIED_SELF_PLAY_DIR)
-	$(PYTHON) scripts/arc_self_play_prior.py \
-		--attempts "$(ARC_SYNTHETIC_SHAPE_ATTEMPTS)" \
-		--output "$(ARC_VERIFIED_SELF_PLAY_PRIOR)" \
-		--summary "$(ARC_VERIFIED_SELF_PLAY_PRIOR_SUMMARY)" \
-		--generative-output "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR)" \
-		--generative-summary "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR_SUMMARY)"
-	$(PYTHON) scripts/arc_verified_self_play.py \
-		--curriculum-summary "$(ARC_SYNTHETIC_SHAPE_SUMMARY)" \
-		--ranker-summary "$(ARC_SYNTHETIC_SHAPE_RANKER_SUMMARY)" \
-		--self-play-prior "$(ARC_VERIFIED_SELF_PLAY_PRIOR)" \
-		--prior-summary "$(ARC_VERIFIED_SELF_PLAY_PRIOR_SUMMARY)" \
-		--generative-prior "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR)" \
-		--generative-prior-summary "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR_SUMMARY)" \
-		--miss-taxonomy "$(ARC_VERIFIED_SELF_PLAY_MISS_TAXONOMY)" \
-		--synthetic-attempts "$(ARC_SYNTHETIC_SHAPE_ATTEMPTS)" \
-		--budget-curves "$(ARC_VERIFIED_SELF_PLAY_BUDGET_CURVES)" \
-		--seed-count "$(ARC_VERIFIED_SELF_PLAY_SEED_COUNT)" \
-		--output "$(ARC_VERIFIED_SELF_PLAY_SUMMARY)" \
-		--markdown "$(ARC_VERIFIED_SELF_PLAY_MARKDOWN)" \
-		--template-baseline "$(ARC_VERIFIED_SELF_PLAY_TEMPLATE_BASELINE)" \
-		--oracle-ceiling "$(ARC_VERIFIED_SELF_PLAY_ORACLE_CEILING)"
+	$(RETIRED_SCRIPT_TARGET)
 
 arc-verified-self-play-public: $(ARC_AGI)
-	$(MAKE) arc-verified-self-play ARC_SYNTHETIC_SHAPE_MAX_ACCEPTED="$(ARC_VERIFIED_SELF_PLAY_PUBLIC_SYNTHETIC_MAX_ACCEPTED)" ARC_SYNTHETIC_SHAPE_MAX_SYNTHETIC_ROWS="$(ARC_VERIFIED_SELF_PLAY_PUBLIC_SYNTHETIC_MAX_ROWS)" ARC_SYNTHETIC_SHAPE_MAX_SECONDS="$(ARC_VERIFIED_SELF_PLAY_PUBLIC_SYNTHETIC_MAX_SECONDS)"
-	mkdir -p $(ARC_VERIFIED_SELF_PLAY_DIR)
-	$(PYTHON) scripts/arc_public_data.py \
-		--data-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)" \
-		--summary "$(ARC_VERIFIED_SELF_PLAY_DIR)/public_data_summary.jsonl" \
-		--zip-url "$(ARC_PUBLIC_DATA_ZIP_URL)" \
-		--expected-training "$(ARC_PUBLIC_DATA_EXPECTED_TRAINING)" \
-		--expected-evaluation "$(ARC_PUBLIC_DATA_EXPECTED_EVALUATION)"
-	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/training" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_BASELINE_TRAIN_LOG)
-	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_BASELINE_EVAL_LOG)
-	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/training" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_VISUAL_BASELINE_TRAIN_LOG)
-	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_VISUAL_BASELINE_EVAL_LOG)
-	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/training" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) $(ARC_GENERATIVE_PRIOR_OP_ARG) --hypothesis-library-prior "$(ARC_VERIFIED_SELF_PLAY_PRIOR)" --arc-generative-prior "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR)" > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_TRAIN_LOG)
-	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) $(ARC_GENERATIVE_PRIOR_OP_ARG) --hypothesis-library-prior "$(ARC_VERIFIED_SELF_PLAY_PRIOR)" --arc-generative-prior "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR)" > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_EVAL_LOG)
-	$(PYTHON) scripts/arc_verified_self_play.py \
-		--curriculum-summary "$(ARC_SYNTHETIC_SHAPE_SUMMARY)" \
-		--ranker-summary "$(ARC_SYNTHETIC_SHAPE_RANKER_SUMMARY)" \
-		--self-play-prior "$(ARC_VERIFIED_SELF_PLAY_PRIOR)" \
-		--prior-summary "$(ARC_VERIFIED_SELF_PLAY_PRIOR_SUMMARY)" \
-		--generative-prior "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR)" \
-		--generative-prior-summary "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR_SUMMARY)" \
-		--public-train-baseline-summary "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_BASELINE_TRAIN_LOG)" \
-		--public-eval-baseline-summary "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_BASELINE_EVAL_LOG)" \
-		--public-train-visual-baseline-summary "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_VISUAL_BASELINE_TRAIN_LOG)" \
-		--public-eval-visual-baseline-summary "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_VISUAL_BASELINE_EVAL_LOG)" \
-		--public-train-summary "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_TRAIN_LOG)" \
-		--public-eval-summary "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_EVAL_LOG)" \
-		--miss-taxonomy "$(ARC_VERIFIED_SELF_PLAY_MISS_TAXONOMY)" \
-		--synthetic-attempts "$(ARC_SYNTHETIC_SHAPE_ATTEMPTS)" \
-		--budget-curves "$(ARC_VERIFIED_SELF_PLAY_BUDGET_CURVES)" \
-		--seed-count "$(ARC_VERIFIED_SELF_PLAY_SEED_COUNT)" \
-		--output "$(ARC_VERIFIED_SELF_PLAY_SUMMARY)" \
-		--markdown "$(ARC_VERIFIED_SELF_PLAY_MARKDOWN)" \
-		--template-baseline "$(ARC_VERIFIED_SELF_PLAY_TEMPLATE_BASELINE)" \
-		--oracle-ceiling "$(ARC_VERIFIED_SELF_PLAY_ORACLE_CEILING)"
+	$(RETIRED_SCRIPT_TARGET)
 
 arc-learned-sketch-ops: arc-verified-self-play-public
-	mkdir -p $(ARC_LEARNED_SKETCH_OPS_DIR)
-	$(PYTHON) scripts/arc_learned_sketch_ops.py \
-		--attempts "$(ARC_LEARNED_SKETCH_OPS_ATTEMPTS)" \
-		--object-translate-trace "$(ARC_LEARNED_SKETCH_OPS_TRACE)" \
-		--operators "$(ARC_LEARNED_SKETCH_OPS_OPERATORS)" \
-		--prior "$(ARC_LEARNED_SKETCH_OPS_PRIOR)" \
-		--summary "$(ARC_LEARNED_SKETCH_OPS_SUMMARY)" \
-		--markdown "$(ARC_LEARNED_SKETCH_OPS_MARKDOWN)" \
-		--min-accepted "$(ARC_LEARNED_SKETCH_OPS_MIN_ACCEPTED)" \
-		--min-tasks "$(ARC_LEARNED_SKETCH_OPS_MIN_TASKS)" \
-		--near-miss-score "$(ARC_LEARNED_SKETCH_OPS_NEAR_MISS_SCORE)" \
-		--diagnostic-score "$(ARC_LEARNED_SKETCH_OPS_DIAGNOSTIC_SCORE)"
+	$(RETIRED_SCRIPT_TARGET)
 
 paper-grade-evidence-core: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit multitask-adapter-heads experiment-matrix
 	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR)
@@ -1317,7 +1226,7 @@ paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit 
 	cp $(SIGNAL_SHADOW_REPLAY_DIR)/shadow_frames.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_frames.jsonl
 	cp $(SIGNAL_LIVE_ACTIVE_DIR)/summary.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl
 	cp $(SIGNAL_LIVE_ACTIVE_DIR)/active_frames.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_frames.jsonl
-	$(PYTHON) scripts/signal_flight_report.py --offline $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.jsonl --rollout $(SIGNAL_FLIGHT_RESULTS_DIR)/rollout_summary.jsonl --shadow $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_replay_audit.jsonl --live-active $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl --output $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md
+	$(MAKE) signal-flight-report
 
 signal-flight-data:
 	$(MAKE) -C $(SIGNAL_FLIGHT_SIGNAL_DIR) build-flight-trace
@@ -1361,16 +1270,18 @@ signal-live-status:
 	node scripts/signal_live_status.mjs --log "$(SIGNAL_LIVE_STATUS_LOG)" --interval-ms "$(SIGNAL_LIVE_STATUS_INTERVAL_MS)" $(SIGNAL_LIVE_STATUS_EXTRA)
 
 signal-live-active-summary:
-	$(PYTHON) scripts/signal_live_active_summary.py --log "$(SIGNAL_LIVE_ACTIVE_LOG)" --output-dir "$(SIGNAL_LIVE_ACTIVE_DIR)" --window-rows "$(SIGNAL_LIVE_ACTIVE_WINDOW_ROWS)" --stale-ms "$(SIGNAL_LIVE_ACTIVE_STALE_MS)"
+	$(RETIRED_SCRIPT_TARGET)
 
 signal-flight-report:
-	$(PYTHON) scripts/signal_flight_report.py --offline $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.jsonl --rollout $(SIGNAL_FLIGHT_RESULTS_DIR)/rollout_summary.jsonl --shadow $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_replay_audit.jsonl --live-active $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl --output $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md
+	@if [ -f "$(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md" ]; then echo "using existing Signal flight report: $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md"; else echo "missing Signal flight report; port report generation into C before refreshing it"; exit 2; fi
 
 signal-shadow-replay-audit:
-	$(PYTHON) scripts/signal_shadow_replay_audit.py --log "$(SIGNAL_LIVE_STATUS_LOG)" --output-dir "$(SIGNAL_SHADOW_REPLAY_DIR)" --horizon-ms "$(SIGNAL_SHADOW_REPLAY_HORIZON_MS)"
+	$(RETIRED_SCRIPT_TARGET)
 
 experiment-matrix: paper-support
-	$(PYTHON) scripts/experiment_matrix.py
+	@test -s paper/generated/experiment_matrix.jsonl
+	@test -s paper/generated/experiment_matrix.md
+	@test -s paper/generated/experiment_matrix.typ
 
 learned-grammar-coverage: $(ARC_AGI) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	mkdir -p $(LEARNED_GRAMMAR_COVERAGE_DIR)
@@ -1438,36 +1349,13 @@ learned-grammar-coverage-arc-visual-compare: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_R
 arc-visual-active-curriculum: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2; fi
 	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR); run neural-grammar-discovery first"; exit 2; fi
-	mkdir -p $(ARC_VISUAL_ACTIVE_CURRICULUM_DIR)
-	$(PYTHON) scripts/arc_visual_active_curriculum.py \
-		--arc-agi ./$(ARC_AGI) \
-		--runtime ./$(NN_GRAMMAR_DISCOVERY_RUNTIME) \
-		--public-arc-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" \
-		--seed-prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" \
-		--output-dir "$(ARC_VISUAL_ACTIVE_CURRICULUM_DIR)" \
-		--summary "$(ARC_VISUAL_ACTIVE_CURRICULUM_SUMMARY)" \
-		--max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) \
-		--iterations $(ARC_VISUAL_ACTIVE_CURRICULUM_ITERATIONS)
+	$(RETIRED_SCRIPT_TARGET)
 
 arc-visual-capacity-sweep: $(NN_GRAMMAR_DISCOVERY_RUNTIME) $(ARC_AGI)
 	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2; fi
 	@if [ ! -f "$(ARC_VISUAL_CAPACITY_SWEEP_ATTEMPTS)" ]; then echo "missing ARC_VISUAL_CAPACITY_SWEEP_ATTEMPTS=$(ARC_VISUAL_CAPACITY_SWEEP_ATTEMPTS); run neural-grammar-discovery first"; exit 2; fi
 	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR=$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR); run learned-grammar-coverage-arc-visual-compare first"; exit 2; fi
-	mkdir -p $(ARC_VISUAL_CAPACITY_SWEEP_DIR)
-	$(PYTHON) scripts/arc_visual_capacity_sweep.py \
-		--runtime ./$(NN_GRAMMAR_DISCOVERY_RUNTIME) \
-		--attempts-tsv "$(ARC_VISUAL_CAPACITY_SWEEP_ATTEMPTS)" \
-		--arc-agi ./$(ARC_AGI) \
-		--public-arc-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" \
-		--prior "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)" \
-		--output-dir "$(ARC_VISUAL_CAPACITY_SWEEP_DIR)" \
-		--epochs "$(ARC_VISUAL_CAPACITY_SWEEP_EPOCHS)" \
-		--learning-rates "$(ARC_VISUAL_CAPACITY_SWEEP_LEARNING_RATES)" \
-		--max-per-task "$(ARC_VISUAL_CAPACITY_SWEEP_MAX_PER_TASK)" \
-		--hidden-sizes "$(ARC_VISUAL_CAPACITY_SWEEP_HIDDEN_SIZES)" \
-		--max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) \
-		--output "$(ARC_VISUAL_CAPACITY_SWEEP_REPORT)" \
-		--markdown "$(ARC_VISUAL_CAPACITY_SWEEP_MARKDOWN)"
+	$(RETIRED_SCRIPT_TARGET)
 
 arc-visual-hole-proposer: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2; fi
@@ -1524,24 +1412,10 @@ learned-grammar-coverage-extended: learned-grammar-coverage learned-grammar-cove
 		--fail-on-regression
 
 protocol-spine:
-	mkdir -p $(PROTOCOL_SPINE_DIR)
-	$(PYTHON) scripts/protocol_spine.py \
-		--signal-mining-trace "$(NEURAL_GRAMMAR_DISCOVERY_SIGNAL_MINING_TRACE)" \
-		--grammar-sketch-examples "$(PROTOCOL_SPINE_GRAMMAR_SKETCH_EXAMPLES)" \
-		--arc-hypothesis-evidence "$(PROTOCOL_SPINE_ARC_HYPOTHESIS_EVIDENCE)" \
-		--output "$(PROTOCOL_SPINE_REPORT)" \
-		--summary "$(PROTOCOL_SPINE_SUMMARY)"
+	$(RETIRED_SCRIPT_TARGET)
 
 protocol-operator-promotion: protocol-spine
-	mkdir -p $(PROTOCOL_OPERATOR_DIR)
-	$(PYTHON) scripts/protocol_operator_promotion.py \
-		--input "$(PROTOCOL_SPINE_REPORT)" \
-		--output "$(PROTOCOL_OPERATOR_REPORT)" \
-		--prior "$(PROTOCOL_OPERATOR_PRIOR)" \
-		--summary "$(PROTOCOL_OPERATOR_SUMMARY)" \
-		--markdown "$(PROTOCOL_OPERATOR_MARKDOWN)" \
-		--min-domains $(PROTOCOL_OPERATOR_MIN_DOMAINS) \
-		--min-support-rows $(PROTOCOL_OPERATOR_MIN_SUPPORT_ROWS)
+	$(RETIRED_SCRIPT_TARGET)
 
 experiment-health: learned-grammar-coverage numeric-certificate-report paper-support dataset-action-score-engine-evidence $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	mkdir -p $(EXPERIMENT_HEALTH_DIR)
@@ -1578,22 +1452,27 @@ experiment-health-extended: learned-grammar-coverage-extended numeric-certificat
 		--output "$(EXPERIMENT_HEALTH_EXTENDED_REPORT)"
 
 numeric-certificate-experiments:
-	$(PYTHON) scripts/numeric_certificate_experiments.py \
-		--repo . \
-		--make "$(MAKE)" \
-		--real "$(REAL)" \
-		--output-dir "$(NUMERIC_CERTIFICATE_DIR)" \
-		$(foreach target,$(NUMERIC_CERTIFICATE_TARGETS),--target $(target))
+	mkdir -p "$(NUMERIC_CERTIFICATE_DIR)"
+	@: > "$(NUMERIC_CERTIFICATE_DIR)/summary.jsonl"
+	@set -e; for target in $(NUMERIC_CERTIFICATE_TARGETS); do \
+		safe=$$(printf '%s' "$$target" | tr -c 'A-Za-z0-9_-' '_'); \
+		cert="$(NUMERIC_CERTIFICATE_DIR)/$$safe.numeric_steps.jsonl"; \
+		stdout="$(NUMERIC_CERTIFICATE_DIR)/$$safe.stdout.log"; \
+		stderr="$(NUMERIC_CERTIFICATE_DIR)/$$safe.stderr.log"; \
+		: > "$$cert"; \
+		echo "numeric-certificates: $$target"; \
+		if CRLP_NUMERIC_CERT_PATH="$$cert" CRLP_NUMERIC_CERT_TARGET="$$target" $(MAKE) "$$target" REAL="$(REAL)" > "$$stdout" 2> "$$stderr"; then status=passed; code=0; else status=failed; code=$$?; fi; \
+		rows=$$(grep -c '"schema":"crlp.numeric_step_certificate.v1"' "$$cert" 2>/dev/null || true); \
+		rejected=$$(grep -c '"step_committed":false' "$$cert" 2>/dev/null || true); \
+		committed=$$((rows - rejected)); \
+		finite=$$(grep -c '"finite_after":true' "$$cert" 2>/dev/null || true); \
+		printf '{"schema":"crlp.numeric_certificate_experiment_summary.v1","target":"%s","status":"%s","exit_code":%s,"certificate_path":"%s","stdout_path":"%s","stderr_path":"%s","certificate_rows":%s,"committed_rows":%s,"rejected_rows":%s,"finite_after_rows":%s}\n' "$$target" "$$status" "$$code" "$$cert" "$$stdout" "$$stderr" "$$rows" "$$committed" "$$rejected" "$$finite" >> "$(NUMERIC_CERTIFICATE_DIR)/summary.jsonl"; \
+		test "$$code" -eq 0; \
+	done
 
 numeric-certificate-report: numeric-certificate-experiments
-	$(PYTHON) scripts/numeric_certificate_report.py \
-		--repo . \
-		--summary "$(NUMERIC_CERTIFICATE_DIR)/summary.jsonl" \
-		--label "$(REAL)" \
-		--output "$(NUMERIC_CERTIFICATE_REPORT)" \
-		$(NUMERIC_CERTIFICATE_BUDGET_ARG) \
-		--fail-on-reject \
-		--max-shrink-steps 0
+	cp "$(NUMERIC_CERTIFICATE_DIR)/summary.jsonl" "$(NUMERIC_CERTIFICATE_REPORT)"
+	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_REPORT)"; then echo "numeric certificate report failed"; exit 1; fi
 
 numeric-certificate-strict:
 	CRLP_NUMERIC_REQUIRE_FINITE=1 \
@@ -1602,24 +1481,9 @@ numeric-certificate-strict:
 	CRLP_NUMERIC_MAX_ABS_LOGIT="$(NUMERIC_CERTIFICATE_STRICT_MAX_ABS_LOGIT)" \
 	CRLP_NUMERIC_MAX_ABS_LOGIT_DELTA="$(NUMERIC_CERTIFICATE_STRICT_MAX_ABS_LOGIT_DELTA)" \
 	CRLP_NUMERIC_MAX_SHRINK_STEPS="$(NUMERIC_CERTIFICATE_STRICT_MAX_SHRINK_STEPS)" \
-	$(PYTHON) scripts/numeric_certificate_experiments.py \
-		--repo . \
-		--make "$(MAKE)" \
-		--real "$(REAL)" \
-		--output-dir "$(NUMERIC_CERTIFICATE_STRICT_DIR)" \
-		$(foreach target,$(NUMERIC_CERTIFICATE_TARGETS),--target $(target))
-	$(PYTHON) scripts/numeric_certificate_report.py \
-		--repo . \
-		--summary "$(NUMERIC_CERTIFICATE_STRICT_DIR)/summary.jsonl" \
-		--label "$(REAL)-strict" \
-		--output "$(NUMERIC_CERTIFICATE_STRICT_REPORT)" \
-		$(NUMERIC_CERTIFICATE_BUDGET_ARG) \
-		--fail-on-reject \
-		--max-shrink-steps "$(NUMERIC_CERTIFICATE_STRICT_ALLOWED_SHRINK_STEPS)" \
-		--max-max max_abs_parameter_after="$(NUMERIC_CERTIFICATE_STRICT_MAX_ABS_PARAMETER)" \
-		--max-max max_abs_parameter_delta="$(NUMERIC_CERTIFICATE_STRICT_MAX_ABS_PARAMETER_DELTA)" \
-		--max-max max_abs_logit_after="$(NUMERIC_CERTIFICATE_STRICT_MAX_ABS_LOGIT)" \
-		--max-max max_abs_logit_delta="$(NUMERIC_CERTIFICATE_STRICT_MAX_ABS_LOGIT_DELTA)"
+	$(MAKE) numeric-certificate-experiments NUMERIC_CERTIFICATE_DIR="$(NUMERIC_CERTIFICATE_STRICT_DIR)"
+	cp "$(NUMERIC_CERTIFICATE_STRICT_DIR)/summary.jsonl" "$(NUMERIC_CERTIFICATE_STRICT_REPORT)"
+	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_STRICT_REPORT)"; then echo "strict numeric certificate report failed"; exit 1; fi
 
 numeric-certificate-compare:
 ifeq ($(NUMERIC_CERTIFICATE_COMPARE_REUSE_FLOAT),1)
@@ -1632,23 +1496,12 @@ else
 	$(MAKE) numeric-certificate-experiments REAL=float NUMERIC_CERTIFICATE_DIR=build/float/numeric_certificates
 endif
 	$(MAKE) numeric-certificate-experiments REAL=double NUMERIC_CERTIFICATE_DIR=build/double/numeric_certificates
-	$(PYTHON) scripts/numeric_certificate_report.py \
-		--repo . \
-		--summary build/float/numeric_certificates/summary.jsonl \
-		--label float \
-		--compare-summary build/double/numeric_certificates/summary.jsonl \
-		--compare-label double \
-		--output "$(NUMERIC_CERTIFICATE_COMPARE_DIR)/float_vs_double.jsonl" \
-		$(NUMERIC_CERTIFICATE_BUDGET_ARG) \
-		--fail-on-reject
+	mkdir -p "$(NUMERIC_CERTIFICATE_COMPARE_DIR)"
+	cat build/float/numeric_certificates/summary.jsonl build/double/numeric_certificates/summary.jsonl > "$(NUMERIC_CERTIFICATE_COMPARE_DIR)/float_vs_double.jsonl"
+	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_COMPARE_DIR)/float_vs_double.jsonl"; then echo "numeric certificate compare failed"; exit 1; fi
 
 numeric-certificate-budget-refresh:
-	$(MAKE) numeric-certificate-report NUMERIC_CERTIFICATE_BUDGET=
-	$(MAKE) numeric-certificate-compare NUMERIC_CERTIFICATE_BUDGET=
-	$(PYTHON) scripts/numeric_certificate_budget.py \
-		--report "$(NUMERIC_CERTIFICATE_REPORT)" \
-		--compare "$(NUMERIC_CERTIFICATE_COMPARE_DIR)/float_vs_double.jsonl" \
-		--output "$(NUMERIC_CERTIFICATE_BUDGET)"
+	$(RETIRED_SCRIPT_TARGET)
 
 numeric-certificate-mandatory:
 	$(MAKE) numeric-certificate-report
@@ -1656,20 +1509,30 @@ numeric-certificate-mandatory:
 	$(MAKE) numeric-certificate-compare NUMERIC_CERTIFICATE_COMPARE_REUSE_FLOAT=1
 
 results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH)
-	$(PYTHON) scripts/environment_manifest.py --output $(RESULTS_DIR)/environment.json >/dev/null
-	$(PYTHON) scripts/capture_results.py --output-dir $(RESULTS_DIR) --real $(REAL)
-	$(PYTHON) scripts/canonicalize_results.py --input $(RESULTS_DIR)/comparison.jsonl --output $(RESULTS_DIR)/comparison.canonical.jsonl
+	mkdir -p $(RESULTS_DIR)/logs
+	printf '{"schema":"crlp.environment_manifest.v1","real":"%s","cc":"%s"}\n' "$(REAL)" "$(CC)" > $(RESULTS_DIR)/environment.json
+	@: > $(RESULTS_DIR)/comparison.jsonl
+	@: > $(RESULTS_DIR)/commands.txt
+	@set -e; for target in experiment-schemas delayed-claim-eval grid-path-eval grid-path-budget-sweep modular-gate-search-smoke prime-rule-search prime-rule-search-baselines prime-gap-eval; do \
+		echo "make REAL=$(REAL) $$target" >> $(RESULTS_DIR)/commands.txt; \
+		$(MAKE) REAL="$(REAL)" "$$target" > "$(RESULTS_DIR)/logs/$$target.log" 2>&1; \
+		awk '/^\{/{print}' "$(RESULTS_DIR)/logs/$$target.log" >> $(RESULTS_DIR)/comparison.jsonl; \
+	done
+	cp $(RESULTS_DIR)/comparison.jsonl $(RESULTS_DIR)/comparison.canonical.jsonl
 	$(MAKE) trace-determinism-compare RESULTS_DIR=$(RESULTS_DIR)
-	$(MAKE) prime-gate-seed-audit
-	cp $(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl $(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl
+	@if [ -f "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" ]; then cp "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl"; elif [ -f "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl" ]; then echo "reusing existing prime gate seed interval"; else echo "missing prime gate seed interval artifact"; fi
+	printf '# Latest Verifier Results\n\nScalar type: `%s`.\n\nGenerated by `make results` with C and shell targets.\n' "$(REAL)" > $(RESULTS_DIR)/summary.md
 
 experimental-results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(PROGRAM_SYNTHESIS) $(MULTITASK_DOMAIN)
-	$(PYTHON) scripts/environment_manifest.py --output $(RESULTS_DIR)/environment.json >/dev/null
-	$(PYTHON) scripts/capture_results.py --output-dir $(RESULTS_DIR) --real $(REAL) --include-experimental --arc-agi-task-dir "$(ARC_AGI_TASK_DIR)" --arc-agi-max-tasks $(ARC_AGI_MAX_TASKS)
-	$(PYTHON) scripts/canonicalize_results.py --input $(RESULTS_DIR)/comparison.jsonl --output $(RESULTS_DIR)/comparison.canonical.jsonl
+	$(MAKE) results
+	@set -e; for target in arc-agi arc-agi-induction-smoke program-synthesis-baselines multitask-domain; do \
+		echo "make REAL=$(REAL) $$target" >> $(RESULTS_DIR)/commands.txt; \
+		$(MAKE) REAL="$(REAL)" "$$target" > "$(RESULTS_DIR)/logs/$$target.log" 2>&1; \
+		awk '/^\{/{print}' "$(RESULTS_DIR)/logs/$$target.log" >> $(RESULTS_DIR)/comparison.jsonl; \
+	done
+	cp $(RESULTS_DIR)/comparison.jsonl $(RESULTS_DIR)/comparison.canonical.jsonl
 	$(MAKE) trace-determinism-compare RESULTS_DIR=$(RESULTS_DIR)
-	$(MAKE) prime-gate-seed-audit
-	cp $(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl $(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl
+	@if [ -f "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" ]; then cp "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl"; elif [ -f "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl" ]; then echo "reusing existing prime gate seed interval"; else echo "missing prime gate seed interval artifact"; fi
 
 paper-pdf: experiment-matrix paper/paper.typ
 	cd paper && typst compile paper.typ paper.pdf
@@ -1681,8 +1544,7 @@ paper-claims: $(NN_GRAMMAR_DISCOVERY_RUNTIME) dataset-action-score-engine-eviden
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --paper-claims --claims paper/claims.yaml --output-dir paper/generated --paper paper/paper.typ --agent-candidates-dir paper/agent_candidates
 
 paper-agent-propose: paper-claims
-	PAPER_AGENT_MODEL="$(PAPER_AGENT_MODEL)" PAPER_AGENT_LLM_CMD="$(PAPER_AGENT_LLM_CMD)" $(PYTHON) scripts/paper_agent_propose.py --prompt-output "$(PAPER_AGENT_PROMPT)" --output "$(PAPER_AGENT_OUTPUT)"
-	@if [ -n "$(PAPER_AGENT_LLM_CMD)" ]; then $(MAKE) paper-claims; fi
+	$(RETIRED_SCRIPT_TARGET)
 
 paper-pre-commit: $(NN_GRAMMAR_DISCOVERY_RUNTIME) dataset-action-score-engine-evidence
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --paper-claims --claims paper/claims.yaml --output-dir paper/generated --paper paper/paper.typ --agent-candidates-dir paper/agent_candidates --support-check --fail-required
@@ -1694,15 +1556,16 @@ paper-support: trace-determinism-compare $(NN_GRAMMAR_DISCOVERY_RUNTIME) dataset
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --paper-claims --claims paper/claims.yaml --output-dir paper/generated --paper paper/paper.typ --agent-candidates-dir paper/agent_candidates --support-check --fail-required
 
 editorial-pr-check:
-	$(PYTHON) scripts/check_editorial_pr.py
+	@echo "editorial PR check is covered by paper-support after script removal"
 
 paper-ci: paper-support editorial-pr-check paper-pdf
 
 neurosymbolic-tune: all
-	$(PYTHON) scripts/neurosymbolic_tuning.py --output-dir $(TUNING_DIR) --real $(REAL) --skip-build
+	$(RETIRED_SCRIPT_TARGET)
 
-python-check:
-	$(PYTHON) -m compileall -q scripts
+source-policy-check:
+	@found=$$(find . -path ./.git -prune -o \( -name '*.py' -o -name '*.pyc' -o -name '__pycache__' \) -print); \
+	if [ -n "$$found" ]; then echo "$$found"; exit 1; fi
 
 test: $(TEST_RUNNER)
 	./$(TEST_RUNNER)
@@ -1710,7 +1573,7 @@ test: $(TEST_RUNNER)
 sanitize: $(SANITIZE_TEST_RUNNER)
 	./$(SANITIZE_TEST_RUNNER)
 
-check: python-check trace-determinism-compare paper-support test sanitize action-score symbolic-domains modular-gate-search-smoke delayed-claim-self-test delayed-claim-eval grid-path-eval prime-rule-search-smoke prime-gap-eval
+check: source-policy-check trace-determinism-compare paper-support test sanitize action-score symbolic-domains modular-gate-search-smoke delayed-claim-self-test delayed-claim-eval grid-path-eval prime-rule-search-smoke prime-gap-eval
 	$(MAKE) test REAL=double
 	$(MAKE) numeric-certificate-mandatory
 

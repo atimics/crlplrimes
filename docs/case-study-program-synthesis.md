@@ -234,9 +234,9 @@ comparison is necessarily one-sided (we report the discipline; they did not).
 This case study is implementable entirely within this repo, no external
 runtime dependencies. The DSL interpreter is ≈ 500 lines of C. The DreamCoder
 list-routines dataset is a small JSON file in their public release. Phase 4
-("compare to DreamCoder / Stitch") requires running their Python pipelines
-to obtain published-protocol numbers, but that comparison is in a separate
-evaluation environment; this repo only needs the C-side results.
+("compare to DreamCoder / Stitch") requires running their external reference
+pipelines to obtain published-protocol numbers, but that comparison is in a
+separate evaluation environment; this repo only needs the C-side results.
 
 The DSL is deliberately small. A larger DSL (lambda calculus with let-
 polymorphism, recursion combinators, recursive types) would make the case

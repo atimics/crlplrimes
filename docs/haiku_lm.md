@@ -66,20 +66,17 @@ vocabulary is written to `data/wordlists/haiku_synthetic_vocab.txt`.
 lexicon gate so samples stay inside the corpus grammar. This is training data
 for scale testing, not a human-authored poetry corpus.
 
-`make haiku-corpus-hf` cleans user-provided Hugging Face haiku dumps from
-`data/haiku_open/raw/huggingface` into `data/haiku_open/clean/hf_haiku_clean.txt`.
-It supports parquet, JSON/JSONL, CSV/TSV, and plain text inputs. The cleaner
-normalizes to ASCII lowercase, requires exactly three nonempty lines, enforces
-the C verifier's line length and syllable-proxy bounds, deduplicates stanzas,
-writes `data/haiku_open/clean/hf_vocab.txt`, and records source hashes and
-reject counts in `data/haiku_open/clean/hf_manifest.json`. Parquet input
-requires Python with `pandas` and a parquet engine such as `pyarrow`, but the
-Makefile reuses existing `data/haiku_open/clean/*` artifacts when present so
-normal C experiment runs do not depend on parquet tooling.
-`make haiku-corpus-hf-dictionary` runs the same cleaner with the
-Scrabble-like list as a hard corpus filter and writes separate
-`hf_dictionary_*` artifacts. The word-action model still derives its active
-vocabulary and adjacency graph from the accepted dataset.
+`make haiku-corpus-hf` reuses checked-in or externally prepared Hugging Face
+haiku-clean artifacts under `data/haiku_open/clean/`. The former in-repo cleaner
+normalized to ASCII lowercase, required exactly three nonempty lines, enforced
+the C verifier's line length and syllable-proxy bounds, deduplicated stanzas,
+wrote `data/haiku_open/clean/hf_vocab.txt`, and recorded source hashes and
+reject counts in `data/haiku_open/clean/hf_manifest.json`; refreshing those
+artifacts now requires porting that import path into C or preparing the corpus
+outside the repo. `make haiku-corpus-hf-dictionary` follows the same reuse-only
+policy for the Scrabble-like hard-filtered artifacts. The word-action model
+still derives its active vocabulary and adjacency graph from the accepted
+dataset.
 
 The local raw dataset pool is not exhausted. The HF mirror is imported into the
 current English ASCII corpora. `data/haiku_open/source_manifest.tsv` also lists

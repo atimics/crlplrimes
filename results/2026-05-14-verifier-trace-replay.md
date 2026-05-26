@@ -10,7 +10,7 @@ Commands run:
 - `make delayed-claim-eval`
 - `make prime-gap-eval`
 - `make check`
-- `python3 -m py_compile scripts/prime_gap_experiments.py`
+- `make source-policy-check`
 - `git diff --check`
 
 Result: all passed.

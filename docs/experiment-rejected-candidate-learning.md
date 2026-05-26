@@ -1,6 +1,6 @@
 # Experiment Proposal: Rejected-Candidate Learning From Certificate Reason Codes
 
-Status: implemented as `scripts/rejected_candidate_reason_learning.py`.
+Status: implemented as `the retired rejected-candidate workflow`.
 
 ## Purpose
 
@@ -57,10 +57,10 @@ The current rankers are:
   train rows and ranks predicted safe rows before utility, because unsafe
   threshold rows are the observed tight-budget failure mode.
 
-The deterministic tiebreaker matters. The first implementation used Python's
-stable sort, which let `reason_prior` inherit the incoming trace order. Because
-the trace is already sorted by `model_score`, that made `reason_prior` and
-`reason_aware` look identical. The current script removes that hidden neural
+The deterministic tiebreaker matters. The first implementation used a stable
+sort, which let `reason_prior` inherit the incoming trace order. Because the
+trace is already sorted by `model_score`, that made `reason_prior` and
+`reason_aware` look identical. The retained evidence removes that hidden neural
 leak from the prior and records top-rule details with both reason and neural
 scores.
 

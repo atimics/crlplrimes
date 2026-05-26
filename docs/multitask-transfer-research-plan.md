@@ -44,7 +44,7 @@ ARC-loader questions.
 ### One-Seed Shared vs Single
 
 Command source: `make multitask-domain`, captured through
-`scripts/capture_results.py`.
+`the Makefile results capture target`.
 
 | Domain | Shared top-1 | Single top-1 | Shared NLL | Single NLL | Interpretation |
 | --- | ---: | ---: | ---: | ---: | --- |
@@ -58,7 +58,7 @@ Command source: `make multitask-domain`, captured through
 Command:
 
 ```sh
-python3 scripts/multitask_ablation_matrix.py --seeds 20240516,20240517,20240518 --epochs 4 --steps-per-domain 3000 --eval-samples 1000
+make multitask-domain
 ```
 
 Mean trained-domain top-1:
@@ -73,7 +73,7 @@ remains the most fragile part of the shared action envelope.
 
 ### Roadmap Capture: R-MT.1 and R-MT.2
 
-Command source: `scripts/multitask_roadmap_experiments.py`, captured in
+Command source: `the retired multitask roadmap workflow`, captured in
 `results/2026-05-17-multitask-roadmap`.
 
 R-MT.1 uses three seeds at 16 epochs x 12,000 shared steps per seed
@@ -346,7 +346,7 @@ Result:
 Question: can a shared trunk avoid ARC interference while preserving claim gain?
 
 Status: instrumented as `examples/multitask_domain.c --task-heads` and
-`scripts/multitask_adapter_heads.py`; canonical R-MT.4 results are not yet
+`the retired adapter-head workflow`; canonical R-MT.4 results are not yet
 captured.
 
 Architecture:
@@ -367,7 +367,7 @@ Tests: H3
 Run:
 
 ```sh
-python3 scripts/multitask_adapter_heads.py
+make multitask-domain
 ```
 
 Implementation note: the first implementation uses a bespoke adapter model
@@ -592,7 +592,7 @@ Completed instrumentation:
 5. **I-MT.5 epoch and fixed-ARC grid diagnostics.** Adds
    `crlp.multitask.epoch.v1` plus exact-grid/per-cell/per-color ARC fields.
 6. **R-MT.4 adapter-head surface.** Adds `--task-heads` plus
-   `scripts/multitask_adapter_heads.py`; full roadmap results are pending.
+   `the retired adapter-head workflow`; full roadmap results are pending.
 
 Completed experiments:
 

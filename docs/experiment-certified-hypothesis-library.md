@@ -1,6 +1,6 @@
 # Experiment Proposal: Library Promotion From Certified Hypotheses
 
-Status: implemented as `scripts/certified_hypothesis_library.py`, an
+Status: implemented as `the retired certified-hypothesis-library workflow`, an
 `arc_agi --hypothesis-library-prior` feedback path, and a tight-capacity
 ablation target.
 

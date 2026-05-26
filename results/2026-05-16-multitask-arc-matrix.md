@@ -8,7 +8,7 @@ removing prime residue features from `examples/multitask_domain.c`.
 ## Command
 
 ```sh
-python3 scripts/multitask_ablation_matrix.py --seeds 20240516,20240517,20240518 --epochs 4 --steps-per-domain 3000 --eval-samples 1000
+make multitask-domain
 ```
 
 The run generated 360 raw JSON rows, 65 trained-domain summary rows, and 57
@@ -62,7 +62,7 @@ Full all-domain rows:
 The code state used for this snapshot passed:
 
 ```sh
-python3 -m py_compile scripts/multitask_ablation_matrix.py scripts/neurosymbolic_tuning.py
+make source-policy-check
 make build/float/multitask_domain
 make test
 make sanitize

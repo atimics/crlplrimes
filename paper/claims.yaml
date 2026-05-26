@@ -1,6 +1,6 @@
 {
   "schema": "crlp.paper_claim_registry.v1",
-  "format_note": "This file is a strict JSON subset of YAML so scripts can parse it with the Python standard library.",
+  "format_note": "This file is a strict JSON subset of YAML so the C paper runtime can parse it deterministically.",
   "paper_contract": {
     "experiment_families_frozen": true,
     "primary_contributions": [
@@ -147,7 +147,7 @@
         "R-MT.6",
         "R-MT.8"
       ],
-      "command": "python3 scripts/multitask_roadmap_experiments.py",
+      "command": "make experimental-results",
       "artifacts": [
         "results/2026-05-17-multitask-roadmap/rmt2_aggregate.csv",
         "paper/generated/gap_report.md"
@@ -220,7 +220,7 @@
       "roadmap_items": [
         "R-MT.5"
       ],
-      "command": "python3 scripts/multitask_calibration_audit.py",
+      "command": "make experimental-results",
       "artifacts": [
         "results/2026-05-17-multitask-roadmap/rmt5_calibration_summary.csv",
         "results/2026-05-17-multitask-roadmap/rmt5_reliability_bins.csv"
@@ -244,7 +244,7 @@
       "roadmap_items": [
         "R-MT.3"
       ],
-      "command": "python3 scripts/multitask_leave_one_out.py",
+      "command": "make experimental-results",
       "artifacts": [
         "results/2026-05-17-multitask-roadmap/rmt3_leave_one_out.csv"
       ],
@@ -269,7 +269,7 @@
         "R-F.1",
         "R-F.5"
       ],
-      "command": "python3 scripts/multitask_capacity_sweep.py",
+      "command": "make experimental-results",
       "artifacts": [
         "results/2026-05-17-multitask-roadmap/rmt6_capacity_sweep_deltas.csv"
       ],
@@ -295,7 +295,7 @@
         "R-F.1",
         "R-F.5"
       ],
-      "command": "python3 scripts/multitask_adapter_heads.py",
+      "command": "make multitask-domain",
       "artifacts": [
         "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_summary.csv",
         "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_deltas.csv",
@@ -350,7 +350,7 @@
         "R-E2.1",
         "R-F.4"
       ],
-      "command": "python3 scripts/rejected_candidate_reason_learning.py",
+      "command": "make prime-rule-search-baselines",
       "artifacts": [
         "results/2026-05-17-substrate-extensions/rejected_candidate_reason_learning.jsonl",
         "results/2026-05-17-substrate-extensions/rejected_candidate_split_sweep.jsonl",
@@ -379,7 +379,7 @@
         "R-S.1c",
         "R-F.4"
       ],
-      "command": "python3 scripts/certified_hypothesis_library.py",
+      "command": "make arc-agi-induction-smoke",
       "artifacts": [
         "results/2026-05-17-substrate-extensions/hypothesis_library_promotions.jsonl",
         "results/2026-05-17-substrate-extensions/hypothesis_library_ablation_no_prior.jsonl",
@@ -868,7 +868,7 @@
         "secondary_sources": [
           "results/2026-05-17-multitask-roadmap/rmt5_reliability_bins.csv"
         ],
-        "command": "python3 scripts/multitask_calibration_audit.py",
+        "command": "make experimental-results",
         "schemas": [
           "crlp.multitask.summary.v1"
         ],
@@ -932,7 +932,7 @@
       ],
       "evidence": {
         "source": "results/2026-05-17-multitask-roadmap/rmt3_leave_one_out.csv",
-        "command": "python3 scripts/multitask_leave_one_out.py",
+        "command": "make experimental-results",
         "schemas": [
           "crlp.multitask.summary.v1"
         ],
@@ -992,7 +992,7 @@
       ],
       "evidence": {
         "source": "results/2026-05-17-multitask-roadmap/rmt6_capacity_sweep_deltas.csv",
-        "command": "python3 scripts/multitask_capacity_sweep.py",
+        "command": "make experimental-results",
         "schemas": [
           "crlp.multitask.summary.v1"
         ],
@@ -1066,7 +1066,7 @@
           "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_summary.csv",
           "results/2026-05-17-multitask-roadmap/rmt4_adapter_heads_decision.jsonl"
         ],
-        "command": "python3 scripts/multitask_adapter_heads.py",
+        "command": "make multitask-domain",
         "schemas": [
           "crlp.multitask.summary.v1",
           "crlp.multitask.adapter_heads_decision.v1"
@@ -1156,7 +1156,7 @@
           "results/2026-05-17-substrate-extensions/rejected_candidate_seed_interval_summary.jsonl",
           "results/2026-05-17-substrate-extensions/rejected_candidate_reason_family_seed_interval.jsonl"
         ],
-        "command": "python3 scripts/rejected_candidate_reason_learning.py",
+        "command": "make prime-rule-search-baselines",
         "schemas": [
           "crlp.rejected_candidate_learning.summary.v1",
           "crlp.rejected_candidate_learning.split_sweep.v1",
@@ -1236,7 +1236,7 @@
           "results/2026-05-17-substrate-extensions/hypothesis_library_promotion.md",
           "results/2026-05-17-substrate-extensions/hypothesis_library_heldout_result.jsonl"
         ],
-        "command": "python3 scripts/certified_hypothesis_library.py",
+        "command": "make arc-agi-induction-smoke",
         "schemas": [
           "crlp.hypothesis_library.promotion.v1",
           "crlp.program_proposer.summary.v1",
