@@ -1375,7 +1375,7 @@ done:
     return status;
 }
 
-#define PAPER_CLAIM_COUNT 16U
+#define PAPER_CLAIM_COUNT 17U
 #define PAPER_CLAIM_SUMMARY_SIZE 1536U
 #define PAPER_CLAIM_EXPLANATION_SIZE 1024U
 #define PAPER_CLAIM_CHART_SIZE 4096U
@@ -1582,6 +1582,18 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "",
         "",
+    },
+    {
+        "C8.dataset_engine_evidence_surface",
+        "C8",
+        "Dataset-first engine ports expose shared evidence without promoting domain claims",
+        "build/float/dataset_action_score_artifacts/engine_evidence.jsonl",
+        1,
+        "The dataset-first action-scoring engine exposes complete candidate rows, verifier labels, shared replay/schema declarations, and engine evidence across the registered smoke adapters.",
+        "This is an infrastructure claim: the rows prove that domains compile to one auditable engine surface, not that the smoke adapters replace richer domain-specific evidence.",
+        "coverage_bar",
+        "rows",
+        "engine evidence rows",
     },
     {
         "C9.signal_flight_replay_control",
@@ -2048,6 +2060,13 @@ static void paper_eval_prime_gate_delta_ci(PaperClaimResult *claim) {
             (void)paper_json_get_double(line, "learned_top10_min", &learned_top10_min);
             (void)paper_json_get_long(line, "false_rejections_max", &false_rejections_max);
             (void)paper_json_get_long(line, "sample_count_min", &sample_count_min);
+            claim->raw_top1 = raw_mean;
+            claim->hand_top1 = hand_mean;
+            claim->learned_top1 = learned_mean;
+            claim->learned_top10 = learned_top10_min;
+            claim->learned_vs_hand_delta_pp = delta_min;
+            claim->false_rejections = false_rejections_max;
+            claim->sample_count = sample_count_min;
             snprintf(claim->status,
                      sizeof(claim->status),
                      "%s",
@@ -2068,7 +2087,6 @@ static void paper_eval_prime_gate_delta_ci(PaperClaimResult *claim) {
                      delta_min,
                      100.0 * learned_top10_min,
                      false_rejections_max);
-            claim->sample_count = sample_count_min;
             free(line);
             fclose(fp);
             return;
@@ -2076,6 +2094,95 @@ static void paper_eval_prime_gate_delta_ci(PaperClaimResult *claim) {
         free(line);
     }
     fclose(fp);
+}
+
+static int paper_string_seen(char values[][64], size_t count, const char *value) {
+    size_t i;
+    for (i = 0U; i < count; ++i) {
+        if (strcmp(values[i], value) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void paper_eval_dataset_engine(PaperClaimResult *claim) {
+    FILE *fp;
+    char *line;
+    char domains[16][64];
+    long rows = 0;
+    long all_capability_rows = 0;
+    long multi_target_rows = 0;
+    size_t domain_count = 0U;
+    double min_test_top1 = 1.0;
+    int have_test = 0;
+    fp = fopen(claim->spec->source, "r");
+    if (fp == NULL) {
+        return;
+    }
+    while ((line = paper_read_line_dynamic(fp)) != NULL) {
+        if (paper_json_string_equals(line, "schema", "crlp.engine_evidence.v1")) {
+            char *domain = paper_json_dup_key_string(line, "domain");
+            double test_top1 = 0.0;
+            double mean_targets = 0.0;
+            int dataset_cap = 0;
+            int rule_cap = 0;
+            int replay_cap = 0;
+            int evidence_cap = 0;
+            int has_dataset = paper_json_get_bool(line, "dataset", &dataset_cap);
+            int has_rule = paper_json_get_bool(line, "rule_search", &rule_cap);
+            int has_replay = paper_json_get_bool(line, "replay", &replay_cap);
+            int has_evidence = paper_json_get_bool(line, "evidence", &evidence_cap);
+            ++rows;
+            if (domain != NULL && domain[0] != '\0' && domain_count < 16U &&
+                !paper_string_seen(domains, domain_count, domain)) {
+                snprintf(domains[domain_count], sizeof(domains[domain_count]), "%s", domain);
+                ++domain_count;
+            }
+            if (has_dataset && dataset_cap && has_rule && rule_cap && has_replay &&
+                replay_cap && has_evidence && evidence_cap) {
+                ++all_capability_rows;
+            }
+            if (paper_json_get_double(line, "test_mean_targets", &mean_targets) &&
+                mean_targets > 1.0) {
+                ++multi_target_rows;
+            }
+            if (paper_json_get_double(line, "test_top1", &test_top1)) {
+                if (!have_test || test_top1 < min_test_top1) {
+                    min_test_top1 = test_top1;
+                }
+                have_test = 1;
+            }
+            free(domain);
+        }
+        free(line);
+    }
+    fclose(fp);
+    claim->raw_top1 = have_test ? min_test_top1 : 0.0;
+    claim->learned_top1 = rows > 0 ? (double)all_capability_rows / (double)rows : 0.0;
+    claim->false_rejections = rows - all_capability_rows;
+    claim->sample_count = rows;
+    snprintf(claim->status,
+             sizeof(claim->status),
+             "%s",
+             rows >= 8 && domain_count >= 7U && all_capability_rows == rows ? "supported"
+                                                                            : "underpowered");
+    snprintf(claim->summary,
+             sizeof(claim->summary),
+             "the dataset-first engine evidence surface has %ld smoke rows across %zu domains, with %ld/%ld rows declaring dataset, rule-search, replay, and evidence capabilities; %ld rows expose multi-target verifier labels, and the weakest smoke test top-1 is %.2f%%. These rows are infrastructure evidence, not promoted domain-result claims.",
+             rows,
+             domain_count,
+             all_capability_rows,
+             rows,
+             multi_target_rows,
+             have_test ? 100.0 * min_test_top1 : 0.0);
+    snprintf(claim->chart_rows,
+             sizeof(claim->chart_rows),
+             "((label: \"engine rows\", value: %ld), (label: \"domains\", value: %zu), (label: \"all caps\", value: %ld), (label: \"multi-target\", value: %ld))",
+             rows,
+             domain_count,
+             all_capability_rows,
+             multi_target_rows);
 }
 
 static void paper_eval_prime_proposer(PaperClaimResult *claim) {
@@ -3033,8 +3140,9 @@ static void paper_evaluate_claims(PaperClaimResult claims[PAPER_CLAIM_COUNT]) {
     paper_eval_hypothesis_promotion(&claims[11]);
     paper_eval_tiny_net(&claims[12]);
     paper_eval_trace_determinism(&claims[13]);
-    paper_eval_signal_replay(&claims[14]);
-    paper_eval_signal_live(&claims[15]);
+    paper_eval_dataset_engine(&claims[14]);
+    paper_eval_signal_replay(&claims[15]);
+    paper_eval_signal_live(&claims[16]);
 }
 
 static void paper_count_claim_statuses(const PaperClaimResult claims[PAPER_CLAIM_COUNT],

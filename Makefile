@@ -1561,20 +1561,20 @@ paper-pdf: experiment-matrix paper/paper.typ
 paper-data: $(NN_GRAMMAR_DISCOVERY_RUNTIME) $(ARC_AGI) $(PRIME_GAP_EXAMPLE)
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --paper-data --paper-data-output paper/data.json --paper-data-typ paper/data.typ --comparison "$(RESULTS_DIR)/comparison.jsonl" --prime-gap-trace "$(BUILD_DIR)/traces/prime_gap.jsonl" --grid-path-trace "$(BUILD_DIR)/grid_path.jsonl" --delayed-claim-trace "$(BUILD_DIR)/delayed_claim.jsonl" --arc-agi ./$(ARC_AGI) --prime-gap ./$(PRIME_GAP_EXAMPLE)
 
-paper-claims: $(NN_GRAMMAR_DISCOVERY_RUNTIME)
+paper-claims: $(NN_GRAMMAR_DISCOVERY_RUNTIME) dataset-action-score-engine-evidence
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --paper-claims --claims paper/claims.yaml --output-dir paper/generated --paper paper/paper.typ --agent-candidates-dir paper/agent_candidates
 
 paper-agent-propose: paper-claims
 	PAPER_AGENT_MODEL="$(PAPER_AGENT_MODEL)" PAPER_AGENT_LLM_CMD="$(PAPER_AGENT_LLM_CMD)" $(PYTHON) scripts/paper_agent_propose.py --prompt-output "$(PAPER_AGENT_PROMPT)" --output "$(PAPER_AGENT_OUTPUT)"
 	@if [ -n "$(PAPER_AGENT_LLM_CMD)" ]; then $(MAKE) paper-claims; fi
 
-paper-pre-commit: $(NN_GRAMMAR_DISCOVERY_RUNTIME)
+paper-pre-commit: $(NN_GRAMMAR_DISCOVERY_RUNTIME) dataset-action-score-engine-evidence
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --paper-claims --claims paper/claims.yaml --output-dir paper/generated --paper paper/paper.typ --agent-candidates-dir paper/agent_candidates --support-check --fail-required
 
 install-hooks:
 	git config core.hooksPath .githooks
 
-paper-support: trace-determinism-compare $(NN_GRAMMAR_DISCOVERY_RUNTIME)
+paper-support: trace-determinism-compare $(NN_GRAMMAR_DISCOVERY_RUNTIME) dataset-action-score-engine-evidence
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --paper-claims --claims paper/claims.yaml --output-dir paper/generated --paper paper/paper.typ --agent-candidates-dir paper/agent_candidates --support-check --fail-required
 
 editorial-pr-check:

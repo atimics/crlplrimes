@@ -1378,6 +1378,57 @@
       ]
     },
     {
+      "id": "C8.dataset_engine_evidence_surface",
+      "title": "Dataset-first engine ports expose shared evidence without promoting domain claims",
+      "claim_type": "framework_claim",
+      "claim_text": "The dataset-first action-scoring engine exposes complete candidate rows, verifier labels, shared replay/schema declarations, and engine evidence across the registered smoke adapters.",
+      "builtin_evaluator": "dataset_engine_evidence_surface",
+      "required_for_submission": true,
+      "paper_surfaces": [
+        "protocol",
+        "engine_substrate",
+        "claim_governance",
+        "limitations"
+      ],
+      "roadmap_items": [
+        "R-F.2",
+        "R-F.5"
+      ],
+      "evidence": {
+        "source": "build/float/dataset_action_score_artifacts/engine_evidence.jsonl",
+        "command": "make dataset-action-score-engine-evidence",
+        "schemas": [
+          "crlp.engine_evidence.v1"
+        ],
+        "filters": {
+          "evidence_level": "dataset_engine_smoke"
+        },
+        "required_rows": [
+          {"experiment": "bitwise_macro_step"},
+          {"experiment": "haiku_adjacency"},
+          {"experiment": "grid_path"},
+          {"experiment": "delayed_claim"},
+          {"experiment": "prime_gap_candidate"},
+          {"experiment": "arc_cell_color"},
+          {"experiment": "program_synthesis_ops"},
+          {"experiment": "signal_wasd"}
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "at least eight crlp.engine_evidence.v1 rows exist",
+          "registered smoke rows span at least seven domains",
+          "every row declares dataset, rule_search, replay, and evidence capabilities",
+          "the claim is interpreted as infrastructure evidence rather than a replacement for richer domain-specific reports"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Run make dataset-action-score-engine-evidence and inspect build/float/dataset_action_score_artifacts/engine_evidence.jsonl.",
+        "Do not describe all experiments as engine-backed until every registered smoke adapter emits an engine evidence row."
+      ],
+      "limitation_when_not_supported": "The dataset-first runner has not yet proven a shared evidence surface across the registered domain adapters, so the paper must keep engine generality as roadmap work."
+    },
+    {
       "id": "C9.signal_flight_replay_control",
       "title": "Signal replay-certified WASD ranker improves held-out control utility",
       "claim_type": "application_vignette",

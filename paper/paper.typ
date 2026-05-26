@@ -1,6 +1,6 @@
 #import "@preview/cetz:0.3.4"
 #import "@preview/cetz-plot:0.1.1": plot
-#import "generated/claims.typ": paper_claim_limitations, paper_claim_support_ok, paper_claim_support_surfaces, paper_claim_status_counts, claim_C1_prime_gate_delta_summary, claim_C1_prime_gate_delta_ci_summary, claim_C1_prime_gate_delta_raw_top1, claim_C1_prime_gate_delta_hand_top1, claim_C1_prime_gate_delta_learned_top1, claim_C1_prime_gate_delta_learned_top10, claim_C1_prime_gate_delta_learned_vs_hand_delta_pp, claim_C1_prime_gate_delta_false_rejections, claim_C1_prime_gate_delta_sample_count, claim_C2_prime_proposer_fixed_budget_summary, claim_C1_arc_public_evidence_surface_chart_rows, claim_C1_arc_public_evidence_surface_summary, claim_C3_arc_ood_calibration_tradeoff_chart_rows, claim_C3_arc_ood_calibration_tradeoff_summary, claim_C4_delayed_claim_sibling_transfer_summary, claim_C4_multitask_capacity_tradeoff_chart_rows, claim_C4_multitask_capacity_tradeoff_summary, claim_C4_adapter_heads_shared_trunk_summary, claim_C5_rejected_candidate_reason_learning_chart_rows, claim_C5_rejected_candidate_reason_learning_summary, claim_C5_hypothesis_library_promotion_chart_rows, claim_C5_hypothesis_library_promotion_summary, claim_C7_tiny_net_plateau_stop_rule_summary, claim_C8_trace_determinism_audit_summary, claim_C9_signal_flight_replay_control_chart_rows, claim_C9_signal_flight_replay_control_summary, claim_C9_signal_live_neural_active_chart_rows, claim_C9_signal_live_neural_active_summary
+#import "generated/claims.typ": paper_claim_limitations, paper_claim_support_ok, paper_claim_support_surfaces, paper_claim_status_counts, claim_C1_prime_gate_delta_summary, claim_C1_prime_gate_delta_ci_summary, claim_C1_prime_gate_delta_raw_top1, claim_C1_prime_gate_delta_hand_top1, claim_C1_prime_gate_delta_learned_top1, claim_C1_prime_gate_delta_learned_top10, claim_C1_prime_gate_delta_learned_vs_hand_delta_pp, claim_C1_prime_gate_delta_false_rejections, claim_C1_prime_gate_delta_sample_count, claim_C2_prime_proposer_fixed_budget_summary, claim_C1_arc_public_evidence_surface_chart_rows, claim_C1_arc_public_evidence_surface_summary, claim_C3_arc_ood_calibration_tradeoff_chart_rows, claim_C3_arc_ood_calibration_tradeoff_summary, claim_C4_delayed_claim_sibling_transfer_summary, claim_C4_multitask_capacity_tradeoff_chart_rows, claim_C4_multitask_capacity_tradeoff_summary, claim_C4_adapter_heads_shared_trunk_summary, claim_C5_rejected_candidate_reason_learning_chart_rows, claim_C5_rejected_candidate_reason_learning_summary, claim_C5_hypothesis_library_promotion_chart_rows, claim_C5_hypothesis_library_promotion_summary, claim_C7_tiny_net_plateau_stop_rule_summary, claim_C8_trace_determinism_audit_summary, claim_C8_dataset_engine_evidence_surface_chart_rows, claim_C8_dataset_engine_evidence_surface_summary, claim_C9_signal_flight_replay_control_chart_rows, claim_C9_signal_flight_replay_control_summary, claim_C9_signal_live_neural_active_chart_rows, claim_C9_signal_live_neural_active_summary
 #import "generated/experiment_matrix.typ": experiment_matrix_rows
 
 #set document(
@@ -119,10 +119,12 @@
     as Fibonacci/Lucas gates via period residues, but those remain smoke-level boundary
     evidence here. The main feedback results are rejected-candidate reason learning and
     certified hypothesis-library promotion. Boundary rows for ARC, Signal, tiny-net
-    capacity, and haiku test where this protocol holds and where it weakens. The scope of
-    this evidence explicitly excludes broad ARC competence, CDCL-equivalent learned clauses,
-    comparative live neural-control improvement, semantic language understanding, and
-    general end-to-end task solving.
+    capacity, and haiku test where this protocol holds and where it weakens. The current
+    artifact also exposes a dataset-first engine surface that ports several domains into one
+    candidate-row contract, but that surface is infrastructure evidence rather than a new
+    domain-result claim. The scope of this evidence explicitly excludes broad ARC competence,
+    CDCL-equivalent learned clauses, comparative live neural-control improvement, semantic
+    language understanding, and general end-to-end task solving.
   ]
 ]
 
@@ -158,8 +160,11 @@ proposer failure supplies the falsifying negative row that motivates the feedbac
 The remaining domains are boundary evidence. ARC tests grammar coverage and failure
 taxonomy, not benchmark competence. Signal tests replay and guarded live execution pressure,
 not comparative live-control performance. Tiny-net and adapter rows bound architecture
-claims. Haiku is a language-adjacent corpus check, not semantic understanding. New domains
-stay outside the claim set until promoted through the evidence matrix.
+claims. Haiku is a language-adjacent corpus check, not semantic understanding. The
+dataset-first runner is a shared infrastructure surface: it can show that a domain compiles to
+complete candidate rows, verifier labels, traces, checkpoints, and engine evidence, but it
+does not by itself promote the domain's scientific result. New domains stay outside the claim
+set until promoted through the evidence matrix.
 
 The environment names are deliberately small. The audited `prime_gap` trace is the
 next-prime instance of a broader modular-filter family; smoke rows already include
@@ -294,6 +299,43 @@ gates unless a schema explicitly allows them as model inputs. Let rules enter th
 through the task grammar and certificate or replay checker. JSONL traces carry stable
 candidate ids, ranking policy, score margins, environment identity, and semantic hashes so
 reordered candidates or float ties cannot silently change registered claim meaning.
+
+= Engine Substrate
+
+The implementation has a lower-level substrate beneath the domain reports. A dataset-first
+action-scoring runner consumes grouped candidate rows:
+
+```text
+split, group_id, state_hash, action_id, target, f0, ..., fN
+```
+
+Each group is one state with a complete candidate set. The target field is verifier-owned and
+may mark more than one valid candidate, so equivalent macro steps, tied shortest paths,
+corpus-valid continuations, or equal-utility actions need not be collapsed into an arbitrary
+single gold row. Domain adapters own state generation, feature encoding, candidate
+enumeration, and verifier labeling. The shared engine owns softmax ranking, trace emission,
+checkpointing, numeric summaries, and common engine-evidence rows.
+
+The generated engine claim is:
+#claim_C8_dataset_engine_evidence_surface_summary
+
+#figure(
+  claim_coverage_chart(
+    claim_C8_dataset_engine_evidence_surface_chart_rows,
+    y-max: 10,
+    y-label: [rows],
+  ),
+  caption: [Dataset-first engine evidence surface. These rows prove that the registered smoke
+    adapters can compile to one candidate-row protocol with replay/schema declarations; they
+    do not replace richer domain-specific reports or promote broad task competence.],
+) <fig:dataset-engine-surface>
+
+The generic trace-replay path is intentionally weaker than a domain-lossless replay adapter.
+When old traces do not store original state/action features, replay training uses trace-native
+features such as logged score, probability, action id, candidate count, and rank. That is enough
+to exercise stable action ids, multi-target labels, checkpointing, and numeric certificates.
+It is not evidence that grid, ARC, haiku, Signal, or program-synthesis semantics can be
+reconstructed from a score trace alone.
 
 = Evidence Matrix
 
@@ -485,6 +527,8 @@ an artifact is missing, stale, contradicted, or underpowered, the manuscript com
 layer will reject the registered claim as supported. The trace determinism row is currently
 supported:
 #claim_C8_trace_determinism_audit_summary
+The dataset-engine row is governed the same way:
+#claim_C8_dataset_engine_evidence_surface_summary
 This does not mean every sentence is cryptographically enforced. It means the empirical
 claims registered with the claim compiler must stay attached to live artifacts.
 
@@ -535,6 +579,10 @@ claims come from repository artifacts checked before compilation.
   neural improvement over the heuristic baseline.
 + *Corpus proxies are weaker than verifiers.* The haiku task can ground train-split
   adjacency, shape, and corruption discrimination. It cannot ground truth or semantics.
++ *Engine ports are not domain promotions.* The dataset-first runner proves a shared row,
+  replay, checkpoint, and evidence contract across smoke adapters. It does not replace the
+  richer domain CLIs, rule searches, replay reports, or paper evidence needed to promote a
+  domain result.
 + *Executable accountability is partial.* Claim compilation catches unsupported generated
   claims, stale evidence, and limitation candidates. It does not replace human judgment
   about interpretation, ethics, or whether a domain belongs in the supported claim set.
@@ -566,8 +614,9 @@ small model rank the allowed choices. Preserve the trace. Bind empirical claims 
 generated evidence. Arithmetic sequence filtering supplies the clean certified-gate anchor,
 with the next-prime trace as the fully audited instance. Rejected-candidate learning and
 hypothesis-library promotion show that checked failures and checked successes can feed back
-into later proposal structure. ARC, Signal, tiny-net, adapter, and haiku rows mark the
-boundary rather than widening the thesis.
+into later proposal structure. The dataset-first engine shows how future experiments can
+enter the system as candidate rows plus verifier labels before becoming paper claims. ARC,
+Signal, tiny-net, adapter, and haiku rows mark the boundary rather than widening the thesis.
 
 The broader lesson is pragmatic. When correctness, safety, or auditability matter, the model
 should not own the whole decision and prose should not outrun the evidence. The checker or
