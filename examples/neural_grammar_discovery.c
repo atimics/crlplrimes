@@ -136,7 +136,8 @@ static void usage(const char *argv0) {
             "--numeric-report PATH --paper-claims PATH --signal-flight-summary PATH "
             "--signal-flight-rollout PATH --signal-live-active PATH "
             "--signal-shadow-replay PATH --neural-grammar-summary PATH "
-            "--protocol-spine PATH --operator-promotions PATH --output PATH] "
+            "--protocol-spine PATH --operator-promotions PATH "
+            "--engine-evidence PATH --output PATH] "
             "[--learned-grammar-coverage --arc-log [SCOPE=]PATH ... "
             "--haiku-word-trace [SCOPE=]PATH ... "
             "--haiku-understanding-trace [SCOPE=]PATH ... "
@@ -267,6 +268,8 @@ int main(int argc, char **argv) {
         arg_value(argc, argv, "--protocol-spine");
     const char *experiment_health_operator_promotions =
         arg_value(argc, argv, "--operator-promotions");
+    const char *experiment_health_engine_evidence =
+        arg_value(argc, argv, "--engine-evidence");
     const char *experiment_health_output = arg_value(argc, argv, "--output");
     const char *ngd_domains = arg_value(argc, argv, "--domains");
     const char *ngd_runtime_path = arg_value(argc, argv, "--runtime");
@@ -436,6 +439,7 @@ int main(int argc, char **argv) {
                 experiment_health_neural_grammar_summary,
                 experiment_health_protocol_spine,
                 experiment_health_operator_promotions,
+                experiment_health_engine_evidence,
                 experiment_health_output) != 0) {
             fprintf(stderr, "failed to write experiment health report\n");
             return 1;

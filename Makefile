@@ -13,7 +13,7 @@ LDFLAGS ?=
 LDLIBS ?= -lm
 
 BUILD_DIR := build/$(REAL)
-NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h include/nn_bitgrid.h include/nn_tilebot.h include/nn_layer.h include/nn_program.h include/nn_hypothesis.h include/nn_protocol.h include/nn_json.h include/nn_text.h include/nn_grammar_discovery.h include/nn_paper.h
+NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h include/nn_bitgrid.h include/nn_tilebot.h include/nn_layer.h include/nn_program.h include/nn_hypothesis.h include/nn_protocol.h include/nn_json.h include/nn_text.h include/nn_dataset.h include/nn_grammar_discovery.h include/nn_paper.h
 PRIME_GAP_TASK_HEADERS := include/nn_tasks_prime_gap.h src/prime_gap/internal.h
 PRIME_GAP_MODULE_SOURCES := $(wildcard src/prime_gap/*.c)
 PRIME_GAP_TASK_OBJS := $(patsubst src/prime_gap/%.c,$(BUILD_DIR)/obj/prime_gap/%.o,$(PRIME_GAP_MODULE_SOURCES))
@@ -30,6 +30,7 @@ NN_HYPOTHESIS_OBJ := $(BUILD_DIR)/nn_hypothesis.o
 NN_PROTOCOL_OBJ := $(BUILD_DIR)/nn_protocol.o
 NN_JSON_OBJ := $(BUILD_DIR)/nn_json.o
 NN_TEXT_OBJ := $(BUILD_DIR)/nn_text.o
+NN_DATASET_OBJ := $(BUILD_DIR)/nn_dataset.o
 NN_GRAMMAR_DISCOVERY_OBJ := $(BUILD_DIR)/nn_grammar_discovery.o
 NN_PAPER_OBJ := $(BUILD_DIR)/nn_paper.o
 NN_TEST_OBJ := $(BUILD_DIR)/nn_test.o
@@ -43,6 +44,7 @@ NN_HYPOTHESIS_TEST_OBJ := $(BUILD_DIR)/nn_hypothesis_test.o
 NN_PROTOCOL_TEST_OBJ := $(BUILD_DIR)/nn_protocol_test.o
 NN_JSON_TEST_OBJ := $(BUILD_DIR)/nn_json_test.o
 NN_TEXT_TEST_OBJ := $(BUILD_DIR)/nn_text_test.o
+NN_DATASET_TEST_OBJ := $(BUILD_DIR)/nn_dataset_test.o
 NN_SANITIZE_OBJ := $(BUILD_DIR)/nn_sanitize.o
 NN_EXPERIMENT_SANITIZE_OBJ := $(BUILD_DIR)/nn_experiment_sanitize.o
 NN_SYMBOLIC_SANITIZE_OBJ := $(BUILD_DIR)/nn_symbolic_sanitize.o
@@ -54,9 +56,10 @@ NN_HYPOTHESIS_SANITIZE_OBJ := $(BUILD_DIR)/nn_hypothesis_sanitize.o
 NN_PROTOCOL_SANITIZE_OBJ := $(BUILD_DIR)/nn_protocol_sanitize.o
 NN_JSON_SANITIZE_OBJ := $(BUILD_DIR)/nn_json_sanitize.o
 NN_TEXT_SANITIZE_OBJ := $(BUILD_DIR)/nn_text_sanitize.o
-NN_OBJS := $(NN_OBJ) $(NN_EXPERIMENT_OBJ) $(NN_SYMBOLIC_OBJ) $(NN_BITGRID_OBJ) $(NN_TILEBOT_OBJ) $(NN_LAYER_OBJ) $(NN_PROGRAM_OBJ) $(NN_HYPOTHESIS_OBJ) $(NN_PROTOCOL_OBJ) $(NN_JSON_OBJ) $(NN_TEXT_OBJ)
-NN_TEST_OBJS := $(NN_TEST_OBJ) $(NN_EXPERIMENT_TEST_OBJ) $(NN_SYMBOLIC_TEST_OBJ) $(NN_BITGRID_TEST_OBJ) $(NN_TILEBOT_TEST_OBJ) $(NN_LAYER_TEST_OBJ) $(NN_PROGRAM_TEST_OBJ) $(NN_HYPOTHESIS_TEST_OBJ) $(NN_PROTOCOL_TEST_OBJ) $(NN_JSON_TEST_OBJ) $(NN_TEXT_TEST_OBJ)
-NN_SANITIZE_OBJS := $(NN_SANITIZE_OBJ) $(NN_EXPERIMENT_SANITIZE_OBJ) $(NN_SYMBOLIC_SANITIZE_OBJ) $(NN_BITGRID_SANITIZE_OBJ) $(NN_TILEBOT_SANITIZE_OBJ) $(NN_LAYER_SANITIZE_OBJ) $(NN_PROGRAM_SANITIZE_OBJ) $(NN_HYPOTHESIS_SANITIZE_OBJ) $(NN_PROTOCOL_SANITIZE_OBJ) $(NN_JSON_SANITIZE_OBJ) $(NN_TEXT_SANITIZE_OBJ)
+NN_DATASET_SANITIZE_OBJ := $(BUILD_DIR)/nn_dataset_sanitize.o
+NN_OBJS := $(NN_OBJ) $(NN_EXPERIMENT_OBJ) $(NN_SYMBOLIC_OBJ) $(NN_BITGRID_OBJ) $(NN_TILEBOT_OBJ) $(NN_LAYER_OBJ) $(NN_PROGRAM_OBJ) $(NN_HYPOTHESIS_OBJ) $(NN_PROTOCOL_OBJ) $(NN_JSON_OBJ) $(NN_TEXT_OBJ) $(NN_DATASET_OBJ)
+NN_TEST_OBJS := $(NN_TEST_OBJ) $(NN_EXPERIMENT_TEST_OBJ) $(NN_SYMBOLIC_TEST_OBJ) $(NN_BITGRID_TEST_OBJ) $(NN_TILEBOT_TEST_OBJ) $(NN_LAYER_TEST_OBJ) $(NN_PROGRAM_TEST_OBJ) $(NN_HYPOTHESIS_TEST_OBJ) $(NN_PROTOCOL_TEST_OBJ) $(NN_JSON_TEST_OBJ) $(NN_TEXT_TEST_OBJ) $(NN_DATASET_TEST_OBJ)
+NN_SANITIZE_OBJS := $(NN_SANITIZE_OBJ) $(NN_EXPERIMENT_SANITIZE_OBJ) $(NN_SYMBOLIC_SANITIZE_OBJ) $(NN_BITGRID_SANITIZE_OBJ) $(NN_TILEBOT_SANITIZE_OBJ) $(NN_LAYER_SANITIZE_OBJ) $(NN_PROGRAM_SANITIZE_OBJ) $(NN_HYPOTHESIS_SANITIZE_OBJ) $(NN_PROTOCOL_SANITIZE_OBJ) $(NN_JSON_SANITIZE_OBJ) $(NN_TEXT_SANITIZE_OBJ) $(NN_DATASET_SANITIZE_OBJ)
 XOR_EXAMPLE := $(BUILD_DIR)/xor
 BITWISE_RECURSIVE := $(BUILD_DIR)/bitwise_recursive
 TILE_RECURSIVE := $(BUILD_DIR)/tile_recursive
@@ -64,6 +67,7 @@ TILE_FEATURE_ENTROPY := $(BUILD_DIR)/tile_feature_entropy
 LIFE_CURRICULUM := $(BUILD_DIR)/life_curriculum
 LAYER_DISCOVERY := $(BUILD_DIR)/layer_discovery
 ACTION_SCORE_EXAMPLE := $(BUILD_DIR)/action_score
+DATASET_ACTION_SCORE := $(BUILD_DIR)/dataset_action_score
 PRIME_GAP_EXAMPLE := $(BUILD_DIR)/prime_gap
 PRIME_REPLAY := $(BUILD_DIR)/prime_replay
 PRIME_COMPARE := $(BUILD_DIR)/prime_compare
@@ -81,6 +85,7 @@ SIGNAL_MINING := $(BUILD_DIR)/signal_mining
 HAIKU_LM := $(BUILD_DIR)/haiku_lm
 HAIKU_WORD_LM := $(BUILD_DIR)/haiku_word_lm
 HAIKU_UNDERSTANDING := $(BUILD_DIR)/haiku_understanding
+HAIKU_RULE_SEARCH := $(BUILD_DIR)/haiku_rule_search
 NN_GRAMMAR_DISCOVERY_RUNTIME := $(BUILD_DIR)/neural_grammar_discovery_runtime
 BENCHMARK := $(BUILD_DIR)/benchmark
 TEST_RUNNER := $(BUILD_DIR)/test_nn
@@ -258,7 +263,15 @@ HAIKU_UNDERSTANDING_LEARNING_RATE ?= 0.006
 HAIKU_UNDERSTANDING_TRACE_LIMIT ?= 2000
 HAIKU_UNDERSTANDING_HF_TRACE_LIMIT ?= 0
 HAIKU_UNDERSTANDING_SPLICE_SCAN_LIMIT ?= 512
-HAIKU_UNDERSTANDING_HARD_NEGATIVE_EXTRA_UPDATES ?= 0
+HAIKU_UNDERSTANDING_HARD_NEGATIVE_EXTRA_UPDATES ?= 1
+HAIKU_RULE_SEARCH_DIR ?= $(BUILD_DIR)/haiku_rule_search_artifacts
+HAIKU_RULE_SEARCH_MAX_CANDIDATES ?= 96
+HAIKU_RULE_SEARCH_MAX_STATES ?= 2000
+HAIKU_RULE_SEARCH_MAX_RULES ?= 32
+HAIKU_RULE_SEARCH_PROPOSER ?= closed-loop
+DATASET_ACTION_SCORE_DIR ?= $(BUILD_DIR)/dataset_action_score_artifacts
+DATASET_ACTION_SCORE_FIXTURE ?= tests/fixtures/dataset_action_score/threshold_actions.csv
+DATASET_ACTION_SCORE_EVIDENCE ?= $(DATASET_ACTION_SCORE_DIR)/engine_evidence.jsonl
 HAIKU_COHERENCE_DIR ?= $(BUILD_DIR)/haiku_coherence_hard_negatives
 HAIKU_COHERENCE_TRACE ?= $(HAIKU_UNDERSTANDING_DIR)/smoke_trace.jsonl
 HAIKU_COHERENCE_REPORT ?= $(HAIKU_COHERENCE_DIR)/hard_negative_rows.jsonl
@@ -398,7 +411,7 @@ PROTOCOL_OPERATOR_MARKDOWN ?= $(PROTOCOL_OPERATOR_DIR)/summary.md
 PROTOCOL_OPERATOR_MIN_DOMAINS ?= 2
 PROTOCOL_OPERATOR_MIN_SUPPORT_ROWS ?= 4
 NUMERIC_CERTIFICATE_DIR ?= $(BUILD_DIR)/numeric_certificates
-NUMERIC_CERTIFICATE_TARGETS ?= action-score prime-gap-trace prime-rule-search-smoke delayed-claim-eval grid-path-eval multitask-domain symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search-smoke arc-agi-induction-smoke haiku-lm-smoke haiku-word-lm-smoke haiku-understanding-smoke signal-mining-smoke
+NUMERIC_CERTIFICATE_TARGETS ?= action-score dataset-action-score-smoke dataset-action-score-replay-smoke prime-gap-trace prime-rule-search-smoke delayed-claim-eval grid-path-eval multitask-domain symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search-smoke arc-agi-induction-smoke haiku-lm-smoke haiku-word-lm-smoke haiku-understanding-smoke haiku-rule-search-smoke signal-mining-smoke
 NUMERIC_CERTIFICATE_REPORT ?= $(NUMERIC_CERTIFICATE_DIR)/report.jsonl
 NUMERIC_CERTIFICATE_COMPARE_REUSE_FLOAT ?= 0
 NUMERIC_CERTIFICATE_STRICT_DIR ?= $(BUILD_DIR)/numeric_certificates_strict
@@ -468,9 +481,9 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run action-score bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune python-check benchmark test sanitize check experimental-check clean
+.PHONY: all run action-score dataset-action-score dataset-action-score-smoke dataset-action-score-replay-smoke dataset-action-score-adapter-smoke dataset-action-score-multitarget-smoke dataset-action-score-bitwise-smoke dataset-action-score-bitwise-macro-smoke dataset-action-score-haiku-smoke dataset-action-score-grid-smoke dataset-action-score-delayed-claim-smoke dataset-action-score-prime-gap-smoke dataset-action-score-arc-smoke dataset-action-score-program-smoke dataset-action-score-signal-smoke dataset-action-score-rest-smoke dataset-action-score-engine-evidence bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-rule-search haiku-rule-search-baselines haiku-rule-search-smoke haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune python-check benchmark test sanitize check experimental-check clean
 
-all: $(XOR_EXAMPLE) $(BITWISE_RECURSIVE) $(TILE_RECURSIVE) $(TILE_FEATURE_ENTROPY) $(LIFE_CURRICULUM) $(LAYER_DISCOVERY) $(ACTION_SCORE_EXAMPLE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(BENCHMARK)
+all: $(XOR_EXAMPLE) $(BITWISE_RECURSIVE) $(TILE_RECURSIVE) $(TILE_FEATURE_ENTROPY) $(LIFE_CURRICULUM) $(LAYER_DISCOVERY) $(ACTION_SCORE_EXAMPLE) $(DATASET_ACTION_SCORE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(HAIKU_RULE_SEARCH) $(BENCHMARK)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -507,6 +520,9 @@ $(NN_JSON_OBJ): src/nn_json.c include/nn_json.h | $(BUILD_DIR)
 
 $(NN_TEXT_OBJ): src/nn_text.c include/nn_text.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_text.c -o $@
+
+$(NN_DATASET_OBJ): src/nn_dataset.c include/nn_dataset.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_dataset.c -o $@
 
 $(NN_GRAMMAR_DISCOVERY_OBJ): src/nn_grammar_discovery.c include/nn_grammar_discovery.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_grammar_discovery.c -o $@
@@ -547,6 +563,9 @@ $(NN_JSON_TEST_OBJ): src/nn_json.c include/nn_json.h | $(BUILD_DIR)
 $(NN_TEXT_TEST_OBJ): src/nn_text.c include/nn_text.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_text.c -o $@
 
+$(NN_DATASET_TEST_OBJ): src/nn_dataset.c include/nn_dataset.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_dataset.c -o $@
+
 $(NN_SANITIZE_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn.c -o $@
 
@@ -579,6 +598,9 @@ $(NN_JSON_SANITIZE_OBJ): src/nn_json.c include/nn_json.h | $(BUILD_DIR)
 
 $(NN_TEXT_SANITIZE_OBJ): src/nn_text.c include/nn_text.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_text.c -o $@
+
+$(NN_DATASET_SANITIZE_OBJ): src/nn_dataset.c include/nn_dataset.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_dataset.c -o $@
 
 $(BUILD_DIR)/obj/prime_gap/%.o: src/prime_gap/%.c $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
@@ -613,6 +635,9 @@ $(LAYER_DISCOVERY): examples/layer_discovery.c $(NN_OBJS) $(NN_HEADERS) | $(BUIL
 $(ACTION_SCORE_EXAMPLE): examples/action_score.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/action_score.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
+$(DATASET_ACTION_SCORE): examples/dataset_action_score.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/dataset_action_score.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
 $(HAIKU_LM): examples/haiku_lm.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_lm.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
@@ -621,6 +646,9 @@ $(HAIKU_WORD_LM): examples/haiku_word_lm.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DI
 
 $(HAIKU_UNDERSTANDING): examples/haiku_understanding.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_understanding.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(HAIKU_RULE_SEARCH): examples/haiku_rule_search.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_rule_search.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(PRIME_GAP_EXAMPLE): examples/prime_gap.c $(NN_OBJS) $(PRIME_GAP_TASK_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_gap.c $(NN_OBJS) $(PRIME_GAP_TASK_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
@@ -681,6 +709,76 @@ run: $(XOR_EXAMPLE)
 
 action-score: $(ACTION_SCORE_EXAMPLE)
 	./$(ACTION_SCORE_EXAMPLE)
+
+dataset-action-score: $(DATASET_ACTION_SCORE)
+	mkdir -p $(DATASET_ACTION_SCORE_DIR)
+	./$(DATASET_ACTION_SCORE) --dataset $(DATASET_ACTION_SCORE_FIXTURE) --features 4 --task dataset_threshold_actions --epochs 800 --hidden 8 --lr 0.04 --trace $(DATASET_ACTION_SCORE_DIR)/trace.jsonl --save $(DATASET_ACTION_SCORE_DIR)/dataset_action_score.nnckpt
+
+dataset-action-score-smoke: $(DATASET_ACTION_SCORE)
+	mkdir -p $(DATASET_ACTION_SCORE_DIR)
+	./$(DATASET_ACTION_SCORE) --dataset $(DATASET_ACTION_SCORE_FIXTURE) --features 4 --task dataset_threshold_actions --epochs 800 --hidden 8 --lr 0.04 --trace $(DATASET_ACTION_SCORE_DIR)/smoke_trace.jsonl --save $(DATASET_ACTION_SCORE_DIR)/smoke.nnckpt
+
+dataset-action-score-replay-smoke: $(DATASET_ACTION_SCORE) dataset-action-score-smoke
+	mkdir -p $(DATASET_ACTION_SCORE_DIR)
+	./$(DATASET_ACTION_SCORE) --replay-trace $(DATASET_ACTION_SCORE_DIR)/smoke_trace.jsonl --task dataset_threshold_replay_actions --epochs 300 --hidden 12 --lr 0.04 --trace $(DATASET_ACTION_SCORE_DIR)/replay_smoke_trace.jsonl --save $(DATASET_ACTION_SCORE_DIR)/replay_smoke.nnckpt
+
+dataset-action-score-adapter-smoke: $(DATASET_ACTION_SCORE)
+	mkdir -p $(DATASET_ACTION_SCORE_DIR)
+	./$(DATASET_ACTION_SCORE) --adapter threshold --task adapter_threshold_actions --epochs 800 --hidden 8 --lr 0.04 --trace $(DATASET_ACTION_SCORE_DIR)/adapter_smoke_trace.jsonl --save $(DATASET_ACTION_SCORE_DIR)/adapter_smoke.nnckpt
+
+dataset-action-score-multitarget-smoke: $(DATASET_ACTION_SCORE)
+	mkdir -p $(DATASET_ACTION_SCORE_DIR)
+	./$(DATASET_ACTION_SCORE) --experiment threshold_multi --task threshold_multi_actions --epochs 800 --hidden 8 --lr 0.04 --trace $(DATASET_ACTION_SCORE_DIR)/multitarget_smoke_trace.jsonl --save $(DATASET_ACTION_SCORE_DIR)/multitarget_smoke.nnckpt
+
+dataset-action-score-bitwise-smoke: $(DATASET_ACTION_SCORE)
+	mkdir -p $(DATASET_ACTION_SCORE_DIR)
+	./$(DATASET_ACTION_SCORE) --adapter bitwise_truth_table --task bitwise_truth_table_actions --epochs 800 --hidden 16 --lr 0.04 --trace $(DATASET_ACTION_SCORE_DIR)/bitwise_smoke_trace.jsonl --save $(DATASET_ACTION_SCORE_DIR)/bitwise_smoke.nnckpt
+
+dataset-action-score-bitwise-macro-smoke: $(DATASET_ACTION_SCORE)
+	mkdir -p $(DATASET_ACTION_SCORE_DIR)
+	./$(DATASET_ACTION_SCORE) --adapter bitwise_macro_step --task bitwise_macro_step_actions --epochs 1200 --hidden 32 --lr 0.04 --trace $(DATASET_ACTION_SCORE_DIR)/bitwise_macro_smoke_trace.jsonl --save $(DATASET_ACTION_SCORE_DIR)/bitwise_macro_smoke.nnckpt
+
+dataset-action-score-haiku-smoke: $(DATASET_ACTION_SCORE)
+	mkdir -p $(DATASET_ACTION_SCORE_DIR)
+	./$(DATASET_ACTION_SCORE) --experiment haiku_adjacency --corpus $(HAIKU_LM_CORPUS) --task haiku_adjacency_actions --epochs 900 --rollout-passes 2 --hidden 16 --lr 0.04 --max-groups 64 --max-candidates 96 --trace $(DATASET_ACTION_SCORE_DIR)/haiku_smoke_trace.jsonl --save $(DATASET_ACTION_SCORE_DIR)/haiku_smoke.nnckpt
+
+dataset-action-score-grid-smoke: $(DATASET_ACTION_SCORE)
+	mkdir -p $(DATASET_ACTION_SCORE_DIR)
+	./$(DATASET_ACTION_SCORE) --experiment grid_path --task grid_path_actions --epochs 500 --hidden 24 --lr 0.04 --max-groups 96 --trace $(DATASET_ACTION_SCORE_DIR)/grid_smoke_trace.jsonl --save $(DATASET_ACTION_SCORE_DIR)/grid_smoke.nnckpt
+
+dataset-action-score-delayed-claim-smoke: $(DATASET_ACTION_SCORE)
+	mkdir -p $(DATASET_ACTION_SCORE_DIR)
+	./$(DATASET_ACTION_SCORE) --experiment delayed_claim --task delayed_claim_actions --epochs 500 --hidden 24 --lr 0.04 --max-groups 96 --trace $(DATASET_ACTION_SCORE_DIR)/delayed_claim_smoke_trace.jsonl --save $(DATASET_ACTION_SCORE_DIR)/delayed_claim_smoke.nnckpt
+
+dataset-action-score-prime-gap-smoke: $(DATASET_ACTION_SCORE)
+	mkdir -p $(DATASET_ACTION_SCORE_DIR)
+	./$(DATASET_ACTION_SCORE) --experiment prime_gap_candidate --task prime_gap_candidate_actions --epochs 500 --hidden 24 --lr 0.04 --max-groups 96 --trace $(DATASET_ACTION_SCORE_DIR)/prime_gap_smoke_trace.jsonl --save $(DATASET_ACTION_SCORE_DIR)/prime_gap_smoke.nnckpt
+
+dataset-action-score-arc-smoke: $(DATASET_ACTION_SCORE)
+	mkdir -p $(DATASET_ACTION_SCORE_DIR)
+	./$(DATASET_ACTION_SCORE) --experiment arc_cell_color --task arc_cell_color_actions --epochs 500 --hidden 24 --lr 0.04 --trace $(DATASET_ACTION_SCORE_DIR)/arc_smoke_trace.jsonl --save $(DATASET_ACTION_SCORE_DIR)/arc_smoke.nnckpt
+
+dataset-action-score-program-smoke: $(DATASET_ACTION_SCORE)
+	mkdir -p $(DATASET_ACTION_SCORE_DIR)
+	./$(DATASET_ACTION_SCORE) --experiment program_synthesis_ops --task program_synthesis_ops_actions --epochs 500 --hidden 24 --lr 0.04 --max-groups 96 --trace $(DATASET_ACTION_SCORE_DIR)/program_smoke_trace.jsonl --save $(DATASET_ACTION_SCORE_DIR)/program_smoke.nnckpt
+
+dataset-action-score-signal-smoke: $(DATASET_ACTION_SCORE)
+	mkdir -p $(DATASET_ACTION_SCORE_DIR)
+	./$(DATASET_ACTION_SCORE) --experiment signal_wasd --task signal_wasd_actions --epochs 500 --hidden 24 --lr 0.04 --max-groups 96 --trace $(DATASET_ACTION_SCORE_DIR)/signal_smoke_trace.jsonl --save $(DATASET_ACTION_SCORE_DIR)/signal_smoke.nnckpt
+
+dataset-action-score-rest-smoke: dataset-action-score-grid-smoke dataset-action-score-delayed-claim-smoke dataset-action-score-prime-gap-smoke dataset-action-score-arc-smoke dataset-action-score-program-smoke dataset-action-score-signal-smoke
+
+dataset-action-score-engine-evidence: $(DATASET_ACTION_SCORE)
+	mkdir -p $(DATASET_ACTION_SCORE_DIR)
+	rm -f $(DATASET_ACTION_SCORE_EVIDENCE)
+	./$(DATASET_ACTION_SCORE) --experiment bitwise_macro_step --task bitwise_macro_step_actions --epochs 300 --hidden 32 --lr 0.04 --evidence $(DATASET_ACTION_SCORE_EVIDENCE)
+	./$(DATASET_ACTION_SCORE) --experiment haiku_adjacency --corpus $(HAIKU_LM_CORPUS) --task haiku_adjacency_actions --epochs 300 --rollout-passes 2 --hidden 16 --lr 0.04 --max-groups 64 --max-candidates 96 --evidence $(DATASET_ACTION_SCORE_EVIDENCE)
+	./$(DATASET_ACTION_SCORE) --experiment grid_path --task grid_path_actions --epochs 300 --hidden 24 --lr 0.04 --max-groups 96 --evidence $(DATASET_ACTION_SCORE_EVIDENCE)
+	./$(DATASET_ACTION_SCORE) --experiment delayed_claim --task delayed_claim_actions --epochs 300 --hidden 24 --lr 0.04 --max-groups 96 --evidence $(DATASET_ACTION_SCORE_EVIDENCE)
+	./$(DATASET_ACTION_SCORE) --experiment prime_gap_candidate --task prime_gap_candidate_actions --epochs 300 --hidden 24 --lr 0.04 --max-groups 96 --evidence $(DATASET_ACTION_SCORE_EVIDENCE)
+	./$(DATASET_ACTION_SCORE) --experiment arc_cell_color --task arc_cell_color_actions --epochs 300 --hidden 24 --lr 0.04 --evidence $(DATASET_ACTION_SCORE_EVIDENCE)
+	./$(DATASET_ACTION_SCORE) --experiment program_synthesis_ops --task program_synthesis_ops_actions --epochs 300 --hidden 24 --lr 0.04 --max-groups 96 --evidence $(DATASET_ACTION_SCORE_EVIDENCE)
+	./$(DATASET_ACTION_SCORE) --experiment signal_wasd --task signal_wasd_actions --epochs 300 --hidden 24 --lr 0.04 --max-groups 96 --evidence $(DATASET_ACTION_SCORE_EVIDENCE)
 
 bitwise-recursive: $(BITWISE_RECURSIVE)
 	./$(BITWISE_RECURSIVE)
@@ -775,6 +873,20 @@ haiku-coherence-hard-negatives-hf-dictionary: $(NN_GRAMMAR_DISCOVERY_RUNTIME) $(
 	@if [ ! -f "$(HAIKU_COHERENCE_HF_DICTIONARY_TRACE)" ]; then echo "missing HAIKU_COHERENCE_HF_DICTIONARY_TRACE=$(HAIKU_COHERENCE_HF_DICTIONARY_TRACE); run haiku-understanding-hf-dictionary or override this variable with an existing trace"; exit 2; fi
 	mkdir -p $(HAIKU_COHERENCE_HF_DICTIONARY_DIR)
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --haiku-coherence-trace "$(HAIKU_COHERENCE_HF_DICTIONARY_TRACE)" --haiku-coherence-output-dir "$(HAIKU_COHERENCE_HF_DICTIONARY_DIR)"
+
+haiku-rule-search: $(HAIKU_RULE_SEARCH)
+	mkdir -p $(HAIKU_RULE_SEARCH_DIR)
+	./$(HAIKU_RULE_SEARCH) --corpus $(HAIKU_LM_CORPUS) --max-candidates $(HAIKU_RULE_SEARCH_MAX_CANDIDATES) --max-states $(HAIKU_RULE_SEARCH_MAX_STATES) --max-rules $(HAIKU_RULE_SEARCH_MAX_RULES) --proposer $(HAIKU_RULE_SEARCH_PROPOSER) --trace $(HAIKU_RULE_SEARCH_DIR)/trace.jsonl --save $(HAIKU_RULE_SEARCH_DIR)/haiku_rules.crlprule
+
+haiku-rule-search-smoke: $(HAIKU_RULE_SEARCH)
+	mkdir -p $(HAIKU_RULE_SEARCH_DIR)
+	./$(HAIKU_RULE_SEARCH) --corpus $(HAIKU_LM_CORPUS) --max-candidates 48 --max-states 600 --max-rules 16 --proposer closed-loop --trace $(HAIKU_RULE_SEARCH_DIR)/smoke_trace.jsonl --save $(HAIKU_RULE_SEARCH_DIR)/haiku_rules_smoke.crlprule
+
+haiku-rule-search-baselines: $(HAIKU_RULE_SEARCH)
+	./$(HAIKU_RULE_SEARCH) --corpus $(HAIKU_LM_CORPUS) --max-candidates 48 --max-states 600 --max-rules 16 --proposer grammar
+	./$(HAIKU_RULE_SEARCH) --corpus $(HAIKU_LM_CORPUS) --max-candidates 48 --max-states 600 --max-rules 16 --proposer structural
+	./$(HAIKU_RULE_SEARCH) --corpus $(HAIKU_LM_CORPUS) --max-candidates 48 --max-states 600 --max-rules 16 --proposer random --proposer-seed 20240518
+	./$(HAIKU_RULE_SEARCH) --corpus $(HAIKU_LM_CORPUS) --max-candidates 48 --max-states 600 --max-rules 16 --proposer closed-loop
 
 experiment-schemas: $(PRIME_GAP_EXAMPLE) $(GRID_PATH) $(DELAYED_CLAIM) $(PROGRAM_SYNTHESIS) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING)
 	./$(PRIME_GAP_EXAMPLE) --schema
@@ -1315,7 +1427,7 @@ protocol-operator-promotion: protocol-spine
 		--min-domains $(PROTOCOL_OPERATOR_MIN_DOMAINS) \
 		--min-support-rows $(PROTOCOL_OPERATOR_MIN_SUPPORT_ROWS)
 
-experiment-health: learned-grammar-coverage numeric-certificate-report paper-support $(NN_GRAMMAR_DISCOVERY_RUNTIME)
+experiment-health: learned-grammar-coverage numeric-certificate-report paper-support dataset-action-score-engine-evidence $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	mkdir -p $(EXPERIMENT_HEALTH_DIR)
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --experiment-health \
 		--coverage "$(LEARNED_GRAMMAR_COVERAGE_REPORT)" \
@@ -1329,9 +1441,10 @@ experiment-health: learned-grammar-coverage numeric-certificate-report paper-sup
 		--neural-grammar-summary "$(EXPERIMENT_HEALTH_NEURAL_GRAMMAR_SUMMARY)" \
 		--protocol-spine "$(PROTOCOL_SPINE_REPORT)" \
 		--operator-promotions "$(PROTOCOL_OPERATOR_REPORT)" \
+		--engine-evidence "$(DATASET_ACTION_SCORE_EVIDENCE)" \
 		--output "$(EXPERIMENT_HEALTH_REPORT)"
 
-experiment-health-extended: learned-grammar-coverage-extended numeric-certificate-report paper-support $(NN_GRAMMAR_DISCOVERY_RUNTIME)
+experiment-health-extended: learned-grammar-coverage-extended numeric-certificate-report paper-support dataset-action-score-engine-evidence $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	mkdir -p $(EXPERIMENT_HEALTH_DIR)
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --experiment-health \
 		--coverage "$(LEARNED_GRAMMAR_COVERAGE_EXTENDED_REPORT)" \
@@ -1345,6 +1458,7 @@ experiment-health-extended: learned-grammar-coverage-extended numeric-certificat
 		--neural-grammar-summary "$(EXPERIMENT_HEALTH_NEURAL_GRAMMAR_SUMMARY)" \
 		--protocol-spine "$(PROTOCOL_SPINE_REPORT)" \
 		--operator-promotions "$(PROTOCOL_OPERATOR_REPORT)" \
+		--engine-evidence "$(DATASET_ACTION_SCORE_EVIDENCE)" \
 		--output "$(EXPERIMENT_HEALTH_EXTENDED_REPORT)"
 
 numeric-certificate-experiments:
@@ -1484,7 +1598,7 @@ check: python-check trace-determinism-compare paper-support test sanitize action
 	$(MAKE) test REAL=double
 	$(MAKE) numeric-certificate-mandatory
 
-experimental-check: program-synthesis program-synthesis-baselines arc-agi arc-agi-induction-smoke multitask-domain haiku-word-lm-smoke haiku-understanding-smoke haiku-coherence-hard-negatives learned-grammar-coverage
+experimental-check: program-synthesis program-synthesis-baselines arc-agi arc-agi-induction-smoke multitask-domain haiku-word-lm-smoke haiku-understanding-smoke haiku-coherence-hard-negatives haiku-rule-search-smoke learned-grammar-coverage
 
 clean:
 	rm -rf $(BUILD_DIR)

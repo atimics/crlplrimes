@@ -15852,6 +15852,7 @@ typedef struct {
     size_t verifier_certificate_rows;
     size_t coverage_rows;
     size_t evidence_rows;
+    size_t engine_evidence_rows;
     size_t protocol_candidate_rows;
     size_t protocol_outcome_rows;
     size_t operator_rows;
@@ -16177,6 +16178,7 @@ static const char *nn_gd_health_priority_for_kind(const char *kind) {
         strcmp(kind, "hard_negative_ranker_gap") == 0 ||
         strcmp(kind, "weak_hard_negative_family") == 0 ||
         strcmp(kind, "ranker_or_retention_gap") == 0 ||
+        strcmp(kind, "engine_evidence_gap") == 0 ||
         strcmp(kind, "haiku_understanding_optional_gate") == 0) {
         return "P1";
     }
@@ -16729,6 +16731,135 @@ static int nn_gd_health_read_claims(NNGDHealthExperimentList *experiments,
 static int nn_gd_health_add_evidence_gate(NNGDHealthExperiment *experiment,
                                           const char *gate,
                                           int passed,
+                                          int required);
+
+static int nn_gd_health_engine_evidence_required(const char *name) {
+    static const char *required[] = {
+        "arc_cell_color",
+        "bitwise_macro_step",
+        "delayed_claim",
+        "grid_path",
+        "haiku_adjacency",
+        "prime_gap_candidate",
+        "program_synthesis_ops",
+        "signal_wasd",
+    };
+    size_t i;
+    if (name == NULL) {
+        return 0;
+    }
+    for (i = 0U; i < sizeof(required) / sizeof(required[0]); ++i) {
+        if (strcmp(name, required[i]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int nn_gd_health_seed_engine_evidence_expectations(
+    NNGDHealthExperimentList *experiments) {
+    static const char *required[] = {
+        "arc_cell_color",
+        "bitwise_macro_step",
+        "delayed_claim",
+        "grid_path",
+        "haiku_adjacency",
+        "prime_gap_candidate",
+        "program_synthesis_ops",
+        "signal_wasd",
+    };
+    size_t i;
+    for (i = 0U; i < sizeof(required) / sizeof(required[0]); ++i) {
+        if (nn_gd_health_experiment(experiments, required[i]) == NULL) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int nn_gd_health_read_engine_evidence(NNGDHealthExperimentList *experiments,
+                                             const char *path) {
+    FILE *fp;
+    char *line;
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+    if (nn_gd_health_seed_engine_evidence_expectations(experiments) != 0) {
+        return -1;
+    }
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        return 0;
+    }
+    while ((line = nn_gd_read_line_dynamic(fp)) != NULL) {
+        NNGDJsonIndex index;
+        char *schema;
+        char *experiment_name;
+        char *rule_search_schema;
+        char *replay_schema;
+        NNGDHealthExperiment *experiment;
+        nn_gd_json_index_line(line, &index);
+        schema = nn_gd_json_dup_index_string(&index, "schema");
+        if (schema == NULL ||
+            strcmp(schema, "crlp.engine_evidence.v1") != 0) {
+            free(schema);
+            free(line);
+            continue;
+        }
+        experiment_name = nn_gd_json_dup_index_string(&index, "experiment");
+        rule_search_schema =
+            nn_gd_json_dup_index_string(&index, "rule_search_schema");
+        replay_schema = nn_gd_json_dup_index_string(&index, "replay_schema");
+        experiment = nn_gd_health_experiment(experiments, experiment_name);
+        if (experiment == NULL ||
+            nn_gd_string_list_add_unique(&experiment->evidence_sources,
+                                         path) != 0) {
+            free(replay_schema);
+            free(rule_search_schema);
+            free(experiment_name);
+            free(schema);
+            free(line);
+            fclose(fp);
+            return -1;
+        }
+        ++experiment->evidence_rows;
+        ++experiment->engine_evidence_rows;
+        if (nn_gd_health_add_evidence_gate(experiment,
+                                           "dataset_engine_evidence_surface",
+                                           1,
+                                           1) != 0 ||
+            nn_gd_health_add_evidence_gate(
+                experiment,
+                "dataset_engine_rule_search_schema_declared",
+                rule_search_schema != NULL &&
+                    strcmp(rule_search_schema, "none") != 0,
+                0) != 0 ||
+            nn_gd_health_add_evidence_gate(
+                experiment,
+                "dataset_engine_replay_schema_declared",
+                replay_schema != NULL && strcmp(replay_schema, "none") != 0,
+                0) != 0) {
+            free(replay_schema);
+            free(rule_search_schema);
+            free(experiment_name);
+            free(schema);
+            free(line);
+            fclose(fp);
+            return -1;
+        }
+        free(replay_schema);
+        free(rule_search_schema);
+        free(experiment_name);
+        free(schema);
+        free(line);
+    }
+    fclose(fp);
+    return 0;
+}
+
+static int nn_gd_health_add_evidence_gate(NNGDHealthExperiment *experiment,
+                                          const char *gate,
+                                          int passed,
                                           int required) {
     if (passed) {
         return nn_gd_string_list_add_unique(&experiment->passing_gates, gate);
@@ -16995,6 +17126,17 @@ static int nn_gd_health_finalize(NNGDHealthExperimentList *experiments) {
                 return -1;
             }
         }
+        if (nn_gd_health_engine_evidence_required(experiment->name) &&
+            experiment->engine_evidence_rows == 0U) {
+            if (nn_gd_string_list_add_unique(
+                    &experiment->failing_required_gates,
+                    "dataset_engine_evidence_surface") != 0 ||
+                nn_gd_health_add_triage(experiment,
+                                        "P1",
+                                        "engine_evidence_gap") != 0) {
+                return -1;
+            }
+        }
         if (experiment->claim_ids.count > 0U &&
             experiment->numeric_targets.count == 0U &&
             experiment->coverage_rows == 0U &&
@@ -17108,11 +17250,13 @@ static void nn_gd_health_write_experiment(FILE *fp,
     nn_gd_json_write_string_list(fp, &experiment->numeric_targets);
     fprintf(fp,
             ",\"numeric_committed_rows\":%zu,\"coverage_rows\":%zu,"
-            "\"evidence_rows\":%zu,\"protocol_candidate_rows\":%zu,"
+            "\"evidence_rows\":%zu,\"engine_evidence_rows\":%zu,"
+            "\"protocol_candidate_rows\":%zu,"
             "\"protocol_outcome_rows\":%zu,\"promoted_operator_rows\":%zu}",
             experiment->numeric_committed_rows,
             experiment->coverage_rows,
             experiment->evidence_rows,
+            experiment->engine_evidence_rows,
             experiment->protocol_candidate_rows,
             experiment->protocol_outcome_rows,
             experiment->promoted_operator_rows);
@@ -17255,6 +17399,7 @@ int nn_grammar_discovery_write_experiment_health(
     const char *neural_grammar_summary_path,
     const char *protocol_spine_path,
     const char *operator_promotions_path,
+    const char *engine_evidence_path,
     const char *output_path) {
     NNGDHealthExperimentList experiments = {0};
     int status = -1;
@@ -17276,6 +17421,7 @@ int nn_grammar_discovery_write_experiment_health(
         nn_gd_health_read_protocol_spine(&experiments, protocol_spine_path) != 0 ||
         nn_gd_health_read_operator_promotions(&experiments,
                                               operator_promotions_path) != 0 ||
+        nn_gd_health_read_engine_evidence(&experiments, engine_evidence_path) != 0 ||
         nn_gd_health_finalize(&experiments) != 0 ||
         nn_gd_health_write_report(&experiments,
                                   paper_claims_path,

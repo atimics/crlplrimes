@@ -79,6 +79,7 @@ Outputs:
 - `build/float/neural_grammar_discovery/grammar_sketch_memory.tsv`
 - `build/float/neural_grammar_discovery/grammar_sketch_memory_summary.jsonl`
 - `build/float/learned_grammar_coverage/coverage.jsonl`
+- `build/float/dataset_action_score_artifacts/engine_evidence.jsonl`
 - `build/float/experiment_health/experiment_health.jsonl`
 - `build/float/haiku_coherence_hard_negatives_hf_dictionary/hard_negative_rows.jsonl`
 
@@ -206,8 +207,11 @@ HF-dictionary report is feature-encoder-v4 diagnostic evidence: topic and
 plausible-topic splice families clear the 75% gate, while `line_splice` and
 `word_salad` remain explicit health triage.
 `crlp.experiment_health.v1` rows then fold coverage status, numeric certificate
-rows, coverage holes, verifier deltas, and generated paper-claim support into one
-per-experiment JSONL report.
+rows, dataset-engine evidence, coverage holes, verifier deltas, and generated
+paper-claim support into one per-experiment JSONL report. `experiment-health`
+depends on `dataset-action-score-engine-evidence` and passes
+`--engine-evidence`; missing `crlp.engine_evidence.v1` rows for the engine-backed
+adapters are required-gate failures under `dataset_engine_evidence_surface`.
 
 ARC replacement rows also emit `coverage_hole_summary` and
 `visual_replacement_gaps`. These aggregates preserve the full split that the

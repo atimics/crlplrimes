@@ -126,6 +126,8 @@ typedef struct {
     const nn_real *probabilities;
     size_t selected_index;
     size_t target_index;
+    const size_t *target_indices;
+    size_t target_count;
     nn_real loss;
     const char *verifier_result;
     const char *verifier_cost_json;

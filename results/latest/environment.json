@@ -4,7 +4,7 @@
   "cc_version": "Apple clang version 17.0.0 (clang-1700.6.4.2)",
   "env": {},
   "git_branch": "main",
-  "git_commit": "029e72302f6cee904c5ee18f9fdc59ba19de665a",
+  "git_commit": "59acd48c12a5dd86a2b3877c5bd0380bbd00e6c3",
   "git_dirty": true,
   "make_version": "GNU Make 3.81",
   "python_implementation": "CPython",

@@ -44,6 +44,8 @@ make haiku-word-lm-hf
 make haiku-word-lm-hf-dictionary
 make haiku-understanding-smoke
 make haiku-coherence-hard-negatives
+make haiku-rule-search-smoke
+make haiku-rule-search-baselines
 make haiku-understanding-synthetic
 make haiku-understanding-hf
 make haiku-understanding-hf-dictionary
@@ -52,6 +54,7 @@ make haiku-word-lm HAIKU_WORD_LM_WORD_LIST=/path/to/scrabble_or_word_list.txt
 make haiku-lm HAIKU_LM_WORD_LIST=/path/to/scrabble_or_word_list.txt HAIKU_LM_LEXICON_GATE=0
 ./build/float/haiku_lm --epochs 12 --sample 1 --top-k 5 --trace build/float/haiku_lm_artifacts/trace.jsonl --save build/float/haiku_lm_artifacts/haiku.nnckpt
 ./build/float/haiku_word_lm --corpus data/haiku_open/clean/hf_haiku_clean.txt --word-list data/haiku_open/clean/hf_vocab.txt --epochs 2 --trace build/float/haiku_word_lm_artifacts/trace.hf.jsonl
+./build/float/haiku_rule_search --corpus data/haiku_tiny.txt --proposer closed-loop --trace build/float/haiku_rule_search_artifacts/trace.jsonl
 ```
 
 `make haiku-corpus-synthetic` generates `data/haiku_synthetic_5000.txt`
@@ -140,7 +143,7 @@ word-frequency priors, train-split adjacency coverage, line-to-line topic
 similarity, poem topic tightness, per-line topic coverage, cross-line content
 reuse, minimum line-pair similarity, line-pair spread, adjacent-line fit,
 adjacency/bigram products, topic-core consistency, topic drift, and a symbolic
-poem-plan score. Feature encoder v4 keeps this as a small neurosymbolic
+poem-plan score. Feature encoder v5 keeps this as a small neurosymbolic
 verifier: the dense scorer sees explicit poem-level coherence aggregates rather
 than relying on a larger hidden model to infer them.
 
@@ -158,6 +161,24 @@ for `line_splice`, `word_salad`, `topic_splice`, `same_season_splice`, and
 syllable ratios. The `plausible_negative_*` cohort isolates the form-valid,
 adjacency-plausible coherence failures. This benchmark measures whether the
 engine can reject near-miss poems, not whether generated poems are good.
+
+`examples/haiku_rule_search.c` ports the haiku word-action surface onto the
+same rule-search reporting stack used by the prime/grid experiments. It
+enumerates deterministic reject-action rules over the haiku word generator
+state, certifies them by replaying observed train next-actions, scores their
+negative-candidate coverage on train/validation/test splits, and writes
+`crlp.rule_trace.v1` plus `crlp.rule_search.summary.v1` rows. The current rule
+grammar covers syllable overflow, line-character overflow, early newline, early
+EOS, train-adjacency absence, and line-position vocabulary support. The
+`--proposer` switch supports `grammar`, `structural`, `random`, and
+`closed-loop`; the closed-loop path uses the shared neural residual rule policy
+with an audited `haiku_rule_features_v1` schema.
+
+This is a verifier/certificate layer over the haiku word-action model, not a
+claim that the generator has learned poetic quality. The certificate means a
+rule has zero false rejections against train positives under this corpus and
+candidate construction, while held-out false rejections remain visible in the
+trace and summary fields.
 
 Training also includes a small online hard-negative loop for the plausible
 splice family. After the normal update, the scorer re-scores the plausible

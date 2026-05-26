@@ -18,7 +18,7 @@ enum {
     HU_ADJ_BUCKETS = 524288,
     HU_MAX_ADJ_EDGES = 400000,
     HU_DEFAULT_SPLICE_SCAN_LIMIT = 512,
-    HU_FEATURE_ENCODER_VERSION = 4,
+    HU_FEATURE_ENCODER_VERSION = 5,
     HU_CORRUPT_LINE_SHUFFLE = 0,
     HU_CORRUPT_LINE_SPLICE = 1,
     HU_CORRUPT_SYLLABLE_BREAK = 2,
@@ -107,10 +107,19 @@ typedef struct {
     size_t by_type_symbolic_correct[HU_CORRUPT_COUNT];
     double by_type_plan_delta_sum[HU_CORRUPT_COUNT];
     double by_type_tightness_delta_sum[HU_CORRUPT_COUNT];
+    double by_type_min_similarity_delta_sum[HU_CORRUPT_COUNT];
+    double by_type_centroid_tightness_delta_sum[HU_CORRUPT_COUNT];
+    double by_type_content_cooccurrence_delta_sum[HU_CORRUPT_COUNT];
     double nll;
 } HUEval;
 
 typedef struct {
+    double topic_similarity01;
+    double topic_similarity12;
+    double topic_similarity02;
+    double content_similarity01;
+    double content_similarity12;
+    double content_similarity02;
     double line_similarity01;
     double line_similarity12;
     double line_similarity02;
@@ -121,7 +130,9 @@ typedef struct {
     double line_similarity_spread;
     double topic_core_ratio;
     double topic_drift;
+    double topic_centroid_tightness;
     double cross_line_reuse;
+    double content_cooccurrence_density;
     double adjacency_ratio;
     double bigram_ratio;
     double exact_syllable_ratio;
@@ -578,7 +589,8 @@ static int is_hard_negative_corruption(int type)
 
 static int is_weighted_hard_negative_corruption(int type)
 {
-    return type == HU_CORRUPT_LINE_SPLICE || type == HU_CORRUPT_WORD_SALAD;
+    return type == HU_CORRUPT_LINE_SPLICE || type == HU_CORRUPT_WORD_SALAD ||
+           type == HU_CORRUPT_TOPIC_SPLICE || type == HU_CORRUPT_SAME_SEASON_SPLICE;
 }
 
 static size_t scan_limit_for_corpus(const HUCorpus *corpus, size_t requested)
@@ -707,6 +719,44 @@ static double line_coherence_similarity(const HUVocab *vocab,
     return 0.5 * topic + 0.5 * content;
 }
 
+static double line_neighbor_fit(const HUVocab *vocab, const HUPoem *poem, int line)
+{
+    double fit = 0.0;
+    size_t neighbors = 0;
+    if (line > 0) {
+        fit += line_coherence_similarity(vocab, poem, line - 1, poem, line);
+        neighbors += 1;
+    }
+    if (line < 2) {
+        fit += line_coherence_similarity(vocab, poem, line, poem, line + 1);
+        neighbors += 1;
+    }
+    return neighbors > 0 ? fit / (double)neighbors : 0.0;
+}
+
+static double line_surface_similarity_score(const HUVocab *vocab,
+                                            const HUPoem *real,
+                                            const HUPoem *candidate,
+                                            int line)
+{
+    int syllable_delta = abs(line_syllable_count(vocab, real, line) -
+                             line_syllable_count(vocab, candidate, line));
+    int word_delta = abs((int)real->line_counts[line] - (int)candidate->line_counts[line]);
+    double syllable_match = 1.0 - (double)syllable_delta / 3.0;
+    if (syllable_match < 0.0) {
+        syllable_match = 0.0;
+    } else if (syllable_match > 1.0) {
+        syllable_match = 1.0;
+    }
+    double word_match = 1.0 - (double)word_delta / 4.0;
+    if (word_match < 0.0) {
+        word_match = 0.0;
+    } else if (word_match > 1.0) {
+        word_match = 1.0;
+    }
+    return 0.65 * syllable_match + 0.35 * word_match;
+}
+
 static double clamp_unit(double value)
 {
     if (value < 0.0) {
@@ -757,9 +807,22 @@ static void compute_coherence_metrics(const HUVocab *vocab,
         }
     }
 
-    metrics->line_similarity01 = line_coherence_similarity(vocab, poem, 0, poem, 1);
-    metrics->line_similarity12 = line_coherence_similarity(vocab, poem, 1, poem, 2);
-    metrics->line_similarity02 = line_coherence_similarity(vocab, poem, 0, poem, 2);
+    unsigned int topic0 = line_topic_mask(vocab, poem, 0) & 7u;
+    unsigned int topic1 = line_topic_mask(vocab, poem, 1) & 7u;
+    unsigned int topic2 = line_topic_mask(vocab, poem, 2) & 7u;
+
+    metrics->topic_similarity01 = mask_similarity(topic0, topic1);
+    metrics->topic_similarity12 = mask_similarity(topic1, topic2);
+    metrics->topic_similarity02 = mask_similarity(topic0, topic2);
+    metrics->content_similarity01 = line_content_similarity(vocab, poem, 0, poem, 1);
+    metrics->content_similarity12 = line_content_similarity(vocab, poem, 1, poem, 2);
+    metrics->content_similarity02 = line_content_similarity(vocab, poem, 0, poem, 2);
+    metrics->line_similarity01 =
+        0.5 * (metrics->topic_similarity01 + metrics->content_similarity01);
+    metrics->line_similarity12 =
+        0.5 * (metrics->topic_similarity12 + metrics->content_similarity12);
+    metrics->line_similarity02 =
+        0.5 * (metrics->topic_similarity02 + metrics->content_similarity02);
     metrics->adjacent_line_tightness =
         (metrics->line_similarity01 + metrics->line_similarity12) / 2.0;
     metrics->poem_topic_tightness =
@@ -781,22 +844,33 @@ static void compute_coherence_metrics(const HUVocab *vocab,
     }
     metrics->line_similarity_spread =
         metrics->max_line_similarity - metrics->min_line_similarity;
-    metrics->cross_line_reuse =
-        (line_content_similarity(vocab, poem, 0, poem, 1) +
-         line_content_similarity(vocab, poem, 1, poem, 2) +
-         line_content_similarity(vocab, poem, 0, poem, 2)) /
+    metrics->content_cooccurrence_density =
+        (metrics->content_similarity01 + metrics->content_similarity12 +
+         metrics->content_similarity02) /
         3.0;
+    metrics->cross_line_reuse = metrics->content_cooccurrence_density;
     metrics->adjacency_ratio =
         adjacent_total > 0 ? (double)adjacent_supported / (double)adjacent_total : 0.0;
     metrics->bigram_ratio =
         bigram_total > 0 ? (double)bigram_supported / (double)bigram_total : 0.0;
     metrics->exact_syllable_ratio = (double)exact_lines / 3.0;
 
-    unsigned int topic0 = line_topic_mask(vocab, poem, 0) & 7u;
-    unsigned int topic1 = line_topic_mask(vocab, poem, 1) & 7u;
-    unsigned int topic2 = line_topic_mask(vocab, poem, 2) & 7u;
     unsigned int topic_union = topic0 | topic1 | topic2;
     unsigned int topic_intersection = topic0 & topic1 & topic2;
+    unsigned int topic_centroid = 0u;
+    if (topic_union != 0u) {
+        for (unsigned int bit = 1u; bit <= 4u; bit <<= 1u) {
+            unsigned int hits = ((topic0 & bit) != 0u ? 1u : 0u) +
+                                ((topic1 & bit) != 0u ? 1u : 0u) +
+                                ((topic2 & bit) != 0u ? 1u : 0u);
+            if (hits >= 2u) {
+                topic_centroid |= bit;
+            }
+        }
+        if (topic_centroid == 0u) {
+            topic_centroid = topic_union;
+        }
+    }
     metrics->topic_core_ratio = topic_union != 0u
                                     ? (double)count_mask_bits(topic_intersection) /
                                           (double)count_mask_bits(topic_union)
@@ -805,14 +879,22 @@ static void compute_coherence_metrics(const HUVocab *vocab,
                                     count_mask_bits(topic1 ^ topic2) +
                                     count_mask_bits(topic0 ^ topic2)) /
                            9.0;
+    metrics->topic_centroid_tightness =
+        topic_centroid != 0u
+            ? (mask_similarity(topic0, topic_centroid) + mask_similarity(topic1, topic_centroid) +
+               mask_similarity(topic2, topic_centroid)) /
+                  3.0
+            : 0.0;
 
     metrics->plan_score =
-        clamp_unit(0.30 * metrics->poem_topic_tightness +
-                   0.20 * metrics->min_line_similarity +
+        clamp_unit(0.25 * metrics->poem_topic_tightness +
+                   0.15 * metrics->min_line_similarity +
                    0.10 * metrics->adjacent_line_tightness +
-                   0.10 * (1.0 - metrics->line_similarity_spread) +
+                   0.08 * (1.0 - metrics->line_similarity_spread) +
                    0.10 * metrics->topic_core_ratio +
-                   0.10 * metrics->adjacency_ratio +
+                   0.07 * metrics->topic_centroid_tightness +
+                   0.07 * metrics->content_cooccurrence_density +
+                   0.08 * metrics->adjacency_ratio +
                    0.05 * metrics->bigram_ratio +
                    0.05 * metrics->exact_syllable_ratio);
 }
@@ -828,32 +910,71 @@ static size_t select_splice_source(const HUCorpus *corpus,
     const HUPoem *real = &corpus->poems[poem_index];
     unsigned int real_mask = line_topic_mask(vocab, real, line);
     int real_has_season = (real_mask & 2u) != 0u;
-    size_t best = poem_index;
-    double best_score = 2.0;
+    double real_neighbor_fit = line_neighbor_fit(vocab, real, line);
+    size_t strict_best = poem_index;
+    double strict_best_score = -1.0;
+    size_t fallback_best = poem_index;
+    double fallback_best_score = -1.0;
     if (corpus->count <= 1) {
-        return best;
+        return strict_best;
     }
     size_t candidates_to_scan = scan_limit_for_corpus(corpus, scan_limit);
-    for (size_t offset = 1; offset <= candidates_to_scan; ++offset) {
-        size_t candidate = (poem_index + offset + (size_t)(mix % corpus->count)) % corpus->count;
-        if (candidate == poem_index) {
-            continue;
+    for (int strict_pass = 0; strict_pass < 2; ++strict_pass) {
+        for (size_t offset = 1; offset <= candidates_to_scan; ++offset) {
+            size_t candidate =
+                (poem_index + offset + (size_t)(mix % corpus->count)) % corpus->count;
+            if (candidate == poem_index) {
+                continue;
+            }
+            const HUPoem *source = &corpus->poems[candidate];
+            unsigned int candidate_mask = line_topic_mask(vocab, source, line);
+            int candidate_has_season = (candidate_mask & 2u) != 0u;
+            if (require_same_season && candidate_has_season != real_has_season) {
+                continue;
+            }
+
+            int syllable_delta = abs(line_syllable_count(vocab, real, line) -
+                                     line_syllable_count(vocab, source, line));
+            int word_delta =
+                abs((int)real->line_counts[line] - (int)source->line_counts[line]);
+            int max_syllable_delta = strict_pass == 0 ? (require_same_season ? 0 : 1)
+                                                      : (require_same_season ? 1 : 2);
+            int max_word_delta = strict_pass == 0 ? 1 : 3;
+            if (syllable_delta > max_syllable_delta || word_delta > max_word_delta) {
+                continue;
+            }
+
+            HUPoem corrupt;
+            copy_poem(&corrupt, real);
+            copy_line(&corrupt, line, source, line);
+
+            double line_similarity = line_coherence_similarity(vocab, real, line, source, line);
+            double neighbor_fit = line_neighbor_fit(vocab, &corrupt, line);
+            double neighbor_break = clamp_unit((real_neighbor_fit - neighbor_fit + 1.0) / 2.0);
+            double surface_similarity = line_surface_similarity_score(vocab, real, source, line);
+            double coherence_break = 0.70 * (1.0 - line_similarity) + 0.30 * neighbor_break;
+            double score = 0.65 * coherence_break + 0.35 * surface_similarity;
+
+            if (score > fallback_best_score) {
+                fallback_best_score = score;
+                fallback_best = candidate;
+            }
+            if (strict_pass == 0 && score > strict_best_score) {
+                strict_best_score = score;
+                strict_best = candidate;
+            }
         }
-        unsigned int candidate_mask = line_topic_mask(vocab, &corpus->poems[candidate], line);
-        int candidate_has_season = (candidate_mask & 2u) != 0u;
-        if (require_same_season && candidate_has_season != real_has_season) {
-            continue;
-        }
-        double score = line_coherence_similarity(vocab, real, line, &corpus->poems[candidate], line);
-        if (score < best_score) {
-            best_score = score;
-            best = candidate;
+        if (strict_best != poem_index) {
+            return strict_best;
         }
     }
-    if (best == poem_index && require_same_season) {
+    if (fallback_best != poem_index) {
+        return fallback_best;
+    }
+    if (require_same_season) {
         return select_splice_source(corpus, vocab, poem_index, line, 0, scan_limit, mix);
     }
-    return best;
+    return strict_best;
 }
 
 static size_t select_plausible_splice_source(const HUCorpus *corpus,
@@ -1479,6 +1600,10 @@ static int write_trace_row(FILE *trace,
         real_metrics.poem_topic_tightness - corrupt_metrics.poem_topic_tightness;
     double min_similarity_delta =
         real_metrics.min_line_similarity - corrupt_metrics.min_line_similarity;
+    double centroid_tightness_delta =
+        real_metrics.topic_centroid_tightness - corrupt_metrics.topic_centroid_tightness;
+    double content_cooccurrence_delta =
+        real_metrics.content_cooccurrence_density - corrupt_metrics.content_cooccurrence_density;
     uint64_t state_hash = hash_mix_u64(hash_poem(real), hash_poem(corrupt));
     return fprintf(trace,
                    "{\"schema\":\"crlp.haiku_understanding.trace.v1\","
@@ -1492,6 +1617,12 @@ static int write_trace_row(FILE *trace,
                    "\"plan_score_delta\":%.9g,\"symbolic_selected\":\"%s\","
                    "\"real_topic_tightness\":%.9g,\"corrupt_topic_tightness\":%.9g,"
                    "\"topic_tightness_delta\":%.9g,"
+                   "\"real_topic_centroid_tightness\":%.9g,"
+                   "\"corrupt_topic_centroid_tightness\":%.9g,"
+                   "\"topic_centroid_tightness_delta\":%.9g,"
+                   "\"real_content_cooccurrence_density\":%.9g,"
+                   "\"corrupt_content_cooccurrence_density\":%.9g,"
+                   "\"content_cooccurrence_delta\":%.9g,"
                    "\"real_min_line_similarity\":%.9g,"
                    "\"corrupt_min_line_similarity\":%.9g,"
                    "\"min_line_similarity_delta\":%.9g,"
@@ -1532,6 +1663,12 @@ static int write_trace_row(FILE *trace,
                    real_metrics.poem_topic_tightness,
                    corrupt_metrics.poem_topic_tightness,
                    tightness_delta,
+                   real_metrics.topic_centroid_tightness,
+                   corrupt_metrics.topic_centroid_tightness,
+                   centroid_tightness_delta,
+                   real_metrics.content_cooccurrence_density,
+                   corrupt_metrics.content_cooccurrence_density,
+                   content_cooccurrence_delta,
                    real_metrics.min_line_similarity,
                    corrupt_metrics.min_line_similarity,
                    min_similarity_delta,
@@ -1588,6 +1725,13 @@ static HUEval evaluate_split(NeuralNet *net,
             double plan_delta = real_metrics.plan_score - corrupt_metrics.plan_score;
             double tightness_delta =
                 real_metrics.poem_topic_tightness - corrupt_metrics.poem_topic_tightness;
+            double min_similarity_delta =
+                real_metrics.min_line_similarity - corrupt_metrics.min_line_similarity;
+            double centroid_tightness_delta =
+                real_metrics.topic_centroid_tightness - corrupt_metrics.topic_centroid_tightness;
+            double content_cooccurrence_delta =
+                real_metrics.content_cooccurrence_density -
+                corrupt_metrics.content_cooccurrence_density;
             double probability = (double)probabilities[0];
             if (probability < 1e-12) {
                 probability = 1e-12;
@@ -1597,6 +1741,9 @@ static HUEval evaluate_split(NeuralNet *net,
             eval.by_type_pairs[type] += 1;
             eval.by_type_plan_delta_sum[type] += plan_delta;
             eval.by_type_tightness_delta_sum[type] += tightness_delta;
+            eval.by_type_min_similarity_delta_sum[type] += min_similarity_delta;
+            eval.by_type_centroid_tightness_delta_sum[type] += centroid_tightness_delta;
+            eval.by_type_content_cooccurrence_delta_sum[type] += content_cooccurrence_delta;
             if (plan_delta >= 0.0) {
                 eval.by_type_symbolic_correct[type] += 1;
             }
@@ -1864,7 +2011,7 @@ int main(int argc, char **argv)
         nn_checkpoint_meta_init(&meta, HU_FEATURE_ENCODER_VERSION);
         if (!nn_checkpoint_meta_set_notes(&meta,
                                           "haiku_understanding real-vs-corrupt scorer") ||
-            !nn_checkpoint_meta_set_feature_set(&meta, "haiku_understanding_v4")) {
+            !nn_checkpoint_meta_set_feature_set(&meta, "haiku_understanding_v5")) {
             fprintf(stderr, "checkpoint metadata is too long\n");
             nn_free(net);
             return EXIT_FAILURE;
@@ -1931,20 +2078,34 @@ int main(int argc, char **argv)
                                     ? valid_eval.by_type_plan_delta_sum[type] /
                                           (double)valid_eval.by_type_pairs[type]
                                     : 0.0;
-        printf("valid_%s pairs=%zu top1=%.2f%% symbolic_top1=%.2f%% avg_plan_delta=%.4f\n",
+        double avg_min_similarity_delta = valid_eval.by_type_pairs[type] > 0
+                                              ? valid_eval.by_type_min_similarity_delta_sum[type] /
+                                                    (double)valid_eval.by_type_pairs[type]
+                                              : 0.0;
+        printf("valid_%s pairs=%zu top1=%.2f%% symbolic_top1=%.2f%% avg_plan_delta=%.4f "
+               "avg_min_line_similarity_delta=%.4f\n",
                corruption_name(type),
                valid_eval.by_type_pairs[type],
                acc * 100.0,
                symbolic_acc * 100.0,
-               avg_plan_delta);
+               avg_plan_delta,
+               avg_min_similarity_delta);
     }
     size_t symbolic_correct = 0;
     double plan_delta_sum = 0.0;
     double tightness_delta_sum = 0.0;
+    double min_similarity_delta_sum = 0.0;
+    double centroid_tightness_delta_sum = 0.0;
+    double content_cooccurrence_delta_sum = 0.0;
     for (int type = 0; type < HU_CORRUPT_COUNT; ++type) {
         symbolic_correct += valid_eval.by_type_symbolic_correct[type];
         plan_delta_sum += valid_eval.by_type_plan_delta_sum[type];
         tightness_delta_sum += valid_eval.by_type_tightness_delta_sum[type];
+        min_similarity_delta_sum += valid_eval.by_type_min_similarity_delta_sum[type];
+        centroid_tightness_delta_sum +=
+            valid_eval.by_type_centroid_tightness_delta_sum[type];
+        content_cooccurrence_delta_sum +=
+            valid_eval.by_type_content_cooccurrence_delta_sum[type];
     }
     double symbolic_top1 =
         valid_eval.pairs > 0 ? (double)symbolic_correct / (double)valid_eval.pairs : 0.0;
@@ -1952,6 +2113,14 @@ int main(int argc, char **argv)
         valid_eval.pairs > 0 ? plan_delta_sum / (double)valid_eval.pairs : 0.0;
     double avg_tightness_delta =
         valid_eval.pairs > 0 ? tightness_delta_sum / (double)valid_eval.pairs : 0.0;
+    double avg_min_similarity_delta =
+        valid_eval.pairs > 0 ? min_similarity_delta_sum / (double)valid_eval.pairs : 0.0;
+    double avg_centroid_tightness_delta = valid_eval.pairs > 0
+                                              ? centroid_tightness_delta_sum /
+                                                    (double)valid_eval.pairs
+                                              : 0.0;
+    double avg_content_cooccurrence_delta =
+        valid_eval.pairs > 0 ? content_cooccurrence_delta_sum / (double)valid_eval.pairs : 0.0;
     printf("training_seconds=%.6f total_updates=%zu\n", training_seconds, total_updates);
     size_t coherence_pairs = valid_eval.by_type_pairs[HU_CORRUPT_TOPIC_SPLICE] +
                              valid_eval.by_type_pairs[HU_CORRUPT_SAME_SEASON_SPLICE];
@@ -1966,6 +2135,15 @@ int main(int argc, char **argv)
     double coherence_tightness_delta_sum =
         valid_eval.by_type_tightness_delta_sum[HU_CORRUPT_TOPIC_SPLICE] +
         valid_eval.by_type_tightness_delta_sum[HU_CORRUPT_SAME_SEASON_SPLICE];
+    double coherence_min_similarity_delta_sum =
+        valid_eval.by_type_min_similarity_delta_sum[HU_CORRUPT_TOPIC_SPLICE] +
+        valid_eval.by_type_min_similarity_delta_sum[HU_CORRUPT_SAME_SEASON_SPLICE];
+    double coherence_centroid_tightness_delta_sum =
+        valid_eval.by_type_centroid_tightness_delta_sum[HU_CORRUPT_TOPIC_SPLICE] +
+        valid_eval.by_type_centroid_tightness_delta_sum[HU_CORRUPT_SAME_SEASON_SPLICE];
+    double coherence_content_cooccurrence_delta_sum =
+        valid_eval.by_type_content_cooccurrence_delta_sum[HU_CORRUPT_TOPIC_SPLICE] +
+        valid_eval.by_type_content_cooccurrence_delta_sum[HU_CORRUPT_SAME_SEASON_SPLICE];
     double coherence_top1 =
         coherence_pairs > 0 ? (double)coherence_correct / (double)coherence_pairs : 0.0;
     double coherence_symbolic_top1 = coherence_pairs > 0
@@ -1977,12 +2155,27 @@ int main(int argc, char **argv)
                                           : 0.0;
     double coherence_avg_tightness_delta =
         coherence_pairs > 0 ? coherence_tightness_delta_sum / (double)coherence_pairs : 0.0;
+    double coherence_avg_min_similarity_delta = coherence_pairs > 0
+                                                    ? coherence_min_similarity_delta_sum /
+                                                          (double)coherence_pairs
+                                                    : 0.0;
+    double coherence_avg_centroid_tightness_delta =
+        coherence_pairs > 0
+            ? coherence_centroid_tightness_delta_sum / (double)coherence_pairs
+            : 0.0;
+    double coherence_avg_content_cooccurrence_delta =
+        coherence_pairs > 0
+            ? coherence_content_cooccurrence_delta_sum / (double)coherence_pairs
+            : 0.0;
 
     size_t hard_negative_pairs = 0;
     size_t hard_negative_correct = 0;
     size_t hard_negative_symbolic_correct = 0;
     double hard_negative_plan_delta_sum = 0.0;
     double hard_negative_tightness_delta_sum = 0.0;
+    double hard_negative_min_similarity_delta_sum = 0.0;
+    double hard_negative_centroid_tightness_delta_sum = 0.0;
+    double hard_negative_content_cooccurrence_delta_sum = 0.0;
     for (int type = 0; type < HU_CORRUPT_COUNT; ++type) {
         if (!is_hard_negative_corruption(type)) {
             continue;
@@ -1992,6 +2185,12 @@ int main(int argc, char **argv)
         hard_negative_symbolic_correct += valid_eval.by_type_symbolic_correct[type];
         hard_negative_plan_delta_sum += valid_eval.by_type_plan_delta_sum[type];
         hard_negative_tightness_delta_sum += valid_eval.by_type_tightness_delta_sum[type];
+        hard_negative_min_similarity_delta_sum +=
+            valid_eval.by_type_min_similarity_delta_sum[type];
+        hard_negative_centroid_tightness_delta_sum +=
+            valid_eval.by_type_centroid_tightness_delta_sum[type];
+        hard_negative_content_cooccurrence_delta_sum +=
+            valid_eval.by_type_content_cooccurrence_delta_sum[type];
     }
     double hard_negative_top1 = hard_negative_pairs > 0
                                     ? (double)hard_negative_correct /
@@ -2007,6 +2206,18 @@ int main(int argc, char **argv)
     double hard_negative_avg_tightness_delta =
         hard_negative_pairs > 0
             ? hard_negative_tightness_delta_sum / (double)hard_negative_pairs
+            : 0.0;
+    double hard_negative_avg_min_similarity_delta =
+        hard_negative_pairs > 0
+            ? hard_negative_min_similarity_delta_sum / (double)hard_negative_pairs
+            : 0.0;
+    double hard_negative_avg_centroid_tightness_delta =
+        hard_negative_pairs > 0
+            ? hard_negative_centroid_tightness_delta_sum / (double)hard_negative_pairs
+            : 0.0;
+    double hard_negative_avg_content_cooccurrence_delta =
+        hard_negative_pairs > 0
+            ? hard_negative_content_cooccurrence_delta_sum / (double)hard_negative_pairs
             : 0.0;
     size_t plausible_negative_pairs =
         valid_eval.by_type_pairs[HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE];
@@ -2033,6 +2244,23 @@ int main(int argc, char **argv)
             ? valid_eval.by_type_tightness_delta_sum[HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE] /
                   (double)plausible_negative_pairs
             : 0.0;
+    double plausible_negative_avg_min_similarity_delta =
+        plausible_negative_pairs > 0
+            ? valid_eval.by_type_min_similarity_delta_sum[HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE] /
+                  (double)plausible_negative_pairs
+            : 0.0;
+    double plausible_negative_avg_centroid_tightness_delta =
+        plausible_negative_pairs > 0
+            ? valid_eval
+                      .by_type_centroid_tightness_delta_sum[HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE] /
+                  (double)plausible_negative_pairs
+            : 0.0;
+    double plausible_negative_avg_content_cooccurrence_delta =
+        plausible_negative_pairs > 0
+            ? valid_eval
+                      .by_type_content_cooccurrence_delta_sum[HU_CORRUPT_PLAUSIBLE_TOPIC_SPLICE] /
+                  (double)plausible_negative_pairs
+            : 0.0;
 
     printf("{\"schema\":\"crlp.haiku_understanding.summary.v1\",\"poems\":%zu,"
            "\"train_pairs\":%zu,\"valid_pairs\":%zu,\"train_top1\":%.6f,"
@@ -2049,19 +2277,31 @@ int main(int argc, char **argv)
            "\"feature_encoder_version\":%u,\"model_hash\":\"%s\","
            "\"symbolic_top1\":%.6f,\"avg_plan_delta\":%.6f,"
            "\"avg_topic_tightness_delta\":%.6f,"
+           "\"avg_min_line_similarity_delta\":%.6f,"
+           "\"avg_topic_centroid_tightness_delta\":%.6f,"
+           "\"avg_content_cooccurrence_delta\":%.6f,"
            "\"coherence_pairs\":%zu,\"coherence_top1\":%.6f,"
            "\"coherence_symbolic_top1\":%.6f,"
            "\"coherence_avg_plan_delta\":%.6f,"
            "\"coherence_avg_topic_tightness_delta\":%.6f,"
+           "\"coherence_avg_min_line_similarity_delta\":%.6f,"
+           "\"coherence_avg_topic_centroid_tightness_delta\":%.6f,"
+           "\"coherence_avg_content_cooccurrence_delta\":%.6f,"
            "\"hard_negative_pairs\":%zu,\"hard_negative_top1\":%.6f,"
            "\"hard_negative_symbolic_top1\":%.6f,"
            "\"hard_negative_avg_plan_delta\":%.6f,"
            "\"hard_negative_avg_topic_tightness_delta\":%.6f,"
+           "\"hard_negative_avg_min_line_similarity_delta\":%.6f,"
+           "\"hard_negative_avg_topic_centroid_tightness_delta\":%.6f,"
+           "\"hard_negative_avg_content_cooccurrence_delta\":%.6f,"
            "\"plausible_negative_pairs\":%zu,"
            "\"plausible_negative_top1\":%.6f,"
            "\"plausible_negative_symbolic_top1\":%.6f,"
            "\"plausible_negative_avg_plan_delta\":%.6f,"
            "\"plausible_negative_avg_topic_tightness_delta\":%.6f,"
+           "\"plausible_negative_avg_min_line_similarity_delta\":%.6f,"
+           "\"plausible_negative_avg_topic_centroid_tightness_delta\":%.6f,"
+           "\"plausible_negative_avg_content_cooccurrence_delta\":%.6f,"
            "\"by_corruption\":{",
            corpus.count,
            train_eval.pairs,
@@ -2086,21 +2326,33 @@ int main(int argc, char **argv)
            symbolic_top1,
            avg_plan_delta,
            avg_tightness_delta,
+           avg_min_similarity_delta,
+           avg_centroid_tightness_delta,
+           avg_content_cooccurrence_delta,
            coherence_pairs,
            coherence_top1,
            coherence_symbolic_top1,
            coherence_avg_plan_delta,
            coherence_avg_tightness_delta,
+           coherence_avg_min_similarity_delta,
+           coherence_avg_centroid_tightness_delta,
+           coherence_avg_content_cooccurrence_delta,
            hard_negative_pairs,
            hard_negative_top1,
            hard_negative_symbolic_top1,
            hard_negative_avg_plan_delta,
            hard_negative_avg_tightness_delta,
+           hard_negative_avg_min_similarity_delta,
+           hard_negative_avg_centroid_tightness_delta,
+           hard_negative_avg_content_cooccurrence_delta,
            plausible_negative_pairs,
            plausible_negative_top1,
            plausible_negative_symbolic_top1,
            plausible_negative_avg_plan_delta,
-           plausible_negative_avg_tightness_delta);
+           plausible_negative_avg_tightness_delta,
+           plausible_negative_avg_min_similarity_delta,
+           plausible_negative_avg_centroid_tightness_delta,
+           plausible_negative_avg_content_cooccurrence_delta);
     for (int type = 0; type < HU_CORRUPT_COUNT; ++type) {
         double acc = valid_eval.by_type_pairs[type] > 0
                          ? (double)valid_eval.by_type_correct[type] /
@@ -2118,16 +2370,39 @@ int main(int argc, char **argv)
                                               ? valid_eval.by_type_tightness_delta_sum[type] /
                                                     (double)valid_eval.by_type_pairs[type]
                                               : 0.0;
+        double avg_type_min_similarity_delta = valid_eval.by_type_pairs[type] > 0
+                                                   ? valid_eval
+                                                             .by_type_min_similarity_delta_sum[type] /
+                                                         (double)valid_eval.by_type_pairs[type]
+                                                   : 0.0;
+        double avg_type_centroid_tightness_delta = valid_eval.by_type_pairs[type] > 0
+                                                       ? valid_eval
+                                                                 .by_type_centroid_tightness_delta_sum
+                                                                       [type] /
+                                                             (double)valid_eval.by_type_pairs[type]
+                                                       : 0.0;
+        double avg_type_content_cooccurrence_delta = valid_eval.by_type_pairs[type] > 0
+                                                         ? valid_eval
+                                                                   .by_type_content_cooccurrence_delta_sum
+                                                                         [type] /
+                                                               (double)valid_eval.by_type_pairs[type]
+                                                         : 0.0;
         printf("%s\"%s\":{\"pairs\":%zu,\"top1\":%.6f,"
                "\"symbolic_top1\":%.6f,\"avg_plan_delta\":%.6f,"
-               "\"avg_topic_tightness_delta\":%.6f}",
+               "\"avg_topic_tightness_delta\":%.6f,"
+               "\"avg_min_line_similarity_delta\":%.6f,"
+               "\"avg_topic_centroid_tightness_delta\":%.6f,"
+               "\"avg_content_cooccurrence_delta\":%.6f}",
                type == 0 ? "" : ",",
                corruption_name(type),
                valid_eval.by_type_pairs[type],
                acc,
                symbolic_acc,
                avg_type_plan_delta,
-               avg_type_tightness_delta);
+               avg_type_tightness_delta,
+               avg_type_min_similarity_delta,
+               avg_type_centroid_tightness_delta,
+               avg_type_content_cooccurrence_delta);
     }
     printf("}}\n");
 

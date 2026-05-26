@@ -13,5 +13,6 @@
 #include "nn_protocol.h"
 #include "nn_train.h"
 #include "nn_text.h"
+#include "nn_dataset.h"
 
 #endif

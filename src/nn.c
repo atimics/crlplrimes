@@ -4197,6 +4197,30 @@ static uint32_t trace_action_id_at(const NNTraceRecord *record, size_t index)
     return record->action_ids == NULL ? (uint32_t)index : record->action_ids[index];
 }
 
+static int trace_target_indices_are_valid(const NNTraceRecord *record)
+{
+    if (record->target_indices == NULL) {
+        return record->target_count == 0 || record->target_count == 1;
+    }
+    if (record->target_count == 0) {
+        return 0;
+    }
+    int saw_primary = 0;
+    for (size_t i = 0; i < record->target_count; ++i) {
+        size_t index = record->target_indices[i];
+        if (index >= record->candidate_count) {
+            return 0;
+        }
+        saw_primary = saw_primary || index == record->target_index;
+        for (size_t j = i + 1; j < record->target_count; ++j) {
+            if (index == record->target_indices[j]) {
+                return 0;
+            }
+        }
+    }
+    return saw_primary;
+}
+
 static int trace_record_arrays_are_valid(const NNTraceRecord *record)
 {
     double probability_sum = 0.0;
@@ -4227,6 +4251,7 @@ int nn_trace_write_jsonl(FILE *fp, const NNTraceRecord *record)
         record->scores == NULL || record->probabilities == NULL ||
         record->selected_index >= record->candidate_count ||
         record->target_index >= record->candidate_count ||
+        !trace_target_indices_are_valid(record) ||
         !trace_record_arrays_are_valid(record)) {
         return 0;
     }
@@ -4240,6 +4265,7 @@ int nn_trace_write_jsonl(FILE *fp, const NNTraceRecord *record)
         record->verifier_cost_json == NULL ? "{}" : record->verifier_cost_json;
     uint32_t selected_action_id = trace_action_id_at(record, record->selected_index);
     uint32_t target_action_id = trace_action_id_at(record, record->target_index);
+    size_t target_count = record->target_indices == NULL ? 1u : record->target_count;
     nn_real selected_score_margin =
         nn_action_score_margin(record->scores, record->candidate_count, record->selected_index);
     if (!isfinite((double)selected_score_margin)) {
@@ -4290,6 +4316,31 @@ int nn_trace_write_jsonl(FILE *fp, const NNTraceRecord *record)
         !trace_write_real_array(fp, record->scores, record->candidate_count) ||
         fputs(",\"probabilities\":", fp) == EOF ||
         !trace_write_real_array(fp, record->probabilities, record->candidate_count)) {
+        return 0;
+    }
+
+    if (fprintf(fp, ",\"target_count\":%zu,\"target_indices\":[", target_count) < 0) {
+        return 0;
+    }
+    for (size_t i = 0; i < target_count; ++i) {
+        size_t index = record->target_indices == NULL ? record->target_index
+                                                      : record->target_indices[i];
+        if ((i != 0 && fputc(',', fp) == EOF) || fprintf(fp, "%zu", index) < 0) {
+            return 0;
+        }
+    }
+    if (fputs("],\"target_action_ids\":[", fp) == EOF) {
+        return 0;
+    }
+    for (size_t i = 0; i < target_count; ++i) {
+        size_t index = record->target_indices == NULL ? record->target_index
+                                                      : record->target_indices[i];
+        if ((i != 0 && fputc(',', fp) == EOF) ||
+            fprintf(fp, "%u", trace_action_id_at(record, index)) < 0) {
+            return 0;
+        }
+    }
+    if (fputc(']', fp) == EOF) {
         return 0;
     }
 

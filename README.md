@@ -18,7 +18,7 @@ Experimental sandboxes:
 | --- | --- | --- |
 | `arc_agi` | ARC fixed-task, public-loader, visual-program compiler, and program-proposer sandbox | keep as an experimental proving ground; promote only after broad coverage is owned by learned visual-algebra programs rather than legacy handcrafted transform templates |
 | `program_synthesis` | typed DSL and abstraction-discovery sandbox | keep for testing program rows and hypothesis evidence; do not use as a headline claim |
-| `haiku_word_lm` / `haiku_understanding` | corpus-derived adjacency and real-vs-corrupt benchmark sandbox | keep for proxy-grounding experiments; no semantic-understanding claim without coherence-specific hard negatives |
+| `haiku_word_lm` / `haiku_understanding` / `haiku_rule_search` | corpus-derived adjacency, real-vs-corrupt benchmark, and certified reject-rule sandbox | keep for proxy-grounding experiments; no semantic-understanding claim without broader coherence transfer |
 | `hypothesis_library` / `rejected_candidate_learning` | substrate loops for learning from certified evidence and rejected candidates | keep as mechanism prototypes; promote only with clean held-out transfer across promoted domains |
 
 Promoted and sandbox task schemas publish the same machine-readable contract with:
@@ -28,7 +28,7 @@ make experiment-schemas
 ```
 
 The schema is `crlp.experiment_schema.v1` and defines the state distribution, candidate enumerator, typed feature provenance, leakage policy, scorer, verifier/replay/proxy outcome fields, rule grammar, certificate checker, proposer inputs, proposer mode, baselines, trace protocol, replay protocol, and verifier-RL protocol where applicable. The public C contract still uses the compatibility field names `exact_verifier` and `verifier_feedback`; this README uses "grounding operator" as the broader authority term that covers exact checks, deterministic replay, corpus proxies, and review gates. The public C contracts live in `include/nn_experiment.h` for task schemas, `include/nn_symbolic.h` for shared symbolic rule domains, and `include/nn_program.h` for typed program/transform candidates with canonical ids and coverage evidence.
-The working design note is [docs/experiment-schema.md](docs/experiment-schema.md). Grounding authority levels are defined in [docs/grounding-operators.md](docs/grounding-operators.md). The shared-model multitask matrix is documented separately in [docs/multitask-domain.md](docs/multitask-domain.md). The formal symbolic-domain interface is documented in [docs/symbolic-domain-interface.md](docs/symbolic-domain-interface.md). The code-to-PDF claim-generation plan is tracked in [docs/self-authoring-paper-roadmap.md](docs/self-authoring-paper-roadmap.md). Editorial-agent review policy is tracked in [docs/editorial-agent-prs.md](docs/editorial-agent-prs.md).
+The working design note is [docs/experiment-schema.md](docs/experiment-schema.md). Grounding authority levels are defined in [docs/grounding-operators.md](docs/grounding-operators.md). The first dataset-first runner is documented in [docs/dataset-experiment-runner.md](docs/dataset-experiment-runner.md). The shared-model multitask matrix is documented separately in [docs/multitask-domain.md](docs/multitask-domain.md). The formal symbolic-domain interface is documented in [docs/symbolic-domain-interface.md](docs/symbolic-domain-interface.md). The code-to-PDF claim-generation plan is tracked in [docs/self-authoring-paper-roadmap.md](docs/self-authoring-paper-roadmap.md). Editorial-agent review policy is tracked in [docs/editorial-agent-prs.md](docs/editorial-agent-prs.md).
 
 The paper-support compiler is the framework boundary between result rows and
 PDF claims:
@@ -608,7 +608,7 @@ Run sandbox coverage explicitly with:
 make experimental-check
 ```
 
-This covers program synthesis, fixed-task ARC, ARC induction smoke, multitask-domain smoke, and the haiku proxy-grounding smokes.
+This covers program synthesis, fixed-task ARC, ARC induction smoke, multitask-domain smoke, and the haiku proxy-grounding plus rule-search smokes.
 
 The tests compare scalar and batched forward results, verify `batch_size=1` training against sample-wise training, finite-difference check batched gradients through the tiled kernels, and check the softmax cross-entropy and shared softmax-scorer gradients.
 
