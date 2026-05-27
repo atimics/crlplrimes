@@ -1864,6 +1864,88 @@ static void mt_print_epoch_json(const MTConfig *config,
     fputs("}\n", out);
 }
 
+static int mt_train_mixed_one_epoch(NeuralNet *net,
+                                    const MTData *data,
+                                    const MTConfig *config,
+                                    size_t epoch_index,
+                                    uint32_t *rng,
+                                    size_t updates[MT_TASK_COUNT],
+                                    nn_real *candidate_inputs)
+{
+    MTTask active_tasks[MT_TASK_COUNT];
+    size_t active_count;
+    double losses[MT_TASK_COUNT] = {0.0, 0.0, 0.0, 0.0};
+    size_t epoch_updates[MT_TASK_COUNT] = {0, 0, 0, 0};
+    if (net == NULL || data == NULL || config == NULL || rng == NULL ||
+        updates == NULL || candidate_inputs == NULL) {
+        return 0;
+    }
+    active_count = mt_fill_active_tasks(config->task_mask,
+                                        active_tasks,
+                                        MT_TASK_COUNT);
+    if (active_count == 0U) {
+        return 0;
+    }
+    for (size_t step = 0; step < config->steps_per_epoch; ++step) {
+        size_t global_step = epoch_index * config->steps_per_epoch + step;
+        MTTask task = mt_choose_training_task(config,
+                                              active_tasks,
+                                              active_count,
+                                              global_step,
+                                              rng);
+        uint64_t sample = (uint64_t)mt_rng_next(rng);
+        if (task == MT_TASK_PRIME_GAP && data->train.count != 0) {
+            sample %= (uint64_t)data->train.count;
+        }
+
+        size_t target_index = 0;
+        double ignored_utility = 0.0;
+        size_t candidate_count = mt_fill_task_sample(data,
+                                                     config,
+                                                     task,
+                                                     1,
+                                                     sample,
+                                                     candidate_inputs,
+                                                     &target_index,
+                                                     &ignored_utility);
+        if (candidate_count == 0 || target_index >= candidate_count) {
+            return 0;
+        }
+        nn_real loss = nn_train_action_scorer(net,
+                                              candidate_inputs,
+                                              candidate_count,
+                                              target_index,
+                                              config->learning_rate);
+        if (isnan((double)loss)) {
+            return 0;
+        }
+        losses[task] += (double)loss;
+        ++epoch_updates[task];
+        ++updates[task];
+    }
+
+    if (!config->quiet) {
+        printf("multitask epoch %zu", epoch_index + 1U);
+        for (size_t i = 0; i < active_count; ++i) {
+            size_t task = (size_t)active_tasks[i];
+            double denom = epoch_updates[task] == 0 ? 1.0 : (double)epoch_updates[task];
+            printf(" %s_loss=%.4f", mt_task_name((MTTask)task), losses[task] / denom);
+        }
+        putchar('\n');
+    }
+    for (size_t i = 0; i < active_count; ++i) {
+        size_t task = (size_t)active_tasks[i];
+        mt_print_epoch_json(config,
+                            "shared",
+                            (MTTask)task,
+                            epoch_index + 1U,
+                            epoch_updates[task],
+                            updates[task],
+                            losses[task]);
+    }
+    return 1;
+}
+
 static int mt_train_mixed(NeuralNet *net,
                           const MTData *data,
                           const MTConfig *config,
@@ -1883,70 +1965,102 @@ static int mt_train_mixed(NeuralNet *net,
 
     memset(updates, 0, MT_TASK_COUNT * sizeof(*updates));
     for (size_t epoch = 0; epoch < config->epochs; ++epoch) {
-        double losses[MT_TASK_COUNT] = {0.0, 0.0, 0.0, 0.0};
-        size_t epoch_updates[MT_TASK_COUNT] = {0, 0, 0, 0};
-        for (size_t step = 0; step < config->steps_per_epoch; ++step) {
-            size_t global_step = epoch * config->steps_per_epoch + step;
-            MTTask task = mt_choose_training_task(config,
-                                                  active_tasks,
-                                                  active_count,
-                                                  global_step,
-                                                  &rng);
-            uint64_t sample = (uint64_t)mt_rng_next(&rng);
-            if (task == MT_TASK_PRIME_GAP && data->train.count != 0) {
-                sample %= (uint64_t)data->train.count;
-            }
-
-            size_t target_index = 0;
-            double ignored_utility = 0.0;
-            size_t candidate_count = mt_fill_task_sample(data,
-                                                         config,
-                                                         task,
-                                                         1,
-                                                         sample,
-                                                         candidate_inputs,
-                                                         &target_index,
-                                                         &ignored_utility);
-            if (candidate_count == 0 || target_index >= candidate_count) {
-                free(candidate_inputs);
-                return 0;
-            }
-            nn_real loss = nn_train_action_scorer(net,
-                                                  candidate_inputs,
-                                                  candidate_count,
-                                                  target_index,
-                                                  config->learning_rate);
-            if (isnan((double)loss)) {
-                free(candidate_inputs);
-                return 0;
-            }
-            losses[task] += (double)loss;
-            ++epoch_updates[task];
-            ++updates[task];
-        }
-
-        if (!config->quiet) {
-            printf("multitask epoch %zu", epoch + 1);
-            for (size_t i = 0; i < active_count; ++i) {
-                size_t task = (size_t)active_tasks[i];
-                double denom = epoch_updates[task] == 0 ? 1.0 : (double)epoch_updates[task];
-                printf(" %s_loss=%.4f", mt_task_name((MTTask)task), losses[task] / denom);
-            }
-            putchar('\n');
-        }
-        for (size_t i = 0; i < active_count; ++i) {
-            size_t task = (size_t)active_tasks[i];
-            mt_print_epoch_json(config,
-                                "shared",
-                                (MTTask)task,
-                                epoch + 1u,
-                                epoch_updates[task],
-                                updates[task],
-                                losses[task]);
+        if (!mt_train_mixed_one_epoch(net,
+                                      data,
+                                      config,
+                                      epoch,
+                                      &rng,
+                                      updates,
+                                      candidate_inputs)) {
+            free(candidate_inputs);
+            return 0;
         }
     }
 
     free(candidate_inputs);
+    return 1;
+}
+
+static int mt_train_mixed_task_heads_one_epoch(MTTaskHeadedScorer *model,
+                                               const MTData *data,
+                                               const MTConfig *config,
+                                               size_t epoch_index,
+                                               uint32_t *rng,
+                                               size_t updates[MT_TASK_COUNT],
+                                               nn_real *candidate_inputs)
+{
+    MTTask active_tasks[MT_TASK_COUNT];
+    size_t active_count;
+    double losses[MT_TASK_COUNT] = {0.0, 0.0, 0.0, 0.0};
+    size_t epoch_updates[MT_TASK_COUNT] = {0, 0, 0, 0};
+    if (model == NULL || data == NULL || config == NULL || rng == NULL ||
+        updates == NULL || candidate_inputs == NULL) {
+        return 0;
+    }
+    active_count = mt_fill_active_tasks(config->task_mask,
+                                        active_tasks,
+                                        MT_TASK_COUNT);
+    if (active_count == 0U) {
+        return 0;
+    }
+    for (size_t step = 0; step < config->steps_per_epoch; ++step) {
+        size_t global_step = epoch_index * config->steps_per_epoch + step;
+        MTTask task = mt_choose_training_task(config,
+                                              active_tasks,
+                                              active_count,
+                                              global_step,
+                                              rng);
+        uint64_t sample = (uint64_t)mt_rng_next(rng);
+        if (task == MT_TASK_PRIME_GAP && data->train.count != 0) {
+            sample %= (uint64_t)data->train.count;
+        }
+
+        size_t target_index = 0;
+        double ignored_utility = 0.0;
+        size_t candidate_count = mt_fill_task_sample(data,
+                                                     config,
+                                                     task,
+                                                     1,
+                                                     sample,
+                                                     candidate_inputs,
+                                                     &target_index,
+                                                     &ignored_utility);
+        if (candidate_count == 0 || target_index >= candidate_count) {
+            return 0;
+        }
+        nn_real loss = mt_task_heads_train_action_scorer(model,
+                                                         task,
+                                                         candidate_inputs,
+                                                         candidate_count,
+                                                         target_index,
+                                                         config->learning_rate);
+        if (isnan((double)loss)) {
+            return 0;
+        }
+        losses[task] += (double)loss;
+        ++epoch_updates[task];
+        ++updates[task];
+    }
+
+    if (!config->quiet) {
+        printf("task_heads epoch %zu", epoch_index + 1U);
+        for (size_t i = 0; i < active_count; ++i) {
+            size_t task = (size_t)active_tasks[i];
+            double denom = epoch_updates[task] == 0 ? 1.0 : (double)epoch_updates[task];
+            printf(" %s_loss=%.4f", mt_task_name((MTTask)task), losses[task] / denom);
+        }
+        putchar('\n');
+    }
+    for (size_t i = 0; i < active_count; ++i) {
+        size_t task = (size_t)active_tasks[i];
+        mt_print_epoch_json(config,
+                            "shared_task_heads",
+                            (MTTask)task,
+                            epoch_index + 1U,
+                            epoch_updates[task],
+                            updates[task],
+                            losses[task]);
+    }
     return 1;
 }
 
@@ -1970,67 +2084,15 @@ static int mt_train_mixed_task_heads(MTTaskHeadedScorer *model,
 
     memset(updates, 0, MT_TASK_COUNT * sizeof(*updates));
     for (size_t epoch = 0; epoch < config->epochs; ++epoch) {
-        double losses[MT_TASK_COUNT] = {0.0, 0.0, 0.0, 0.0};
-        size_t epoch_updates[MT_TASK_COUNT] = {0, 0, 0, 0};
-        for (size_t step = 0; step < config->steps_per_epoch; ++step) {
-            size_t global_step = epoch * config->steps_per_epoch + step;
-            MTTask task = mt_choose_training_task(config,
-                                                  active_tasks,
-                                                  active_count,
-                                                  global_step,
-                                                  &rng);
-            uint64_t sample = (uint64_t)mt_rng_next(&rng);
-            if (task == MT_TASK_PRIME_GAP && data->train.count != 0) {
-                sample %= (uint64_t)data->train.count;
-            }
-
-            size_t target_index = 0;
-            double ignored_utility = 0.0;
-            size_t candidate_count = mt_fill_task_sample(data,
-                                                         config,
-                                                         task,
-                                                         1,
-                                                         sample,
-                                                         candidate_inputs,
-                                                         &target_index,
-                                                         &ignored_utility);
-            if (candidate_count == 0 || target_index >= candidate_count) {
-                free(candidate_inputs);
-                return 0;
-            }
-            nn_real loss = mt_task_heads_train_action_scorer(model,
-                                                             task,
-                                                             candidate_inputs,
-                                                             candidate_count,
-                                                             target_index,
-                                                             config->learning_rate);
-            if (isnan((double)loss)) {
-                free(candidate_inputs);
-                return 0;
-            }
-            losses[task] += (double)loss;
-            ++epoch_updates[task];
-            ++updates[task];
-        }
-
-        if (!config->quiet) {
-            printf("task_heads epoch %zu", epoch + 1);
-            for (size_t i = 0; i < active_count; ++i) {
-                size_t task = (size_t)active_tasks[i];
-                double denom = epoch_updates[task] == 0 ? 1.0 : (double)epoch_updates[task];
-                printf(" %s_loss=%.4f", mt_task_name((MTTask)task), losses[task] / denom);
-            }
-            putchar('\n');
-        }
-        for (size_t i = 0; i < active_count; ++i) {
-            size_t task = (size_t)active_tasks[i];
-            mt_print_epoch_json(config,
-                                "shared_task_heads",
-                                (MTTask)task,
-                                epoch + 1u,
-                                epoch_updates[task],
-                                updates[task],
-                                losses[task]);
+        if (!mt_train_mixed_task_heads_one_epoch(model,
+                                                 data,
+                                                 config,
+                                                 epoch,
+                                                 &rng,
+                                                 updates,
+                                                 candidate_inputs)) {
+            free(candidate_inputs);
+            return 0;
         }
     }
 
@@ -2038,23 +2100,22 @@ static int mt_train_mixed_task_heads(MTTaskHeadedScorer *model,
     return 1;
 }
 
-static int mt_train_single_task(NeuralNet *net,
-                                const MTData *data,
-                                const MTConfig *config,
-                                MTTask task,
-                                size_t updates)
+static int mt_train_single_task_steps(NeuralNet *net,
+                                      const MTData *data,
+                                      const MTConfig *config,
+                                      MTTask task,
+                                      uint32_t *rng,
+                                      nn_real *candidate_inputs,
+                                      size_t updates,
+                                      double *loss_sum_out)
 {
-    uint32_t rng =
-        (uint32_t)(config->seed ^ (config->seed >> 32) ^ (0x9e3779b9u + (uint32_t)task));
-    nn_real *candidate_inputs =
-        calloc((size_t)MT_MAX_CANDIDATES * MT_FEATURE_COUNT, sizeof(*candidate_inputs));
-    if (candidate_inputs == NULL) {
+    double loss_sum = 0.0;
+    if (net == NULL || data == NULL || config == NULL || rng == NULL ||
+        candidate_inputs == NULL) {
         return 0;
     }
-
-    double loss_sum = 0.0;
     for (size_t step = 0; step < updates; ++step) {
-        uint64_t sample = (uint64_t)mt_rng_next(&rng);
+        uint64_t sample = (uint64_t)mt_rng_next(rng);
         if (task == MT_TASK_PRIME_GAP && data->train.count != 0) {
             sample %= (uint64_t)data->train.count;
         }
@@ -2069,7 +2130,6 @@ static int mt_train_single_task(NeuralNet *net,
                                                      &target_index,
                                                      &ignored_utility);
         if (candidate_count == 0 || target_index >= candidate_count) {
-            free(candidate_inputs);
             return 0;
         }
         nn_real loss = nn_train_action_scorer(net,
@@ -2078,10 +2138,41 @@ static int mt_train_single_task(NeuralNet *net,
                                               target_index,
                                               config->learning_rate);
         if (isnan((double)loss)) {
-            free(candidate_inputs);
             return 0;
         }
         loss_sum += (double)loss;
+    }
+    if (loss_sum_out != NULL) {
+        *loss_sum_out = loss_sum;
+    }
+    return 1;
+}
+
+static int mt_train_single_task(NeuralNet *net,
+                                const MTData *data,
+                                const MTConfig *config,
+                                MTTask task,
+                                size_t updates)
+{
+    uint32_t rng =
+        (uint32_t)(config->seed ^ (config->seed >> 32) ^ (0x9e3779b9u + (uint32_t)task));
+    nn_real *candidate_inputs =
+        calloc((size_t)MT_MAX_CANDIDATES * MT_FEATURE_COUNT, sizeof(*candidate_inputs));
+    double loss_sum = 0.0;
+    if (candidate_inputs == NULL) {
+        return 0;
+    }
+
+    if (!mt_train_single_task_steps(net,
+                                    data,
+                                    config,
+                                    task,
+                                    &rng,
+                                    candidate_inputs,
+                                    updates,
+                                    &loss_sum)) {
+        free(candidate_inputs);
+        return 0;
     }
 
     if (!config->quiet) {
@@ -4533,6 +4624,297 @@ static int mt_write_tiny_report_md(const char *path,
     return 0;
 }
 
+static size_t mt_epoch_grid_max(const size_t *epoch_grid, size_t epoch_count)
+{
+    size_t max_epoch = 0U;
+    for (size_t i = 0U; i < epoch_count; ++i) {
+        if (epoch_grid[i] > max_epoch) {
+            max_epoch = epoch_grid[i];
+        }
+    }
+    return max_epoch;
+}
+
+static int mt_epoch_grid_contains(const size_t *epoch_grid,
+                                  size_t epoch_count,
+                                  size_t epoch)
+{
+    for (size_t i = 0U; i < epoch_count; ++i) {
+        if (epoch_grid[i] == epoch) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void mt_tiny_record_task_checkpoint(MTScorer *scorer,
+                                           const MTData *data,
+                                           const MTConfig *run,
+                                           const char *model_kind,
+                                           const char *training_order,
+                                           const size_t updates[MT_TASK_COUNT],
+                                           size_t epoch,
+                                           MTTask task)
+{
+    MTConfig checkpoint = *run;
+    checkpoint.epochs = epoch;
+    MTMetrics metrics =
+        mt_evaluate_task(scorer, data, &checkpoint, task, checkpoint.eval_samples);
+    mt_print_metrics_json(scorer,
+                          model_kind,
+                          training_order,
+                          task,
+                          updates[task],
+                          &checkpoint,
+                          metrics);
+    if (task == MT_TASK_ARC_AGI) {
+        mt_print_arc_ood_task_breakdown(scorer,
+                                        data,
+                                        &checkpoint,
+                                        model_kind,
+                                        training_order,
+                                        updates[task]);
+    }
+}
+
+static void mt_tiny_record_checkpoint(MTScorer *scorer,
+                                      const MTData *data,
+                                      const MTConfig *run,
+                                      const char *model_kind,
+                                      const char *training_order,
+                                      const size_t updates[MT_TASK_COUNT],
+                                      size_t epoch)
+{
+    MTConfig checkpoint = *run;
+    MTTask eval_tasks[MT_TASK_COUNT];
+    size_t eval_count;
+    checkpoint.epochs = epoch;
+    eval_count = mt_fill_active_tasks(checkpoint.eval_task_mask,
+                                      eval_tasks,
+                                      MT_TASK_COUNT);
+    for (size_t task_index = 0U; task_index < eval_count; ++task_index) {
+        MTTask task = eval_tasks[task_index];
+        mt_tiny_record_task_checkpoint(scorer,
+                                       data,
+                                       &checkpoint,
+                                       model_kind,
+                                       training_order,
+                                       updates,
+                                       epoch,
+                                       task);
+    }
+}
+
+static int mt_run_tiny_net_plateau_cell(const MTConfig *base,
+                                        const MTTinyCapacity *capacity,
+                                        uint64_t seed,
+                                        const size_t *epoch_grid,
+                                        size_t epoch_count,
+                                        MTReportRows *rows,
+                                        FILE *raw)
+{
+    uint32_t all_task_mask = mt_task_bit(MT_TASK_PRIME_GAP) |
+                             mt_task_bit(MT_TASK_GRID_PATH) |
+                             mt_task_bit(MT_TASK_DELAYED_CLAIM) |
+                             mt_task_bit(MT_TASK_ARC_AGI);
+    size_t max_epoch;
+    MTConfig run;
+    MTData data;
+    int data_ready = 0;
+    int status = 0;
+    nn_real *candidate_inputs = NULL;
+    NeuralNet *shared = NULL;
+    MTTaskHeadedScorer *task_heads = NULL;
+
+    if (base == NULL || capacity == NULL || epoch_grid == NULL || epoch_count == 0U ||
+        rows == NULL || raw == NULL) {
+        return 0;
+    }
+    max_epoch = mt_epoch_grid_max(epoch_grid, epoch_count);
+    if (max_epoch == 0U) {
+        return 0;
+    }
+    run = *base;
+
+    run.tiny_net_plateau_audit = 0;
+    run.adapter_heads_report = 0;
+    run.hidden1 = capacity->hidden1;
+    run.hidden2 = capacity->hidden2;
+    run.seed = seed;
+    run.epochs = max_epoch;
+    run.task_mask = all_task_mask;
+    run.eval_task_mask = base->eval_task_mask == 0U ? all_task_mask : base->eval_task_mask;
+    run.arc_eval_suite = MT_ARC_EVAL_0520FDE7;
+    run.arc_ood_task = -1;
+    run.report_arc_ood_tasks = 0;
+    run.quiet = 1;
+    run.roadmap_item = "E-MT.9";
+    run.adapter_eval_suite = NULL;
+    run.json_output = raw;
+    run.report_rows = rows;
+
+    if (!mt_prepare_data(&data)) {
+        fputs("failed to prepare multitask datasets\n", stderr);
+        goto done;
+    }
+    data_ready = 1;
+
+    candidate_inputs =
+        calloc((size_t)MT_MAX_CANDIDATES * MT_FEATURE_COUNT, sizeof(*candidate_inputs));
+    if (candidate_inputs == NULL) {
+        goto done;
+    }
+
+    shared = mt_create_model(&run, (unsigned int)(run.seed & 0xffffffffu));
+    if (shared == NULL) {
+        goto done;
+    }
+    {
+        uint32_t rng =
+            (uint32_t)(run.seed ^ (run.seed >> 32) ^ UINT64_C(0x31415926));
+        size_t shared_updates[MT_TASK_COUNT] = {0, 0, 0, 0};
+        MTScorer shared_scorer;
+        shared_scorer.kind = MT_SCORER_NN;
+        shared_scorer.net = shared;
+        shared_scorer.task_heads = NULL;
+        for (size_t epoch = 0U; epoch < max_epoch; ++epoch) {
+            if (!mt_train_mixed_one_epoch(shared,
+                                          &data,
+                                          &run,
+                                          epoch,
+                                          &rng,
+                                          shared_updates,
+                                          candidate_inputs)) {
+                goto done;
+            }
+            if (mt_epoch_grid_contains(epoch_grid, epoch_count, epoch + 1U)) {
+                mt_tiny_record_checkpoint(&shared_scorer,
+                                          &data,
+                                          &run,
+                                          "shared",
+                                          mt_training_order_name(
+                                              (MTTrainingOrder)run.training_order),
+                                          shared_updates,
+                                          epoch + 1U);
+            }
+        }
+    }
+
+    if (run.run_task_head_model) {
+        task_heads =
+            mt_task_heads_create(&run,
+                                 (unsigned int)((run.seed + UINT64_C(303)) &
+                                                UINT64_C(0xffffffff)));
+        if (task_heads == NULL) {
+            goto done;
+        }
+        uint32_t rng =
+            (uint32_t)(run.seed ^ (run.seed >> 32) ^ UINT64_C(0x27182818));
+        size_t task_head_updates[MT_TASK_COUNT] = {0, 0, 0, 0};
+        MTScorer task_head_scorer;
+        task_head_scorer.kind = MT_SCORER_TASK_HEADS;
+        task_head_scorer.net = NULL;
+        task_head_scorer.task_heads = task_heads;
+        for (size_t epoch = 0U; epoch < max_epoch; ++epoch) {
+            if (!mt_train_mixed_task_heads_one_epoch(task_heads,
+                                                     &data,
+                                                     &run,
+                                                     epoch,
+                                                     &rng,
+                                                     task_head_updates,
+                                                     candidate_inputs)) {
+                goto done;
+            }
+            if (mt_epoch_grid_contains(epoch_grid, epoch_count, epoch + 1U)) {
+                mt_tiny_record_checkpoint(&task_head_scorer,
+                                          &data,
+                                          &run,
+                                          "shared_task_heads",
+                                          mt_training_order_name(
+                                              (MTTrainingOrder)run.training_order),
+                                          task_head_updates,
+                                          epoch + 1U);
+            }
+        }
+        mt_task_heads_free(task_heads);
+        task_heads = NULL;
+    }
+
+    if (run.run_task_baselines) {
+        MTTask active_tasks[MT_TASK_COUNT];
+        size_t active_count = mt_fill_active_tasks(run.task_mask,
+                                                   active_tasks,
+                                                   MT_TASK_COUNT);
+        if (active_count == 0U) {
+            goto done;
+        }
+        for (size_t task_index = 0U; task_index < active_count; ++task_index) {
+            MTTask task = active_tasks[task_index];
+            if ((run.eval_task_mask & mt_task_bit(task)) == 0) {
+                continue;
+            }
+            NeuralNet *single =
+                mt_create_model(&run,
+                                (unsigned int)((run.seed + 101u + task_index) &
+                                               0xffffffffu));
+            if (single == NULL) {
+                goto done;
+            }
+            uint32_t rng =
+                (uint32_t)(run.seed ^ (run.seed >> 32) ^
+                           (0x9e3779b9u + (uint32_t)task));
+            size_t single_updates[MT_TASK_COUNT] = {0, 0, 0, 0};
+            MTScorer single_scorer;
+            single_scorer.kind = MT_SCORER_NN;
+            single_scorer.net = single;
+            single_scorer.task_heads = NULL;
+            for (size_t epoch = 0U; epoch < max_epoch; ++epoch) {
+                size_t target_updates = ((epoch + 1U) * run.steps_per_epoch) / active_count;
+                if (target_updates == 0U) {
+                    target_updates = 1U;
+                }
+                if (target_updates > single_updates[task]) {
+                    double ignored_loss = 0.0;
+                    if (!mt_train_single_task_steps(single,
+                                                    &data,
+                                                    &run,
+                                                    task,
+                                                    &rng,
+                                                    candidate_inputs,
+                                                    target_updates - single_updates[task],
+                                                    &ignored_loss)) {
+                        nn_free(single);
+                        goto done;
+                    }
+                    single_updates[task] = target_updates;
+                }
+                if (mt_epoch_grid_contains(epoch_grid, epoch_count, epoch + 1U)) {
+                    run.epochs = epoch + 1U;
+                    mt_tiny_record_task_checkpoint(&single_scorer,
+                                                   &data,
+                                                   &run,
+                                                   "single_task",
+                                                   "domain_only_random",
+                                                   single_updates,
+                                                   epoch + 1U,
+                                                   task);
+                }
+            }
+            nn_free(single);
+        }
+    }
+
+    status = 1;
+done:
+    mt_task_heads_free(task_heads);
+    nn_free(shared);
+    free(candidate_inputs);
+    if (data_ready) {
+        mt_free_data(&data);
+    }
+    return status;
+}
+
 static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
 {
     uint32_t all_task_mask = mt_task_bit(MT_TASK_PRIME_GAP) |
@@ -4615,44 +4997,36 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
     }
     for (size_t cap_index = 0U; cap_index < capacity_count; ++cap_index) {
         for (size_t seed_index = 0U; seed_index < seed_count; ++seed_index) {
-            for (size_t epoch_index = 0U; epoch_index < epoch_count; ++epoch_index) {
-                MTConfig run = *base;
-                run.tiny_net_plateau_audit = 0;
-                run.adapter_heads_report = 0;
-                run.hidden1 = capacities[cap_index].hidden1;
-                run.hidden2 = capacities[cap_index].hidden2;
-                run.seed = seeds[seed_index];
-                run.epochs = epoch_grid[epoch_index];
-                run.task_mask = all_task_mask;
-                run.eval_task_mask = base->eval_task_mask == 0U ? all_task_mask : base->eval_task_mask;
-                run.arc_eval_suite = MT_ARC_EVAL_0520FDE7;
-                run.arc_ood_task = -1;
-                run.report_arc_ood_tasks = 0;
-                run.quiet = 1;
-                run.roadmap_item = "E-MT.9";
-                run.adapter_eval_suite = NULL;
-                run.json_output = raw;
-                run.report_rows = &rows;
-                char eval_task_set[128];
-                mt_task_set_name(run.eval_task_mask, eval_task_set, sizeof(eval_task_set));
-                fprintf(commands,
-                        "multitask_domain --tasks all --eval-tasks %s --epochs %zu --steps-per-epoch %zu --eval-samples %zu --hidden %s --seed %llu",
-                        eval_task_set,
-                        run.epochs,
-                        run.steps_per_epoch,
-                        run.eval_samples,
-                        capacities[cap_index].label,
-                        (unsigned long long)run.seed);
-                if (run.run_task_head_model) {
-                    fputs(" --task-heads", commands);
-                }
-                if (!run.run_task_baselines) {
-                    fputs(" --no-task-baselines", commands);
-                }
-                fputc('\n', commands);
-                if (mt_run_once(&run) != EXIT_SUCCESS) {
-                    goto done;
-                }
+            MTConfig command_config = *base;
+            char eval_task_set[128];
+            command_config.eval_task_mask =
+                base->eval_task_mask == 0U ? all_task_mask : base->eval_task_mask;
+            mt_task_set_name(command_config.eval_task_mask,
+                             eval_task_set,
+                             sizeof(eval_task_set));
+            fprintf(commands,
+                    "multitask_domain --tiny-net-plateau-audit --tasks all --eval-tasks %s --epoch-grid %s --steps-per-epoch %zu --eval-samples %zu --hidden %s --seed %llu",
+                    eval_task_set,
+                    base->tiny_net_epoch_grid,
+                    base->steps_per_epoch,
+                    base->eval_samples,
+                    capacities[cap_index].label,
+                    (unsigned long long)seeds[seed_index]);
+            if (base->run_task_head_model) {
+                fputs(" --task-heads", commands);
+            }
+            if (!base->run_task_baselines) {
+                fputs(" --no-task-baselines", commands);
+            }
+            fputc('\n', commands);
+            if (!mt_run_tiny_net_plateau_cell(base,
+                                              &capacities[cap_index],
+                                              seeds[seed_index],
+                                              epoch_grid,
+                                              epoch_count,
+                                              &rows,
+                                              raw)) {
+                goto done;
             }
         }
     }
