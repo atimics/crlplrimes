@@ -209,6 +209,73 @@ static int run_case(const BenchCase *bench)
     return 1;
 }
 
+static int run_action_scorer_case(void)
+{
+    const size_t layers[] = {96, 256, 128, 1};
+    const size_t layer_count = sizeof(layers) / sizeof(layers[0]);
+    const size_t candidate_count = 129;
+    const size_t updates = 20000;
+    const nn_real learning_rate = (nn_real)0.006;
+    uint32_t rng = 424242u;
+    NNConfig config = {
+        .layer_sizes = layers,
+        .layer_count = layer_count,
+        .seed = 7,
+        .hidden_activation = NN_ACTIVATION_RELU,
+        .output_activation = NN_ACTIVATION_LINEAR,
+        .loss = NN_LOSS_SOFTMAX_CROSS_ENTROPY,
+    };
+    NeuralNet *net = nn_create_config(&config);
+    if (net == NULL) {
+        fputs("action-scorer: failed to create network\n", stderr);
+        return 0;
+    }
+
+    nn_real *candidate_inputs =
+        calloc(candidate_count * layers[0], sizeof(*candidate_inputs));
+    if (candidate_inputs == NULL) {
+        fputs("action-scorer: failed to allocate candidates\n", stderr);
+        nn_free(net);
+        return 0;
+    }
+    for (size_t i = 0; i < candidate_count * layers[0]; ++i) {
+        candidate_inputs[i] = rng_uniform(&rng);
+    }
+
+    double started = now_seconds();
+    nn_real loss = 0;
+    for (size_t update = 0; update < updates; ++update) {
+        size_t target = (size_t)(rng_next(&rng) % (uint32_t)candidate_count);
+        loss += nn_train_action_scorer(net,
+                                       candidate_inputs,
+                                       candidate_count,
+                                       target,
+                                       learning_rate);
+    }
+    double elapsed = now_seconds() - started;
+    size_t forward_flops = nn_forward_flop_count(net);
+    double candidate_rows = (double)updates * (double)candidate_count;
+
+    printf("%-16s params=%zu fwd_flops=%zu candidates=%zu updates=%zu\n",
+           "action-scorer",
+           nn_parameter_count(net),
+           forward_flops,
+           candidate_count,
+           updates);
+    printf("  train-action-scorer:\n");
+    printf("    %.6fs %.0f updates/s %.0f rows/s loss_sum=%.6f est_dense=%.2f GFLOP/s\n\n",
+           elapsed,
+           safe_rate((double)updates, elapsed),
+           safe_rate(candidate_rows, elapsed),
+           (double)loss,
+           safe_rate(candidate_rows * (double)forward_flops * 3.0, elapsed) /
+               1000000000.0);
+
+    free(candidate_inputs);
+    nn_free(net);
+    return 1;
+}
+
 int main(void)
 {
     const BenchCase cases[] = {
@@ -250,6 +317,7 @@ int main(void)
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         ok = run_case(&cases[i]) && ok;
     }
+    ok = run_action_scorer_case() && ok;
 
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

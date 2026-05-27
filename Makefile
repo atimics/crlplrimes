@@ -159,6 +159,20 @@ TINY_NET_AUDIT_SHARD_COUNT ?=
 TINY_NET_AUDIT_RESUME_ARG = $(if $(filter 1 true TRUE yes YES,$(TINY_NET_AUDIT_RESUME)),--resume,)
 TINY_NET_AUDIT_SHARD_ARG = $(if $(strip $(TINY_NET_AUDIT_SHARD_COUNT)),--shard-index "$(TINY_NET_AUDIT_SHARD_INDEX)" --shard-count "$(TINY_NET_AUDIT_SHARD_COUNT)",)
 TINY_NET_AUDIT_EXTRA ?=
+TINY_NET_STRONGER_BASELINE_DIR ?= $(BUILD_DIR)/tiny_net_stronger_baseline
+TINY_NET_STRONGER_BASELINE_SEEDS ?= $(TINY_NET_AUDIT_SEEDS)
+TINY_NET_STRONGER_BASELINE_CAPACITIES ?= 8x4,16x8,32x16,64x32,128x64,256x128
+TINY_NET_STRONGER_BASELINE_EPOCH_GRID ?= 1,2,4,8,16,32,64,128
+TINY_NET_STRONGER_BASELINE_STEPS_PER_EPOCH ?= $(TINY_NET_AUDIT_STEPS_PER_EPOCH)
+TINY_NET_STRONGER_BASELINE_EVAL_SAMPLES ?= $(TINY_NET_AUDIT_EVAL_SAMPLES)
+TINY_NET_STRONGER_BASELINE_PLATEAU_THRESHOLD ?= $(TINY_NET_AUDIT_PLATEAU_THRESHOLD)
+TINY_NET_STRONGER_BASELINE_PLATEAU_WINDOW ?= $(TINY_NET_AUDIT_PLATEAU_WINDOW)
+TINY_NET_STRONGER_BASELINE_RESUME ?= $(TINY_NET_AUDIT_RESUME)
+TINY_NET_STRONGER_BASELINE_SHARD_INDEX ?= $(TINY_NET_AUDIT_SHARD_INDEX)
+TINY_NET_STRONGER_BASELINE_SHARD_COUNT ?=
+TINY_NET_STRONGER_BASELINE_RESUME_ARG = $(if $(filter 1 true TRUE yes YES,$(TINY_NET_STRONGER_BASELINE_RESUME)),--resume,)
+TINY_NET_STRONGER_BASELINE_SHARD_ARG = $(if $(strip $(TINY_NET_STRONGER_BASELINE_SHARD_COUNT)),--shard-index "$(TINY_NET_STRONGER_BASELINE_SHARD_INDEX)" --shard-count "$(TINY_NET_STRONGER_BASELINE_SHARD_COUNT)",)
+TINY_NET_STRONGER_BASELINE_EXTRA ?=
 MULTITASK_FAILURE_DIAGNOSTIC_SEEDS ?= 20240516,20240517,20240518
 MULTITASK_FAILURE_DIAGNOSTIC_STEPS_PER_EPOCH ?= 12000
 MULTITASK_FAILURE_DIAGNOSTIC_EVAL_SAMPLES ?= 1000
@@ -543,7 +557,7 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run action-score dataset-action-score dataset-action-score-smoke dataset-action-score-replay-smoke dataset-action-score-adapter-smoke dataset-action-score-multitarget-smoke dataset-action-score-bitwise-smoke dataset-action-score-bitwise-macro-smoke dataset-action-score-haiku-smoke dataset-action-score-grid-smoke dataset-action-score-delayed-claim-smoke dataset-action-score-prime-gap-smoke dataset-action-score-arc-smoke dataset-action-score-program-smoke dataset-action-score-signal-smoke dataset-action-score-rest-smoke dataset-action-score-engine-evidence bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-public-data arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-rule-search haiku-rule-search-baselines haiku-rule-search-smoke haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-verified-self-play arc-verified-self-play-public arc-learned-sketch-ops arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune source-policy-check benchmark test sanitize check experimental-check clean
+.PHONY: all run action-score dataset-action-score dataset-action-score-smoke dataset-action-score-replay-smoke dataset-action-score-adapter-smoke dataset-action-score-multitarget-smoke dataset-action-score-bitwise-smoke dataset-action-score-bitwise-macro-smoke dataset-action-score-haiku-smoke dataset-action-score-grid-smoke dataset-action-score-delayed-claim-smoke dataset-action-score-prime-gap-smoke dataset-action-score-arc-smoke dataset-action-score-program-smoke dataset-action-score-signal-smoke dataset-action-score-rest-smoke dataset-action-score-engine-evidence bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit tiny-net-stronger-baseline symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-public-data arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-rule-search haiku-rule-search-baselines haiku-rule-search-smoke haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-verified-self-play arc-verified-self-play-public arc-learned-sketch-ops arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune source-policy-check benchmark test sanitize check experimental-check clean
 
 all: $(XOR_EXAMPLE) $(BITWISE_RECURSIVE) $(TILE_RECURSIVE) $(TILE_FEATURE_ENTROPY) $(LIFE_CURRICULUM) $(LAYER_DISCOVERY) $(ACTION_SCORE_EXAMPLE) $(DATASET_ACTION_SCORE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(HAIKU_RULE_SEARCH) $(BENCHMARK)
 
@@ -1118,6 +1132,20 @@ tiny-net-plateau-audit: $(MULTITASK_DOMAIN)
 		$(TINY_NET_AUDIT_SHARD_ARG) \
 		$(TINY_NET_AUDIT_EXTRA)
 
+tiny-net-stronger-baseline: $(MULTITASK_DOMAIN)
+	./$(MULTITASK_DOMAIN) --tiny-net-plateau-audit \
+		--output-dir "$(TINY_NET_STRONGER_BASELINE_DIR)" \
+		--seeds "$(TINY_NET_STRONGER_BASELINE_SEEDS)" \
+		--capacities "$(TINY_NET_STRONGER_BASELINE_CAPACITIES)" \
+		--epoch-grid "$(TINY_NET_STRONGER_BASELINE_EPOCH_GRID)" \
+		--steps-per-epoch "$(TINY_NET_STRONGER_BASELINE_STEPS_PER_EPOCH)" \
+		--eval-samples "$(TINY_NET_STRONGER_BASELINE_EVAL_SAMPLES)" \
+		--plateau-threshold "$(TINY_NET_STRONGER_BASELINE_PLATEAU_THRESHOLD)" \
+		--plateau-window "$(TINY_NET_STRONGER_BASELINE_PLATEAU_WINDOW)" \
+		$(TINY_NET_STRONGER_BASELINE_RESUME_ARG) \
+		$(TINY_NET_STRONGER_BASELINE_SHARD_ARG) \
+		$(TINY_NET_STRONGER_BASELINE_EXTRA)
+
 symbolic-domains: $(SYMBOLIC_DOMAINS)
 	./$(SYMBOLIC_DOMAINS)
 
@@ -1249,6 +1277,7 @@ paper-grade-evidence-core: rejected-candidate-learning rejected-candidate-seed-a
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_plateau_summary.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_plateau_summary.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_width_help.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_width_help.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_audit_verdict.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_audit_verdict.jsonl
+	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_diagnostics.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_diagnostics.jsonl
 
 paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit multitask-adapter-heads signal-flight-rollout-eval signal-shadow-replay-audit signal-live-active-summary experiment-matrix
 	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR) $(SIGNAL_FLIGHT_RESULTS_DIR)
@@ -1262,6 +1291,7 @@ paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit 
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_plateau_summary.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_plateau_summary.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_width_help.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_width_help.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_audit_verdict.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_audit_verdict.jsonl
+	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_diagnostics.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_diagnostics.jsonl
 	cp $(SIGNAL_FLIGHT_RESULT_DIR)/summary.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.jsonl
 	cp $(SIGNAL_FLIGHT_ROLLOUT_SUMMARY) $(SIGNAL_FLIGHT_RESULTS_DIR)/rollout_summary.jsonl
 	cp $(SIGNAL_SHADOW_REPLAY_DIR)/summary.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_replay_audit.jsonl

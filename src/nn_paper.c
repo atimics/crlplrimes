@@ -1605,8 +1605,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "Tiny-net architecture claims are gated by plateau audits",
         "results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl",
         0,
-        "Capacity and architecture claims remain underpowered until the tiny-net plateau audit is complete.",
-        "",
+        "Capacity and architecture claims remain underpowered until tiny-net rows reach plateau-ready verdicts.",
+        "Diagnostics separate weak signal, seed variance, non-plateaued rows, and width help before architecture claims can be promoted.",
         "",
         "",
         "",
@@ -3589,6 +3589,58 @@ static int paper_tiny_net_plateau_audit_ready(long *rows_out,
            audit_ready == verdict_rows;
 }
 
+static void paper_tiny_net_audit_shape(long *capacity_count_out,
+                                       long *restart_count_out,
+                                       long *checkpoint_count_out,
+                                       long *max_epoch_out) {
+    FILE *fp;
+    char *line;
+    long capacity_count = 0;
+    long restart_count = 0;
+    long checkpoint_count = 0;
+    long max_epoch = 0;
+
+    fp = fopen("results/2026-05-17-multitask-roadmap/tiny_net_audit_verdict.jsonl",
+               "r");
+    if (fp != NULL) {
+        line = paper_read_line_dynamic(fp);
+        if (line != NULL) {
+            (void)paper_json_get_long(line, "capacity_count", &capacity_count);
+            (void)paper_json_get_long(line, "restart_count", &restart_count);
+            (void)paper_json_get_long(line, "epoch_checkpoint_count", &checkpoint_count);
+            free(line);
+        }
+        fclose(fp);
+    }
+
+    fp = fopen("results/2026-05-17-multitask-roadmap/tiny_net_plateau_summary.jsonl",
+               "r");
+    if (fp != NULL) {
+        while ((line = paper_read_line_dynamic(fp)) != NULL) {
+            long last_epochs = 0;
+            if (paper_json_get_long(line, "last_epochs", &last_epochs) &&
+                last_epochs > max_epoch) {
+                max_epoch = last_epochs;
+            }
+            free(line);
+        }
+        fclose(fp);
+    }
+
+    if (capacity_count_out != NULL) {
+        *capacity_count_out = capacity_count;
+    }
+    if (restart_count_out != NULL) {
+        *restart_count_out = restart_count;
+    }
+    if (checkpoint_count_out != NULL) {
+        *checkpoint_count_out = checkpoint_count;
+    }
+    if (max_epoch_out != NULL) {
+        *max_epoch_out = max_epoch;
+    }
+}
+
 static void paper_eval_capacity(PaperClaimResult *claim) {
     FILE *fp;
     char *header_line;
@@ -4073,10 +4125,18 @@ static void paper_eval_tiny_net(PaperClaimResult *claim) {
     long plateau_rows = 0;
     long verdict_rows = 0;
     long audit_ready = 0;
+    long capacity_count = 0;
+    long restart_count = 0;
+    long checkpoint_count = 0;
+    long max_epoch = 0;
     int ready = paper_tiny_net_plateau_audit_ready(&rows,
                                                    &plateau_rows,
                                                    &verdict_rows,
                                                    &audit_ready);
+    paper_tiny_net_audit_shape(&capacity_count,
+                               &restart_count,
+                               &checkpoint_count,
+                               &max_epoch);
     if (rows == 0) {
         return;
     }
@@ -4086,7 +4146,12 @@ static void paper_eval_tiny_net(PaperClaimResult *claim) {
              ready ? "supported" : "underpowered");
     snprintf(claim->summary,
              sizeof(claim->summary),
-             "tiny-net plateau audit covers 4 capacities, 4 domains, and variants shared, shared_task_heads, single_task; %ld/%ld required rows meet the plateau threshold and %ld/%ld domain/variant verdicts are audit-ready.",
+             "tiny-net plateau audit covers %ld capacities, %ld restarts, and %ld checkpoints through %ld epochs across %ld domain/variant verdicts; %ld/%ld required rows meet the plateau threshold and %ld/%ld verdicts are audit-ready.",
+             capacity_count > 0 ? capacity_count : 4,
+             restart_count > 0 ? restart_count : 0,
+             checkpoint_count > 0 ? checkpoint_count : 0,
+             max_epoch > 0 ? max_epoch : 0,
+             verdict_rows < 0 ? 0 : verdict_rows,
              plateau_rows,
              rows,
              audit_ready,
@@ -4826,14 +4891,14 @@ static const PaperExperimentMatrixRow PAPER_EXPERIMENT_MATRIX_ROWS[] = {
         "shared residual scorer with per-domain diagnostics",
         "none promoted; architecture rows are blocked by the plateau audit",
         "single-task scorer and C7 plateau audit",
-        "crlp.multitask.summary.v1; crlp.multitask.tiny_net_plateau.v1",
+        "crlp.multitask.summary.v1; crlp.multitask.tiny_net_plateau.v1; crlp.multitask.tiny_net_diagnostic.v1",
         {"shared trunk row", "ARC OOD row", "capacity plateau row", NULL},
         3U,
-        "ARC OOD shared +5.57pp; capacity is not monotonic; plateau audit is underpowered",
-        "ARC OOD shared +5.57pp; capacity is not monotonic; plateau audit is underpowered",
+        "ARC OOD shared +5.57pp; capacity is not monotonic; 128-epoch plateau audit is underpowered",
+        "ARC OOD shared +5.57pp; capacity is not monotonic; 128-epoch plateau audit is underpowered",
         "representation/protocol limits dominate naive width scaling",
         "small rankers are useful around certified structure, but one flat head exposes interference.",
-        "architecture-size claims stay gated by the plateau audit",
+        "architecture-size claims stay gated by plateau-ready diagnostics",
         {"C4.arc_ood_shared_vs_single", "C4.multitask_capacity_tradeoff", "C7.tiny_net_plateau_stop_rule", NULL},
         3U,
     },

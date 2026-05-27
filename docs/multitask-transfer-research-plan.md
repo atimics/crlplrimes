@@ -535,7 +535,10 @@ make tiny-net-plateau-audit
 
 The runner writes checkpointed learning curves, restart variance, best
 checkpoint rows, plateau flags, parameter/FLOP counts, and a width-help verdict
-under `build/float/tiny_net_plateau_audit/`.
+under `build/float/tiny_net_plateau_audit/`. It also emits
+`tiny_net_diagnostics.jsonl`, which classifies each domain/model variant as
+weak-signal, seed-variance dominated, not plateaued, not width-limited, or a
+capacity-helped-but-unsettled row before any architecture claim can be promoted.
 
 For each row, report loss, top-1, NLL, ECE, validation utility, and
 certificate-gated utility over checkpoints. Then rerun the best small trunk with
@@ -555,6 +558,22 @@ Decision rule:
   network capacity.
 - If a wider trunk wins after the same plateau checks, keep capacity as a
   controlled variable but do not make it the default explanation.
+
+Current result:
+
+- The 128-epoch audit remains underpowered: 11/48 plateau rows pass the
+  threshold and 0/12 domain/variant verdicts are audit-ready. Longer training
+  alone did not clear C7.
+- The next capacity baseline is explicit and uses the same resumable/sharded
+  runner:
+
+```sh
+make tiny-net-stronger-baseline
+```
+
+By default this extends the ladder to `128x64` and `256x128` through the same
+128-epoch checkpoint grid. Use `TINY_NET_STRONGER_BASELINE_*` variables for
+short smoke probes, sharding, or a shared resume cache.
 
 ### E-ARC.1: Public ARC Induction Family Expansion
 
@@ -609,12 +628,14 @@ Completed experiments:
 6. **E-MT.7 gate/proposer invariance.** ARC accepted rule sets, prediction
    hashes, loader summaries, and budgeted proposer aggregates are invariant
    across the current scorer-context labels.
+7. **E-MT.9 fully trained tiny-net audit.** The 128-epoch audit stayed
+   underpowered, with 11/48 plateau rows and 0/12 audit-ready verdicts.
 
 Next experiments:
 
-1. **E-MT.9 fully trained tiny-net audit.** Establish whether the current
-   tiny scorers are undertrained, saturated, or missing cumulative artifacts
-   before spending effort on architecture.
+1. **E-MT.9 stronger baseline ladder.** Run the `tiny-net-stronger-baseline`
+   target to test whether modestly larger MLPs change the diagnostic verdicts
+   under the same audit rules.
 2. **E-MT.8 curriculum.** Use the implemented training-order modes once the
    dominant failure mode is known.
 3. **E-MT.4 adapter heads.** Run the now-instrumented `--task-heads` comparison

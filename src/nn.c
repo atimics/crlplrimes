@@ -517,19 +517,6 @@ static void forward_batch_workspace(NeuralNet *net, size_t batch_size)
     }
 }
 
-static void zero_gradients(NeuralNet *net)
-{
-    for (size_t layer = 1; layer < net->layer_count; ++layer) {
-        size_t current = net->sizes[layer];
-        size_t previous = net->sizes[layer - 1];
-
-        memset(net->grad_biases[layer], 0, current * sizeof(*net->grad_biases[layer]));
-        memset(net->grad_weights[layer],
-               0,
-               current * previous * sizeof(*net->grad_weights[layer]));
-    }
-}
-
 static int ensure_gradient_buffers(NeuralNet *net)
 {
     if (net->grad_biases != NULL && net->grad_weights != NULL) {
@@ -648,6 +635,64 @@ static nn_real softmax_cross_entropy_index(const nn_real *scores, size_t count, 
     }
 
     return max_score + NN_LOG(sum_exp) - scores[target_index];
+}
+
+static nn_real softmax_probabilities_and_index_loss(const nn_real *scores,
+                                                    nn_real *probabilities,
+                                                    size_t count,
+                                                    size_t target_index,
+                                                    nn_real *log_denominator_out)
+{
+    if (scores == NULL || probabilities == NULL || count == 0 || target_index >= count) {
+        return (nn_real)NAN;
+    }
+
+    nn_real max_score = scores[0];
+    for (size_t i = 1; i < count; ++i) {
+        if (scores[i] > max_score) {
+            max_score = scores[i];
+        }
+    }
+
+    nn_real denominator = 0;
+    for (size_t i = 0; i < count; ++i) {
+        probabilities[i] = NN_EXP(scores[i] - max_score);
+        denominator += probabilities[i];
+    }
+
+    if (denominator <= (nn_real)0) {
+        nn_real uniform = (nn_real)1 / (nn_real)count;
+        for (size_t i = 0; i < count; ++i) {
+            probabilities[i] = uniform;
+        }
+        if (log_denominator_out != NULL) {
+            *log_denominator_out = (nn_real)NAN;
+        }
+        return (nn_real)NAN;
+    }
+
+    nn_real inv_denominator = (nn_real)1 / denominator;
+    for (size_t i = 0; i < count; ++i) {
+        probabilities[i] *= inv_denominator;
+    }
+
+    nn_real log_denominator = max_score + NN_LOG(denominator);
+    if (log_denominator_out != NULL) {
+        *log_denominator_out = log_denominator;
+    }
+    return log_denominator - scores[target_index];
+}
+
+static nn_real softmax_cross_entropy_from_log_denominator(const nn_real *scores,
+                                                          const nn_real *targets,
+                                                          size_t count,
+                                                          nn_real log_denominator)
+{
+    nn_real loss = 0;
+    for (size_t i = 0; i < count; ++i) {
+        loss -= targets[i] * (scores[i] - log_denominator);
+    }
+    return loss;
 }
 
 static nn_real safe_log_probability(nn_real probability)
@@ -944,15 +989,46 @@ static nn_real compute_batch_deltas_and_loss(NeuralNet *net,
     return loss;
 }
 
-static void accumulate_batch_gradients(NeuralNet *net, size_t batch_size)
+static void apply_batch_gradients(NeuralNet *net, size_t batch_size, nn_real scale)
 {
     for (size_t layer = 1; layer < net->layer_count; ++layer) {
         size_t previous = net->sizes[layer - 1];
         size_t current = net->sizes[layer];
         const nn_real *previous_activations = net->batch_activations[layer - 1];
         const nn_real *deltas = net->batch_deltas[layer];
+        nn_real *biases = net->biases[layer];
+        nn_real *weights = net->weights[layer];
         nn_real *grad_biases = net->grad_biases[layer];
         nn_real *grad_weights = net->grad_weights[layer];
+
+        if (current == 1) {
+            nn_real *neuron_grad_weights = grad_weights;
+            nn_real *neuron_weights = weights;
+            nn_real bias_sum = 0;
+            memset(neuron_grad_weights, 0, previous * sizeof(*neuron_grad_weights));
+
+            for (size_t sample = 0; sample < batch_size; ++sample) {
+                nn_real delta = deltas[sample];
+                const nn_real *previous_row = &previous_activations[sample * previous];
+                bias_sum += delta;
+                axpy(neuron_grad_weights, previous_row, previous, delta);
+            }
+
+            size_t input_index = 0;
+            for (; input_index + 3 < previous; input_index += 4) {
+                neuron_weights[input_index + 0] -= scale * neuron_grad_weights[input_index + 0];
+                neuron_weights[input_index + 1] -= scale * neuron_grad_weights[input_index + 1];
+                neuron_weights[input_index + 2] -= scale * neuron_grad_weights[input_index + 2];
+                neuron_weights[input_index + 3] -= scale * neuron_grad_weights[input_index + 3];
+            }
+            for (; input_index < previous; ++input_index) {
+                neuron_weights[input_index] -= scale * neuron_grad_weights[input_index];
+            }
+
+            grad_biases[0] = bias_sum;
+            biases[0] -= scale * bias_sum;
+            continue;
+        }
 
         size_t neuron = 0;
         for (; neuron + 3 < current; neuron += 4) {
@@ -1014,23 +1090,43 @@ static void accumulate_batch_gradients(NeuralNet *net, size_t batch_size)
                 nn_real *grad1 = &grad_weights[(neuron + 1) * previous + input_index];
                 nn_real *grad2 = &grad_weights[(neuron + 2) * previous + input_index];
                 nn_real *grad3 = &grad_weights[(neuron + 3) * previous + input_index];
+                nn_real *weights0 = &weights[(neuron + 0) * previous + input_index];
+                nn_real *weights1 = &weights[(neuron + 1) * previous + input_index];
+                nn_real *weights2 = &weights[(neuron + 2) * previous + input_index];
+                nn_real *weights3 = &weights[(neuron + 3) * previous + input_index];
 
-                grad0[0] += sum00;
-                grad0[1] += sum01;
-                grad0[2] += sum02;
-                grad0[3] += sum03;
-                grad1[0] += sum10;
-                grad1[1] += sum11;
-                grad1[2] += sum12;
-                grad1[3] += sum13;
-                grad2[0] += sum20;
-                grad2[1] += sum21;
-                grad2[2] += sum22;
-                grad2[3] += sum23;
-                grad3[0] += sum30;
-                grad3[1] += sum31;
-                grad3[2] += sum32;
-                grad3[3] += sum33;
+                grad0[0] = sum00;
+                grad0[1] = sum01;
+                grad0[2] = sum02;
+                grad0[3] = sum03;
+                grad1[0] = sum10;
+                grad1[1] = sum11;
+                grad1[2] = sum12;
+                grad1[3] = sum13;
+                grad2[0] = sum20;
+                grad2[1] = sum21;
+                grad2[2] = sum22;
+                grad2[3] = sum23;
+                grad3[0] = sum30;
+                grad3[1] = sum31;
+                grad3[2] = sum32;
+                grad3[3] = sum33;
+                weights0[0] -= scale * sum00;
+                weights0[1] -= scale * sum01;
+                weights0[2] -= scale * sum02;
+                weights0[3] -= scale * sum03;
+                weights1[0] -= scale * sum10;
+                weights1[1] -= scale * sum11;
+                weights1[2] -= scale * sum12;
+                weights1[3] -= scale * sum13;
+                weights2[0] -= scale * sum20;
+                weights2[1] -= scale * sum21;
+                weights2[2] -= scale * sum22;
+                weights2[3] -= scale * sum23;
+                weights3[0] -= scale * sum30;
+                weights3[1] -= scale * sum31;
+                weights3[2] -= scale * sum32;
+                weights3[3] -= scale * sum33;
             }
 
             for (; input_index < previous; ++input_index) {
@@ -1048,10 +1144,14 @@ static void accumulate_batch_gradients(NeuralNet *net, size_t batch_size)
                     sum3 += delta_row[3] * activation;
                 }
 
-                grad_weights[(neuron + 0) * previous + input_index] += sum0;
-                grad_weights[(neuron + 1) * previous + input_index] += sum1;
-                grad_weights[(neuron + 2) * previous + input_index] += sum2;
-                grad_weights[(neuron + 3) * previous + input_index] += sum3;
+                grad_weights[(neuron + 0) * previous + input_index] = sum0;
+                grad_weights[(neuron + 1) * previous + input_index] = sum1;
+                grad_weights[(neuron + 2) * previous + input_index] = sum2;
+                grad_weights[(neuron + 3) * previous + input_index] = sum3;
+                weights[(neuron + 0) * previous + input_index] -= scale * sum0;
+                weights[(neuron + 1) * previous + input_index] -= scale * sum1;
+                weights[(neuron + 2) * previous + input_index] -= scale * sum2;
+                weights[(neuron + 3) * previous + input_index] -= scale * sum3;
             }
 
             for (size_t sample = 0; sample < batch_size; ++sample) {
@@ -1062,46 +1162,63 @@ static void accumulate_batch_gradients(NeuralNet *net, size_t batch_size)
                 bias3 += delta_row[3];
             }
 
-            grad_biases[neuron + 0] += bias0;
-            grad_biases[neuron + 1] += bias1;
-            grad_biases[neuron + 2] += bias2;
-            grad_biases[neuron + 3] += bias3;
+            grad_biases[neuron + 0] = bias0;
+            grad_biases[neuron + 1] = bias1;
+            grad_biases[neuron + 2] = bias2;
+            grad_biases[neuron + 3] = bias3;
+            biases[neuron + 0] -= scale * bias0;
+            biases[neuron + 1] -= scale * bias1;
+            biases[neuron + 2] -= scale * bias2;
+            biases[neuron + 3] -= scale * bias3;
         }
 
         for (; neuron < current; ++neuron) {
             nn_real *neuron_grad_weights = &grad_weights[neuron * previous];
+            nn_real *neuron_weights = &weights[neuron * previous];
             nn_real bias_sum = 0;
+            size_t input_index = 0;
 
             for (size_t sample = 0; sample < batch_size; ++sample) {
-                nn_real delta = deltas[sample * current + neuron];
-                const nn_real *previous_row = &previous_activations[sample * previous];
-
-                bias_sum += delta;
-                axpy(neuron_grad_weights, previous_row, previous, delta);
+                bias_sum += deltas[sample * current + neuron];
             }
 
-            grad_biases[neuron] += bias_sum;
-        }
-    }
-}
+            for (; input_index + 3 < previous; input_index += 4) {
+                nn_real sum0 = 0;
+                nn_real sum1 = 0;
+                nn_real sum2 = 0;
+                nn_real sum3 = 0;
 
-static void apply_gradients(NeuralNet *net, nn_real scale)
-{
-    for (size_t layer = 1; layer < net->layer_count; ++layer) {
-        size_t previous = net->sizes[layer - 1];
-        size_t current = net->sizes[layer];
-        size_t weight_count = current * previous;
-        nn_real *biases = net->biases[layer];
-        nn_real *weights = net->weights[layer];
-        const nn_real *grad_biases = net->grad_biases[layer];
-        const nn_real *grad_weights = net->grad_weights[layer];
+                for (size_t sample = 0; sample < batch_size; ++sample) {
+                    const nn_real *previous_row = &previous_activations[sample * previous];
+                    nn_real delta = deltas[sample * current + neuron];
+                    sum0 += delta * previous_row[input_index + 0];
+                    sum1 += delta * previous_row[input_index + 1];
+                    sum2 += delta * previous_row[input_index + 2];
+                    sum3 += delta * previous_row[input_index + 3];
+                }
 
-        for (size_t i = 0; i < current; ++i) {
-            biases[i] -= scale * grad_biases[i];
-        }
+                neuron_grad_weights[input_index + 0] = sum0;
+                neuron_grad_weights[input_index + 1] = sum1;
+                neuron_grad_weights[input_index + 2] = sum2;
+                neuron_grad_weights[input_index + 3] = sum3;
+                neuron_weights[input_index + 0] -= scale * sum0;
+                neuron_weights[input_index + 1] -= scale * sum1;
+                neuron_weights[input_index + 2] -= scale * sum2;
+                neuron_weights[input_index + 3] -= scale * sum3;
+            }
 
-        for (size_t i = 0; i < weight_count; ++i) {
-            weights[i] -= scale * grad_weights[i];
+            for (; input_index < previous; ++input_index) {
+                nn_real sum = 0;
+                for (size_t sample = 0; sample < batch_size; ++sample) {
+                    sum += deltas[sample * current + neuron] *
+                           previous_activations[sample * previous + input_index];
+                }
+                neuron_grad_weights[input_index] = sum;
+                neuron_weights[input_index] -= scale * sum;
+            }
+
+            grad_biases[neuron] = bias_sum;
+            biases[neuron] -= scale * bias_sum;
         }
     }
 
@@ -1128,14 +1245,11 @@ static nn_real train_indexed_batch(NeuralNet *net,
         return (nn_real)NAN;
     }
 
-    zero_gradients(net);
-
     load_batch_inputs(net, inputs, order, start, batch_size, input_width);
     forward_batch_workspace(net, batch_size);
     nn_real loss =
         compute_batch_deltas_and_loss(net, targets, order, start, batch_size, target_width);
-    accumulate_batch_gradients(net, batch_size);
-    apply_gradients(net, learning_rate / (nn_real)batch_size);
+    apply_batch_gradients(net, batch_size, learning_rate / (nn_real)batch_size);
     return loss / (nn_real)batch_size;
 }
 
@@ -2515,19 +2629,29 @@ static nn_real train_softmax_scorer_from_workspace(NeuralNet *net,
         return (nn_real)NAN;
     }
 
-    zero_gradients(net);
-
     size_t output_layer = net->layer_count - 1;
     const nn_real *scores = net->batch_activations[output_layer];
     nn_real *output_deltas = net->batch_deltas[output_layer];
-    nn_softmax(scores, output_deltas, candidate_count);
-    nn_real loss = weight * softmax_cross_entropy_index(scores, candidate_count, selected_index);
+    nn_real loss =
+        weight * softmax_probabilities_and_index_loss(scores,
+                                                      output_deltas,
+                                                      candidate_count,
+                                                      selected_index,
+                                                      NULL);
 
-    for (size_t sample = 0; sample < candidate_count; ++sample) {
-        nn_real target = sample == selected_index ? (nn_real)1 : (nn_real)0;
-        nn_real score = scores[sample];
-        output_deltas[sample] = weight * (output_deltas[sample] - target) *
-                                activation_derivative_from_activation(score, net->output_activation);
+    if (net->output_activation == NN_ACTIVATION_LINEAR) {
+        for (size_t sample = 0; sample < candidate_count; ++sample) {
+            nn_real target = sample == selected_index ? (nn_real)1 : (nn_real)0;
+            output_deltas[sample] = weight * (output_deltas[sample] - target);
+        }
+    } else {
+        for (size_t sample = 0; sample < candidate_count; ++sample) {
+            nn_real target = sample == selected_index ? (nn_real)1 : (nn_real)0;
+            nn_real score = scores[sample];
+            output_deltas[sample] = weight * (output_deltas[sample] - target) *
+                                    activation_derivative_from_activation(score,
+                                                                          net->output_activation);
+        }
     }
 
     for (size_t layer = net->layer_count - 2; layer > 0; --layer) {
@@ -2543,8 +2667,7 @@ static nn_real train_softmax_scorer_from_workspace(NeuralNet *net,
                                     activation_for_layer(net, layer));
     }
 
-    accumulate_batch_gradients(net, candidate_count);
-    apply_gradients(net, learning_rate);
+    apply_batch_gradients(net, candidate_count, learning_rate);
     return loss;
 }
 
@@ -2557,8 +2680,6 @@ static nn_real train_pairwise_ranker_from_workspace(NeuralNet *net,
     if (!ensure_gradient_buffers(net)) {
         return (nn_real)NAN;
     }
-
-    zero_gradients(net);
 
     size_t output_layer = net->layer_count - 1;
     const nn_real *scores = net->batch_activations[output_layer];
@@ -2601,8 +2722,7 @@ static nn_real train_pairwise_ranker_from_workspace(NeuralNet *net,
                                     activation_for_layer(net, layer));
     }
 
-    accumulate_batch_gradients(net, candidate_count);
-    apply_gradients(net, learning_rate);
+    apply_batch_gradients(net, candidate_count, learning_rate);
     return loss * scale;
 }
 
@@ -2702,20 +2822,26 @@ static nn_real nn_train_softmax_scorer_policy_regularized_cached_raw(
         return (nn_real)NAN;
     }
 
-    zero_gradients(net);
-
     size_t output_layer = net->layer_count - 1;
     const nn_real *scores = net->batch_activations[output_layer];
     nn_real *output_deltas = net->batch_deltas[output_layer];
-    nn_softmax(scores, output_deltas, candidate_count);
+    nn_real log_denominator = (nn_real)0;
+    nn_real selected_loss = softmax_probabilities_and_index_loss(scores,
+                                                                 output_deltas,
+                                                                 candidate_count,
+                                                                 selected_index,
+                                                                 &log_denominator);
 
     nn_real loss = (nn_real)0;
     if (policy_weight != (nn_real)0) {
-        loss += policy_weight * softmax_cross_entropy_index(scores, candidate_count, selected_index);
+        loss += policy_weight * selected_loss;
     }
     if (reference_weight != (nn_real)0) {
         loss += reference_weight *
-                nn_softmax_cross_entropy(scores, reference_probabilities, candidate_count);
+                softmax_cross_entropy_from_log_denominator(scores,
+                                                           reference_probabilities,
+                                                           candidate_count,
+                                                           log_denominator);
     }
 
     nn_real entropy_loss = (nn_real)0;
@@ -2743,8 +2869,13 @@ static nn_real nn_train_softmax_scorer_policy_regularized_cached_raw(
                      (safe_log_probability(probability) - entropy_loss);
         }
 
-        output_deltas[sample] =
-            delta * activation_derivative_from_activation(scores[sample], net->output_activation);
+        if (net->output_activation == NN_ACTIVATION_LINEAR) {
+            output_deltas[sample] = delta;
+        } else {
+            output_deltas[sample] =
+                delta * activation_derivative_from_activation(scores[sample],
+                                                              net->output_activation);
+        }
     }
 
     for (size_t layer = net->layer_count - 2; layer > 0; --layer) {
@@ -2760,8 +2891,7 @@ static nn_real nn_train_softmax_scorer_policy_regularized_cached_raw(
                                     activation_for_layer(net, layer));
     }
 
-    accumulate_batch_gradients(net, candidate_count);
-    apply_gradients(net, learning_rate);
+    apply_batch_gradients(net, candidate_count, learning_rate);
     return loss;
 }
 

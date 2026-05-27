@@ -4584,6 +4584,25 @@ static const MTTinyWidth *mt_tiny_find_width(const MTTinyWidth *widths,
     return NULL;
 }
 
+static const MTTinyCurve *mt_tiny_find_curve(const MTTinyCurve *curves,
+                                             size_t curve_count,
+                                             const char *hidden,
+                                             const char *domain,
+                                             const char *model_kind,
+                                             size_t epochs)
+{
+    for (size_t i = 0U; i < curve_count; ++i) {
+        if (curves[i].present &&
+            curves[i].epochs == epochs &&
+            strcmp(curves[i].hidden, hidden) == 0 &&
+            strcmp(curves[i].domain, domain) == 0 &&
+            strcmp(curves[i].model_kind, model_kind) == 0) {
+            return &curves[i];
+        }
+    }
+    return NULL;
+}
+
 static int mt_tiny_collect_verdicts(const MTTinyPlateau *plateaus,
                                     size_t plateau_count,
                                     const MTTinyWidth *widths,
@@ -4863,6 +4882,180 @@ static int mt_write_tiny_verdict_jsonl(const char *path,
                 ",\"larger_width_helped\":%s,\"audit_ready\":%s}\n",
                 row->larger_width_helped ? "true" : "false",
                 row->audit_ready ? "true" : "false");
+    }
+    fclose(fp);
+    return 0;
+}
+
+static int mt_write_tiny_diagnostics_jsonl(const char *path,
+                                           const MTTinyCurve *curves,
+                                           size_t curve_count,
+                                           const MTTinyPlateau *plateaus,
+                                           size_t plateau_count,
+                                           const MTTinyWidth *widths,
+                                           size_t width_count,
+                                           const MTTinyVerdict *verdicts,
+                                           size_t verdict_count,
+                                           const MTTinyCapacity *capacities,
+                                           size_t capacity_count)
+{
+    const double seed_stdev_threshold = 0.03;
+    char date[11];
+    FILE *fp = fopen(path, "w");
+    if (fp == NULL) {
+        return -1;
+    }
+    mt_today_iso(date);
+    for (size_t i = 0U; i < verdict_count; ++i) {
+        const MTTinyVerdict *verdict = &verdicts[i];
+        const MTTinyWidth *width =
+            mt_tiny_find_width(widths, width_count, verdict->domain, verdict->model_kind);
+        const MTTinyPlateau *best = NULL;
+        const MTTinyPlateau *smallest = NULL;
+        const MTTinyPlateau *largest = NULL;
+        const char *diagnosis = "mixed_unready";
+        const char *next_step = "inspect_learning_curves";
+        long observed_capacity_count = 0L;
+        long non_plateau_count = 0L;
+        long late_best_not_plateau_count = 0L;
+        long high_seed_stdev_count = 0L;
+        double max_seed_stdev = 0.0;
+        double max_best_seed_spread = 0.0;
+        double max_abs_last_gain = 0.0;
+        double max_abs_last_window_gain = 0.0;
+        double width_delta = 0.0;
+
+        for (size_t cap_index = 0U; cap_index < capacity_count; ++cap_index) {
+            const MTTinyPlateau *row = mt_tiny_find_plateau(plateaus,
+                                                            plateau_count,
+                                                            capacities[cap_index].label,
+                                                            verdict->domain,
+                                                            verdict->model_kind);
+            if (row == NULL) {
+                continue;
+            }
+            ++observed_capacity_count;
+            if (smallest == NULL) {
+                smallest = row;
+            }
+            largest = row;
+            if (best == NULL || row->best_top1_mean > best->best_top1_mean) {
+                best = row;
+            }
+            if (!row->plateau_detected) {
+                ++non_plateau_count;
+                if (row->best_epoch_in_last_window) {
+                    ++late_best_not_plateau_count;
+                }
+            }
+            if (row->best_top1_stdev >= seed_stdev_threshold) {
+                ++high_seed_stdev_count;
+            }
+            if (row->best_top1_stdev > max_seed_stdev) {
+                max_seed_stdev = row->best_top1_stdev;
+            }
+            if (fabs(row->last_gain) > max_abs_last_gain) {
+                max_abs_last_gain = fabs(row->last_gain);
+            }
+            if (fabs(row->last_window_gain) > max_abs_last_window_gain) {
+                max_abs_last_window_gain = fabs(row->last_window_gain);
+            }
+            {
+                const MTTinyCurve *curve = mt_tiny_find_curve(curves,
+                                                              curve_count,
+                                                              row->hidden,
+                                                              row->domain,
+                                                              row->model_kind,
+                                                              row->best_epochs);
+                if (curve != NULL) {
+                    double spread = curve->top1_max - curve->top1_min;
+                    if (spread > max_best_seed_spread) {
+                        max_best_seed_spread = spread;
+                    }
+                }
+            }
+        }
+
+        if (width != NULL) {
+            width_delta = width->largest_minus_smallest_top1;
+        }
+        if (verdict->audit_ready) {
+            diagnosis = "audit_ready";
+            next_step = "eligible_for_claim_review";
+        } else if (best == NULL) {
+            diagnosis = "missing_coverage";
+            next_step = "finish_or_resume_audit_cells";
+        } else if (best->best_top1_mean < 0.25) {
+            diagnosis = "weak_signal";
+            next_step = "inspect_feature_or_label_encoding";
+        } else if (high_seed_stdev_count > 0L &&
+                   max_seed_stdev >= fabs(width_delta)) {
+            diagnosis = "seed_variance_dominates_width";
+            next_step = "increase_restarts_before_width_claim";
+        } else if (observed_capacity_count > 0L &&
+                   non_plateau_count == observed_capacity_count) {
+            diagnosis = "not_plateaued";
+            next_step = "extend_or_stabilize_training";
+        } else if (width != NULL && !width->larger_width_helped) {
+            diagnosis = "not_width_limited";
+            next_step = "try_protocol_artifacts_or_sampling";
+        } else if (width != NULL && width->larger_width_helped &&
+                   non_plateau_count > 0L) {
+            diagnosis = "capacity_helped_but_unsettled";
+            next_step = "run_stronger_baseline_ladder";
+        }
+
+        fputs("{\"schema\":\"crlp.multitask.tiny_net_diagnostic.v1\","
+              "\"report_version\":1,\"date\":",
+              fp);
+        mt_json_write_string(fp, date);
+        fputs(",\"domain\":", fp); mt_json_write_string(fp, verdict->domain);
+        fputs(",\"model_kind\":", fp); mt_json_write_string(fp, verdict->model_kind);
+        fputs(",\"capacity_ladder\":", fp); mt_write_capacity_ladder_json(fp, capacities, capacity_count);
+        fprintf(fp,
+                ",\"capacity_count\":%ld,\"observed_capacity_count\":%ld,"
+                "\"restart_count\":%ld,\"epoch_checkpoint_count\":%ld,"
+                "\"plateau_count\":%ld,\"non_plateau_count\":%ld,"
+                "\"late_best_not_plateau_count\":%ld,"
+                "\"high_seed_stdev_count\":%ld,\"audit_ready\":%s,"
+                "\"best_hidden\":",
+                verdict->capacity_count,
+                observed_capacity_count,
+                verdict->restart_count,
+                verdict->epoch_checkpoint_count,
+                verdict->plateau_count,
+                non_plateau_count,
+                late_best_not_plateau_count,
+                high_seed_stdev_count,
+                verdict->audit_ready ? "true" : "false");
+        mt_json_write_string(fp, best == NULL ? "" : best->hidden);
+        if (best != NULL) {
+            fprintf(fp, ",\"best_epochs\":%zu,\"best_top1_mean\":", best->best_epochs);
+            mt_json_number_or_null(fp, best->best_top1_mean);
+            fputs(",\"best_top1_stdev\":", fp); mt_json_number_or_null(fp, best->best_top1_stdev);
+        } else {
+            fputs(",\"best_epochs\":null,\"best_top1_mean\":null,\"best_top1_stdev\":null", fp);
+        }
+        fputs(",\"smallest_hidden\":", fp);
+        mt_json_write_string(fp, smallest == NULL ? "" : smallest->hidden);
+        fputs(",\"smallest_best_top1_mean\":", fp);
+        mt_json_number_or_null(fp, smallest == NULL ? NAN : smallest->best_top1_mean);
+        fputs(",\"largest_hidden\":", fp);
+        mt_json_write_string(fp, largest == NULL ? "" : largest->hidden);
+        fputs(",\"largest_best_top1_mean\":", fp);
+        mt_json_number_or_null(fp, largest == NULL ? NAN : largest->best_top1_mean);
+        fputs(",\"largest_minus_smallest_top1\":", fp);
+        mt_json_number_or_null(fp, width == NULL ? NAN : width->largest_minus_smallest_top1);
+        fprintf(fp, ",\"larger_width_helped\":%s,\"max_seed_stdev\":",
+                width != NULL && width->larger_width_helped ? "true" : "false");
+        mt_json_number_or_null(fp, max_seed_stdev);
+        fputs(",\"max_best_seed_spread\":", fp); mt_json_number_or_null(fp, max_best_seed_spread);
+        fputs(",\"max_abs_last_gain\":", fp); mt_json_number_or_null(fp, max_abs_last_gain);
+        fputs(",\"max_abs_last_window_gain\":", fp); mt_json_number_or_null(fp, max_abs_last_window_gain);
+        fputs(",\"seed_stdev_threshold\":", fp); mt_json_number_or_null(fp, seed_stdev_threshold);
+        fputs(",\"diagnosis\":", fp); mt_json_write_string(fp, diagnosis);
+        fputs(",\"next_step\":", fp); mt_json_write_string(fp, next_step);
+        fputs("}\n", fp);
     }
     fclose(fp);
     return 0;
@@ -5382,6 +5575,7 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
     size_t present_cell_count = 0U, missing_cell_count = 0U;
     char raw_path[4096], commands_path[4096], curve_path[4096], plateau_csv_path[4096];
     char plateau_jsonl_path[4096], width_path[4096], verdict_path[4096], markdown_path[4096];
+    char diagnostics_path[4096];
     char cell_dir_path[4096], cell_dir_name[128];
     FILE *raw = NULL;
     FILE *commands = NULL;
@@ -5443,6 +5637,7 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
         mt_join_path(plateau_jsonl_path, sizeof(plateau_jsonl_path), base->output_dir, "tiny_net_plateau_summary.jsonl") != 0 ||
         mt_join_path(width_path, sizeof(width_path), base->output_dir, "tiny_net_width_help.jsonl") != 0 ||
         mt_join_path(verdict_path, sizeof(verdict_path), base->output_dir, "tiny_net_audit_verdict.jsonl") != 0 ||
+        mt_join_path(diagnostics_path, sizeof(diagnostics_path), base->output_dir, "tiny_net_diagnostics.jsonl") != 0 ||
         mt_join_path(markdown_path, sizeof(markdown_path), base->output_dir, "tiny_net_plateau_audit.md") != 0) {
         fputs("failed to prepare tiny-net output paths\n", stderr);
         return EXIT_FAILURE;
@@ -5639,6 +5834,17 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
                                     epoch_count,
                                     base->plateau_threshold,
                                     base->plateau_window) != 0 ||
+        mt_write_tiny_diagnostics_jsonl(diagnostics_path,
+                                        curves,
+                                        curve_count,
+                                        plateaus,
+                                        plateau_count,
+                                        widths,
+                                        width_count,
+                                        verdicts,
+                                        verdict_count,
+                                        capacities,
+                                        capacity_count) != 0 ||
         mt_write_tiny_report_md(markdown_path,
                                 seeds,
                                 seed_count,
@@ -5661,6 +5867,7 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
     }
     printf("wrote %s\n", markdown_path);
     printf("wrote %s\n", verdict_path);
+    printf("wrote %s\n", diagnostics_path);
     status = EXIT_SUCCESS;
 done:
     if (raw != NULL) {
