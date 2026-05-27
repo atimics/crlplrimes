@@ -167,6 +167,9 @@ typedef struct {
     int run_task_head_model;
     int adapter_heads_report;
     int tiny_net_plateau_audit;
+    int tiny_net_resume;
+    size_t tiny_net_shard_index;
+    size_t tiny_net_shard_count;
     int quiet;
     const char *output_dir;
     const char *report_seeds;
@@ -555,6 +558,35 @@ static int mt_parse_hidden_text(const char *text, size_t *hidden1, size_t *hidde
     }
     *hidden1 = first;
     *hidden2 = second;
+    return 1;
+}
+
+static int mt_parse_shard_text(const char *text, size_t *index, size_t *count)
+{
+    char buffer[64];
+    char *sep;
+    size_t parsed_index = 0U;
+    size_t parsed_count = 0U;
+    int written;
+    if (text == NULL || index == NULL || count == NULL || text[0] == '\0') {
+        return 0;
+    }
+    written = snprintf(buffer, sizeof(buffer), "%s", text);
+    if (written < 0 || (size_t)written >= sizeof(buffer)) {
+        return 0;
+    }
+    sep = strchr(buffer, '/');
+    if (sep == NULL) {
+        return 0;
+    }
+    *sep = '\0';
+    if (!mt_parse_size_text(buffer, &parsed_index) ||
+        !mt_parse_size_text(sep + 1, &parsed_count) ||
+        parsed_index > parsed_count) {
+        return 0;
+    }
+    *index = parsed_index;
+    *count = parsed_count;
     return 1;
 }
 
@@ -2672,6 +2704,276 @@ static void mt_print_metrics_json(MTScorer *scorer,
                              &metrics);
 }
 
+static int mt_report_rows_append(MTReportRows *rows, const MTReportRow *row)
+{
+    if (rows == NULL || row == NULL) {
+        return 0;
+    }
+    if (rows->count == rows->capacity) {
+        size_t next_capacity = rows->capacity == 0U ? 64U : rows->capacity * 2U;
+        MTReportRow *next_items =
+            (MTReportRow *)realloc(rows->items, next_capacity * sizeof(*rows->items));
+        if (next_items == NULL) {
+            return 0;
+        }
+        rows->items = next_items;
+        rows->capacity = next_capacity;
+    }
+    rows->items[rows->count++] = *row;
+    return 1;
+}
+
+static const char *mt_json_field_value(const char *line, const char *key)
+{
+    char pattern[96];
+    int written;
+    const char *match;
+    if (line == NULL || key == NULL || key[0] == '\0') {
+        return NULL;
+    }
+    written = snprintf(pattern, sizeof(pattern), "\"%s\":", key);
+    if (written < 0 || (size_t)written >= sizeof(pattern)) {
+        return NULL;
+    }
+    match = strstr(line, pattern);
+    return match == NULL ? NULL : match + (size_t)written;
+}
+
+static const char *mt_skip_json_space(const char *cursor)
+{
+    while (cursor != NULL &&
+           (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n')) {
+        ++cursor;
+    }
+    return cursor;
+}
+
+static int mt_json_line_get_string(const char *line,
+                                   const char *key,
+                                   char *out,
+                                   size_t out_size)
+{
+    const char *cursor = mt_skip_json_space(mt_json_field_value(line, key));
+    size_t used = 0U;
+    if (cursor == NULL || out == NULL || out_size == 0U || *cursor != '"') {
+        return 0;
+    }
+    ++cursor;
+    while (*cursor != '\0' && *cursor != '"') {
+        char ch = *cursor++;
+        if (ch == '\\') {
+            ch = *cursor++;
+            if (ch == '\0') {
+                return 0;
+            }
+            switch (ch) {
+            case '"':
+            case '\\':
+            case '/':
+                break;
+            case 'b':
+                ch = '\b';
+                break;
+            case 'f':
+                ch = '\f';
+                break;
+            case 'n':
+                ch = '\n';
+                break;
+            case 'r':
+                ch = '\r';
+                break;
+            case 't':
+                ch = '\t';
+                break;
+            default:
+                return 0;
+            }
+        }
+        if (used + 1U >= out_size) {
+            return 0;
+        }
+        out[used++] = ch;
+    }
+    if (*cursor != '"') {
+        return 0;
+    }
+    out[used] = '\0';
+    return 1;
+}
+
+static int mt_json_line_get_double(const char *line, const char *key, double *out)
+{
+    const char *cursor = mt_skip_json_space(mt_json_field_value(line, key));
+    char *end = NULL;
+    double value;
+    if (cursor == NULL || out == NULL) {
+        return 0;
+    }
+    errno = 0;
+    value = strtod(cursor, &end);
+    if (end == cursor || errno == ERANGE || !isfinite(value)) {
+        return 0;
+    }
+    *out = value;
+    return 1;
+}
+
+static int mt_json_line_get_u64(const char *line, const char *key, uint64_t *out)
+{
+    const char *cursor = mt_skip_json_space(mt_json_field_value(line, key));
+    char *end = NULL;
+    unsigned long long value;
+    if (cursor == NULL || out == NULL || *cursor == '-' || *cursor == '+') {
+        return 0;
+    }
+    errno = 0;
+    value = strtoull(cursor, &end, 10);
+    if (end == cursor || errno == ERANGE) {
+        return 0;
+    }
+    *out = (uint64_t)value;
+    return 1;
+}
+
+static const char *mt_report_domain_canonical(const char *domain)
+{
+    for (int task = 0; task < (int)MT_TASK_COUNT; ++task) {
+        const char *name = mt_task_name((MTTask)task);
+        if (strcmp(domain, name) == 0) {
+            return name;
+        }
+    }
+    return NULL;
+}
+
+static const char *mt_report_model_canonical(const char *model_kind)
+{
+    if (strcmp(model_kind, "shared") == 0) {
+        return "shared";
+    }
+    if (strcmp(model_kind, "shared_task_heads") == 0) {
+        return "shared_task_heads";
+    }
+    if (strcmp(model_kind, "single_task") == 0) {
+        return "single_task";
+    }
+    return NULL;
+}
+
+static const char *mt_report_eval_suite_canonical(const char *eval_suite)
+{
+    if (strcmp(eval_suite, "fixed") == 0) {
+        return "fixed";
+    }
+    if (strcmp(eval_suite, "ood") == 0) {
+        return "ood";
+    }
+    return NULL;
+}
+
+static const char *mt_report_eval_suite_from_line(const char *line)
+{
+    char value[32];
+    const char *suite;
+    if (mt_json_line_get_string(line, "adapter_eval_suite", value, sizeof(value)) ||
+        mt_json_line_get_string(line, "eval_suite", value, sizeof(value))) {
+        suite = mt_report_eval_suite_canonical(value);
+        return suite == NULL ? NULL : suite;
+    }
+    if (mt_json_line_get_string(line, "arc_eval_task", value, sizeof(value)) &&
+        strcmp(value, "all") == 0) {
+        return "ood";
+    }
+    return "fixed";
+}
+
+static int mt_parse_report_row_json(const char *line, MTReportRow *row)
+{
+    char domain[64];
+    char model_kind[64];
+    char hidden[32];
+    uint64_t seed = 0U;
+    uint64_t epochs = 0U;
+    const char *canonical_domain;
+    const char *canonical_model;
+    const char *eval_suite;
+    MTReportRow parsed;
+    if (line == NULL || row == NULL) {
+        return -1;
+    }
+    if (strstr(line, "\"schema\":\"crlp.multitask.summary.v1\"") == NULL) {
+        return 0;
+    }
+    if (!mt_json_line_get_string(line, "domain", domain, sizeof(domain)) ||
+        !mt_json_line_get_string(line, "model_kind", model_kind, sizeof(model_kind)) ||
+        !mt_json_line_get_string(line, "hidden", hidden, sizeof(hidden)) ||
+        !mt_json_line_get_u64(line, "seed", &seed) ||
+        !mt_json_line_get_u64(line, "epochs", &epochs)) {
+        return -1;
+    }
+    canonical_domain = mt_report_domain_canonical(domain);
+    canonical_model = mt_report_model_canonical(model_kind);
+    eval_suite = mt_report_eval_suite_from_line(line);
+    if (canonical_domain == NULL || canonical_model == NULL || eval_suite == NULL) {
+        return -1;
+    }
+    memset(&parsed, 0, sizeof(parsed));
+    parsed.eval_suite = eval_suite;
+    parsed.domain = canonical_domain;
+    parsed.model_kind = canonical_model;
+    snprintf(parsed.hidden, sizeof(parsed.hidden), "%s", hidden);
+    parsed.seed = seed;
+    parsed.epochs = (size_t)epochs;
+    if (!mt_json_line_get_double(line, "top1", &parsed.top1) ||
+        !mt_json_line_get_double(line, "nll", &parsed.nll) ||
+        !mt_json_line_get_double(line, "ece", &parsed.ece) ||
+        !mt_json_line_get_double(line, "decision_utility", &parsed.decision_utility) ||
+        !mt_json_line_get_double(line, "train_updates", &parsed.train_updates) ||
+        !mt_json_line_get_double(line, "parameters", &parsed.parameters) ||
+        !mt_json_line_get_double(line, "forward_flops", &parsed.forward_flops)) {
+        return -1;
+    }
+    *row = parsed;
+    return 1;
+}
+
+static int mt_report_rows_load_jsonl(MTReportRows *rows, const char *path)
+{
+    char line[65536];
+    FILE *fp;
+    if (rows == NULL || path == NULL) {
+        return -1;
+    }
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        return -1;
+    }
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        MTReportRow row;
+        int parsed;
+        if (strchr(line, '\n') == NULL && !feof(fp)) {
+            fclose(fp);
+            return -1;
+        }
+        parsed = mt_parse_report_row_json(line, &row);
+        if (parsed < 0) {
+            fclose(fp);
+            return -1;
+        }
+        if (parsed > 0 && !mt_report_rows_append(rows, &row)) {
+            fclose(fp);
+            return -1;
+        }
+    }
+    if (ferror(fp)) {
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    return 0;
+}
+
 static void mt_print_metrics_line(const char *model_kind, MTTask task, MTMetrics metrics)
 {
     double samples = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
@@ -2728,7 +3030,8 @@ static void mt_print_usage(FILE *stream)
           "[--arc-ood-task-breakdown] "
           "[--tasks prime,grid,claim,arc|all] [--eval-tasks prime,grid,claim,arc|all] "
           "[--task-heads] [--adapter-heads-report --output-dir path --seeds csv] "
-          "[--tiny-net-plateau-audit --capacities csv --epoch-grid csv] "
+          "[--tiny-net-plateau-audit --capacities csv --epoch-grid csv "
+          "--resume --shard-index n --shard-count n] "
           "[--no-task-tags] [--no-task-baselines]\n",
           stream);
 }
@@ -2756,6 +3059,9 @@ static int mt_parse_config(int argc, char **argv, MTConfig *config)
     config->run_task_head_model = 0;
     config->adapter_heads_report = 0;
     config->tiny_net_plateau_audit = 0;
+    config->tiny_net_resume = 0;
+    config->tiny_net_shard_index = 1U;
+    config->tiny_net_shard_count = 1U;
     config->quiet = 0;
     config->output_dir = "results/2026-05-17-multitask-roadmap";
     config->report_seeds = "20240516,20240517,20240518";
@@ -2858,6 +3164,23 @@ static int mt_parse_config(int argc, char **argv, MTConfig *config)
             if (!mt_parse_size_text(argv[++i], &config->plateau_window)) {
                 return 0;
             }
+        } else if (strcmp(argv[i], "--resume") == 0 ||
+                   strcmp(argv[i], "--tiny-net-resume") == 0) {
+            config->tiny_net_resume = 1;
+        } else if (strcmp(argv[i], "--shard") == 0 && i + 1 < argc) {
+            if (!mt_parse_shard_text(argv[++i],
+                                     &config->tiny_net_shard_index,
+                                     &config->tiny_net_shard_count)) {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--shard-index") == 0 && i + 1 < argc) {
+            if (!mt_parse_size_text(argv[++i], &config->tiny_net_shard_index)) {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--shard-count") == 0 && i + 1 < argc) {
+            if (!mt_parse_size_text(argv[++i], &config->tiny_net_shard_count)) {
+                return 0;
+            }
         } else if (strcmp(argv[i], "--no-task-heads") == 0) {
             config->run_task_head_model = 0;
         } else if (strcmp(argv[i], "--quiet") == 0) {
@@ -2884,6 +3207,11 @@ static int mt_parse_config(int argc, char **argv, MTConfig *config)
     }
     if (config->eval_task_mask == 0) {
         config->eval_task_mask = config->task_mask;
+    }
+    if (config->tiny_net_shard_count == 0U ||
+        config->tiny_net_shard_index == 0U ||
+        config->tiny_net_shard_index > config->tiny_net_shard_count) {
+        return 0;
     }
     return 1;
 }
@@ -3165,6 +3493,41 @@ static int mt_join_path(char *out, size_t out_size, const char *dir, const char 
                        dir[0] != '\0' && dir[strlen(dir) - 1U] == '/' ? "" : "/",
                        name);
     return written < 0 || (size_t)written >= out_size ? -1 : 0;
+}
+
+static int mt_file_has_content(const char *path)
+{
+    struct stat st;
+    return path != NULL && stat(path, &st) == 0 && st.st_size > 0;
+}
+
+static int mt_copy_file_to(FILE *out, const char *path)
+{
+    char buffer[16384];
+    FILE *fp;
+    if (out == NULL || path == NULL) {
+        return -1;
+    }
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        return -1;
+    }
+    for (;;) {
+        size_t n = fread(buffer, 1U, sizeof(buffer), fp);
+        if (n > 0U && fwrite(buffer, 1U, n, out) != n) {
+            fclose(fp);
+            return -1;
+        }
+        if (n < sizeof(buffer)) {
+            if (ferror(fp)) {
+                fclose(fp);
+                return -1;
+            }
+            break;
+        }
+    }
+    fclose(fp);
+    return 0;
 }
 
 static void mt_today_iso(char out[11])
@@ -4705,6 +5068,86 @@ static void mt_tiny_record_checkpoint(MTScorer *scorer,
     }
 }
 
+static int mt_tiny_cell_path(char *out,
+                             size_t out_size,
+                             const char *cell_dir,
+                             const MTTinyCapacity *capacity,
+                             uint64_t seed)
+{
+    char filename[128];
+    int written;
+    if (out == NULL || cell_dir == NULL || capacity == NULL) {
+        return -1;
+    }
+    written = snprintf(filename,
+                       sizeof(filename),
+                       "tiny_net_plateau.%s.seed-%llu.jsonl",
+                       capacity->label,
+                       (unsigned long long)seed);
+    if (written < 0 || (size_t)written >= sizeof(filename)) {
+        return -1;
+    }
+    return mt_join_path(out, out_size, cell_dir, filename);
+}
+
+static uint64_t mt_fnv1a_update_bytes(uint64_t hash, const void *data, size_t size)
+{
+    const unsigned char *bytes = (const unsigned char *)data;
+    for (size_t i = 0U; i < size; ++i) {
+        hash ^= (uint64_t)bytes[i];
+        hash *= UINT64_C(1099511628211);
+    }
+    return hash;
+}
+
+static uint64_t mt_fnv1a_update_text(uint64_t hash, const char *text)
+{
+    const char *value = text == NULL ? "" : text;
+    return mt_fnv1a_update_bytes(hash, value, strlen(value));
+}
+
+static uint64_t mt_tiny_audit_signature(const MTConfig *base,
+                                        const size_t *epoch_grid,
+                                        size_t epoch_count)
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+    char buffer[128];
+    char task_set[128];
+    char eval_task_set[128];
+    mt_task_set_name(base->task_mask, task_set, sizeof(task_set));
+    mt_task_set_name(base->eval_task_mask, eval_task_set, sizeof(eval_task_set));
+    hash = mt_fnv1a_update_text(hash, "tiny-net-plateau-v2;");
+    hash = mt_fnv1a_update_text(hash, task_set);
+    hash = mt_fnv1a_update_text(hash, ";eval=");
+    hash = mt_fnv1a_update_text(hash, eval_task_set);
+    snprintf(buffer,
+             sizeof(buffer),
+             ";steps=%zu;eval_samples=%zu;lr=%.17g;order=%s;tags=%d;heads=%d;baselines=%d;",
+             base->steps_per_epoch,
+             base->eval_samples,
+             (double)base->learning_rate,
+             mt_training_order_name((MTTrainingOrder)base->training_order),
+             base->use_task_tags,
+             base->run_task_head_model,
+             base->run_task_baselines);
+    hash = mt_fnv1a_update_text(hash, buffer);
+    for (size_t i = 0U; i < epoch_count; ++i) {
+        snprintf(buffer, sizeof(buffer), "%zu,", epoch_grid[i]);
+        hash = mt_fnv1a_update_text(hash, buffer);
+    }
+    return hash;
+}
+
+static int mt_tiny_shard_selected(size_t cell_index,
+                                  size_t shard_index,
+                                  size_t shard_count)
+{
+    if (shard_count <= 1U) {
+        return 1;
+    }
+    return cell_index % shard_count == shard_index - 1U;
+}
+
 static int mt_run_tiny_net_plateau_cell(const MTConfig *base,
                                         const MTTinyCapacity *capacity,
                                         uint64_t seed,
@@ -4936,8 +5379,10 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
     MTTinyWidth *widths = NULL;
     MTTinyVerdict *verdicts = NULL;
     size_t curve_count = 0U, plateau_count = 0U, width_count = 0U, verdict_count = 0U;
+    size_t present_cell_count = 0U, missing_cell_count = 0U;
     char raw_path[4096], commands_path[4096], curve_path[4096], plateau_csv_path[4096];
     char plateau_jsonl_path[4096], width_path[4096], verdict_path[4096], markdown_path[4096];
+    char cell_dir_path[4096], cell_dir_name[128];
     FILE *raw = NULL;
     FILE *commands = NULL;
     int status = EXIT_FAILURE;
@@ -4977,7 +5422,20 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
         fputs("invalid --epoch-grid list\n", stderr);
         return EXIT_FAILURE;
     }
+    {
+        uint64_t signature = mt_tiny_audit_signature(base, epoch_grid, epoch_count);
+        int written = snprintf(cell_dir_name,
+                               sizeof(cell_dir_name),
+                               "tiny_net_plateau_cells/%016llx",
+                               (unsigned long long)signature);
+        if (written < 0 || (size_t)written >= sizeof(cell_dir_name)) {
+            fputs("failed to prepare tiny-net cell cache path\n", stderr);
+            return EXIT_FAILURE;
+        }
+    }
     if (mt_mkdir_p(base->output_dir) != 0 ||
+        mt_join_path(cell_dir_path, sizeof(cell_dir_path), base->output_dir, cell_dir_name) != 0 ||
+        mt_mkdir_p(cell_dir_path) != 0 ||
         mt_join_path(raw_path, sizeof(raw_path), base->output_dir, "tiny_net_plateau.raw.jsonl") != 0 ||
         mt_join_path(commands_path, sizeof(commands_path), base->output_dir, "tiny_net_plateau.commands.txt") != 0 ||
         mt_join_path(curve_path, sizeof(curve_path), base->output_dir, "tiny_net_learning_curve.csv") != 0 ||
@@ -4989,51 +5447,141 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
         fputs("failed to prepare tiny-net output paths\n", stderr);
         return EXIT_FAILURE;
     }
-    raw = fopen(raw_path, "w");
     commands = fopen(commands_path, "w");
-    if (raw == NULL || commands == NULL) {
-        fputs("failed to open tiny-net output files\n", stderr);
+    if (commands == NULL) {
+        fputs("failed to open tiny-net command file\n", stderr);
         goto done;
     }
+    fprintf(commands, "# tiny-net cell cache: %s\n", cell_dir_path);
+    fprintf(commands,
+            "# resume=%s shard=%zu/%zu\n",
+            base->tiny_net_resume ? "true" : "false",
+            base->tiny_net_shard_index,
+            base->tiny_net_shard_count);
     for (size_t cap_index = 0U; cap_index < capacity_count; ++cap_index) {
         for (size_t seed_index = 0U; seed_index < seed_count; ++seed_index) {
             MTConfig command_config = *base;
+            char cell_path[4096];
+            char tmp_cell_path[4096];
             char eval_task_set[128];
+            size_t cell_index = cap_index * seed_count + seed_index;
+            int selected = mt_tiny_shard_selected(cell_index,
+                                                  base->tiny_net_shard_index,
+                                                  base->tiny_net_shard_count);
             command_config.eval_task_mask =
                 base->eval_task_mask == 0U ? all_task_mask : base->eval_task_mask;
             mt_task_set_name(command_config.eval_task_mask,
                              eval_task_set,
                              sizeof(eval_task_set));
+            if (mt_tiny_cell_path(cell_path,
+                                  sizeof(cell_path),
+                                  cell_dir_path,
+                                  &capacities[cap_index],
+                                  seeds[seed_index]) != 0) {
+                goto done;
+            }
             fprintf(commands,
-                    "multitask_domain --tiny-net-plateau-audit --tasks all --eval-tasks %s --epoch-grid %s --steps-per-epoch %zu --eval-samples %zu --hidden %s --seed %llu",
+                    "multitask_domain --tiny-net-plateau-audit --output-dir \"%s\" --tasks all --eval-tasks %s --capacities %s --seeds %llu --epoch-grid %s --steps-per-epoch %zu --eval-samples %zu",
+                    base->output_dir,
                     eval_task_set,
+                    capacities[cap_index].label,
+                    (unsigned long long)seeds[seed_index],
                     base->tiny_net_epoch_grid,
                     base->steps_per_epoch,
-                    base->eval_samples,
-                    capacities[cap_index].label,
-                    (unsigned long long)seeds[seed_index]);
+                    base->eval_samples);
             if (base->run_task_head_model) {
                 fputs(" --task-heads", commands);
+            } else {
+                fputs(" --no-task-heads", commands);
             }
             if (!base->run_task_baselines) {
                 fputs(" --no-task-baselines", commands);
             }
             fputc('\n', commands);
-            if (!mt_run_tiny_net_plateau_cell(base,
-                                              &capacities[cap_index],
-                                              seeds[seed_index],
-                                              epoch_grid,
-                                              epoch_count,
-                                              &rows,
-                                              raw)) {
+            if (selected) {
+                int has_cell = mt_file_has_content(cell_path);
+                if (base->tiny_net_resume && has_cell) {
+                    printf("resumed tiny-net cell hidden=%s seed=%llu from %s\n",
+                           capacities[cap_index].label,
+                           (unsigned long long)seeds[seed_index],
+                           cell_path);
+                } else {
+                    MTReportRows scratch_rows;
+                    FILE *cell_raw;
+                    int ok;
+                    int written = snprintf(tmp_cell_path,
+                                           sizeof(tmp_cell_path),
+                                           "%s.tmp",
+                                           cell_path);
+                    if (written < 0 || (size_t)written >= sizeof(tmp_cell_path)) {
+                        goto done;
+                    }
+                    memset(&scratch_rows, 0, sizeof(scratch_rows));
+                    cell_raw = fopen(tmp_cell_path, "w");
+                    if (cell_raw == NULL) {
+                        free(scratch_rows.items);
+                        goto done;
+                    }
+                    printf("running tiny-net cell hidden=%s seed=%llu -> %s\n",
+                           capacities[cap_index].label,
+                           (unsigned long long)seeds[seed_index],
+                           cell_path);
+                    ok = mt_run_tiny_net_plateau_cell(base,
+                                                      &capacities[cap_index],
+                                                      seeds[seed_index],
+                                                      epoch_grid,
+                                                      epoch_count,
+                                                      &scratch_rows,
+                                                      cell_raw);
+                    if (fclose(cell_raw) != 0) {
+                        ok = 0;
+                    }
+                    free(scratch_rows.items);
+                    if (!ok) {
+                        remove(tmp_cell_path);
+                        goto done;
+                    }
+                    if (rename(tmp_cell_path, cell_path) != 0) {
+                        remove(tmp_cell_path);
+                        goto done;
+                    }
+                }
+            }
+            if (mt_file_has_content(cell_path)) {
+                ++present_cell_count;
+                if (mt_report_rows_load_jsonl(&rows, cell_path) != 0) {
+                    fprintf(stderr, "failed to load tiny-net cell rows from %s\n", cell_path);
+                    goto done;
+                }
+            } else {
+                ++missing_cell_count;
+            }
+        }
+    }
+    fclose(commands);
+    commands = NULL;
+    raw = fopen(raw_path, "w");
+    if (raw == NULL) {
+        goto done;
+    }
+    for (size_t cap_index = 0U; cap_index < capacity_count; ++cap_index) {
+        for (size_t seed_index = 0U; seed_index < seed_count; ++seed_index) {
+            char cell_path[4096];
+            if (mt_tiny_cell_path(cell_path,
+                                  sizeof(cell_path),
+                                  cell_dir_path,
+                                  &capacities[cap_index],
+                                  seeds[seed_index]) != 0) {
+                goto done;
+            }
+            if (mt_file_has_content(cell_path) &&
+                mt_copy_file_to(raw, cell_path) != 0) {
                 goto done;
             }
         }
     }
     fclose(raw);
-    fclose(commands);
     raw = NULL;
-    commands = NULL;
     if (mt_tiny_collect_curves(&rows, &curves, &curve_count) != 0 ||
         mt_tiny_collect_plateaus(curves,
                                  curve_count,
@@ -5068,6 +5616,15 @@ static int mt_run_tiny_net_plateau_audit(const MTConfig *base)
                                  &verdicts,
                                  &verdict_count) != 0) {
         goto done;
+    }
+    if (missing_cell_count > 0U) {
+        for (size_t i = 0U; i < verdict_count; ++i) {
+            verdicts[i].capacity_coverage_complete = 0;
+            verdicts[i].audit_ready = 0;
+        }
+        printf("tiny-net audit partial cell coverage: %zu/%zu cells present\n",
+               present_cell_count,
+               present_cell_count + missing_cell_count);
     }
     if (mt_write_tiny_learning_curve_csv(curve_path, curves, curve_count) != 0 ||
         mt_write_tiny_plateau_csv(plateau_csv_path, plateaus, plateau_count) != 0 ||
