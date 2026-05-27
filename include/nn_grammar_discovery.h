@@ -155,6 +155,18 @@ int nn_grammar_discovery_write_arc_verified_self_play_report(
     long oracle_ceiling,
     long seed_count);
 
+int nn_grammar_discovery_write_arc_learned_sketch_ops(
+    const char *attempts_tsv_path,
+    const char *trace_path,
+    const char *operators_path,
+    const char *prior_path,
+    const char *summary_path,
+    const char *markdown_path,
+    long min_accepted,
+    long min_tasks,
+    double near_miss_score,
+    double diagnostic_score);
+
 int nn_grammar_discovery_append_arc_probe_attempts_tsv(
     const char *base_attempts_tsv_path,
     const char *probe_attempts_jsonl_path,

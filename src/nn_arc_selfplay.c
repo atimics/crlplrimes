@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #define SP_LINE_MAX 65536
 #define SP_MAX_FIELDS 128
@@ -119,6 +120,69 @@ typedef struct {
     double top1_all_task_rate;
     double retained_all_task_rate;
 } SPRankerSummary;
+
+typedef struct {
+    int accepted;
+    int has_translate_fields;
+    int has_specs;
+    char attempt_id[128];
+    char task_id[128];
+    char failure_stage[64];
+    char rejection_reason[128];
+    char source_path[4096];
+    double verifier_score;
+    long selector;
+    long color;
+    long output_color;
+    long dx;
+    long dy;
+    long render_mode;
+    long attempted_specs;
+    long accepted_specs;
+} LSOExample;
+
+typedef struct {
+    char family[128];
+    char operator_name[256];
+    char operator_id[64];
+    char compiler_target[64];
+    char composition_kind[128];
+    char normalization_frame[128];
+    char typed_stages[256];
+    char primitive_contract[256];
+    char slot_signature[256];
+    char visual_program[256];
+    char learned_from[128];
+    char compiler_contract[256];
+    size_t accepted_count;
+    size_t rejected_count;
+    size_t near_miss_count;
+    size_t hard_rejected_count;
+    double verifier_score_sum;
+    double best_verifier_score;
+    SPStringList source_tasks;
+    SPStringList accepted_tasks;
+    SPCounterList failure_stages;
+    SPCounterList rejection_reasons;
+    LSOExample examples[5];
+    size_t example_count;
+} LSOOperator;
+
+typedef struct {
+    LSOOperator *items;
+    size_t count;
+    size_t capacity;
+} LSOOperatorList;
+
+typedef struct {
+    size_t attempt_rows;
+    size_t promoted_operators;
+    size_t candidate_operators;
+    size_t blocked_operators;
+    SPCounterList family_counts;
+    SPCounterList learned_from_counts;
+    SPCounterList status_counts;
+} LSOSummary;
 
 static const SPOpMap SP_OP_MAPS[] = {
     {"crop", 0, "crop"},
@@ -1535,5 +1599,1101 @@ done:
     sp_log_free(&eval_visual);
     sp_log_free(&train_self);
     sp_log_free(&eval_self);
+    return status;
+}
+
+static void lso_copy(char *dst, size_t dst_size, const char *src) {
+    if (dst == NULL || dst_size == 0U) {
+        return;
+    }
+    snprintf(dst, dst_size, "%s", src == NULL ? "" : src);
+}
+
+static int lso_counter_add_nonempty(SPCounterList *list, const char *key) {
+    if (key == NULL || key[0] == '\0') {
+        return 0;
+    }
+    return sp_counter_add(list, key);
+}
+
+static void lso_today(char out[11]) {
+    time_t now = time(NULL);
+    struct tm *tm_value = localtime(&now);
+    if (tm_value == NULL || strftime(out, 11U, "%Y-%m-%d", tm_value) == 0U) {
+        strcpy(out, "1970-01-01");
+    }
+}
+
+static unsigned long long lso_fnv1a48(const char *text) {
+    unsigned long long hash = 1469598103934665603ULL;
+    const unsigned char *p = (const unsigned char *)(text == NULL ? "" : text);
+    while (*p != '\0') {
+        hash ^= (unsigned long long)*p++;
+        hash *= 1099511628211ULL;
+    }
+    return hash & 0xffffffffffffULL;
+}
+
+static const char *lso_known_operator_suffix(const char *operator_name) {
+    struct KnownId {
+        const char *name;
+        const char *suffix;
+    };
+    static const struct KnownId ids[] = {
+        {"arc.fill_or_complete.shape_completion.boundary_fill_frame",
+         "2c4cc9b1eb23"},
+        {"arc.object_motion.object_motion.offset_frame", "3f7a743b2ae9"},
+        {"arc.recolor.color_rewrite.mask_color_frame", "0dac0ae7b2ce"},
+        {"arc.tile_scale.tile_scale.motif_scale_frame", "fbfaf50866b5"},
+        {"arc.component_color_summary.component_summary.component_color_frame",
+         "a645695a5994"},
+        {"arc.crop.object_render.bbox_frame", "3f92aaa0ddf6"},
+        {"arc.macrocell_substitute.template_render.macrocell_frame",
+         "75d9e2453cf2"},
+        {"arc.masked_or_normalized_crop.object_render.normalized_bbox_frame",
+         "08faa2d8c1a7"},
+        {"arc.recolor_crop.object_render.bbox_color_frame", "81c438fff9ef"},
+        {"arc.separator_panel_map.panel_composition.separator_panel_frame",
+         "a6b18bb0e848"},
+        {"arc.symmetry.symmetry_geometry.axis_geometry_frame", "22d4e2d79fb9"},
+        {"arc.visual_combinator.combinator_render.component_relation_frame",
+         "3e21963f52a1"},
+        {"arc.tile_repeat.lattice_transform.task_bbox", "f406fb43c3ff"},
+        {"arc.reference_recolor_mask", "c8fd08924126"},
+        {"arc.object_relation_motion_refinement", "b53118f28348"},
+        {"arc.crop.lattice_transform.task_bbox", "ffe41601241c"},
+    };
+    size_t i;
+    for (i = 0U; i < sizeof(ids) / sizeof(ids[0]); ++i) {
+        if (strcmp(ids[i].name, operator_name) == 0) {
+            return ids[i].suffix;
+        }
+    }
+    return NULL;
+}
+
+static void lso_operator_id(const char *operator_name, char out[64]) {
+    const char *known = lso_known_operator_suffix(operator_name);
+    if (known != NULL) {
+        snprintf(out, 64U, "arc_sketch_op:%s", known);
+    } else {
+        snprintf(out,
+                 64U,
+                 "arc_sketch_op:%012llx",
+                 lso_fnv1a48(operator_name));
+    }
+}
+
+static void lso_slot_signature_from_contract(const char *contract,
+                                             char out[256]) {
+    const char *cursor = contract == NULL ? "" : contract;
+    size_t used = 0U;
+    int saw_assignment = strchr(cursor, '=') != NULL;
+    if (!saw_assignment) {
+        lso_copy(out, 256U, cursor);
+        return;
+    }
+    out[0] = '\0';
+    while (*cursor != '\0' && used + 1U < 256U) {
+        const char *key_start;
+        const char *key_end;
+        while (*cursor == '|' || *cursor == ',' || isspace((unsigned char)*cursor)) {
+            ++cursor;
+        }
+        if (*cursor == '\0') {
+            break;
+        }
+        key_start = cursor;
+        while (*cursor != '\0' && *cursor != '=' && *cursor != '|' &&
+               *cursor != ',') {
+            ++cursor;
+        }
+        key_end = cursor;
+        if (*cursor == '=') {
+            while (*cursor != '\0' && *cursor != '|' && *cursor != ',') {
+                ++cursor;
+            }
+        }
+        if (key_end > key_start) {
+            size_t len = (size_t)(key_end - key_start);
+            if (used > 0U && used + 1U < 256U) {
+                out[used++] = '|';
+            }
+            if (used + len >= 256U) {
+                len = 255U - used;
+            }
+            memcpy(out + used, key_start, len);
+            used += len;
+            out[used] = '\0';
+        }
+    }
+}
+
+static int lso_is_attempt_near_miss(const char *failure_stage) {
+    return failure_stage != NULL &&
+           (strcmp(failure_stage, "renderer_cells") == 0 ||
+            strcmp(failure_stage, "transform_or_color") == 0 ||
+            strcmp(failure_stage, "verifier_distance") == 0);
+}
+
+static int lso_is_attempt_hard_reject(const char *failure_stage) {
+    return failure_stage != NULL &&
+           (strcmp(failure_stage, "compiler") == 0 ||
+            strcmp(failure_stage, "normalizer_shape") == 0 ||
+            strcmp(failure_stage, "renderer_shape") == 0 ||
+            strcmp(failure_stage, "selector_or_transform") == 0 ||
+            strcmp(failure_stage, "unsupported_shape") == 0);
+}
+
+static size_t lso_support_tasks(const LSOOperator *op) {
+    return op->accepted_tasks.count > 0U ? op->accepted_tasks.count
+                                         : op->source_tasks.count;
+}
+
+static size_t lso_proposal_count(const LSOOperator *op) {
+    return op->accepted_count + op->near_miss_count;
+}
+
+static const char *lso_status(const LSOOperator *op,
+                              long min_accepted,
+                              long min_tasks) {
+    if ((long)op->accepted_count >= min_accepted &&
+        (long)op->accepted_tasks.count >= min_tasks) {
+        return "promoted";
+    }
+    if (op->near_miss_count > 0U) {
+        return "candidate";
+    }
+    return "blocked";
+}
+
+static const char *lso_reason_code(const LSOOperator *op,
+                                   long min_accepted,
+                                   long min_tasks) {
+    const char *status = lso_status(op, min_accepted, min_tasks);
+    if (strcmp(status, "promoted") == 0) {
+        return "meets verifier-accepted support threshold";
+    }
+    if (strcmp(status, "candidate") == 0) {
+        return "diagnostic near-miss only; requires compiler and verifier replay";
+    }
+    return "no accepted or near-miss evidence";
+}
+
+static int lso_operator_reserve(LSOOperatorList *list, size_t needed) {
+    LSOOperator *items;
+    size_t capacity;
+    if (needed <= list->capacity) {
+        return 0;
+    }
+    capacity = list->capacity == 0U ? 16U : list->capacity * 2U;
+    while (capacity < needed) {
+        capacity *= 2U;
+    }
+    items = (LSOOperator *)realloc(list->items, capacity * sizeof(*list->items));
+    if (items == NULL) {
+        return -1;
+    }
+    list->items = items;
+    list->capacity = capacity;
+    return 0;
+}
+
+static void lso_compiler_contract(const char *operator_name,
+                                  const char *family,
+                                  const char *compiler_target,
+                                  char out[256]) {
+    if (strcmp(operator_name, "arc.reference_recolor_mask") == 0) {
+        lso_copy(out,
+                 256U,
+                 "learn relative mask/color binding from reference object, "
+                 "recolor target object, then replay ARC verifier");
+    } else if (strcmp(operator_name, "arc.object_relation_motion_refinement") ==
+               0) {
+        lso_copy(out,
+                 256U,
+                 "learn relation-conditioned offset binding before replaying "
+                 "object-translate verifier");
+    } else if (strcmp(compiler_target, "visual_combinator") == 0) {
+        lso_copy(out,
+                 256U,
+                 "compile learned visual-program stages through the generic "
+                 "ARC sketch VM, then replay train-pair verifier");
+    } else {
+        snprintf(out,
+                 256U,
+                 "compile typed slots into ARC_SKETCH_OP_%s, then replay "
+                 "train-pair verifier",
+                 family == NULL ? "unknown" : family);
+    }
+}
+
+static LSOOperator *lso_find_or_add(LSOOperatorList *list,
+                                    const char *family,
+                                    const char *operator_name,
+                                    const char *compiler_target,
+                                    const char *composition_kind,
+                                    const char *normalization_frame,
+                                    const char *typed_stages,
+                                    const char *primitive_contract,
+                                    const char *slot_signature,
+                                    const char *visual_program,
+                                    const char *learned_from) {
+    size_t i;
+    for (i = 0U; i < list->count; ++i) {
+        LSOOperator *op = &list->items[i];
+        if (strcmp(op->operator_name, operator_name) == 0 &&
+            strcmp(op->learned_from, learned_from) == 0) {
+            return op;
+        }
+    }
+    if (lso_operator_reserve(list, list->count + 1U) != 0) {
+        return NULL;
+    }
+    LSOOperator *op = &list->items[list->count++];
+    memset(op, 0, sizeof(*op));
+    lso_copy(op->family, sizeof(op->family), family);
+    lso_copy(op->operator_name, sizeof(op->operator_name), operator_name);
+    lso_operator_id(op->operator_name, op->operator_id);
+    lso_copy(op->compiler_target, sizeof(op->compiler_target), compiler_target);
+    lso_copy(op->composition_kind, sizeof(op->composition_kind), composition_kind);
+    lso_copy(op->normalization_frame,
+             sizeof(op->normalization_frame),
+             normalization_frame);
+    lso_copy(op->typed_stages, sizeof(op->typed_stages), typed_stages);
+    lso_copy(op->primitive_contract,
+             sizeof(op->primitive_contract),
+             primitive_contract);
+    lso_copy(op->slot_signature, sizeof(op->slot_signature), slot_signature);
+    lso_copy(op->visual_program, sizeof(op->visual_program), visual_program);
+    lso_copy(op->learned_from, sizeof(op->learned_from), learned_from);
+    lso_compiler_contract(op->operator_name,
+                          op->family,
+                          op->compiler_target,
+                          op->compiler_contract);
+    return op;
+}
+
+static void lso_add_example(LSOOperator *op, const LSOExample *example) {
+    if (op == NULL || example == NULL || op->example_count >= 5U) {
+        return;
+    }
+    op->examples[op->example_count++] = *example;
+}
+
+static int lso_add_observation(LSOOperator *op,
+                               const char *task_id,
+                               int accepted,
+                               int near_miss,
+                               int hard_reject,
+                               double verifier_score,
+                               const char *failure_stage,
+                               const char *rejection_reason,
+                               const LSOExample *example) {
+    if (op == NULL) {
+        return -1;
+    }
+    if (sp_string_add_unique(&op->source_tasks, task_id) != 0) {
+        return -1;
+    }
+    if (accepted) {
+        ++op->accepted_count;
+        if (sp_string_add_unique(&op->accepted_tasks, task_id) != 0) {
+            return -1;
+        }
+    } else {
+        ++op->rejected_count;
+        if (near_miss) {
+            ++op->near_miss_count;
+        } else if (hard_reject) {
+            ++op->hard_rejected_count;
+        }
+    }
+    op->verifier_score_sum += verifier_score;
+    if (op->accepted_count + op->rejected_count == 1U ||
+        verifier_score > op->best_verifier_score) {
+        op->best_verifier_score = verifier_score;
+    }
+    if (lso_counter_add_nonempty(&op->failure_stages, failure_stage) != 0 ||
+        lso_counter_add_nonempty(&op->rejection_reasons, rejection_reason) != 0) {
+        return -1;
+    }
+    lso_add_example(op, example);
+    return 0;
+}
+
+static LSOOperator *lso_attempt_operator(LSOOperatorList *list,
+                                         char **fields,
+                                         size_t field_count) {
+    const char *family = sp_field(fields, field_count, 8U);
+    const char *composition_kind = sp_field(fields, field_count, 11U);
+    const char *normalization_frame = sp_field(fields, field_count, 12U);
+    const char *typed_stages = sp_field(fields, field_count, 13U);
+    const char *primitive_contract = sp_field(fields, field_count, 14U);
+    const char *visual_program = sp_field(fields, field_count, 9U);
+    const char *compiler_target =
+        strcmp(family, "visual_combinator") == 0 ? "visual_combinator"
+                                                 : "arc_sketch_program";
+    char operator_name[256];
+    char slot_signature[256];
+    snprintf(operator_name,
+             sizeof(operator_name),
+             "arc.%s.%s.%s",
+             family,
+             composition_kind,
+             normalization_frame);
+    lso_slot_signature_from_contract(sp_field(fields, field_count, 10U),
+                                     slot_signature);
+    return lso_find_or_add(list,
+                           family,
+                           operator_name,
+                           compiler_target,
+                           composition_kind,
+                           normalization_frame,
+                           typed_stages,
+                           primitive_contract,
+                           slot_signature,
+                           visual_program,
+                           "attempt_tsv");
+}
+
+static int lso_read_attempts(const char *attempts_tsv_path,
+                             LSOOperatorList *operators,
+                             size_t *attempt_rows,
+                             double near_miss_score) {
+    FILE *fp;
+    char line[SP_LINE_MAX];
+    (void)near_miss_score;
+    fp = fopen(attempts_tsv_path, "r");
+    if (fp == NULL) {
+        return -1;
+    }
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        char *fields[SP_MAX_FIELDS];
+        size_t field_count = sp_split_tabs(line, fields, SP_MAX_FIELDS);
+        const char *split_name = sp_field(fields, field_count, 0U);
+        const char *op_name = sp_field(fields, field_count, 8U);
+        const char *task_id = sp_field(fields, field_count, 2U);
+        int accepted = sp_bool_text(sp_field(fields, field_count, 16U));
+        const char *failure_stage = sp_field(fields, field_count, 18U);
+        const char *rejection_reason = sp_field(fields, field_count, 17U);
+        double verifier_score = sp_double(sp_field(fields, field_count, 67U));
+        int near_miss = !accepted && lso_is_attempt_near_miss(failure_stage);
+        int hard_reject =
+            !accepted && lso_is_attempt_hard_reject(failure_stage);
+        LSOOperator *op;
+        LSOExample example;
+        if (strcmp(split_name, "split_name") == 0 || split_name[0] == '\0' ||
+            op_name[0] == '\0') {
+            continue;
+        }
+        ++*attempt_rows;
+        op = lso_attempt_operator(operators, fields, field_count);
+        if (op == NULL) {
+            fclose(fp);
+            return -1;
+        }
+        memset(&example, 0, sizeof(example));
+        example.accepted = accepted;
+        lso_copy(example.attempt_id,
+                 sizeof(example.attempt_id),
+                 sp_field(fields, field_count, 4U));
+        lso_copy(example.task_id, sizeof(example.task_id), task_id);
+        lso_copy(example.failure_stage,
+                 sizeof(example.failure_stage),
+                 failure_stage);
+        lso_copy(example.rejection_reason,
+                 sizeof(example.rejection_reason),
+                 rejection_reason);
+        lso_copy(example.source_path, sizeof(example.source_path), attempts_tsv_path);
+        example.verifier_score = verifier_score;
+        if (lso_add_observation(op,
+                                task_id,
+                                accepted,
+                                near_miss,
+                                hard_reject,
+                                verifier_score,
+                                failure_stage,
+                                rejection_reason,
+                                &example) != 0) {
+            fclose(fp);
+            return -1;
+        }
+    }
+    if (ferror(fp)) {
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    return 0;
+}
+
+static LSOOperator *lso_reference_recolor_operator(LSOOperatorList *operators) {
+    return lso_find_or_add(operators,
+                           "reference_recolor_mask",
+                           "arc.reference_recolor_mask",
+                           "visual_combinator",
+                           "reference_conditioned_recolor",
+                           "reference_target_bbox",
+                           "select_reference|derive_relative_mask|select_target|recolor_overlay",
+                           "compiler_replay",
+                           "reference_selector|target_selector|source_color|output_color|relative_mask",
+                           "reference_recolor_mask",
+                           "object_translate_trace|compiler_replay_trace");
+}
+
+static LSOOperator *lso_motion_refinement_operator(LSOOperatorList *operators) {
+    return lso_find_or_add(operators,
+                           "object_relation_motion_refinement",
+                           "arc.object_relation_motion_refinement",
+                           "visual_combinator",
+                           "reference_conditioned_motion",
+                           "object_relation_offset",
+                           "select_reference|bind_offset|select_target|move_or_copy",
+                           "diagnostic_near_miss",
+                           "reference_selector|target_selector|dx|dy|render_mode",
+                           "object_relation_motion_refinement",
+                           "object_translate_trace");
+}
+
+static int lso_add_object_translate_trace(LSOOperatorList *operators,
+                                          const char *line,
+                                          const char *trace_path,
+                                          double diagnostic_score) {
+    char *reason = sp_json_string_dup(line, "best_rejected_reason");
+    char *task_id = sp_json_string_dup(line, "task_instance");
+    double score = sp_json_double(line, "best_rejected_verifier_score");
+    long dx = (long)sp_json_double(line, "best_rejected_dx");
+    long dy = (long)sp_json_double(line, "best_rejected_dy");
+    LSOOperator *op = NULL;
+    LSOExample example;
+    int status = 0;
+    if (reason == NULL || task_id == NULL) {
+        status = -1;
+        goto done;
+    }
+    if (strcmp(reason, "no_train_match") != 0 || score < diagnostic_score) {
+        goto done;
+    }
+    op = dx == 0L && dy == 0L ? lso_reference_recolor_operator(operators)
+                              : lso_motion_refinement_operator(operators);
+    if (op == NULL) {
+        status = -1;
+        goto done;
+    }
+    memset(&example, 0, sizeof(example));
+    example.accepted = 0;
+    example.has_translate_fields = 1;
+    lso_copy(example.task_id, sizeof(example.task_id), task_id);
+    lso_copy(example.failure_stage,
+             sizeof(example.failure_stage),
+             "diagnostic_near_miss");
+    lso_copy(example.rejection_reason, sizeof(example.rejection_reason), reason);
+    lso_copy(example.source_path, sizeof(example.source_path), trace_path);
+    example.verifier_score = score;
+    example.selector = (long)sp_json_double(line, "best_rejected_selector");
+    example.color = (long)sp_json_double(line, "best_rejected_color");
+    example.output_color =
+        (long)sp_json_double(line, "best_rejected_output_color");
+    example.dx = dx;
+    example.dy = dy;
+    example.render_mode =
+        (long)sp_json_double(line, "best_rejected_render_mode");
+    if (lso_add_observation(op,
+                            task_id,
+                            0,
+                            1,
+                            0,
+                            score,
+                            "diagnostic_near_miss",
+                            reason,
+                            &example) != 0) {
+        status = -1;
+    }
+done:
+    free(reason);
+    free(task_id);
+    return status;
+}
+
+static int lso_add_reference_recolor_trace(LSOOperatorList *operators,
+                                           const char *line,
+                                           const char *trace_path) {
+    long accepted_specs = (long)sp_json_double(line, "accepted_specs");
+    long attempted_specs = (long)sp_json_double(line, "attempted_specs");
+    char *task_id = sp_json_string_dup(line, "task_instance");
+    LSOOperator *op;
+    LSOExample example;
+    int status = 0;
+    if (task_id == NULL) {
+        return -1;
+    }
+    if (accepted_specs <= 0L) {
+        goto done;
+    }
+    op = lso_reference_recolor_operator(operators);
+    if (op == NULL) {
+        status = -1;
+        goto done;
+    }
+    memset(&example, 0, sizeof(example));
+    example.accepted = 1;
+    example.has_specs = 1;
+    example.accepted_specs = accepted_specs;
+    example.attempted_specs = attempted_specs;
+    lso_copy(example.task_id, sizeof(example.task_id), task_id);
+    lso_copy(example.failure_stage, sizeof(example.failure_stage), "accepted");
+    lso_copy(example.source_path, sizeof(example.source_path), trace_path);
+    example.verifier_score = 1.0;
+    if (lso_add_observation(op,
+                            task_id,
+                            1,
+                            0,
+                            0,
+                            1.0,
+                            "accepted",
+                            "",
+                            &example) != 0) {
+        status = -1;
+    }
+done:
+    free(task_id);
+    return status;
+}
+
+static int lso_read_trace(const char *trace_path,
+                          LSOOperatorList *operators,
+                          double diagnostic_score) {
+    FILE *fp;
+    char line[SP_LINE_MAX];
+    if (trace_path == NULL || trace_path[0] == '\0') {
+        return 0;
+    }
+    fp = fopen(trace_path, "r");
+    if (fp == NULL) {
+        return 0;
+    }
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        if (strstr(line,
+                   "\"schema\":\"crlp.arc_object_translate_miner.trace.v1\"") !=
+            NULL) {
+            if (lso_add_object_translate_trace(operators,
+                                               line,
+                                               trace_path,
+                                               diagnostic_score) != 0) {
+                fclose(fp);
+                return -1;
+            }
+        } else if (strstr(line,
+                          "\"schema\":\"crlp.arc_reference_recolor_mask_miner.trace.v1\"") !=
+                   NULL) {
+            if (lso_add_reference_recolor_trace(operators, line, trace_path) !=
+                0) {
+                fclose(fp);
+                return -1;
+            }
+        }
+    }
+    if (ferror(fp)) {
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    return 0;
+}
+
+static int lso_sort_rank(const LSOOperator *op) {
+    if (op->accepted_count > 0U) {
+        return 0;
+    }
+    if (op->near_miss_count > 0U) {
+        return 1;
+    }
+    return 2;
+}
+
+static int lso_operator_cmp(const void *a, const void *b) {
+    const LSOOperator *oa = (const LSOOperator *)a;
+    const LSOOperator *ob = (const LSOOperator *)b;
+    int ra = lso_sort_rank(oa);
+    int rb = lso_sort_rank(ob);
+    size_t pa = lso_proposal_count(oa);
+    size_t pb = lso_proposal_count(ob);
+    if (ra != rb) {
+        return ra < rb ? -1 : 1;
+    }
+    if (pa != pb) {
+        return pa > pb ? -1 : 1;
+    }
+    if (oa->accepted_count != ob->accepted_count) {
+        return oa->accepted_count > ob->accepted_count ? -1 : 1;
+    }
+    if (oa->best_verifier_score != ob->best_verifier_score) {
+        return oa->best_verifier_score > ob->best_verifier_score ? -1 : 1;
+    }
+    return strcmp(oa->operator_name, ob->operator_name);
+}
+
+static void lso_write_example(FILE *fp, const LSOExample *example) {
+    fputs("{\"accepted\":", fp);
+    fputs(example->accepted ? "true" : "false", fp);
+    if (example->attempt_id[0] != '\0') {
+        fputs(",\"attempt_id\":", fp);
+        sp_json_string(fp, example->attempt_id);
+    }
+    if (example->has_translate_fields) {
+        fprintf(fp,
+                ",\"color\":%ld,\"dx\":%ld,\"dy\":%ld",
+                example->color,
+                example->dx,
+                example->dy);
+    }
+    if (example->has_specs) {
+        fprintf(fp,
+                ",\"accepted_specs\":%ld,\"attempted_specs\":%ld",
+                example->accepted_specs,
+                example->attempted_specs);
+    }
+    fputs(",\"failure_stage\":", fp);
+    sp_json_string(fp, example->failure_stage);
+    if (example->has_translate_fields) {
+        fprintf(fp, ",\"output_color\":%ld", example->output_color);
+    }
+    fputs(",\"rejection_reason\":", fp);
+    sp_json_string(fp, example->rejection_reason);
+    if (example->has_translate_fields) {
+        fprintf(fp,
+                ",\"render_mode\":%ld,\"selector\":%ld",
+                example->render_mode,
+                example->selector);
+    }
+    fputs(",\"source_path\":", fp);
+    sp_json_string(fp, example->source_path);
+    fputs(",\"task_id\":", fp);
+    sp_json_string(fp, example->task_id);
+    fprintf(fp, ",\"verifier_score\":%.8f}", example->verifier_score);
+}
+
+static int lso_write_operator(FILE *fp,
+                              LSOOperator *op,
+                              const char *date,
+                              long min_accepted,
+                              long min_tasks) {
+    size_t i;
+    size_t total = op->accepted_count + op->rejected_count;
+    double mean = total == 0U ? 0.0 : op->verifier_score_sum / (double)total;
+    fputs("{\"accepted_count\":", fp);
+    fprintf(fp, "%zu,\"accepted_task_count\":%zu", op->accepted_count,
+            op->accepted_tasks.count);
+    fprintf(fp, ",\"best_verifier_score\":%.8f", op->best_verifier_score);
+    fputs(",\"compiler_contract\":", fp);
+    sp_json_string(fp, op->compiler_contract);
+    fputs(",\"compiler_target\":", fp);
+    sp_json_string(fp, op->compiler_target);
+    fputs(",\"composition_kind\":", fp);
+    sp_json_string(fp, op->composition_kind);
+    fputs(",\"date\":", fp);
+    sp_json_string(fp, date);
+    fputs(",\"family\":", fp);
+    sp_json_string(fp, op->family);
+    fprintf(fp,
+            ",\"hard_rejected_count\":%zu,\"learned_from\":",
+            op->hard_rejected_count);
+    sp_json_string(fp, op->learned_from);
+    fprintf(fp, ",\"mean_verifier_score\":%.8f", mean);
+    fprintf(fp, ",\"near_miss_count\":%zu", op->near_miss_count);
+    fputs(",\"normalization_frame\":", fp);
+    sp_json_string(fp, op->normalization_frame);
+    fputs(",\"operator_id\":", fp);
+    sp_json_string(fp, op->operator_id);
+    fputs(",\"operator_name\":", fp);
+    sp_json_string(fp, op->operator_name);
+    fputs(",\"primitive_contract\":", fp);
+    sp_json_string(fp, op->primitive_contract);
+    fputs(",\"promotion_policy\":\"accepted verifier rows promote; diagnostic near-misses remain candidates\",",
+          fp);
+    fputs("\"promotion_status\":", fp);
+    sp_json_string(fp, lso_status(op, min_accepted, min_tasks));
+    fputs(",\"reason_code\":", fp);
+    sp_json_string(fp, lso_reason_code(op, min_accepted, min_tasks));
+    fprintf(fp,
+            ",\"rejected_count\":%zu,\"report_version\":1,"
+            "\"schema\":\"crlp.arc_learned_sketch_op.v1\",",
+            op->rejected_count);
+    fputs("\"slot_signature\":", fp);
+    sp_json_string(fp, op->slot_signature);
+    fputs(",\"source_examples\":[", fp);
+    for (i = 0U; i < op->example_count; ++i) {
+        if (i > 0U) {
+            fputc(',', fp);
+        }
+        lso_write_example(fp, &op->examples[i]);
+    }
+    fprintf(fp,
+            "],\"source_task_count\":%zu,\"support_tasks\":%zu,",
+            op->source_tasks.count,
+            lso_support_tasks(op));
+    fputs("\"top_failure_stages\":", fp);
+    sp_counter_write(fp, &op->failure_stages);
+    fputs(",\"top_rejection_reasons\":", fp);
+    sp_counter_write(fp, &op->rejection_reasons);
+    fputs(",\"typed_stages\":", fp);
+    sp_json_string(fp, op->typed_stages);
+    fputs(",\"verifier_gate\":", fp);
+    sp_json_string(fp, op->primitive_contract);
+    fputs(",\"visual_program\":", fp);
+    sp_json_string(fp, op->visual_program);
+    fputs("}\n", fp);
+    return ferror(fp) ? -1 : 0;
+}
+
+static int lso_write_prior_row(FILE *fp,
+                               const LSOOperator *op,
+                               long min_accepted,
+                               long min_tasks) {
+    size_t total = op->accepted_count + op->rejected_count;
+    double mean = total == 0U ? 0.0 : op->verifier_score_sum / (double)total;
+    return fprintf(fp,
+                   "crlp.arc_learned_sketch_op_prior.v1\t%s\t%s\t%s\t%s\t%s\t%zu\t%zu\t%zu\t%zu\t%zu\t%zu\t%.8f\t%.8f\t%s\t%s\t%s\t%s\t%s\t%s\n",
+                   op->operator_id,
+                   op->operator_name,
+                   op->family,
+                   op->compiler_target,
+                   lso_status(op, min_accepted, min_tasks),
+                   lso_proposal_count(op),
+                   op->accepted_count,
+                   op->rejected_count,
+                   op->near_miss_count,
+                   op->hard_rejected_count,
+                   lso_support_tasks(op),
+                   mean,
+                   op->best_verifier_score,
+                   op->composition_kind,
+                   op->normalization_frame,
+                   op->typed_stages,
+                   op->primitive_contract,
+                   op->slot_signature,
+                   op->learned_from) < 0
+               ? -1
+               : 0;
+}
+
+static int lso_summary_add_counts(LSOSummary *summary,
+                                  LSOOperatorList *operators,
+                                  long min_accepted,
+                                  long min_tasks) {
+    size_t i;
+    for (i = 0U; i < operators->count; ++i) {
+        LSOOperator *op = &operators->items[i];
+        const char *status = lso_status(op, min_accepted, min_tasks);
+        if (sp_counter_add(&summary->family_counts, op->family) != 0 ||
+            sp_counter_add(&summary->learned_from_counts, op->learned_from) !=
+                0 ||
+            sp_counter_add(&summary->status_counts, status) != 0) {
+            return -1;
+        }
+        if (strcmp(status, "promoted") == 0) {
+            ++summary->promoted_operators;
+        } else if (strcmp(status, "candidate") == 0) {
+            ++summary->candidate_operators;
+        } else {
+            ++summary->blocked_operators;
+        }
+    }
+    return 0;
+}
+
+static void lso_write_top_candidate(FILE *fp, const LSOOperator *op,
+                                    long min_accepted, long min_tasks) {
+    fputs("{\"accepted_count\":", fp);
+    fprintf(fp,
+            "%zu,\"best_verifier_score\":%.8f,\"compiler_target\":",
+            op->accepted_count,
+            op->best_verifier_score);
+    sp_json_string(fp, op->compiler_target);
+    fputs(",\"family\":", fp);
+    sp_json_string(fp, op->family);
+    fprintf(fp, ",\"near_miss_count\":%zu,\"operator_name\":",
+            op->near_miss_count);
+    sp_json_string(fp, op->operator_name);
+    fputs(",\"promotion_status\":", fp);
+    sp_json_string(fp, lso_status(op, min_accepted, min_tasks));
+    fprintf(fp, ",\"support_tasks\":%zu}", lso_support_tasks(op));
+}
+
+static int lso_write_summary_json(FILE *fp,
+                                  const char *attempts_tsv_path,
+                                  const char *trace_path,
+                                  LSOOperatorList *operators,
+                                  LSOSummary *summary,
+                                  const char *date,
+                                  long min_accepted,
+                                  long min_tasks) {
+    size_t i;
+    size_t top_count = operators->count < 12U ? operators->count : 12U;
+    fputs("{\"attempt_paths\":[", fp);
+    sp_json_string(fp, attempts_tsv_path);
+    fputs("],\"attempt_rows\":", fp);
+    fprintf(fp, "%zu,\"blocked_operators\":%zu,\"candidate_operators\":%zu,",
+            summary->attempt_rows,
+            summary->blocked_operators,
+            summary->candidate_operators);
+    fputs("\"claim_scope\":\"learned sketch-op priors only; all candidates still require domain compiler replay before they can act as verifier gates\",",
+          fp);
+    fputs("\"compiler_trace_paths\":[", fp);
+    if (trace_path != NULL && trace_path[0] != '\0') {
+        sp_json_string(fp, trace_path);
+    }
+    fputs("],\"date\":", fp);
+    sp_json_string(fp, date);
+    fputs(",\"family_counts\":", fp);
+    sp_counter_write(fp, &summary->family_counts);
+    fputs(",\"learned_from_counts\":", fp);
+    sp_counter_write(fp, &summary->learned_from_counts);
+    fprintf(fp,
+            ",\"operator_candidates\":%zu,\"operator_status_counts\":",
+            operators->count);
+    sp_counter_write(fp, &summary->status_counts);
+    fprintf(fp,
+            ",\"promoted_operators\":%zu,\"report_version\":1,"
+            "\"schema\":\"crlp.arc_learned_sketch_ops.summary.v1\","
+            "\"top_candidates\":[",
+            summary->promoted_operators);
+    for (i = 0U; i < top_count; ++i) {
+        if (i > 0U) {
+            fputc(',', fp);
+        }
+        lso_write_top_candidate(fp, &operators->items[i], min_accepted, min_tasks);
+    }
+    fputs("]}\n", fp);
+    return ferror(fp) ? -1 : 0;
+}
+
+static int lso_write_markdown(FILE *md,
+                              LSOOperatorList *operators,
+                              LSOSummary *summary,
+                              const char *date,
+                              long min_accepted,
+                              long min_tasks) {
+    size_t i;
+    fprintf(md,
+            "# ARC Learned Sketch Operators\n\n"
+            "Date: %s\n\n"
+            "This pass mines typed ARC visual-pipeline attempt rows, diagnostic traces, and compiler-replay traces into learned sketch-op families. Accepted verifier rows can promote an operator prior; diagnostic near-misses remain candidates until a compiler emits executable sketches and the ARC verifier accepts them.\n\n"
+            "Attempt rows: `%zu`\n"
+            "Operator candidates: `%zu`\n"
+            "Promoted operators: `%zu`\n"
+            "Diagnostic/candidate operators: `%zu`\n\n"
+            "| Operator | Status | Family | Support tasks | Accepted | Near misses | Best score | Compiler |\n"
+            "| --- | --- | --- | ---: | ---: | ---: | ---: | --- |\n",
+            date,
+            summary->attempt_rows,
+            operators->count,
+            summary->promoted_operators,
+            summary->candidate_operators);
+    for (i = 0U; i < operators->count; ++i) {
+        const LSOOperator *op = &operators->items[i];
+        fprintf(md,
+                "| `%s` | `%s` | `%s` | %zu | %zu | %zu | %.3f | `%s` |\n",
+                op->operator_name,
+                lso_status(op, min_accepted, min_tasks),
+                op->family,
+                lso_support_tasks(op),
+                op->accepted_count,
+                op->near_miss_count,
+                op->best_verifier_score,
+                op->compiler_target);
+    }
+    fputs("\n## Contract\n\n"
+          "- Output schema: `crlp.arc_learned_sketch_op.v1`.\n"
+          "- Prior schema: `crlp.arc_learned_sketch_op_prior.v1`.\n"
+          "- Promotion requires accepted verifier support; near-miss diagnostics are proposal pressure only.\n"
+          "- Runtime use still requires a domain compiler and ARC verifier replay.\n",
+          md);
+    return ferror(md) ? -1 : 0;
+}
+
+static int lso_write_outputs(const char *attempts_tsv_path,
+                             const char *trace_path,
+                             const char *operators_path,
+                             const char *prior_path,
+                             const char *summary_path,
+                             const char *markdown_path,
+                             LSOOperatorList *operators,
+                             LSOSummary *summary,
+                             long min_accepted,
+                             long min_tasks) {
+    FILE *ops = NULL;
+    FILE *prior = NULL;
+    FILE *summary_fp = NULL;
+    FILE *md = NULL;
+    char date[11];
+    size_t i;
+    int status = -1;
+    lso_today(date);
+    if (sp_mkdir_parent(operators_path) != 0 ||
+        sp_mkdir_parent(prior_path) != 0 ||
+        sp_mkdir_parent(summary_path) != 0 ||
+        sp_mkdir_parent(markdown_path) != 0) {
+        goto done;
+    }
+    if (operators->count > 1U) {
+        qsort(operators->items,
+              operators->count,
+              sizeof(operators->items[0]),
+              lso_operator_cmp);
+    }
+    if (lso_summary_add_counts(summary, operators, min_accepted, min_tasks) !=
+        0) {
+        goto done;
+    }
+    ops = fopen(operators_path, "w");
+    prior = fopen(prior_path, "w");
+    summary_fp = fopen(summary_path, "w");
+    md = fopen(markdown_path, "w");
+    if (ops == NULL || prior == NULL || summary_fp == NULL || md == NULL) {
+        goto done;
+    }
+    fputs("schema_version\toperator_id\toperator_name\tfamily\tcompiler_target\t"
+          "promotion_status\tproposal_count\taccepted_count\trejected_count\t"
+          "near_miss_count\thard_rejected_count\tsupport_tasks\t"
+          "mean_verifier_score\tbest_verifier_score\tcomposition_kind\t"
+          "normalization_frame\ttyped_stages\tprimitive_contract\t"
+          "slot_signature\tlearned_from\n",
+          prior);
+    for (i = 0U; i < operators->count; ++i) {
+        if (lso_write_operator(ops,
+                               &operators->items[i],
+                               date,
+                               min_accepted,
+                               min_tasks) != 0 ||
+            lso_write_prior_row(prior,
+                                &operators->items[i],
+                                min_accepted,
+                                min_tasks) != 0) {
+            goto done;
+        }
+    }
+    if (lso_write_summary_json(summary_fp,
+                               attempts_tsv_path,
+                               trace_path,
+                               operators,
+                               summary,
+                               date,
+                               min_accepted,
+                               min_tasks) != 0 ||
+        lso_write_markdown(md,
+                           operators,
+                           summary,
+                           date,
+                           min_accepted,
+                           min_tasks) != 0) {
+        goto done;
+    }
+    if (fclose(ops) != 0 || fclose(prior) != 0 || fclose(summary_fp) != 0 ||
+        fclose(md) != 0) {
+        ops = NULL;
+        prior = NULL;
+        summary_fp = NULL;
+        md = NULL;
+        goto done;
+    }
+    ops = NULL;
+    prior = NULL;
+    summary_fp = NULL;
+    md = NULL;
+    status = 0;
+done:
+    if (ops != NULL) {
+        fclose(ops);
+    }
+    if (prior != NULL) {
+        fclose(prior);
+    }
+    if (summary_fp != NULL) {
+        fclose(summary_fp);
+    }
+    if (md != NULL) {
+        fclose(md);
+    }
+    return status;
+}
+
+static void lso_free_operators(LSOOperatorList *operators) {
+    size_t i;
+    for (i = 0U; i < operators->count; ++i) {
+        sp_string_list_free(&operators->items[i].source_tasks);
+        sp_string_list_free(&operators->items[i].accepted_tasks);
+        sp_counter_free(&operators->items[i].failure_stages);
+        sp_counter_free(&operators->items[i].rejection_reasons);
+    }
+    free(operators->items);
+    memset(operators, 0, sizeof(*operators));
+}
+
+int nn_grammar_discovery_write_arc_learned_sketch_ops(
+    const char *attempts_tsv_path,
+    const char *trace_path,
+    const char *operators_path,
+    const char *prior_path,
+    const char *summary_path,
+    const char *markdown_path,
+    long min_accepted,
+    long min_tasks,
+    double near_miss_score,
+    double diagnostic_score) {
+    LSOOperatorList operators;
+    LSOSummary summary;
+    int status = -1;
+    memset(&operators, 0, sizeof(operators));
+    memset(&summary, 0, sizeof(summary));
+    if (attempts_tsv_path == NULL || attempts_tsv_path[0] == '\0' ||
+        operators_path == NULL || operators_path[0] == '\0' ||
+        prior_path == NULL || prior_path[0] == '\0' ||
+        summary_path == NULL || summary_path[0] == '\0' ||
+        markdown_path == NULL || markdown_path[0] == '\0') {
+        goto done;
+    }
+    if (min_accepted <= 0L) {
+        min_accepted = 1L;
+    }
+    if (min_tasks <= 0L) {
+        min_tasks = 1L;
+    }
+    if (near_miss_score <= 0.0) {
+        near_miss_score = 0.75;
+    }
+    if (diagnostic_score <= 0.0) {
+        diagnostic_score = 0.90;
+    }
+    if (lso_read_attempts(attempts_tsv_path,
+                          &operators,
+                          &summary.attempt_rows,
+                          near_miss_score) != 0 ||
+        lso_read_trace(trace_path, &operators, diagnostic_score) != 0 ||
+        lso_write_outputs(attempts_tsv_path,
+                          trace_path,
+                          operators_path,
+                          prior_path,
+                          summary_path,
+                          markdown_path,
+                          &operators,
+                          &summary,
+                          min_accepted,
+                          min_tasks) != 0) {
+        goto done;
+    }
+    printf("arc-learned-sketch-ops operators=%zu promoted=%zu candidates=%zu blocked=%zu summary=%s\n",
+           operators.count,
+           summary.promoted_operators,
+           summary.candidate_operators,
+           summary.blocked_operators,
+           summary_path);
+    status = 0;
+done:
+    lso_free_operators(&operators);
+    sp_counter_free(&summary.family_counts);
+    sp_counter_free(&summary.learned_from_counts);
+    sp_counter_free(&summary.status_counts);
     return status;
 }

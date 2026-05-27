@@ -127,6 +127,10 @@ static void usage(const char *argv0) {
             "--self-play-generative-prior-summary PATH --summary PATH "
             "--markdown PATH --template-baseline N --oracle-ceiling N "
             "--seed-count N] "
+            "[--arc-learned-sketch-ops --attempts-tsv PATH --trace PATH "
+            "--operators PATH --prior PATH --summary PATH --markdown PATH "
+            "--min-accepted N --min-tasks N --near-miss-score X "
+            "--diagnostic-score X] "
             "[--paper-data --paper-data-output PATH --paper-data-typ PATH "
             "--comparison PATH --prime-gap-trace PATH --grid-path-trace PATH "
             "--delayed-claim-trace PATH --arc-agi PATH --prime-gap PATH] "
@@ -268,6 +272,18 @@ int main(int argc, char **argv) {
         arg_value(argc, argv, "--oracle-ceiling");
     const char *arc_selfplay_seed_count_arg =
         arg_value(argc, argv, "--seed-count");
+    const char *arc_learned_sketch_ops_trace = arg_value(argc, argv, "--trace");
+    const char *arc_learned_sketch_ops_operators =
+        arg_value(argc, argv, "--operators");
+    const char *arc_learned_sketch_ops_prior = arg_value(argc, argv, "--prior");
+    const char *arc_learned_sketch_ops_min_accepted_arg =
+        arg_value(argc, argv, "--min-accepted");
+    const char *arc_learned_sketch_ops_min_tasks_arg =
+        arg_value(argc, argv, "--min-tasks");
+    const char *arc_learned_sketch_ops_near_miss_score_arg =
+        arg_value(argc, argv, "--near-miss-score");
+    const char *arc_learned_sketch_ops_diagnostic_score_arg =
+        arg_value(argc, argv, "--diagnostic-score");
     const char *paper_data_output = arg_value(argc, argv, "--paper-data-output");
     const char *paper_data_typ = arg_value(argc, argv, "--paper-data-typ");
     const char *paper_comparison = arg_value(argc, argv, "--comparison");
@@ -483,6 +499,22 @@ int main(int argc, char **argv) {
         arc_selfplay_seed_count_arg == NULL
             ? 1L
             : strtol(arc_selfplay_seed_count_arg, NULL, 10);
+    long arc_learned_sketch_ops_min_accepted =
+        arc_learned_sketch_ops_min_accepted_arg == NULL
+            ? 1L
+            : strtol(arc_learned_sketch_ops_min_accepted_arg, NULL, 10);
+    long arc_learned_sketch_ops_min_tasks =
+        arc_learned_sketch_ops_min_tasks_arg == NULL
+            ? 1L
+            : strtol(arc_learned_sketch_ops_min_tasks_arg, NULL, 10);
+    double arc_learned_sketch_ops_near_miss_score =
+        arc_learned_sketch_ops_near_miss_score_arg == NULL
+            ? 0.75
+            : strtod(arc_learned_sketch_ops_near_miss_score_arg, NULL);
+    double arc_learned_sketch_ops_diagnostic_score =
+        arc_learned_sketch_ops_diagnostic_score_arg == NULL
+            ? 0.90
+            : strtod(arc_learned_sketch_ops_diagnostic_score_arg, NULL);
     int arc_visual_hole_requested = has_arg(argc, argv, "--arc-visual-hole-proposer");
     int arc_visual_curriculum_requested =
         has_arg(argc, argv, "--arc-visual-curriculum");
@@ -498,6 +530,8 @@ int main(int argc, char **argv) {
         has_arg(argc, argv, "--arc-ranker-failure-report");
     int arc_verified_selfplay_requested =
         has_arg(argc, argv, "--arc-verified-self-play-report");
+    int arc_learned_sketch_ops_requested =
+        has_arg(argc, argv, "--arc-learned-sketch-ops");
     int paper_data_requested = has_arg(argc, argv, "--paper-data");
     int paper_claims_requested = has_arg(argc, argv, "--paper-claims");
     int trace_determinism_requested =
@@ -853,6 +887,31 @@ int main(int argc, char **argv) {
                 arc_selfplay_oracle_ceiling,
                 arc_selfplay_seed_count) != 0) {
             fprintf(stderr, "failed to write ARC verified self-play report\n");
+            return 1;
+        }
+        return 0;
+    }
+    if (arc_learned_sketch_ops_requested) {
+        if (arc_ranker_benchmark_attempts == NULL ||
+            arc_learned_sketch_ops_operators == NULL ||
+            arc_learned_sketch_ops_prior == NULL ||
+            arc_hole_summary == NULL ||
+            arc_ranker_failure_markdown == NULL) {
+            usage(argv[0]);
+            return 2;
+        }
+        if (nn_grammar_discovery_write_arc_learned_sketch_ops(
+                arc_ranker_benchmark_attempts,
+                arc_learned_sketch_ops_trace,
+                arc_learned_sketch_ops_operators,
+                arc_learned_sketch_ops_prior,
+                arc_hole_summary,
+                arc_ranker_failure_markdown,
+                arc_learned_sketch_ops_min_accepted,
+                arc_learned_sketch_ops_min_tasks,
+                arc_learned_sketch_ops_near_miss_score,
+                arc_learned_sketch_ops_diagnostic_score) != 0) {
+            fprintf(stderr, "failed to write ARC learned sketch-op report\n");
             return 1;
         }
         return 0;
