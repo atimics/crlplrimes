@@ -10877,6 +10877,14 @@ static const NNGDArcSyntheticShapeSpec nn_gd_arc_synthetic_shape_specs[] = {
      "offset_frame",
      "select_object|infer_offset|translate|emit_grid",
      "selector:object,transform:translate,emitter:grid"},
+    {"object_relation_translate_to_anchor",
+     "object_relation_translate_to_anchor_pipeline",
+     "select_object -> infer_anchor_relation -> translate_to_anchor -> emit_grid",
+     "selector,x_anchor,y_anchor,x_offset,y_offset,width,height,color",
+     "object_relation_translate",
+     "anchor_relation_frame",
+     "select_object|infer_anchor_relation|translate_to_anchor|emit_grid",
+     "selector:object,relation:anchor,transform:translate,emitter:grid"},
     {"recolor",
      "recolor_pipeline",
      "select_mask -> infer_color_map -> recolor -> emit_grid",
@@ -11068,7 +11076,8 @@ static const char *nn_gd_arc_synthetic_shape_target_family(const char *op_name) 
     if (op_name == NULL) {
         return "unsupported_parse_or_shape";
     }
-    if (strcmp(op_name, "object_motion") == 0) {
+    if (strcmp(op_name, "object_motion") == 0 ||
+        strcmp(op_name, "object_relation_translate_to_anchor") == 0) {
         return "object_motion_or_copy_extend";
     }
     if (strcmp(op_name, "recolor") == 0 || strcmp(op_name, "recolor_crop") == 0) {
