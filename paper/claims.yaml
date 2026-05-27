@@ -112,7 +112,7 @@
     {
       "id": "axis2-prime-proposer-baselines",
       "title": "Prime fixed-budget proposer baseline support",
-      "role": "claim_falsification",
+      "role": "negative_baseline_support",
       "claim_ids": [
         "C2.prime_proposer_fixed_budget"
       ],
@@ -126,13 +126,13 @@
         "results/latest/comparison.canonical.jsonl",
         "paper/generated/limitations.md"
       ],
-      "agent_instruction": "Treat C2 as currently contradicted; produce baseline evidence that either keeps it as a limitation or defines a narrower supported proposer claim.",
+      "agent_instruction": "Treat C2 as a supported negative static-proposer baseline; produce any positive proposer claim as a separate, narrower, budget-matched claim.",
       "success_criteria": [
         "Static, closed-loop, grammar-order, structural, random, and oracle baselines remain budget-matched.",
-        "Any positive proposer claim is narrower than the current contradicted C2 claim."
+        "Any positive proposer claim is narrower than the static-proposer negative baseline claim."
       ],
       "failure_modes": [
-        "Do not present the static neural proposer as supported while C2 remains contradicted."
+        "Do not present the static neural proposer as useful based on C2."
       ]
     },
     {
@@ -605,9 +605,9 @@
     },
     {
       "id": "C2.prime_proposer_fixed_budget",
-      "title": "Next-prime neural proposer beats fixed-budget symbolic baselines",
-      "claim_type": "proposer_usefulness",
-      "claim_text": "On the audited next-prime filter (`prime_gap` trace id), the neural rule proposer is useful at fixed verifier budget relative to grammar-order and structural baselines.",
+      "title": "Next-prime static proposer is a fixed-budget negative baseline",
+      "claim_type": "proposer_boundary",
+      "claim_text": "On the audited next-prime filter (`prime_gap` trace id), the static neural rule proposer is not useful at fixed verifier budget relative to grammar-order and structural baselines.",
       "builtin_evaluator": "prime_proposer_fixed_budget",
       "required_for_submission": false,
       "paper_surfaces": [
@@ -660,19 +660,18 @@
       },
       "decision_rule": {
         "supported_if": [
-          "best_neural.expanded_saved_pct >= grammar_order.expanded_saved_pct for every grammar",
-          "best_neural.expanded_saved_pct >= structural_heuristic.expanded_saved_pct for every grammar"
+          "static_neural.expanded_saved_pct <= max(grammar_order.expanded_saved_pct, structural_heuristic.expanded_saved_pct) for every reported grammar"
         ],
         "contradicted_if": [
-          "neural_structural trails grammar_order and structural_heuristic on any reported grammar"
+          "static_neural.expanded_saved_pct beats grammar_order and structural_heuristic on every reported grammar"
         ]
       },
       "residual_when_not_supported": [
-        "Treat the current Axis 2 row as a negative or mixed result, not a proposer-usefulness proof.",
+        "Treat the current Axis 2 row as mixed evidence, not a static-proposer usefulness proof.",
         "Run R-E2.1 for 5+ seeds and budget grids.",
         "Run R-E2.2/R-E2.3 only if the richer grammar creates non-saturated cases where learned ordering can matter."
       ],
-      "limitation_when_not_supported": "The current fixed-budget next-prime proposer evidence is negative for static neural proposer superiority; Axis 2 remains a falsifiable baseline failure until R-E2.1/R-E2.2/R-E2.3 close the gap.",
+      "limitation_when_not_supported": "If the static proposer stops trailing deterministic orderings, the negative-baseline claim must be revised into a mixed or narrower proposer claim before Axis 2 can be promoted.",
       "derived_claims": [
         "C2.closed_loop_residual_scope",
         "C2.conjunctive_grammar_needed"

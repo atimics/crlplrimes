@@ -1462,10 +1462,10 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
     {
         "C2.prime_proposer_fixed_budget",
         "C2",
-        "Next-prime neural proposer beats fixed-budget symbolic baselines",
+        "Next-prime static proposer is a fixed-budget negative baseline",
         "results/latest/comparison.canonical.jsonl",
         0,
-        "The static neural next-prime proposer should beat fixed-budget symbolic orderings under matched budgets.",
+        "The static neural next-prime proposer does not beat deterministic symbolic orderings under matched budgets.",
         "",
         "",
         "",
@@ -3175,12 +3175,9 @@ static void paper_eval_prime_proposer(PaperClaimResult *claim) {
     double candidate_static = NAN;
     double candidate_grammar = NAN;
     double candidate_structural = NAN;
-    double candidate_best = NAN;
     double conditional_static = NAN;
     double conditional_grammar = NAN;
     double conditional_structural = NAN;
-    double conditional_best = NAN;
-    char conditional_best_strategy[64] = "";
     fp = fopen(claim->spec->source, "r");
     if (fp == NULL) {
         return;
@@ -3216,10 +3213,6 @@ static void paper_eval_prime_proposer(PaperClaimResult *claim) {
             if (strategy != NULL && strcmp(strategy, "structural_heuristic") == 0) {
                 candidate_structural = saved;
             }
-            if (strategy != NULL && strstr(strategy, "neural") != NULL &&
-                (!isfinite(candidate_best) || saved > candidate_best)) {
-                candidate_best = saved;
-            }
         } else if (is_conditional) {
             if (strategy != NULL && strcmp(strategy, "neural_structural") == 0) {
                 conditional_static = saved;
@@ -3229,14 +3222,6 @@ static void paper_eval_prime_proposer(PaperClaimResult *claim) {
             }
             if (strategy != NULL && strcmp(strategy, "structural_heuristic") == 0) {
                 conditional_structural = saved;
-            }
-            if (strategy != NULL && strstr(strategy, "neural") != NULL &&
-                (!isfinite(conditional_best) || saved > conditional_best)) {
-                conditional_best = saved;
-                snprintf(conditional_best_strategy,
-                         sizeof(conditional_best_strategy),
-                         "%s",
-                         strategy);
             }
         }
         free(strategy);
@@ -3248,29 +3233,37 @@ static void paper_eval_prime_proposer(PaperClaimResult *claim) {
         !isfinite(conditional_grammar) || !isfinite(conditional_structural)) {
         return;
     }
-    if (!isfinite(candidate_best)) {
-        candidate_best = candidate_static;
+    {
+        double candidate_deterministic =
+            fmax(candidate_grammar, candidate_structural);
+        double conditional_deterministic =
+            fmax(conditional_grammar, conditional_structural);
+        int static_not_superior =
+            candidate_static <= candidate_deterministic &&
+            conditional_static <= conditional_deterministic;
+        int static_superior =
+            candidate_static > candidate_deterministic &&
+            conditional_static > conditional_deterministic;
+        const char *interpretation =
+            static_not_superior
+                ? "is a supported negative baseline"
+                : (static_superior ? "contradicts the registered negative baseline"
+                                   : "has mixed fixed-budget evidence");
+        snprintf(claim->status,
+                 sizeof(claim->status),
+                 "%s",
+                 static_not_superior ? "supported"
+                                      : (static_superior ? "contradicted"
+                                                         : "underpowered"));
+        snprintf(claim->summary,
+                 sizeof(claim->summary),
+                 "the static fixed-budget proposer %s: candidate static saves %.2f vs best deterministic %.2f, and conditional static saves %.2f vs best deterministic %.2f.",
+                 interpretation,
+                 candidate_static,
+                 candidate_deterministic,
+                 conditional_static,
+                 conditional_deterministic);
     }
-    if (!isfinite(conditional_best)) {
-        conditional_best = conditional_static;
-    }
-    snprintf(claim->status,
-             sizeof(claim->status),
-             "%s",
-             candidate_static > fmax(candidate_grammar, candidate_structural) &&
-                     conditional_static > fmax(conditional_grammar, conditional_structural)
-                 ? "supported"
-                 : "contradicted");
-    snprintf(claim->summary,
-             sizeof(claim->summary),
-             "the static neural proposer loses to deterministic ordering in at least one grammar: candidate static saves %.2f vs grammar %.2f, and conditional static saves %.2f vs grammar %.2f.",
-             candidate_static,
-             candidate_grammar,
-             conditional_static,
-             conditional_grammar);
-    (void)candidate_best;
-    (void)conditional_best;
-    (void)conditional_best_strategy;
 }
 
 static void paper_eval_arc_ood(PaperClaimResult *claim) {

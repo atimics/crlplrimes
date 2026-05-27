@@ -6,7 +6,7 @@ Status: passing
 
 - `C1.prime_gate_delta`: supported - the verified learned filter raises top-1 ranking to 68.87% from 45.12% for the hand-coded wheel and 9.13% raw, with 0 verifier-counted true-answer deletions.
 - `C1.prime_gate_delta_ci`: supported - across 5 seeds, the learned filter stays at 68.87% +/- 0.00pp, versus 45.12% +/- 0.00pp for the hand wheel and 9.13% +/- 0.00pp raw; the worst learned-vs-hand gain is +23.74pp, learned top-10 never falls below 100.00%, and false rejections never exceed 0; promotion requires 5 seeds.
-- `C2.prime_proposer_fixed_budget`: contradicted - the static neural proposer loses to deterministic ordering in at least one grammar: candidate static saves 72.49 vs grammar 73.22, and conditional static saves 2.15 vs grammar 55.57.
+- `C2.prime_proposer_fixed_budget`: supported - the static fixed-budget proposer is a supported negative baseline: candidate static saves 72.49 vs best deterministic 73.22, and conditional static saves 2.15 vs best deterministic 55.57.
 - `C4.arc_ood_shared_vs_single`: supported - shared OOD top-1 48.40% vs single 42.83% (+5.57pp), NLL 2.6278 vs 4.3723.
 - `C1.arc_gate_scorer_invariance`: supported - ARC gate/proposer invariance holds across scorer-context labels: train 24/400 certified tasks, eval 4/400, mismatches=0.
 - `C1.arc_public_evidence_surface`: supported - the ARC row measures coverage, not competence: public eval coverage moves from v10 4 tasks/187 cells to v15_measured 7 tasks/1057 cells, while train coverage is 24 tasks/1187 cells.

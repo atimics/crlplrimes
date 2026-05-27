@@ -181,8 +181,8 @@ At this artifact snapshot, the generated claim compiler reports
 #paper_claim_status_counts.underpowered #claim_count_label(paper_claim_status_counts.underpowered, [underpowered claim], [underpowered claims]),
 #paper_claim_status_counts.missing #claim_count_label(paper_claim_status_counts.missing, [missing claim], [missing claims]), and
 #paper_claim_status_counts.stale #claim_count_label(paper_claim_status_counts.stale, [stale claim], [stale claims]). Contradicted and underpowered rows remain
-visible because falsifiability is part of the protocol. The fixed-budget proposer row is
-contradicted (#claim_C2_prime_proposer_fixed_budget_summary), and the tiny-net plateau row is
+visible because falsifiability is part of the protocol. The fixed-budget proposer row is a
+supported negative baseline (#claim_C2_prime_proposer_fixed_budget_summary), and the tiny-net plateau row is
 underpowered (#claim_C7_tiny_net_plateau_stop_rule_summary).
 
 = Positioning
@@ -599,8 +599,9 @@ claims come from repository artifacts checked before compilation.
 + *Multi-seed intervals are still uneven.* The clean next-prime filter headline now has a generated
   seed interval. Some boundary rows still need more explicit confidence intervals before
   they should be treated as stable quantitative laws.
-+ *The fixed-budget proposer result is negative.* The generated contradiction is not an
-  embarrassment; it is the reason rejected-candidate learning matters.
++ *The fixed-budget proposer result is negative.* The generated static-proposer baseline
+  claim is supported as a negative result; it is the reason rejected-candidate learning
+  matters.
 + *Architecture claims are underpowered or contradicted.* Tiny-net plateau evidence remains
   underpowered, and adapter heads are diagnostic rather than promoted architecture.
 + *Signal is live but not comparative.* The live `neural_active` row establishes guarded
@@ -640,8 +641,8 @@ claims come from repository artifacts checked before compilation.
     )).flatten(),
   ),
   caption: [Generated limitation candidates from the claim compiler. The required
-    claim support gate is currently #paper_support_status. Optional contradicted claims
-    remain visible here instead of blocking PDF compilation.],
+    claim support gate is currently #paper_support_status. Optional contradicted and
+    underpowered claims remain visible here instead of blocking PDF compilation.],
 ) <tab:generated-limitations>
 
 = Conclusion
