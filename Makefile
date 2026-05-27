@@ -32,6 +32,7 @@ NN_JSON_OBJ := $(BUILD_DIR)/nn_json.o
 NN_TEXT_OBJ := $(BUILD_DIR)/nn_text.o
 NN_DATASET_OBJ := $(BUILD_DIR)/nn_dataset.o
 NN_GRAMMAR_DISCOVERY_OBJ := $(BUILD_DIR)/nn_grammar_discovery.o
+NN_ARC_SELFPLAY_OBJ := $(BUILD_DIR)/nn_arc_selfplay.o
 NN_PAPER_OBJ := $(BUILD_DIR)/nn_paper.o
 NN_TEST_OBJ := $(BUILD_DIR)/nn_test.o
 NN_EXPERIMENT_TEST_OBJ := $(BUILD_DIR)/nn_experiment_test.o
@@ -612,6 +613,9 @@ $(NN_DATASET_OBJ): src/nn_dataset.c include/nn_dataset.h include/nn_core.h | $(B
 $(NN_GRAMMAR_DISCOVERY_OBJ): src/nn_grammar_discovery.c include/nn_grammar_discovery.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_grammar_discovery.c -o $@
 
+$(NN_ARC_SELFPLAY_OBJ): src/nn_arc_selfplay.c include/nn_grammar_discovery.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_arc_selfplay.c -o $@
+
 $(NN_PAPER_OBJ): src/nn_paper.c include/nn_paper.h include/nn.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_paper.c -o $@
 
@@ -774,8 +778,8 @@ $(MODULAR_GATE_SEARCH): examples/modular_gate_search.c $(NN_OBJS) $(NN_HEADERS) 
 $(ARC_AGI): examples/arc_agi.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/arc_agi.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(NN_GRAMMAR_DISCOVERY_RUNTIME): examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_TEXT_OBJ) include/nn_grammar_discovery.h include/nn_paper.h include/nn.h include/nn_text.h | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_TEXT_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+$(NN_GRAMMAR_DISCOVERY_RUNTIME): examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_TEXT_OBJ) include/nn_grammar_discovery.h include/nn_paper.h include/nn.h include/nn_text.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_TEXT_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(SIGNAL_FLIGHT): examples/signal_flight.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/signal_flight.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
@@ -1266,10 +1270,17 @@ arc-public-data:
 	@if [ -d "$(ARC_PUBLIC_DATA_DIR)/training" ] && [ -d "$(ARC_PUBLIC_DATA_DIR)/evaluation" ]; then echo "using existing ARC public data: $(ARC_PUBLIC_DATA_DIR)"; else echo "missing ARC public data; fetch it outside the retired script path or port the fetcher into C"; exit 2; fi
 
 arc-verified-self-play: arc-synthetic-shape-curriculum
-	$(RETIRED_SCRIPT_TARGET)
+	mkdir -p $(ARC_VERIFIED_SELF_PLAY_DIR)
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-verified-self-play-report --attempts-tsv "$(ARC_SYNTHETIC_SHAPE_COMBINED_ATTEMPTS)" --synthetic-summary "$(ARC_SYNTHETIC_SHAPE_SUMMARY)" --ranker-summary "$(ARC_SYNTHETIC_SHAPE_RANKER_SUMMARY)" --self-play-prior "$(ARC_VERIFIED_SELF_PLAY_PRIOR)" --self-play-prior-summary "$(ARC_VERIFIED_SELF_PLAY_PRIOR_SUMMARY)" --self-play-generative-prior "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR)" --self-play-generative-prior-summary "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR_SUMMARY)" --summary "$(ARC_VERIFIED_SELF_PLAY_SUMMARY)" --markdown "$(ARC_VERIFIED_SELF_PLAY_MARKDOWN)" --template-baseline "$(ARC_VERIFIED_SELF_PLAY_TEMPLATE_BASELINE)" --oracle-ceiling "$(ARC_VERIFIED_SELF_PLAY_ORACLE_CEILING)" --seed-count "$(ARC_VERIFIED_SELF_PLAY_SEED_COUNT)"
 
-arc-verified-self-play-public: $(ARC_AGI)
-	$(RETIRED_SCRIPT_TARGET)
+arc-verified-self-play-public: arc-verified-self-play arc-public-data $(ARC_AGI)
+	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/training" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_BASELINE_TRAIN_LOG)
+	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_BASELINE_EVAL_LOG)
+	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/training" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_VISUAL_BASELINE_TRAIN_LOG)
+	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_VISUAL_BASELINE_EVAL_LOG)
+	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/training" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) --hypothesis-library-prior "$(ARC_VERIFIED_SELF_PLAY_PRIOR)" --arc-generative-prior "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR)" $(ARC_GENERATIVE_PRIOR_OP_ARG) > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_TRAIN_LOG)
+	./$(ARC_AGI) --task-dir "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(ARC_VERIFIED_SELF_PLAY_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 --arc-visual-only $(ARC_RUNTIME_SKETCH_MINE_ARG) --hypothesis-library-prior "$(ARC_VERIFIED_SELF_PLAY_PRIOR)" --arc-generative-prior "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR)" $(ARC_GENERATIVE_PRIOR_OP_ARG) > $(ARC_VERIFIED_SELF_PLAY_PUBLIC_EVAL_LOG)
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-verified-self-play-report --attempts-tsv "$(ARC_SYNTHETIC_SHAPE_COMBINED_ATTEMPTS)" --synthetic-summary "$(ARC_SYNTHETIC_SHAPE_SUMMARY)" --ranker-summary "$(ARC_SYNTHETIC_SHAPE_RANKER_SUMMARY)" --public-train-baseline-log "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_BASELINE_TRAIN_LOG)" --public-eval-baseline-log "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_BASELINE_EVAL_LOG)" --public-train-visual-baseline-log "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_VISUAL_BASELINE_TRAIN_LOG)" --public-eval-visual-baseline-log "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_VISUAL_BASELINE_EVAL_LOG)" --public-train-self-play-log "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_TRAIN_LOG)" --public-eval-self-play-log "$(ARC_VERIFIED_SELF_PLAY_PUBLIC_EVAL_LOG)" --self-play-prior "$(ARC_VERIFIED_SELF_PLAY_PRIOR)" --self-play-prior-summary "$(ARC_VERIFIED_SELF_PLAY_PRIOR_SUMMARY)" --self-play-generative-prior "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR)" --self-play-generative-prior-summary "$(ARC_VERIFIED_SELF_PLAY_GENERATIVE_PRIOR_SUMMARY)" --summary "$(ARC_VERIFIED_SELF_PLAY_SUMMARY)" --markdown "$(ARC_VERIFIED_SELF_PLAY_MARKDOWN)" --template-baseline "$(ARC_VERIFIED_SELF_PLAY_TEMPLATE_BASELINE)" --oracle-ceiling "$(ARC_VERIFIED_SELF_PLAY_ORACLE_CEILING)" --seed-count "$(ARC_VERIFIED_SELF_PLAY_SEED_COUNT)"
 
 arc-learned-sketch-ops: arc-verified-self-play-public
 	$(RETIRED_SCRIPT_TARGET)

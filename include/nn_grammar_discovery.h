@@ -135,6 +135,26 @@ int nn_grammar_discovery_write_arc_synthetic_shape_curriculum(
     unsigned max_synthetic_rows,
     unsigned max_seconds);
 
+int nn_grammar_discovery_write_arc_verified_self_play_report(
+    const char *attempts_tsv_path,
+    const char *synthetic_summary_path,
+    const char *ranker_summary_path,
+    const char *public_train_baseline_log,
+    const char *public_eval_baseline_log,
+    const char *public_train_visual_baseline_log,
+    const char *public_eval_visual_baseline_log,
+    const char *public_train_self_play_log,
+    const char *public_eval_self_play_log,
+    const char *prior_path,
+    const char *prior_summary_path,
+    const char *generative_prior_path,
+    const char *generative_prior_summary_path,
+    const char *summary_path,
+    const char *markdown_path,
+    long template_baseline,
+    long oracle_ceiling,
+    long seed_count);
+
 int nn_grammar_discovery_append_arc_probe_attempts_tsv(
     const char *base_attempts_tsv_path,
     const char *probe_attempts_jsonl_path,

@@ -113,7 +113,20 @@ static void usage(const char *argv0) {
             "[--arc-ranker-benchmark --attempts-tsv PATH --output-dir DIR "
             "--report PATH --epochs N --max-per-task N] "
             "[--arc-ranker-failure-report --attempts-tsv PATH --proposals PATH "
-            "--summary PATH --output PATH --markdown PATH] "
+            "--summary PATH --output PATH --markdown PATH] ",
+            argv0);
+    fputs(
+            "[--arc-verified-self-play-report --attempts-tsv PATH "
+            "--synthetic-summary PATH --ranker-summary PATH "
+            "--public-train-baseline-log PATH --public-eval-baseline-log PATH "
+            "--public-train-visual-baseline-log PATH "
+            "--public-eval-visual-baseline-log PATH "
+            "--public-train-self-play-log PATH --public-eval-self-play-log PATH "
+            "--self-play-prior PATH --self-play-prior-summary PATH "
+            "--self-play-generative-prior PATH "
+            "--self-play-generative-prior-summary PATH --summary PATH "
+            "--markdown PATH --template-baseline N --oracle-ceiling N "
+            "--seed-count N] "
             "[--paper-data --paper-data-output PATH --paper-data-typ PATH "
             "--comparison PATH --prime-gap-trace PATH --grid-path-trace PATH "
             "--delayed-claim-trace PATH --arc-agi PATH --prime-gap PATH] "
@@ -159,7 +172,7 @@ static void usage(const char *argv0) {
             "[--learning-rate LR] [--arc-pipeline-max-per-task N] "
             "[--nearest-signatures N] [--max-attempt-seeds N] [--max-ops-per-task N] "
             "[--max-op-hints N]\n",
-            argv0);
+            stderr);
 }
 
 int main(int argc, char **argv) {
@@ -226,6 +239,35 @@ int main(int argc, char **argv) {
     const char *arc_ranker_failure_output = arg_value(argc, argv, "--output");
     const char *arc_ranker_failure_markdown =
         arg_value(argc, argv, "--markdown");
+    const char *arc_selfplay_synthetic_summary =
+        arg_value(argc, argv, "--synthetic-summary");
+    const char *arc_selfplay_ranker_summary =
+        arg_value(argc, argv, "--ranker-summary");
+    const char *arc_selfplay_public_train_baseline =
+        arg_value(argc, argv, "--public-train-baseline-log");
+    const char *arc_selfplay_public_eval_baseline =
+        arg_value(argc, argv, "--public-eval-baseline-log");
+    const char *arc_selfplay_public_train_visual_baseline =
+        arg_value(argc, argv, "--public-train-visual-baseline-log");
+    const char *arc_selfplay_public_eval_visual_baseline =
+        arg_value(argc, argv, "--public-eval-visual-baseline-log");
+    const char *arc_selfplay_public_train_log =
+        arg_value(argc, argv, "--public-train-self-play-log");
+    const char *arc_selfplay_public_eval_log =
+        arg_value(argc, argv, "--public-eval-self-play-log");
+    const char *arc_selfplay_prior = arg_value(argc, argv, "--self-play-prior");
+    const char *arc_selfplay_prior_summary =
+        arg_value(argc, argv, "--self-play-prior-summary");
+    const char *arc_selfplay_generative_prior =
+        arg_value(argc, argv, "--self-play-generative-prior");
+    const char *arc_selfplay_generative_prior_summary =
+        arg_value(argc, argv, "--self-play-generative-prior-summary");
+    const char *arc_selfplay_template_baseline_arg =
+        arg_value(argc, argv, "--template-baseline");
+    const char *arc_selfplay_oracle_ceiling_arg =
+        arg_value(argc, argv, "--oracle-ceiling");
+    const char *arc_selfplay_seed_count_arg =
+        arg_value(argc, argv, "--seed-count");
     const char *paper_data_output = arg_value(argc, argv, "--paper-data-output");
     const char *paper_data_typ = arg_value(argc, argv, "--paper-data-typ");
     const char *paper_comparison = arg_value(argc, argv, "--comparison");
@@ -429,6 +471,18 @@ int main(int argc, char **argv) {
         arc_synthetic_curriculum_max_seconds_arg == NULL
             ? 0U
             : (unsigned)strtoul(arc_synthetic_curriculum_max_seconds_arg, NULL, 10);
+    long arc_selfplay_template_baseline =
+        arc_selfplay_template_baseline_arg == NULL
+            ? 7L
+            : strtol(arc_selfplay_template_baseline_arg, NULL, 10);
+    long arc_selfplay_oracle_ceiling =
+        arc_selfplay_oracle_ceiling_arg == NULL
+            ? 14L
+            : strtol(arc_selfplay_oracle_ceiling_arg, NULL, 10);
+    long arc_selfplay_seed_count =
+        arc_selfplay_seed_count_arg == NULL
+            ? 1L
+            : strtol(arc_selfplay_seed_count_arg, NULL, 10);
     int arc_visual_hole_requested = has_arg(argc, argv, "--arc-visual-hole-proposer");
     int arc_visual_curriculum_requested =
         has_arg(argc, argv, "--arc-visual-curriculum");
@@ -442,6 +496,8 @@ int main(int argc, char **argv) {
         has_arg(argc, argv, "--arc-ranker-benchmark");
     int arc_ranker_failure_report_requested =
         has_arg(argc, argv, "--arc-ranker-failure-report");
+    int arc_verified_selfplay_requested =
+        has_arg(argc, argv, "--arc-verified-self-play-report");
     int paper_data_requested = has_arg(argc, argv, "--paper-data");
     int paper_claims_requested = has_arg(argc, argv, "--paper-claims");
     int trace_determinism_requested =
@@ -762,6 +818,41 @@ int main(int argc, char **argv) {
                                   has_arg(argc, argv, "--fail-required"),
                                   has_arg(argc, argv, "--fail-unlinked-roadmap")) != 0) {
             fprintf(stderr, "failed to write paper claim artifacts\n");
+            return 1;
+        }
+        return 0;
+    }
+    if (arc_verified_selfplay_requested) {
+        if (arc_ranker_benchmark_attempts == NULL ||
+            arc_selfplay_prior == NULL ||
+            arc_selfplay_prior_summary == NULL ||
+            arc_selfplay_generative_prior == NULL ||
+            arc_selfplay_generative_prior_summary == NULL ||
+            arc_hole_summary == NULL ||
+            arc_ranker_failure_markdown == NULL) {
+            usage(argv[0]);
+            return 2;
+        }
+        if (nn_grammar_discovery_write_arc_verified_self_play_report(
+                arc_ranker_benchmark_attempts,
+                arc_selfplay_synthetic_summary,
+                arc_selfplay_ranker_summary,
+                arc_selfplay_public_train_baseline,
+                arc_selfplay_public_eval_baseline,
+                arc_selfplay_public_train_visual_baseline,
+                arc_selfplay_public_eval_visual_baseline,
+                arc_selfplay_public_train_log,
+                arc_selfplay_public_eval_log,
+                arc_selfplay_prior,
+                arc_selfplay_prior_summary,
+                arc_selfplay_generative_prior,
+                arc_selfplay_generative_prior_summary,
+                arc_hole_summary,
+                arc_ranker_failure_markdown,
+                arc_selfplay_template_baseline,
+                arc_selfplay_oracle_ceiling,
+                arc_selfplay_seed_count) != 0) {
+            fprintf(stderr, "failed to write ARC verified self-play report\n");
             return 1;
         }
         return 0;
@@ -1232,7 +1323,8 @@ int main(int argc, char **argv) {
         haiku_coherence_trace == NULL && arc_hole_visual_log_count == 0U &&
         !arc_synthetic_requested && !arc_synthetic_curriculum_requested &&
         !arc_append_requested &&
-        !arc_ranker_benchmark_requested && !arc_ranker_failure_report_requested) {
+        !arc_ranker_benchmark_requested && !arc_ranker_failure_report_requested &&
+        !arc_verified_selfplay_requested) {
         usage(argv[0]);
         free_arc_arg_arrays(arc_pipeline_dedupe_attempts_inputs,
                             arc_pipeline_source_attempts_jsonl,
