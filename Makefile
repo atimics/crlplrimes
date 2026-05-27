@@ -471,8 +471,12 @@ EXPERIMENT_HEALTH_REPORT ?= $(EXPERIMENT_HEALTH_DIR)/experiment_health.jsonl
 EXPERIMENT_HEALTH_EXTENDED_REPORT ?= $(EXPERIMENT_HEALTH_DIR)/experiment_health_extended.jsonl
 EXPERIMENT_HEALTH_FAILURE_ATLAS ?= $(EXPERIMENT_HEALTH_DIR)/failure_atlas.jsonl
 EXPERIMENT_HEALTH_FAILURE_ATLAS_MARKDOWN ?= $(EXPERIMENT_HEALTH_DIR)/failure_atlas.md
+EXPERIMENT_HEALTH_WORK_QUEUE ?= $(EXPERIMENT_HEALTH_DIR)/work_queue.jsonl
+EXPERIMENT_HEALTH_WORK_QUEUE_MARKDOWN ?= $(EXPERIMENT_HEALTH_DIR)/work_queue.md
 EXPERIMENT_HEALTH_EXTENDED_FAILURE_ATLAS ?= $(EXPERIMENT_HEALTH_DIR)/failure_atlas_extended.jsonl
 EXPERIMENT_HEALTH_EXTENDED_FAILURE_ATLAS_MARKDOWN ?= $(EXPERIMENT_HEALTH_DIR)/failure_atlas_extended.md
+EXPERIMENT_HEALTH_EXTENDED_WORK_QUEUE ?= $(EXPERIMENT_HEALTH_DIR)/work_queue_extended.jsonl
+EXPERIMENT_HEALTH_EXTENDED_WORK_QUEUE_MARKDOWN ?= $(EXPERIMENT_HEALTH_DIR)/work_queue_extended.md
 EXPERIMENT_HEALTH_SIGNAL_FLIGHT_SUMMARY ?= $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.jsonl
 EXPERIMENT_HEALTH_SIGNAL_FLIGHT_ROLLOUT ?= $(SIGNAL_FLIGHT_RESULTS_DIR)/rollout_summary.jsonl
 EXPERIMENT_HEALTH_SIGNAL_LIVE_ACTIVE ?= $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl
@@ -1512,6 +1516,8 @@ experiment-health: learned-grammar-coverage numeric-certificate-report paper-sup
 		--tiny-net-diagnostics "$(EXPERIMENT_HEALTH_TINY_NET_DIAGNOSTICS)" \
 		--failure-atlas "$(EXPERIMENT_HEALTH_FAILURE_ATLAS)" \
 		--failure-atlas-markdown "$(EXPERIMENT_HEALTH_FAILURE_ATLAS_MARKDOWN)" \
+		--failure-work-queue "$(EXPERIMENT_HEALTH_WORK_QUEUE)" \
+		--failure-work-queue-markdown "$(EXPERIMENT_HEALTH_WORK_QUEUE_MARKDOWN)" \
 		--output "$(EXPERIMENT_HEALTH_REPORT)"
 
 experiment-health-extended: learned-grammar-coverage-extended numeric-certificate-report paper-support dataset-action-score-engine-evidence $(NN_GRAMMAR_DISCOVERY_RUNTIME)
@@ -1532,6 +1538,8 @@ experiment-health-extended: learned-grammar-coverage-extended numeric-certificat
 		--tiny-net-diagnostics "$(EXPERIMENT_HEALTH_TINY_NET_DIAGNOSTICS)" \
 		--failure-atlas "$(EXPERIMENT_HEALTH_EXTENDED_FAILURE_ATLAS)" \
 		--failure-atlas-markdown "$(EXPERIMENT_HEALTH_EXTENDED_FAILURE_ATLAS_MARKDOWN)" \
+		--failure-work-queue "$(EXPERIMENT_HEALTH_EXTENDED_WORK_QUEUE)" \
+		--failure-work-queue-markdown "$(EXPERIMENT_HEALTH_EXTENDED_WORK_QUEUE_MARKDOWN)" \
 		--output "$(EXPERIMENT_HEALTH_EXTENDED_REPORT)"
 
 numeric-certificate-experiments:

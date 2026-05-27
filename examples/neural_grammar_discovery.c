@@ -143,7 +143,9 @@ static void usage(const char *argv0) {
             "--signal-shadow-replay PATH --neural-grammar-summary PATH "
             "--protocol-spine PATH --operator-promotions PATH "
             "--engine-evidence PATH --tiny-net-diagnostics PATH "
-            "--failure-atlas PATH --failure-atlas-markdown PATH --output PATH] "
+            "--failure-atlas PATH --failure-atlas-markdown PATH "
+            "--failure-work-queue PATH --failure-work-queue-markdown PATH "
+            "--output PATH] "
             "[--learned-grammar-coverage --arc-log [SCOPE=]PATH ... "
             "--haiku-word-trace [SCOPE=]PATH ... "
             "--haiku-understanding-trace [SCOPE=]PATH ... "
@@ -289,6 +291,10 @@ int main(int argc, char **argv) {
         arg_value(argc, argv, "--failure-atlas");
     const char *experiment_health_failure_atlas_markdown =
         arg_value(argc, argv, "--failure-atlas-markdown");
+    const char *experiment_health_failure_work_queue =
+        arg_value(argc, argv, "--failure-work-queue");
+    const char *experiment_health_failure_work_queue_markdown =
+        arg_value(argc, argv, "--failure-work-queue-markdown");
     const char *experiment_health_output = arg_value(argc, argv, "--output");
     const char *ngd_domains = arg_value(argc, argv, "--domains");
     const char *ngd_runtime_path = arg_value(argc, argv, "--runtime");
@@ -507,6 +513,8 @@ int main(int argc, char **argv) {
                 experiment_health_tiny_net_diagnostics,
                 experiment_health_failure_atlas,
                 experiment_health_failure_atlas_markdown,
+                experiment_health_failure_work_queue,
+                experiment_health_failure_work_queue_markdown,
                 experiment_health_output) != 0) {
             fprintf(stderr, "failed to write experiment health report\n");
             return 1;

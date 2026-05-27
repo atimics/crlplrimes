@@ -93,6 +93,8 @@ Outputs:
 - `build/float/experiment_health/experiment_health.jsonl`
 - `build/float/experiment_health/failure_atlas.jsonl`
 - `build/float/experiment_health/failure_atlas.md`
+- `build/float/experiment_health/work_queue.jsonl`
+- `build/float/experiment_health/work_queue.md`
 - `build/float/haiku_coherence_hard_negatives_hf_dictionary/hard_negative_rows.jsonl`
 
 The C driver assembles source rows and reports, then calls the same in-process C
@@ -281,6 +283,10 @@ health state plus the tiny-net diagnostic ladder. The atlas ranks likely next
 work by failure class and next-step counts while keeping the promotion boundary
 explicit: it is diagnostic triage, not claim support without verifier or
 certificate rows.
+`crlp.experiment_work_item.v1` rows turn the atlas counters into an ordered
+work queue. The queue is intentionally downstream of health and claims: it
+chooses what to inspect next, while support status still comes from the
+underlying claim, certificate, and verifier rows.
 
 ARC replacement rows also emit `coverage_hole_summary` and
 `visual_replacement_gaps`. These aggregates preserve the full split that the
