@@ -64,7 +64,9 @@ enum {
     UNIFIED_F_DOMAIN_ARC_ACTION = NN_SCORER_ENVELOPE_F_DOMAIN_ARC_ACTION,
     UNIFIED_F_ACTION_COMMON = NN_SCORER_ENVELOPE_F_ACTION_COMMON,
     UNIFIED_F_ACTION_STATE = NN_SCORER_ENVELOPE_F_ACTION_STATE,
+    UNIFIED_F_ACTION_PAYLOAD = NN_SCORER_ENVELOPE_F_ROLE_PAYLOAD,
     UNIFIED_F_RULE_FEATURES = NN_SCORER_ENVELOPE_F_RESIDUAL_FEATURES,
+    UNIFIED_PRIME_RESIDUE_FEATURES = FEATURE_MOD_COUNT,
     UNIFIED_TRANSFER_MIN_RULE_UPDATES = 128,
     UNIFIED_TRANSFER_RULE_UPDATES_PER_BUDGET = 8,
 };
@@ -2059,6 +2061,19 @@ static size_t unified_fill_prime_action_sample(const GapDataset *dataset,
             (nn_real)(log1p((double)candidate_gap) / log1p((double)(G_MAX + 2)));
         row[UNIFIED_F_ACTION_COMMON + 4] =
             (nn_real)(log((double)candidate) / prime_log_scale);
+        /* Match standalone prime-gap action features; otherwise the joint scorer
+           sees only weak gap cues. */
+        if (action == OVERFLOW_ACTION) {
+            for (size_t i = 0; i < UNIFIED_PRIME_RESIDUE_FEATURES; ++i) {
+                row[UNIFIED_F_ACTION_PAYLOAD + i] = (nn_real)0;
+            }
+            continue;
+        }
+        for (size_t i = 0; i < UNIFIED_PRIME_RESIDUE_FEATURES; ++i) {
+            uint32_t mod = FEATURE_MODS[i];
+            row[UNIFIED_F_ACTION_PAYLOAD + i] =
+                candidate > mod && candidate % mod == 0 ? (nn_real)1 : (nn_real)0;
+        }
     }
     return ACTION_COUNT;
 }

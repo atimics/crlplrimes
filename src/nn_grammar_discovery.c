@@ -16545,6 +16545,7 @@ typedef struct {
     NNGDStringList failing_optional_gates;
     NNGDStringList coverage_sources;
     NNGDStringList evidence_sources;
+    NNGDStringList diagnostic_sources;
     NNGDStringList claim_ids;
     NNGDStringList required_claim_ids;
     NNGDHealthCounterList numeric_status_counts;
@@ -16552,6 +16553,8 @@ typedef struct {
     NNGDHealthCounterList triage_kind_counts;
     NNGDHealthCounterList triage_priority_counts;
     NNGDHealthCounterList coverage_hole_counts;
+    NNGDHealthCounterList diagnostic_failure_class_counts;
+    NNGDHealthCounterList diagnostic_next_step_counts;
     size_t numeric_certificate_rows;
     size_t numeric_committed_rows;
     size_t numeric_rejected_rows;
@@ -16559,6 +16562,7 @@ typedef struct {
     size_t verifier_certificate_rows;
     size_t coverage_rows;
     size_t evidence_rows;
+    size_t diagnostic_rows;
     size_t engine_evidence_rows;
     size_t protocol_candidate_rows;
     size_t protocol_outcome_rows;
@@ -16701,6 +16705,7 @@ static void nn_gd_health_experiment_free(NNGDHealthExperiment *experiment) {
     nn_gd_string_list_free(&experiment->failing_optional_gates);
     nn_gd_string_list_free(&experiment->coverage_sources);
     nn_gd_string_list_free(&experiment->evidence_sources);
+    nn_gd_string_list_free(&experiment->diagnostic_sources);
     nn_gd_string_list_free(&experiment->claim_ids);
     nn_gd_string_list_free(&experiment->required_claim_ids);
     nn_gd_health_counter_free(&experiment->numeric_status_counts);
@@ -16708,6 +16713,8 @@ static void nn_gd_health_experiment_free(NNGDHealthExperiment *experiment) {
     nn_gd_health_counter_free(&experiment->triage_kind_counts);
     nn_gd_health_counter_free(&experiment->triage_priority_counts);
     nn_gd_health_counter_free(&experiment->coverage_hole_counts);
+    nn_gd_health_counter_free(&experiment->diagnostic_failure_class_counts);
+    nn_gd_health_counter_free(&experiment->diagnostic_next_step_counts);
 }
 
 static void nn_gd_health_experiment_list_free(NNGDHealthExperimentList *list) {
@@ -16886,17 +16893,24 @@ static const char *nn_gd_health_priority_for_kind(const char *kind) {
         strcmp(kind, "weak_hard_negative_family") == 0 ||
         strcmp(kind, "ranker_or_retention_gap") == 0 ||
         strcmp(kind, "engine_evidence_gap") == 0 ||
-        strcmp(kind, "haiku_understanding_optional_gate") == 0) {
+        strcmp(kind, "haiku_understanding_optional_gate") == 0 ||
+        strcmp(kind, "tiny_net_weak_signal") == 0 ||
+        strcmp(kind, "tiny_net_seed_variance_dominates_width") == 0) {
         return "P1";
     }
     if (strcmp(kind, "paper_claim_hygiene") == 0 ||
         strcmp(kind, "underpowered_claim") == 0 ||
         strcmp(kind, "optional_gate") == 0 ||
-        strcmp(kind, "missing_plausible_negative_family") == 0) {
+        strcmp(kind, "missing_plausible_negative_family") == 0 ||
+        strcmp(kind, "tiny_net_missing_coverage") == 0 ||
+        strcmp(kind, "tiny_net_not_plateaued") == 0 ||
+        strcmp(kind, "tiny_net_capacity_helped_but_unsettled") == 0) {
         return "P2";
     }
     if (strcmp(kind, "diagnostic_generation_gate") == 0 ||
-        strcmp(kind, "haiku_coherence_optional_gate") == 0) {
+        strcmp(kind, "haiku_coherence_optional_gate") == 0 ||
+        strcmp(kind, "tiny_net_not_width_limited") == 0 ||
+        strcmp(kind, "tiny_net_audit_ready") == 0) {
         return "INFO";
     }
     return "P3";
@@ -17836,6 +17850,121 @@ static int nn_gd_health_read_operator_promotions(
     return 0;
 }
 
+static const char *nn_gd_failure_class_for_tiny_diagnosis(
+    const char *diagnosis) {
+    if (diagnosis == NULL || diagnosis[0] == '\0') {
+        return "diagnostic_unclassified";
+    }
+    if (strcmp(diagnosis, "missing_coverage") == 0) {
+        return "instrumentation_gap";
+    }
+    if (strcmp(diagnosis, "weak_signal") == 0) {
+        return "representation_or_label_gap";
+    }
+    if (strcmp(diagnosis, "seed_variance_dominates_width") == 0) {
+        return "seed_variance";
+    }
+    if (strcmp(diagnosis, "not_plateaued") == 0) {
+        return "optimizer_unsettled";
+    }
+    if (strcmp(diagnosis, "not_width_limited") == 0) {
+        return "protocol_or_sampling_gap";
+    }
+    if (strcmp(diagnosis, "capacity_helped_but_unsettled") == 0) {
+        return "capacity_unsettled";
+    }
+    if (strcmp(diagnosis, "audit_ready") == 0) {
+        return "claim_review_ready";
+    }
+    return "diagnostic_unclassified";
+}
+
+static int nn_gd_health_read_tiny_net_diagnostics(
+    NNGDHealthExperimentList *experiments,
+    const char *path) {
+    FILE *fp;
+    char *line;
+    NNGDHealthExperiment *experiment;
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        return 0;
+    }
+    experiment = nn_gd_health_experiment(experiments, "multitask_domain");
+    if (experiment == NULL) {
+        fclose(fp);
+        return -1;
+    }
+    while ((line = nn_gd_read_line_dynamic(fp)) != NULL) {
+        NNGDJsonIndex index;
+        char *schema;
+        char *diagnosis;
+        char *next_step;
+        int audit_ready;
+        nn_gd_json_index_line(line, &index);
+        schema = nn_gd_json_dup_index_string(&index, "schema");
+        if (schema == NULL ||
+            strcmp(schema, "crlp.multitask.tiny_net_diagnostic.v1") != 0) {
+            free(schema);
+            free(line);
+            continue;
+        }
+        diagnosis = nn_gd_json_dup_index_string(&index, "diagnosis");
+        next_step = nn_gd_json_dup_index_string(&index, "next_step");
+        audit_ready = nn_gd_json_index_bool_or(&index, "audit_ready", 0);
+        if (diagnosis == NULL || next_step == NULL ||
+            nn_gd_string_list_add_unique(&experiment->evidence_sources,
+                                         path) != 0 ||
+            nn_gd_string_list_add_unique(&experiment->diagnostic_sources,
+                                         path) != 0) {
+            free(next_step);
+            free(diagnosis);
+            free(schema);
+            free(line);
+            fclose(fp);
+            return -1;
+        }
+        ++experiment->evidence_rows;
+        ++experiment->diagnostic_rows;
+        if (!audit_ready && strcmp(diagnosis, "audit_ready") != 0) {
+            char triage_kind[160];
+            int written =
+                snprintf(triage_kind,
+                         sizeof(triage_kind),
+                         "tiny_net_%s",
+                         diagnosis);
+            if (written <= 0 || (size_t)written >= sizeof(triage_kind) ||
+                nn_gd_health_counter_add(
+                    &experiment->diagnostic_failure_class_counts,
+                    nn_gd_failure_class_for_tiny_diagnosis(diagnosis),
+                    1U) != 0 ||
+                nn_gd_health_counter_add(
+                    &experiment->diagnostic_next_step_counts,
+                    next_step,
+                    1U) != 0 ||
+                nn_gd_health_add_triage(
+                    experiment,
+                    nn_gd_health_priority_for_kind(triage_kind),
+                    triage_kind) != 0) {
+                free(next_step);
+                free(diagnosis);
+                free(schema);
+                free(line);
+                fclose(fp);
+                return -1;
+            }
+        }
+        free(next_step);
+        free(diagnosis);
+        free(schema);
+        free(line);
+    }
+    fclose(fp);
+    return 0;
+}
+
 static int nn_gd_health_compare_experiments(const void *a, const void *b) {
     const NNGDHealthExperiment *ea = (const NNGDHealthExperiment *)a;
     const NNGDHealthExperiment *eb = (const NNGDHealthExperiment *)b;
@@ -18002,12 +18131,14 @@ static void nn_gd_health_write_experiment(FILE *fp,
     nn_gd_json_write_string_list(fp, &experiment->numeric_targets);
     fprintf(fp,
             ",\"numeric_committed_rows\":%zu,\"coverage_rows\":%zu,"
-            "\"evidence_rows\":%zu,\"engine_evidence_rows\":%zu,"
+            "\"evidence_rows\":%zu,\"diagnostic_rows\":%zu,"
+            "\"engine_evidence_rows\":%zu,"
             "\"protocol_candidate_rows\":%zu,"
             "\"protocol_outcome_rows\":%zu,\"promoted_operator_rows\":%zu}",
             experiment->numeric_committed_rows,
             experiment->coverage_rows,
             experiment->evidence_rows,
+            experiment->diagnostic_rows,
             experiment->engine_evidence_rows,
             experiment->protocol_candidate_rows,
             experiment->protocol_outcome_rows,
@@ -18040,6 +18171,8 @@ static void nn_gd_health_write_experiment(FILE *fp,
     nn_gd_json_write_string_list(fp, &experiment->coverage_sources);
     fputs(",\"evidence\":", fp);
     nn_gd_json_write_string_list(fp, &experiment->evidence_sources);
+    fputs(",\"diagnostics\":", fp);
+    nn_gd_json_write_string_list(fp, &experiment->diagnostic_sources);
     fputs(",\"numeric_targets\":", fp);
     nn_gd_json_write_string_list(fp, &experiment->numeric_targets);
     fputs(",\"paper_claims\":", fp);
@@ -18139,6 +18272,425 @@ static int nn_gd_health_write_report(NNGDHealthExperimentList *experiments,
     return 0;
 }
 
+static int nn_gd_health_counter_merge(NNGDHealthCounterList *dst,
+                                      const NNGDHealthCounterList *src) {
+    size_t i;
+    if (dst == NULL || src == NULL) {
+        return 0;
+    }
+    for (i = 0U; i < src->count; ++i) {
+        if (nn_gd_health_counter_add(dst,
+                                     src->items[i].key,
+                                     src->items[i].count) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static const char *nn_gd_failure_class_for_triage_kind(const char *kind) {
+    if (kind == NULL || kind[0] == '\0') {
+        return "diagnostic_unclassified";
+    }
+    if (strncmp(kind, "tiny_net_", 9U) == 0) {
+        return nn_gd_failure_class_for_tiny_diagnosis(kind + 9U);
+    }
+    if (strstr(kind, "engine") != NULL) {
+        return "engine_surface_gap";
+    }
+    if (strstr(kind, "visual") != NULL ||
+        strstr(kind, "arc_") != NULL ||
+        strstr(kind, "coverage") != NULL) {
+        return "coverage_or_representation_gap";
+    }
+    if (strstr(kind, "coherence") != NULL ||
+        strstr(kind, "ranker") != NULL ||
+        strstr(kind, "corruption") != NULL) {
+        return "representation_or_label_gap";
+    }
+    if (strstr(kind, "paper_claim") != NULL ||
+        strcmp(kind, "underpowered_claim") == 0) {
+        return "paper_claim_gap";
+    }
+    if (strstr(kind, "optional_gate") != NULL ||
+        strstr(kind, "protocol") != NULL) {
+        return "protocol_or_sampling_gap";
+    }
+    if (strcmp(kind, "instrumentation_gap") == 0) {
+        return "instrumentation_gap";
+    }
+    return "diagnostic_or_protocol_gap";
+}
+
+static const char *nn_gd_failure_class_for_required_gate(const char *gate) {
+    if (gate == NULL || gate[0] == '\0') {
+        return "required_gate_failure";
+    }
+    if (strstr(gate, "dataset_engine") != NULL ||
+        strstr(gate, "engine") != NULL) {
+        return "engine_surface_gap";
+    }
+    if (strstr(gate, "protocol") != NULL ||
+        strstr(gate, "signal") != NULL) {
+        return "protocol_or_sampling_gap";
+    }
+    if (strstr(gate, "coverage") != NULL ||
+        strstr(gate, "visual") != NULL) {
+        return "coverage_or_representation_gap";
+    }
+    return "required_gate_failure";
+}
+
+static const char *nn_gd_action_for_triage_kind(const char *kind) {
+    if (kind == NULL || kind[0] == '\0') {
+        return "inspect_unclassified_diagnostic";
+    }
+    if (strstr(kind, "engine") != NULL) {
+        return "repair_dataset_engine_surface";
+    }
+    if (strstr(kind, "visual") != NULL ||
+        strstr(kind, "arc_") != NULL ||
+        strstr(kind, "coverage") != NULL) {
+        return "inspect_coverage_and_representation_holes";
+    }
+    if (strstr(kind, "coherence") != NULL ||
+        strstr(kind, "ranker") != NULL ||
+        strstr(kind, "corruption") != NULL) {
+        return "inspect_feature_or_label_encoding";
+    }
+    if (strstr(kind, "paper_claim") != NULL ||
+        strcmp(kind, "underpowered_claim") == 0) {
+        return "collect_or_refresh_claim_evidence";
+    }
+    if (strstr(kind, "protocol") != NULL ||
+        strstr(kind, "optional_gate") != NULL) {
+        return "add_protocol_surface_or_sampling_ablation";
+    }
+    return "inspect_source_evidence";
+}
+
+static int nn_gd_health_build_failure_atlas_counts(
+    const NNGDHealthExperiment *experiment,
+    NNGDHealthCounterList *classes,
+    NNGDHealthCounterList *next_steps) {
+    size_t i;
+    size_t claim_underpowered;
+    size_t claim_missing;
+    size_t claim_stale;
+    size_t claim_contradicted;
+    if (nn_gd_health_counter_merge(
+            classes,
+            &experiment->diagnostic_failure_class_counts) != 0 ||
+        nn_gd_health_counter_merge(
+            next_steps,
+            &experiment->diagnostic_next_step_counts) != 0) {
+        return -1;
+    }
+    for (i = 0U; i < experiment->triage_kind_counts.count; ++i) {
+        const char *kind = experiment->triage_kind_counts.items[i].key;
+        size_t count = experiment->triage_kind_counts.items[i].count;
+        if (strncmp(kind, "tiny_net_", 9U) == 0 ||
+            strcmp(nn_gd_health_priority_for_kind(kind), "INFO") == 0) {
+            continue;
+        }
+        if (nn_gd_health_counter_add(
+                classes,
+                nn_gd_failure_class_for_triage_kind(kind),
+                count) != 0 ||
+            nn_gd_health_counter_add(
+                next_steps,
+                nn_gd_action_for_triage_kind(kind),
+                count) != 0) {
+            return -1;
+        }
+    }
+    for (i = 0U; i < experiment->coverage_hole_counts.count; ++i) {
+        size_t count = experiment->coverage_hole_counts.items[i].count;
+        if (nn_gd_health_counter_add(classes, "coverage_gap", count) != 0 ||
+            nn_gd_health_counter_add(next_steps,
+                                     "inspect_coverage_holes",
+                                     count) != 0) {
+            return -1;
+        }
+    }
+    for (i = 0U; i < experiment->failing_required_gates.count; ++i) {
+        if (nn_gd_health_counter_add(
+                classes,
+                nn_gd_failure_class_for_required_gate(
+                    experiment->failing_required_gates.items[i]),
+                1U) != 0 ||
+            nn_gd_health_counter_add(next_steps,
+                                     "restore_required_health_gate",
+                                     1U) != 0) {
+            return -1;
+        }
+    }
+    if (experiment->failing_optional_gates.count > 0U &&
+        strcmp(nn_gd_health_status(experiment), "pass") != 0) {
+        if (nn_gd_health_counter_add(classes,
+                                     "optional_evidence_gap",
+                                     experiment->failing_optional_gates.count) != 0 ||
+            nn_gd_health_counter_add(next_steps,
+                                     "decide_or_repair_optional_gate",
+                                     experiment->failing_optional_gates.count) != 0) {
+            return -1;
+        }
+    }
+    if (experiment->numeric_rejected_rows > 0U ||
+        experiment->numeric_failed_statuses > 0U) {
+        size_t count = experiment->numeric_rejected_rows +
+                       experiment->numeric_failed_statuses;
+        if (nn_gd_health_counter_add(classes,
+                                     "numeric_certificate_gap",
+                                     count) != 0 ||
+            nn_gd_health_counter_add(next_steps,
+                                     "inspect_numeric_certificate_rejections",
+                                     count) != 0) {
+            return -1;
+        }
+    }
+    claim_underpowered =
+        nn_gd_health_counter_get(&experiment->claim_status_counts, "underpowered");
+    claim_missing =
+        nn_gd_health_counter_get(&experiment->claim_status_counts, "missing");
+    claim_stale =
+        nn_gd_health_counter_get(&experiment->claim_status_counts, "stale");
+    claim_contradicted =
+        nn_gd_health_counter_get(&experiment->claim_status_counts, "contradicted");
+    if (claim_underpowered + claim_missing + claim_stale > 0U) {
+        if (nn_gd_health_counter_add(classes,
+                                     "paper_claim_gap",
+                                     claim_underpowered + claim_missing +
+                                         claim_stale) != 0 ||
+            nn_gd_health_counter_add(next_steps,
+                                     "collect_or_refresh_claim_evidence",
+                                     claim_underpowered + claim_missing +
+                                         claim_stale) != 0) {
+            return -1;
+        }
+    }
+    if (claim_contradicted > 0U) {
+        if (nn_gd_health_counter_add(classes,
+                                     "paper_claim_contradiction",
+                                     claim_contradicted) != 0 ||
+            nn_gd_health_counter_add(next_steps,
+                                     "revise_claim_or_rerun_evidence",
+                                     claim_contradicted) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static const char *nn_gd_health_counter_top_key(
+    const NNGDHealthCounterList *list) {
+    const char *best = NULL;
+    size_t best_count = 0U;
+    size_t i;
+    if (list == NULL) {
+        return NULL;
+    }
+    for (i = 0U; i < list->count; ++i) {
+        if (list->items[i].count > best_count) {
+            best = list->items[i].key;
+            best_count = list->items[i].count;
+        }
+    }
+    return best;
+}
+
+static int nn_gd_health_write_failure_atlas_jsonl(
+    NNGDHealthExperimentList *experiments,
+    const char *health_report_path,
+    const char *failure_atlas_path) {
+    FILE *fp;
+    NNGDHealthCounterList all_classes = {0};
+    NNGDHealthCounterList all_next_steps = {0};
+    size_t i;
+    if (failure_atlas_path == NULL || failure_atlas_path[0] == '\0') {
+        return 0;
+    }
+    fp = nn_gd_ngd_open_write(failure_atlas_path);
+    if (fp == NULL) {
+        return -1;
+    }
+    for (i = 0U; i < experiments->count; ++i) {
+        const NNGDHealthExperiment *experiment = &experiments->items[i];
+        NNGDHealthCounterList classes = {0};
+        NNGDHealthCounterList next_steps = {0};
+        const char *top_failure_class;
+        size_t claim_supported =
+            nn_gd_health_counter_get(&experiment->claim_status_counts,
+                                     "supported");
+        size_t claim_contradicted =
+            nn_gd_health_counter_get(&experiment->claim_status_counts,
+                                     "contradicted");
+        if (nn_gd_health_build_failure_atlas_counts(experiment,
+                                                    &classes,
+                                                    &next_steps) != 0 ||
+            nn_gd_health_counter_merge(&all_classes, &classes) != 0 ||
+            nn_gd_health_counter_merge(&all_next_steps, &next_steps) != 0) {
+            nn_gd_health_counter_free(&classes);
+            nn_gd_health_counter_free(&next_steps);
+            fclose(fp);
+            nn_gd_health_counter_free(&all_classes);
+            nn_gd_health_counter_free(&all_next_steps);
+            return -1;
+        }
+        top_failure_class = nn_gd_health_counter_top_key(&classes);
+        fputs("{\"schema\":\"crlp.experiment_failure_atlas.v1\",", fp);
+        fputs("\"experiment\":", fp);
+        nn_gd_json_write_string(fp, experiment->name);
+        fputs(",\"health_status\":", fp);
+        nn_gd_json_write_string(fp, nn_gd_health_status(experiment));
+        fputs(",\"top_failure_class\":", fp);
+        if (top_failure_class == NULL) {
+            fputs("null", fp);
+        } else {
+            nn_gd_json_write_string(fp, top_failure_class);
+        }
+        fputs(",\"failure_class_counts\":", fp);
+        nn_gd_health_write_counter_object(fp, &classes);
+        fputs(",\"next_step_counts\":", fp);
+        nn_gd_health_write_counter_object(fp, &next_steps);
+        fputs(",\"diagnostic_failure_class_counts\":", fp);
+        nn_gd_health_write_counter_object(
+            fp,
+            &experiment->diagnostic_failure_class_counts);
+        fputs(",\"triage_kind_counts\":", fp);
+        nn_gd_health_write_counter_object(fp, &experiment->triage_kind_counts);
+        fputs(",\"coverage_hole_counts\":", fp);
+        nn_gd_health_write_counter_object(fp, &experiment->coverage_hole_counts);
+        fprintf(fp,
+                ",\"rows\":{\"coverage\":%zu,\"evidence\":%zu,"
+                "\"diagnostic\":%zu,\"verifier_certificate\":%zu,"
+                "\"numeric_certificate\":%zu}",
+                experiment->coverage_rows,
+                experiment->evidence_rows,
+                experiment->diagnostic_rows,
+                experiment->verifier_certificate_rows,
+                experiment->numeric_certificate_rows);
+        fputs(",\"paper_claim_status_counts\":", fp);
+        nn_gd_health_write_counter_object(fp, &experiment->claim_status_counts);
+        fputs(",\"supports_paper_claim\":", fp);
+        fputs(claim_supported > 0U && claim_contradicted == 0U ? "true" : "false",
+              fp);
+        fputs(",\"promotion_boundary\":", fp);
+        nn_gd_json_write_string(
+            fp,
+            "diagnostic ranking only; paper promotion still requires verifier/certificate support");
+        fputs(",\"sources\":{\"experiment_health\":", fp);
+        if (health_report_path == NULL || health_report_path[0] == '\0') {
+            fputs("null", fp);
+        } else {
+            nn_gd_json_write_string(fp, health_report_path);
+        }
+        fputs(",\"diagnostics\":", fp);
+        nn_gd_json_write_string_list(fp, &experiment->diagnostic_sources);
+        fputs(",\"evidence\":", fp);
+        nn_gd_json_write_string_list(fp, &experiment->evidence_sources);
+        fputs("}}\n", fp);
+        nn_gd_health_counter_free(&classes);
+        nn_gd_health_counter_free(&next_steps);
+    }
+    fputs("{\"schema\":\"crlp.experiment_failure_atlas_summary.v1\",", fp);
+    fprintf(fp, "\"experiments\":%zu,", experiments->count);
+    fputs("\"failure_class_counts\":", fp);
+    nn_gd_health_write_counter_object(fp, &all_classes);
+    fputs(",\"next_step_counts\":", fp);
+    nn_gd_health_write_counter_object(fp, &all_next_steps);
+    fputs(",\"promotion_boundary\":", fp);
+    nn_gd_json_write_string(
+        fp,
+        "summary counts rank diagnostic work; claim status remains owned by generated claims and verifiers");
+    fputs("}\n", fp);
+    if (ferror(fp)) {
+        fclose(fp);
+        nn_gd_health_counter_free(&all_classes);
+        nn_gd_health_counter_free(&all_next_steps);
+        return -1;
+    }
+    fclose(fp);
+    nn_gd_health_counter_free(&all_classes);
+    nn_gd_health_counter_free(&all_next_steps);
+    return 0;
+}
+
+static void nn_gd_health_write_markdown_counter(FILE *fp,
+                                                const NNGDHealthCounterList *list) {
+    size_t i;
+    if (list == NULL || list->count == 0U) {
+        fputs("-", fp);
+        return;
+    }
+    for (i = 0U; i < list->count; ++i) {
+        if (i > 0U) {
+            fputs("<br>", fp);
+        }
+        fprintf(fp, "%s=%zu", list->items[i].key, list->items[i].count);
+    }
+}
+
+static int nn_gd_health_write_failure_atlas_markdown(
+    NNGDHealthExperimentList *experiments,
+    const char *failure_atlas_jsonl_path,
+    const char *markdown_path) {
+    FILE *fp;
+    size_t i;
+    if (markdown_path == NULL || markdown_path[0] == '\0') {
+        return 0;
+    }
+    fp = nn_gd_ngd_open_write(markdown_path);
+    if (fp == NULL) {
+        return -1;
+    }
+    fputs("# Experiment Failure Atlas\n\n", fp);
+    fputs("Diagnostic ranking surface. These rows prioritize feature, protocol, "
+          "capacity, and evidence work; they do not promote paper claims without "
+          "the existing verifier/certificate gates.\n\n",
+          fp);
+    fputs("JSONL: `", fp);
+    if (failure_atlas_jsonl_path != NULL) {
+        fputs(failure_atlas_jsonl_path, fp);
+    }
+    fputs("`\n\n", fp);
+    fputs("| Experiment | Health | Top failure class | Failure classes | Next steps |\n",
+          fp);
+    fputs("| --- | --- | --- | --- | --- |\n", fp);
+    for (i = 0U; i < experiments->count; ++i) {
+        const NNGDHealthExperiment *experiment = &experiments->items[i];
+        NNGDHealthCounterList classes = {0};
+        NNGDHealthCounterList next_steps = {0};
+        const char *top_failure_class;
+        if (nn_gd_health_build_failure_atlas_counts(experiment,
+                                                    &classes,
+                                                    &next_steps) != 0) {
+            nn_gd_health_counter_free(&classes);
+            nn_gd_health_counter_free(&next_steps);
+            fclose(fp);
+            return -1;
+        }
+        top_failure_class = nn_gd_health_counter_top_key(&classes);
+        fprintf(fp,
+                "| `%s` | `%s` | `%s` | ",
+                experiment->name,
+                nn_gd_health_status(experiment),
+                top_failure_class == NULL ? "-" : top_failure_class);
+        nn_gd_health_write_markdown_counter(fp, &classes);
+        fputs(" | ", fp);
+        nn_gd_health_write_markdown_counter(fp, &next_steps);
+        fputs(" |\n", fp);
+        nn_gd_health_counter_free(&classes);
+        nn_gd_health_counter_free(&next_steps);
+    }
+    if (ferror(fp)) {
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    return 0;
+}
+
 int nn_grammar_discovery_write_experiment_health(
     const char *coverage_path,
     const char *numeric_summary_path,
@@ -18152,6 +18704,9 @@ int nn_grammar_discovery_write_experiment_health(
     const char *protocol_spine_path,
     const char *operator_promotions_path,
     const char *engine_evidence_path,
+    const char *tiny_net_diagnostics_path,
+    const char *failure_atlas_path,
+    const char *failure_atlas_markdown_path,
     const char *output_path) {
     NNGDHealthExperimentList experiments = {0};
     int status = -1;
@@ -18174,15 +18729,27 @@ int nn_grammar_discovery_write_experiment_health(
         nn_gd_health_read_operator_promotions(&experiments,
                                               operator_promotions_path) != 0 ||
         nn_gd_health_read_engine_evidence(&experiments, engine_evidence_path) != 0 ||
+        nn_gd_health_read_tiny_net_diagnostics(&experiments,
+                                               tiny_net_diagnostics_path) != 0 ||
         nn_gd_health_finalize(&experiments) != 0 ||
         nn_gd_health_write_report(&experiments,
                                   paper_claims_path,
-                                  output_path) != 0) {
+                                  output_path) != 0 ||
+        nn_gd_health_write_failure_atlas_jsonl(&experiments,
+                                               output_path,
+                                               failure_atlas_path) != 0 ||
+        nn_gd_health_write_failure_atlas_markdown(
+            &experiments,
+            failure_atlas_path,
+            failure_atlas_markdown_path) != 0) {
         goto done;
     }
     printf("wrote %zu experiment health rows to %s\n",
            experiments.count,
            output_path);
+    if (failure_atlas_path != NULL && failure_atlas_path[0] != '\0') {
+        printf("wrote experiment failure atlas to %s\n", failure_atlas_path);
+    }
     status = 0;
 
 done:

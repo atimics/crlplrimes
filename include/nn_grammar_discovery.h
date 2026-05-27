@@ -201,6 +201,9 @@ int nn_grammar_discovery_write_experiment_health(
     const char *protocol_spine_path,
     const char *operator_promotions_path,
     const char *engine_evidence_path,
+    const char *tiny_net_diagnostics_path,
+    const char *failure_atlas_path,
+    const char *failure_atlas_markdown_path,
     const char *output_path);
 
 int nn_grammar_discovery_write_learned_grammar_coverage(

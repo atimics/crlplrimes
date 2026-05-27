@@ -91,6 +91,8 @@ Outputs:
 - `build/float/learned_grammar_coverage/coverage.jsonl`
 - `build/float/dataset_action_score_artifacts/engine_evidence.jsonl`
 - `build/float/experiment_health/experiment_health.jsonl`
+- `build/float/experiment_health/failure_atlas.jsonl`
+- `build/float/experiment_health/failure_atlas.md`
 - `build/float/haiku_coherence_hard_negatives_hf_dictionary/hard_negative_rows.jsonl`
 
 The C driver assembles source rows and reports, then calls the same in-process C
@@ -274,6 +276,11 @@ paper-claim support into one per-experiment JSONL report. `experiment-health`
 depends on `dataset-action-score-engine-evidence` and passes
 `--engine-evidence`; missing `crlp.engine_evidence.v1` rows for the engine-backed
 adapters are required-gate failures under `dataset_engine_evidence_surface`.
+The same C runtime now emits `crlp.experiment_failure_atlas.v1` rows from that
+health state plus the tiny-net diagnostic ladder. The atlas ranks likely next
+work by failure class and next-step counts while keeping the promotion boundary
+explicit: it is diagnostic triage, not claim support without verifier or
+certificate rows.
 
 ARC replacement rows also emit `coverage_hole_summary` and
 `visual_replacement_gaps`. These aggregates preserve the full split that the

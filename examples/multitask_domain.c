@@ -67,6 +67,7 @@ enum {
     MT_ARC_PANEL_WIDTH = 3,
     MT_ARC_PANEL_HEIGHT = 3,
     MT_ARC_PANEL_CELLS = MT_ARC_PANEL_WIDTH * MT_ARC_PANEL_HEIGHT,
+    MT_PRIME_RESIDUE_FEATURES = FEATURE_MOD_COUNT,
     MT_ARC_SEPARATOR_COLOR = 5,
     MT_ARC_INPUT_COLOR = 1,
     MT_ARC_TARGET_COLOR = 2,
@@ -856,6 +857,19 @@ static size_t mt_fill_prime_gap_sample(const MTData *data,
             (nn_real)(log1p((double)candidate_gap) / log1p((double)(G_MAX + 2)));
         row[MT_F_COMMON + 4] =
             (nn_real)(log((double)candidate) / data->prime_log_scale);
+        /* Match the dedicated prime-gap scorer's wheel bits; global gap-frequency
+           cues are too weak alone. */
+        if (action == OVERFLOW_ACTION) {
+            for (size_t i = 0; i < MT_PRIME_RESIDUE_FEATURES; ++i) {
+                row[MT_F_TASK_SPECIFIC + i] = (nn_real)0;
+            }
+            continue;
+        }
+        for (size_t i = 0; i < MT_PRIME_RESIDUE_FEATURES; ++i) {
+            uint32_t mod = FEATURE_MODS[i];
+            row[MT_F_TASK_SPECIFIC + i] =
+                candidate > mod && candidate % mod == 0 ? (nn_real)1 : (nn_real)0;
+        }
     }
 
     return ACTION_COUNT;

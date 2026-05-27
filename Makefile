@@ -469,11 +469,16 @@ ARC_VISUAL_HOLE_PROPOSER_COMPARE_REPORT ?= $(ARC_VISUAL_HOLE_PROPOSER_DIR)/arc_v
 EXPERIMENT_HEALTH_DIR ?= $(BUILD_DIR)/experiment_health
 EXPERIMENT_HEALTH_REPORT ?= $(EXPERIMENT_HEALTH_DIR)/experiment_health.jsonl
 EXPERIMENT_HEALTH_EXTENDED_REPORT ?= $(EXPERIMENT_HEALTH_DIR)/experiment_health_extended.jsonl
+EXPERIMENT_HEALTH_FAILURE_ATLAS ?= $(EXPERIMENT_HEALTH_DIR)/failure_atlas.jsonl
+EXPERIMENT_HEALTH_FAILURE_ATLAS_MARKDOWN ?= $(EXPERIMENT_HEALTH_DIR)/failure_atlas.md
+EXPERIMENT_HEALTH_EXTENDED_FAILURE_ATLAS ?= $(EXPERIMENT_HEALTH_DIR)/failure_atlas_extended.jsonl
+EXPERIMENT_HEALTH_EXTENDED_FAILURE_ATLAS_MARKDOWN ?= $(EXPERIMENT_HEALTH_DIR)/failure_atlas_extended.md
 EXPERIMENT_HEALTH_SIGNAL_FLIGHT_SUMMARY ?= $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.jsonl
 EXPERIMENT_HEALTH_SIGNAL_FLIGHT_ROLLOUT ?= $(SIGNAL_FLIGHT_RESULTS_DIR)/rollout_summary.jsonl
 EXPERIMENT_HEALTH_SIGNAL_LIVE_ACTIVE ?= $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl
 EXPERIMENT_HEALTH_SIGNAL_SHADOW_REPLAY ?= $(SIGNAL_FLIGHT_RESULTS_DIR)/shadow_replay_audit.jsonl
 EXPERIMENT_HEALTH_NEURAL_GRAMMAR_SUMMARY ?= $(NEURAL_GRAMMAR_DISCOVERY_DIR)/summary.jsonl
+EXPERIMENT_HEALTH_TINY_NET_DIAGNOSTICS ?= $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_diagnostics.jsonl
 PROTOCOL_SPINE_DIR ?= $(BUILD_DIR)/protocol_spine
 PROTOCOL_SPINE_REPORT ?= $(PROTOCOL_SPINE_DIR)/protocol_spine.jsonl
 PROTOCOL_SPINE_SUMMARY ?= $(PROTOCOL_SPINE_DIR)/summary.jsonl
@@ -1504,6 +1509,9 @@ experiment-health: learned-grammar-coverage numeric-certificate-report paper-sup
 		--protocol-spine "$(PROTOCOL_SPINE_REPORT)" \
 		--operator-promotions "$(PROTOCOL_OPERATOR_REPORT)" \
 		--engine-evidence "$(DATASET_ACTION_SCORE_EVIDENCE)" \
+		--tiny-net-diagnostics "$(EXPERIMENT_HEALTH_TINY_NET_DIAGNOSTICS)" \
+		--failure-atlas "$(EXPERIMENT_HEALTH_FAILURE_ATLAS)" \
+		--failure-atlas-markdown "$(EXPERIMENT_HEALTH_FAILURE_ATLAS_MARKDOWN)" \
 		--output "$(EXPERIMENT_HEALTH_REPORT)"
 
 experiment-health-extended: learned-grammar-coverage-extended numeric-certificate-report paper-support dataset-action-score-engine-evidence $(NN_GRAMMAR_DISCOVERY_RUNTIME)
@@ -1521,6 +1529,9 @@ experiment-health-extended: learned-grammar-coverage-extended numeric-certificat
 		--protocol-spine "$(PROTOCOL_SPINE_REPORT)" \
 		--operator-promotions "$(PROTOCOL_OPERATOR_REPORT)" \
 		--engine-evidence "$(DATASET_ACTION_SCORE_EVIDENCE)" \
+		--tiny-net-diagnostics "$(EXPERIMENT_HEALTH_TINY_NET_DIAGNOSTICS)" \
+		--failure-atlas "$(EXPERIMENT_HEALTH_EXTENDED_FAILURE_ATLAS)" \
+		--failure-atlas-markdown "$(EXPERIMENT_HEALTH_EXTENDED_FAILURE_ATLAS_MARKDOWN)" \
 		--output "$(EXPERIMENT_HEALTH_EXTENDED_REPORT)"
 
 numeric-certificate-experiments:
