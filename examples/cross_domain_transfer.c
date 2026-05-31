@@ -373,7 +373,7 @@ static void cd_eval_transfer(const CDSet*as,size_t sc,const char*ho,TFRResult*re
     if(!ml.cert&&ec){
         CDML vs;cd_ml_init(&vs);size_t vsn=tc<4096?tc:4096;nn_real*vi=(nn_real*)calloc(vsn*H_FEAT,sizeof(*vi));nn_real*vt=(nn_real*)calloc(vsn,sizeof(*vt));size_t vp=0;
         if(vi&&vt){for(size_t i=0;i<tc&&vp<vsn;++i){if(tr[i].vr==CD_SAFE)continue;cd_encode(&tr[i],&vi[vp*H_FEAT],H_FEAT,0,1);vt[vp]=tr[i].vr==CD_ACC?1.0:0.0;++vp;}
-            const size_t vsl[]={H_FEAT,4,1};NNConfig vsc={.layer_sizes=vsl,.layer_count=3,.seed=(unsigned)(seed&0xFFFFFFFFu)+7777,.hidden_activation=NN_ACTIVATION_RELU,.output_activation=NN_ACTIVATION_SIGMOID,.loss=NN_LOSS_MSE};
+            const size_t vsl[]={H_FEAT, CD_MH, 1};NNConfig vsc={.layer_sizes=vsl,.layer_count=3,.seed=(unsigned)(seed&0xFFFFFFFFu)+7777,.hidden_activation=NN_ACTIVATION_RELU,.output_activation=NN_ACTIVATION_SIGMOID,.loss=NN_LOSS_MSE};
             vs.net=nn_create_config(&vsc);if(vs.net){vs.loss=(nn_real)nn_train(vs.net,vi,vt,vp,0.01,CD_ME/2,1);vs.ts=vp;
                 nn_real vma=2.0,vmx=-1.0;size_t vac=0;for(size_t i=0;i<ec;++i){nn_real s=cd_ml_score(&vs,&er[i]);if(er[i].vr==CD_ACC){++vac;if(s<vma)vma=s;}else if(er[i].vr==CD_UNSAFE){if(s>vmx)vmx=s;}}
                 vs.ha=vac;vs.cert=vac>0&&vmx<=vma;fprintf(stderr,"  [vrfy] loss=%.4f heldout=%zu cert=%s\n",(double)vs.loss,vac,vs.cert?"YES":"no");}}

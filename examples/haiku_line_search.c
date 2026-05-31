@@ -101,11 +101,11 @@ static int line_score(NeuralNet*net,int tgt,size_t bw,char*out,size_t cap,unsign
             if(st>=2&&ppw<LEX_N&&pw<LEX_N&&TG[ppw][pw][wi]<=0.0)sc*=(nn_real)0.15;
             /* Cross-line repeat penalty already handled by f[22] sensor */
             /* Semantic contrast: if line 3 word is too similar to line 2 words, penalize */
-            if(forbidden&&forbidden[0]&&st>=0 && tgt==5){char fb[256];strcpy(fb,forbidden);
-                char*tok=strtok(fb," ");while(tok){for(size_t li=0;li<LEX_N;++li)if(!strcmp(LEX[li].word,tok)&&CLUSTER_SIM[wi][li]>0.5){sc*=(nn_real)0.4;break;}tok=strtok(NULL," ");}}
+            if(forbidden&&forbidden[0]&&tgt==5){char fb[256];strcpy(fb,forbidden);
+                char*tok=strtok(fb," ");while(tok){for(size_t li=0;li<LEX_N;++li)if(!strcmp(LEX[li].word,tok)&&CLUSTER_SIM[wi][li]>0.5){sc*=(nn_real)0.2;break;}tok=strtok(NULL," ");}}
             if(sc>mx)mx=sc;if(cn<MAX_LEX){cw[cn]=wi;cs[cn]=sc;++cn;}}
         if(!cn)break;
-        nn_real tmp=0.7,sum=0;for(size_t ci=0;ci<cn;++ci){cs[ci]=(nn_real)exp((double)(cs[ci]-mx)/tmp);sum+=cs[ci];}
+        nn_real tmp=0.9,sum=0;for(size_t ci=0;ci<cn;++ci){cs[ci]=(nn_real)exp((double)(cs[ci]-mx)/tmp);sum+=cs[ci];}
         nn_real r=(nn_real)((st*17+syl*31+pw*13+tgt*7+lseed)%1000)/1000.0f,cum=0;size_t bw2=LEX_N;
         for(size_t ci=0;ci<cn;++ci){cum+=cs[ci]/sum;if(r<=cum){bw2=cw[ci];break;}}if(bw2>=LEX_N)bw2=cw[0];
         const char*w=LEX[bw2].word;size_t wl=strlen(w),pl=strlen(pfx);if(pl+wl+2>=255)break;
