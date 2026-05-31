@@ -5,17 +5,20 @@
     "experiment_families_frozen": true,
     "primary_contributions": [
       "rejected_candidate_learning",
-      "held_out_certified_hypothesis_library_feedback"
+      "held_out_certified_hypothesis_library_feedback",
+      "cross_domain_structural_transfer_with_certification_gating"
     ],
     "scoped_roles": {
       "arc_agi": "evidence_surface",
-      "signal_flight": "application_pressure"
+      "signal_flight": "application_pressure",
+      "signal_mining": "application_pressure",
+      "cross_domain": "substrate_claim"
     },
     "non_claims": [
       "general task solving",
       "competitive ARC performance",
       "comparative live neural-control improvement",
-      "generic cross-domain reason-code safety",
+      "generic cross-domain reason-code safety (transfer is gated per-domain by certification check)",
       "wider MLPs solve the ARC geometry failure"
     ],
     "paper_agent_trace": {
@@ -81,6 +84,11 @@
       "id": "C9",
       "title": "Replay-grounded control uses bounded neural rankers without owning safety",
       "role": "application_claim"
+    },
+    {
+      "id": "C10",
+      "title": "Cross-domain structural transfer with learned invariant features and certification gating",
+      "role": "substrate_claim"
     }
   ],
   "experiment_tracks": [
@@ -427,7 +435,7 @@
     },
     {
       "id": "application-signal-flight-replay-control",
-      "title": "Signal offline replay control vignette",
+      "title": "Signal flight replay control vignette (flight half of Signal application pair)",
       "role": "claim_support",
       "claim_ids": [
         "C9.signal_flight_replay_control"
@@ -445,7 +453,7 @@
         "results/2026-05-17-signal-flight/live_active_summary.jsonl",
         "results/2026-05-17-signal-flight/live_active_frames.jsonl"
       ],
-      "agent_instruction": "Keep Signal split into replay ranking, shadow evidence, and live neural-active execution; do not claim active-control performance until a baseline comparison artifact exists.",
+      "agent_instruction": "Signal flight is the reactive control half of the Signal application pair; signal_mining is the tactical planning half. Keep flight claims scoped to WASD counterfactual replay; mining claims cover multi-step policy hypotheses.",
       "success_criteria": [
         "The neural ranker beats the no-safety baseline on top-1, utility, and regret.",
         "Damage and death rates are not worse than the baseline on the measured held-out trace.",
@@ -477,6 +485,64 @@
       ],
       "failure_modes": [
         "Do not claim bit-identical logits; if semantic hashes diverge, keep L9 open and inspect the first mismatch row."
+      ]
+    },
+    {
+      "id": "cross-domain-structural-transfer",
+      "title": "Cross-domain meta-learner with learned invariant features and heldout certification gate",
+      "role": "claim_support",
+      "claim_ids": [
+        "C10.cross_domain_structural_transfer"
+      ],
+      "roadmap_items": [
+        "R-X5",
+        "R-X6"
+      ],
+      "command": "make cross-domain-transfer",
+      "artifacts": [
+        "build/float/traces/cross_domain_transfer.jsonl",
+        "build/float/traces/cross_domain_transfer_summary.jsonl",
+        "build/float/traces/cross_domain_leave_out.jsonl"
+      ],
+      "agent_instruction": "The cross-domain meta-learner trains on per-domain certified rules from all non-heldout domains, learns domain-invariant structural features through the unified scorer envelope, and certifies transfer only when no heldout unsafe rule outscores the lowest heldout accepted rule. Keep the certification gate as the safety boundary; do not claim generic transfer safety.",
+      "success_criteria": [
+        "At least one heldout domain certifies (cert=YES) and matches or approaches model_score utility at budget 8.",
+        "At least one heldout domain shows transfer utility improvement over model_score at some budget, whether or not it certifies.",
+        "Meta-learner correctly refuses certification on domains where structural features are insufficient (prime_gap, fibonacci_lucas).",
+        "The certification gate is documented as the safety mechanism; certification failures are useful diagnostics, not cleanup."
+      ],
+      "failure_modes": [
+        "Do not claim cross-domain transfer works uniformly. The result is mixed and gated.",
+        "Do not treat meta-learner utility improvements on uncertified domains as supported transfer claims.",
+        "Do not bypass the certification gate to produce a cleaner headline."
+      ]
+    },
+    {
+      "id": "application-signal-mining-replay-options",
+      "title": "Signal mining tactical option ranker with replay-certified grammar hypotheses",
+      "role": "claim_support",
+      "claim_ids": [
+        "C9.signal_mining_replay_options"
+      ],
+      "roadmap_items": [
+        "R-S3",
+        "R-S4"
+      ],
+      "command": "make signal-mining",
+      "artifacts": [
+        "build/float/signal_mining_experiment/summary.jsonl",
+        "build/float/signal_mining_experiment/counterfactual_trace.jsonl"
+      ],
+      "agent_instruction": "Signal mining evaluates bounded policy hypotheses (target selector x route constraint x speed profile x interaction primitive) through deterministic replay. Keep the claim scoped to replay-certified utility over the declared grammar; do not claim live mining control improvement.",
+      "success_criteria": [
+        "Grammar hypothesis ranker produces replay-certified utility rows with stable option ids.",
+        "At least one hypothesis family certifies (zero unsafe outcomes on declared support).",
+        "Summary row records grammar coverage (how many of the 420 hypotheses certify) and per-family utility."
+      ],
+      "failure_modes": [
+        "Do not claim live economy control or supply-chain optimization outside the declared grammar.",
+        "Do not claim that neural ranking beats a fixed-priority heuristic baseline unless a matched-budget comparison is registered.",
+        "Keep mining as replay-grounded application pressure, not as a standalone optimization result."
       ]
     }
   ],
@@ -1506,14 +1572,30 @@
           "evidence_level": "dataset_engine_smoke"
         },
         "required_rows": [
-          {"experiment": "bitwise_macro_step"},
-          {"experiment": "haiku_adjacency"},
-          {"experiment": "grid_path"},
-          {"experiment": "delayed_claim"},
-          {"experiment": "prime_gap_candidate"},
-          {"experiment": "arc_cell_color"},
-          {"experiment": "program_synthesis_ops"},
-          {"experiment": "signal_wasd"}
+          {
+            "experiment": "bitwise_macro_step"
+          },
+          {
+            "experiment": "haiku_adjacency"
+          },
+          {
+            "experiment": "grid_path"
+          },
+          {
+            "experiment": "delayed_claim"
+          },
+          {
+            "experiment": "prime_gap_candidate"
+          },
+          {
+            "experiment": "arc_cell_color"
+          },
+          {
+            "experiment": "program_synthesis_ops"
+          },
+          {
+            "experiment": "signal_wasd"
+          }
         ]
       },
       "decision_rule": {

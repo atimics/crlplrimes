@@ -1470,7 +1470,7 @@ int nn_bitwise_gate_train_truth_table(NNBitwiseGate *gate,
     uint8_t best_predicted[BG_TRUTH_ROWS] = {0, 0, 0, 0};
 
     for (size_t attempt = 0; attempt < active_config.retry_count; ++attempt) {
-        size_t layers[] = {BG_INPUT_WIDTH, active_config.hidden_width, BG_OUTPUT_WIDTH};
+        size_t layers[] = {BG_INPUT_WIDTH, active_config.hidden_width, active_config.hidden_width, active_config.hidden_width, BG_OUTPUT_WIDTH};
         NNConfig nn_config = {
             .layer_sizes = layers,
             .layer_count = sizeof(layers) / sizeof(layers[0]),
