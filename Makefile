@@ -556,7 +556,9 @@ SIGNAL_FLIGHT_SIM_SOURCES := \
 	$(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/trade_paging.c \
 	$(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/tweetnacl/tweetnacl.c \
 	$(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/tweetnacl/randombytes.c \
-	$(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/tweetnacl/signal_crypto_tweetnacl.c
+	$(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/tweetnacl/signal_crypto_tweetnacl.c \
+	$(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/fixpoint.c \
+	$(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/settlement_engine.c
 
 SIGNAL_FLIGHT_TRACE_EXTRA :=
 ifeq ($(SIGNAL_FLIGHT_COUNTERFACTUAL),1)
@@ -1705,3 +1707,8 @@ experimental-check: program-synthesis program-synthesis-baselines arc-agi arc-ag
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+TRAIN_CONTRACT_BRAIN := $(BUILD_DIR)/train_contract_brain
+
+$(TRAIN_CONTRACT_BRAIN): examples/train_contract_brain.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/train_contract_brain.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
