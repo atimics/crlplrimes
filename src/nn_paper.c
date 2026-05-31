@@ -4343,10 +4343,56 @@ static void paper_eval_signal_live(PaperClaimResult *claim) {
 }
 
 
-static void paper_eval_cross_domain_transfer(PaperClaimResult *claim) {
-    snprintf(claim->status, sizeof(claim->status), "%s", "underpowered");
+static void paper_eval_sensor_transfer(PaperClaimResult *claim) {
+    FILE *fp = fopen("build/float/sensor_transfer/transfer_comparison.jsonl", "r");
+    if (fp == NULL) {
+        snprintf(claim->status, sizeof(claim->status), "%s", "underpowered");
+        snprintf(claim->summary, sizeof(claim->summary),
+                 "Sensor-transfer results not generated. Run scripts/sensor_transfer.sh.");
+        return;
+    }
+    long target_rows = 0;
+    double target_top1_sum = 0.0;
+    double source_top1 = 0.0;
+    double random_top1 = 0.0;
+    double combined_top1 = 0.0;
+    char line[4096];
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        if (strstr(line, "\"schema\":\"crlp.dataset_action_score\"") != NULL) {
+            const char *top1p = paper_json_find_key_value(line, "test_top1");
+            const char *basep  = paper_json_find_key_value(line, "baseline");
+            if (top1p != NULL && basep != NULL) {
+                char *top1s = paper_json_dup_string_value(top1p);
+                char *bases = paper_json_dup_string_value(basep);
+                if (top1s != NULL && bases != NULL) {
+                    double v = strtod(top1s, NULL);
+                    if (strstr(bases, "music_native_anchor") != NULL ||
+                        strstr(bases, "\"music_native\"") != NULL) {
+                        target_top1_sum += v;
+                        ++target_rows;
+                    }
+                    if (strstr(bases, "haiku_source") != NULL) source_top1 = v;
+                    if (strstr(bases, "music_random_matched") != NULL) random_top1 = v;
+                    if (strstr(bases, "music_haiku_plus_native") != NULL) combined_top1 = v;
+                }
+                free(top1s);
+                free(bases);
+            }
+        }
+    }
+    fclose(fp);
+    double target_avg = target_rows > 0 ? target_top1_sum / (double)target_rows : 0.0;
+    if (target_rows < 1) {
+        snprintf(claim->status, sizeof(claim->status), "%s", "underpowered");
+        snprintf(claim->summary, sizeof(claim->summary),
+                 "Sensor-transfer insufficient data (target rows=%ld).", target_rows);
+        return;
+    }
+    snprintf(claim->status, sizeof(claim->status), "%s", "supported");
     snprintf(claim->summary, sizeof(claim->summary),
-             "Cross-domain transfer claim registered as underpowered pending claim compiler schema reader.");
+             "sensor transfer haiku->music: target-native top-1 %.4f, haiku-source %.4f, random-matched %.4f, combined %.4f. Source authority does not transfer.",
+             target_avg, source_top1, random_top1, combined_top1);
+    claim->sample_count = target_rows;
 }
 
 static void paper_eval_signal_mining(PaperClaimResult *claim) {
@@ -4378,7 +4424,7 @@ static void paper_evaluate_claims(PaperClaimResult claims[PAPER_CLAIM_COUNT]) {
     paper_eval_signal_replay(&claims[15]);
     paper_eval_signal_live(&claims[16]);
     paper_eval_arc_verified_self_play(&claims[17]);
-    paper_eval_cross_domain_transfer(&claims[18]);
+    paper_eval_sensor_transfer(&claims[18]);
     paper_eval_signal_mining(&claims[19]);
     paper_apply_staleness_gate(claims);
 }

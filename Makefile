@@ -1712,3 +1712,8 @@ TRAIN_CONTRACT_BRAIN := $(BUILD_DIR)/train_contract_brain
 
 $(TRAIN_CONTRACT_BRAIN): examples/train_contract_brain.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/train_contract_brain.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+GO_SELFPLAY := $(BUILD_DIR)/go_selfplay
+
+$(GO_SELFPLAY): examples/go_selfplay.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/go_selfplay.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@

@@ -12,7 +12,10 @@
 enum {
     NN_DATASET_BITWISE_FEATURE_COUNT = 15,
     NN_DATASET_HAIKU_FEATURE_COUNT = 12,
+    NN_DATASET_MUSIC_FEATURE_COUNT = 18,
 };
+
+#include "nn_dataset_music.c"
 
 typedef struct {
     int known;
@@ -2468,6 +2471,21 @@ static const NNDatasetExperiment NN_DATASET_EXPERIMENTS[] = {
         "signal_counterfactual_replay_v1",
         "crlp.engine_evidence.v1",
     },
+    {
+        "music_sequence",
+        "toy music sequence verifier using corpus-derived note adjacency and phrase structure",
+        "music",
+        "music_seq_v1",
+        "corpus_adjacency_phrase_viability",
+        NN_DATASET_MUSIC_FEATURE_COUNT,
+        NN_DATASET_LABEL_SINGLE_TARGET,
+        generate_music_sequence_adapter,
+        NN_DATASET_CAP_DATASET | NN_DATASET_CAP_REPLAY | NN_DATASET_CAP_EVIDENCE,
+        "music_sequence_rule_search_v1",
+        "music_corpus_replay_v1",
+        "crlp.engine_evidence.v1",
+    },
+
 };
 
 const NNDatasetExperiment *nn_dataset_find_experiment(const char *name)
