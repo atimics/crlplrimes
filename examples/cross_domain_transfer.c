@@ -312,25 +312,11 @@ static void cd_ml_free(CDML*ml){if(ml->net)nn_free(ml->net);memset(ml,0,sizeof(*
 static nn_real cd_ml_score(const CDML*ml,const CDRule*r){if(!ml->net)return 0.0;nn_real row[H_FEAT];cd_encode(r,row,H_FEAT,0,1);nn_real o=0;nn_forward((NeuralNet*)ml->net,row,&o);return o;}
 static int cd_ml_train(CDML*ml,const CDRule*tr,size_t tc,unsigned seed){
     if(!tc)return 0;size_t na=0;for(size_t i=0;i<tc;++i)if(tr[i].vr==CD_ACC)++na;ml->ta=na;
-    size_t dc[CD_MAX_DOMAINS]={0};for(size_t i=0;i<tc;++i){int di=-1;for(int d=0;d<(int)CD_DC;++d)if(strstr(tr[i].domain,CD_DOMAINS[d].n)==tr[i].domain){di=d;break;}if(di>=0&&di<(int)CD_DC)dc[di]++;}
     size_t n=tc<4096?tc:4096;nn_real*in=(nn_real*)calloc(n*H_FEAT,sizeof(*in));nn_real*tg=(nn_real*)calloc(n,sizeof(*tg));if(!in||!tg){free(in);free(tg);return 0;}
-    struct{nn_real f[H_FEAT];nn_real t;int di;}*samples=(void*)calloc(n,sizeof(*samples));if(!samples){free(in);free(tg);return 0;}
-    size_t sc=0,dom_idx[CD_MAX_DOMAINS]={0};
-    for(size_t i=0;i<tc&&sc<n;++i){if(tr[i].vr!=CD_ACC&&tr[i].vr!=CD_UNSAFE)continue;int di=-1;for(int d=0;d<(int)CD_DC;++d)if(strstr(tr[i].domain,CD_DOMAINS[d].n)==tr[i].domain){di=d;break;}if(di<0)continue;
-        cd_encode(&tr[i],samples[sc].f,H_FEAT,dom_idx[di]++,dc[di]>0?dc[di]:1);samples[sc].t=tr[i].vr==CD_ACC?1.0:0.0;samples[sc].di=di;++sc;}
-    /* Novelty-weighted curriculum */
-    nn_real tot_loss=0.0;nn_real*dl=(nn_real*)calloc(CD_DC+1,sizeof(*dl));size_t*dn=(size_t*)calloc(CD_DC+1,sizeof(*dn));
-    if(dl&&dn)for(size_t ep=0;ep<CD_ME;++ep){
-        memset(dl,0,(CD_DC+1)*sizeof(*dl));memset(dn,0,(CD_DC+1)*sizeof(*dn));
-        for(size_t i=0;i<sc;++i){nn_real o=0;nn_forward((NeuralNet*)ml->net,samples[i].f,&o);nn_real e=samples[i].t-o;dl[samples[i].di]+=e*e;dn[samples[i].di]++;}
-        nn_real mx=0;for(int d=0;d<(int)CD_DC;++d){if(dn[d])dl[d]/=(nn_real)dn[d];if(dl[d]>mx)mx=dl[d];}if(mx<1e-6)mx=1.0;
-        for(size_t i=0;i<sc;++i){nn_real w=samples[i].di>=0&&dn[samples[i].di]?dl[samples[i].di]/mx:1.0;size_t ps=(size_t)(w*3.0+0.5);if(ps<1)ps=1;if(ps>3)ps=3;
-            for(size_t p=0;p<ps;++p)nn_train_sample(ml->net,samples[i].f,&samples[i].t,0.05);}
-    }ml->loss=tot_loss;free(dl);free(dn);free(samples);
-    /* Final pass with full batch training */
-    size_t sc2=0;for(size_t i=0;i<tc&&sc2<n;++i){if(tr[i].vr!=CD_ACC&&tr[i].vr!=CD_UNSAFE)continue;cd_encode(&tr[i],&in[sc2*H_FEAT],H_FEAT,0,1);tg[sc2]=tr[i].vr==CD_ACC?1.0:0.0;++sc2;}
-    ml->loss=(nn_real)nn_train(ml->net,in,tg,sc2,(nn_real)0.05,CD_ME/2,1);ml->ts=sc2;
-    return 1;
+    size_t sc=0;for(size_t i=0;i<tc&&sc<n;++i){if(tr[i].vr!=CD_ACC&&tr[i].vr!=CD_UNSAFE)continue;cd_encode(&tr[i],&in[sc*H_FEAT],H_FEAT,0,1);tg[sc]=tr[i].vr==CD_ACC?1.0:0.0;++sc;}
+    const size_t ls[]={H_FEAT,CD_MH,1};NNConfig c={.layer_sizes=ls,.layer_count=3,.seed=seed,.hidden_activation=NN_ACTIVATION_RELU,.output_activation=NN_ACTIVATION_SIGMOID,.loss=NN_LOSS_MSE};
+    ml->net=nn_create_config(&c);if(!ml->net){fprintf(stderr,"  [dbg] net create failed\n");free(in);free(tg);return 0;}
+    ml->loss=(nn_real)nn_train(ml->net,in,tg,sc,(nn_real)0.02,CD_ME/4,1);ml->ts=sc;free(in);free(tg);return 1;ml->ts=sc;free(in);free(tg);return 1;
 }
 static void cd_ml_certify(CDML*ml,const CDRule*hr,size_t hc){
     ml->cert=0;ml->ha=0;ml->hfp=0;if(!hc)return;nn_real ma=2.0,mu=-1.0;size_t ac=0;
@@ -370,7 +356,7 @@ static int cd_fm(const CDRule*r,const char*f){return strcmp(r->domain,f)==0;}
 static void cd_eval_transfer(const CDSet*as,size_t sc,const char*ho,TFRResult*res,uint64_t seed,FILE*sf){
     res->hf=ho;CDRule*tr=(CDRule*)calloc(CD_MAX_RULES*CD_MAX_DOMAINS,sizeof(CDRule));size_t tc=0;if(!tr)return;char tn[CD_MAX_DOMAINS*CD_MAX_NAME];tn[0]=0;
     for(size_t si=0;si<sc;++si){if(cd_fm(&as[si].r[0],ho))continue;if(tn[0])strcat(tn,",");strcat(tn,as[si].r[0].domain);
-        size_t room=sizeof(tr)/sizeof(tr[0])-tc,copy=as[si].n<room?as[si].n:room;memcpy(&tr[tc],as[si].r,copy*sizeof(CDRule));tc+=copy;}
+        size_t room=(CD_MAX_RULES*CD_MAX_DOMAINS)-tc,copy=as[si].n<room?as[si].n:room;memcpy(&tr[tc],as[si].r,copy*sizeof(CDRule));tc+=copy;}
     res->tf=tn;CDRule er[CD_MAX_RULES];size_t ec=0;
     for(size_t si=0;si<sc;++si){if(cd_fm(&as[si].r[0],ho)){size_t copy=as[si].n<CD_MAX_RULES?as[si].n:CD_MAX_RULES;memcpy(er,as[si].r,copy*sizeof(CDRule));ec=copy;break;}}
     RCPrior p;cd_learn_rcp(tr,tc,&p);TResidual res2;cd_train_res(tr,tc,&p,&res2);
@@ -388,7 +374,7 @@ static void cd_eval_transfer(const CDSet*as,size_t sc,const char*ho,TFRResult*re
         CDML vs;cd_ml_init(&vs);size_t vsn=tc<4096?tc:4096;nn_real*vi=(nn_real*)calloc(vsn*H_FEAT,sizeof(*vi));nn_real*vt=(nn_real*)calloc(vsn,sizeof(*vt));size_t vp=0;
         if(vi&&vt){for(size_t i=0;i<tc&&vp<vsn;++i){if(tr[i].vr==CD_SAFE)continue;cd_encode(&tr[i],&vi[vp*H_FEAT],H_FEAT,0,1);vt[vp]=tr[i].vr==CD_ACC?1.0:0.0;++vp;}
             const size_t vsl[]={H_FEAT,4,1};NNConfig vsc={.layer_sizes=vsl,.layer_count=3,.seed=(unsigned)(seed&0xFFFFFFFFu)+7777,.hidden_activation=NN_ACTIVATION_RELU,.output_activation=NN_ACTIVATION_SIGMOID,.loss=NN_LOSS_MSE};
-            vs.net=nn_create_config(&vsc);if(vs.net){vs.loss=(nn_real)nn_train(vs.net,vi,vt,vp,0.05,CD_ME/2,1);vs.ts=vp;
+            vs.net=nn_create_config(&vsc);if(vs.net){vs.loss=(nn_real)nn_train(vs.net,vi,vt,vp,0.01,CD_ME/2,1);vs.ts=vp;
                 nn_real vma=2.0,vmx=-1.0;size_t vac=0;for(size_t i=0;i<ec;++i){nn_real s=cd_ml_score(&vs,&er[i]);if(er[i].vr==CD_ACC){++vac;if(s<vma)vma=s;}else if(er[i].vr==CD_UNSAFE){if(s>vmx)vmx=s;}}
                 vs.ha=vac;vs.cert=vac>0&&vmx<=vma;fprintf(stderr,"  [vrfy] loss=%.4f heldout=%zu cert=%s\n",(double)vs.loss,vac,vs.cert?"YES":"no");}}
         free(vi);free(vt);cd_ml_free(&vs);}
