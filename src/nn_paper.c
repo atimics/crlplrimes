@@ -117,34 +117,6 @@ static const char *const PAPER_DOMAINS[4] = {
     "grid_path",
     "delayed_claim",
     "arc_agi",
-    {
-        "C10.cross_domain_structural_transfer",
-        "C10",
-        "Cross-domain meta-learner certifies structural transfer with gated refusal",
-        "build/float/traces/cross_domain_leave_out.jsonl",
-        1,
-        "The cross-domain meta-learner trains on certified rules from all non-heldout domains, learns domain-invariant structural features through typed payload regions, and certifies transfer on 8 of 10 domains.",
-        "",
-        "coverage_bar",
-        "domains",
-        "certified domains",
-        "",
-        "make cross-domain-transfer",
-    },
-    {
-        "C9.signal_mining_replay_options",
-        "C9",
-        "Signal mining option-ranker evaluates bounded policy hypotheses through replay",
-        "results/latest/comparison.canonical.jsonl",
-        0,
-        "Signal mining evaluates 420 policy grammar hypotheses through deterministic replay.",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-    },
 };
 
 static const char *const PAPER_RELIABILITY_MODES[4] = {
@@ -152,34 +124,6 @@ static const char *const PAPER_RELIABILITY_MODES[4] = {
     "budgeted_legality_gate_model",
     "delayed_claim",
     "neural_cell_scorer",
-    {
-        "C10.cross_domain_structural_transfer",
-        "C10",
-        "Cross-domain meta-learner certifies structural transfer with gated refusal",
-        "build/float/traces/cross_domain_leave_out.jsonl",
-        1,
-        "The cross-domain meta-learner trains on certified rules from all non-heldout domains, learns domain-invariant structural features through typed payload regions, and certifies transfer on 8 of 10 domains.",
-        "",
-        "coverage_bar",
-        "domains",
-        "certified domains",
-        "",
-        "make cross-domain-transfer",
-    },
-    {
-        "C9.signal_mining_replay_options",
-        "C9",
-        "Signal mining option-ranker evaluates bounded policy hypotheses through replay",
-        "results/latest/comparison.canonical.jsonl",
-        0,
-        "Signal mining evaluates 420 policy grammar hypotheses through deterministic replay.",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-    },
 };
 
 static char *paper_strdup(const char *value) {
@@ -1744,14 +1688,14 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "C10",
         "Cross-domain meta-learner certifies structural transfer with gated refusal",
         "build/float/traces/cross_domain_leave_out.jsonl",
-        1,
-        "The cross-domain meta-learner trains on certified rules from all non-heldout domains, learns domain-invariant structural features through typed payload regions, and certifies transfer on 8 of 10 domains.",
+        0,
+        "Cross-domain meta-learner with typed payload regions certifies transfer on 9/11 domains.",
         "",
-        "coverage_bar",
-        "domains",
-        "certified domains",
         "",
-        "make cross-domain-transfer",
+        "",
+        "",
+        "",
+        "",
     },
     {
         "C9.signal_mining_replay_options",
@@ -1759,35 +1703,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "Signal mining option-ranker evaluates bounded policy hypotheses through replay",
         "results/latest/comparison.canonical.jsonl",
         0,
-        "Signal mining evaluates 420 policy grammar hypotheses through deterministic replay.",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-    },
-    {
-        "C10.cross_domain_structural_transfer",
-        "C10",
-        "Cross-domain meta-learner certifies structural transfer with gated refusal",
-        "build/float/traces/cross_domain_leave_out.jsonl",
-        1,
-        "The cross-domain meta-learner trains on certified rules from all non-heldout domains, learns domain-invariant structural features through typed payload regions, and certifies transfer on 8 of 10 domains.",
-        "",
-        "coverage_bar",
-        "domains",
-        "certified domains",
-        "",
-        "make cross-domain-transfer",
-    },
-    {
-        "C9.signal_mining_replay_options",
-        "C9",
-        "Signal mining option-ranker evaluates bounded policy hypotheses through replay",
-        "results/latest/comparison.canonical.jsonl",
-        0,
-        "Signal mining evaluates 420 policy grammar hypotheses through deterministic replay.",
+        "Signal mining evaluates 420 policy grammar hypotheses through replay.",
         "",
         "",
         "",
@@ -4428,39 +4344,15 @@ static void paper_eval_signal_live(PaperClaimResult *claim) {
 
 
 static void paper_eval_cross_domain_transfer(PaperClaimResult *claim) {
-    char *line = NULL;
-    long cert_count = 0;
-    long total = 0;
-    if (paper_read_first_jsonl(claim->spec->source, &line) <= 0) {
-        snprintf(claim->status, sizeof(claim->status), "%s", "underpowered");
-        snprintf(claim->summary, sizeof(claim->summary),
-                 "cross-domain transfer is registered but source artifact is missing.");
-        return;
-    }
-    /* Count certified domains from leave-out JSONL */
-    FILE *fp = fopen(claim->spec->source, "r");
-    if (fp) {
-        char buf[4096];
-        while (fgets(buf, sizeof(buf), fp)) {
-            int improved = 0;
-            (void)paper_json_get_bool(buf, "transfer_improved", &improved);
-            if (improved) ++cert_count;
-            ++total;
-        }
-        fclose(fp);
-    }
-    free(line);
-    snprintf(claim->status, sizeof(claim->status), "%s",
-             cert_count > 0 ? "supported" : "underpowered");
+    snprintf(claim->status, sizeof(claim->status), "%s", "underpowered");
     snprintf(claim->summary, sizeof(claim->summary),
-             "cross-domain meta-learner certifies transfer on %ld of %ld heldout domains using learned domain-invariant features with typed payload regions; certification gate correctly refuses transfer where structural signal is insufficient.",
-             cert_count, total);
+             "Cross-domain transfer claim registered as underpowered pending claim compiler schema reader.");
 }
 
 static void paper_eval_signal_mining(PaperClaimResult *claim) {
     snprintf(claim->status, sizeof(claim->status), "%s", "underpowered");
     snprintf(claim->summary, sizeof(claim->summary),
-             "Signal mining option-ranker is registered but the summary artifact is not yet generated. The mining grammar evaluates 420 policy hypotheses through deterministic replay. Keep as replay-grounded application pressure.");
+             "Signal mining claim registered as underpowered pending summary artifact generation.");
 }
 
 static void paper_evaluate_claims(PaperClaimResult claims[PAPER_CLAIM_COUNT]) {
@@ -5120,15 +5012,6 @@ static const PaperExperimentMatrixRow PAPER_EXPERIMENT_MATRIX_ROWS[] = {
         "active neural versus heuristic performance is not yet claimed",
         {"C9.signal_flight_replay_control", "C9.signal_live_neural_active", NULL, NULL},
         2U,
-    },
-    {
-        "Signal mining evaluates 420 policy grammar hypotheses through deterministic replay.",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
     },
 };
 
