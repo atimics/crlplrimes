@@ -4344,56 +4344,76 @@ static void paper_eval_signal_live(PaperClaimResult *claim) {
 
 
 static void paper_eval_sensor_transfer(PaperClaimResult *claim) {
-    FILE *fp = fopen("build/float/sensor_transfer/transfer_comparison.jsonl", "r");
+    FILE *fp = fopen("build/float/sensor_transfer/transfer_proof_grid.jsonl", "r");
     if (fp == NULL) {
         snprintf(claim->status, sizeof(claim->status), "%s", "underpowered");
         snprintf(claim->summary, sizeof(claim->summary),
-                 "Sensor-transfer results not generated. Run scripts/sensor_transfer.sh.");
+                 "Sensor-transfer proof-to-grid results not generated. Run scripts/sensor_transfer_proof_grid.sh.");
         return;
     }
-    long target_rows = 0;
-    double target_top1_sum = 0.0;
-    double source_top1 = 0.0;
-    double random_top1 = 0.0;
-    double combined_top1 = 0.0;
+    long grid_native_rows = 0;
+    double grid_native_sum = 0.0;
+    double proof_source_val = 0.0;
+    int proof_source_rows __attribute__((unused)) = 0;
+    double grid_anchor_val = 0.0;
+    int grid_anchor_rows __attribute__((unused)) = 0;
+    double grid_from_proof_val = 0.0;
+    int grid_from_proof_rows __attribute__((unused)) = 0;
+    double grid_proof_combined_val = 0.0;
+    int grid_proof_combined_rows __attribute__((unused)) = 0;
+    long total_rows __attribute__((unused)) = 0;
     char line[4096];
     while (fgets(line, sizeof(line), fp) != NULL) {
-        if (strstr(line, "\"schema\":\"crlp.dataset_action_score\"") != NULL) {
-            const char *top1p = paper_json_find_key_value(line, "test_top1");
-            const char *basep  = paper_json_find_key_value(line, "baseline");
-            if (top1p != NULL && basep != NULL) {
-                char *top1s = paper_json_dup_string_value(top1p);
-                char *bases = paper_json_dup_string_value(basep);
-                if (top1s != NULL && bases != NULL) {
-                    double v = strtod(top1s, NULL);
-                    if (strstr(bases, "music_native_anchor") != NULL ||
-                        strstr(bases, "\"music_native\"") != NULL) {
-                        target_top1_sum += v;
-                        ++target_rows;
+        /* Match lines with test_top1 (dataset_action_score output lines) */
+        if (strstr(line, "\"test_top1\"") != NULL) {
+            double top1 = 0.0;
+            if (paper_json_get_double(line, "test_top1", &top1)) {
+                const char *basep = paper_json_find_key_value(line, "baseline");
+                if (basep != NULL) {
+                    char *bases = paper_json_dup_string_value(basep);
+                    if (bases != NULL) {
+                        if (strstr(bases, "grid_native") != NULL) {
+                            grid_native_sum += top1;
+                            ++grid_native_rows;
+                        }
+                        if (strstr(bases, "proof_source") != NULL) {
+                            proof_source_val = top1;
+                            ++proof_source_rows;
+                        }
+                        if (strstr(bases, "grid_anchor") != NULL) {
+                            grid_anchor_val = top1;
+                            ++grid_anchor_rows;
+                        }
+                        if (strstr(bases, "grid_from_proof") != NULL) {
+                            grid_from_proof_val = top1;
+                            ++grid_from_proof_rows;
+                        }
+                        if (strstr(bases, "grid_proof_combined") != NULL) {
+                            grid_proof_combined_val = top1;
+                            ++grid_proof_combined_rows;
+                        }
+                        total_rows++;
+                        free(bases);
                     }
-                    if (strstr(bases, "haiku_source") != NULL) source_top1 = v;
-                    if (strstr(bases, "music_random_matched") != NULL) random_top1 = v;
-                    if (strstr(bases, "music_haiku_plus_native") != NULL) combined_top1 = v;
                 }
-                free(top1s);
-                free(bases);
             }
         }
     }
     fclose(fp);
-    double target_avg = target_rows > 0 ? target_top1_sum / (double)target_rows : 0.0;
-    if (target_rows < 1) {
+    double grid_native_avg = grid_native_rows > 0 ? grid_native_sum / (double)grid_native_rows : 0.0;
+    if (grid_native_rows < 1) {
         snprintf(claim->status, sizeof(claim->status), "%s", "underpowered");
         snprintf(claim->summary, sizeof(claim->summary),
-                 "Sensor-transfer insufficient data (target rows=%ld).", target_rows);
+                 "Sensor-transfer proof-to-grid insufficient data (grid-native rows=%ld).", grid_native_rows);
         return;
     }
     snprintf(claim->status, sizeof(claim->status), "%s", "supported");
     snprintf(claim->summary, sizeof(claim->summary),
-             "sensor transfer haiku->music: target-native top-1 %.4f, haiku-source %.4f, random-matched %.4f, combined %.4f. Source authority does not transfer.",
-             target_avg, source_top1, random_top1, combined_top1);
-    claim->sample_count = target_rows;
+             "sensor transfer proof->grid: grid-native top-1 %.4f, proof-source %.4f, grid-anchor %.4f, from-proof %.4f, combined %.4f.",
+             grid_native_avg, proof_source_val, grid_anchor_val, grid_from_proof_val, grid_proof_combined_val);
+    claim->sample_count = grid_native_rows;
 }
+
 
 static void paper_eval_signal_mining(PaperClaimResult *claim) {
     snprintf(claim->status, sizeof(claim->status), "%s", "underpowered");

@@ -22,7 +22,11 @@
 #define BOARD_SIZE 9
 #define CELLS (BOARD_SIZE * BOARD_SIZE)
 #define MAX_MOVES (CELLS + 1)
-#define FEATURES (CELLS * 3)
+/* Board encoding: CELLS * 3 one-hot planes + 2 dedicated scratch slots */
+#define BOARD_FEATURES (CELLS * 3)
+#define SLOT_MOVE_ID    (BOARD_FEATURES)
+#define SLOT_REWARD     (BOARD_FEATURES + 1)
+#define FEATURES        (BOARD_FEATURES + 2)
 #define HIDDEN0 128
 #define HIDDEN1 64
 #define MAX_GAME_MOVES 200
@@ -41,6 +45,9 @@
 
 static const int DIRS[4] = {-BOARD_SIZE, -1, 1, BOARD_SIZE};
 
+/* Zobrist side-to-move constant */
+static uint64_t zobrist_side;
+
 typedef struct {
     int8_t board[CELLS];
     int to_play, moves, passes;
@@ -54,16 +61,29 @@ static bool z_init_done = false;
 
 static void z_init(void) {
     if (z_init_done) return;
-    srand(42);
-    for (int i = 0; i < CELLS; i++)
-        for (int c = 0; c < 3; c++)
-            zobrist[i][c] = ((uint64_t)rand() << 32) | rand();
+    /* Private LCG */
+    unsigned int z_seed = 20260531u;
+    for (int i = 0; i < CELLS; i++) {
+        for (int c = 0; c < 3; c++) {
+            z_seed = z_seed * 1103515245u + 12345u;
+            uint64_t lo = ((uint64_t)z_seed) & 0xFFFFFFFFu;
+            z_seed = z_seed * 1103515245u + 12345u;
+            uint64_t hi = ((uint64_t)z_seed) & 0xFFFFFFFFu;
+            zobrist[i][c] = (hi << 32) | lo;
+        }
+    }
+    z_seed = z_seed * 1103515245u + 12345u;
+    uint64_t lo = ((uint64_t)z_seed) & 0xFFFFFFFFu;
+    z_seed = z_seed * 1103515245u + 12345u;
+    uint64_t hi = ((uint64_t)z_seed) & 0xFFFFFFFFu;
+    zobrist_side = (hi << 32) | lo;
     z_init_done = true;
 }
 
 static void go_init(GoState *s) {
     z_init();
     memset(s, 0, sizeof(*s)); s->to_play = 1; s->last_move = -1;
+    s->zhash = zobrist_side;
 }
 
 static int xy(int x, int y) { return y * BOARD_SIZE + x; }
@@ -90,7 +110,7 @@ static void remove_group(GoState *s, int i, int8_t *vis) {
 static int has_liberty(GoState *s, int i, int8_t *vis) {
     if (!in_bounds(i) || vis[i]) return 0;
     if (s->board[i] == 0) return 1;
-    int8_t c = s->board[i]; vis[i] = 1;
+    vis[i] = 1;
     for (int d = 0; d < 4; d++) {
         int ni = i + DIRS[d];
         if ((d == 1 && on_left(i)) || (d == 2 && on_right(i))) continue;
@@ -124,11 +144,12 @@ static int count_liberties(GoState *s, int i) {
     return count;
 }
 
-static int is_atari(GoState *s, int i, int8_t color) {
+static int is_atari(GoState *s, int i, int8_t color) { (void)color;
     return count_liberties(s, i) == 1;
 }
 
-static int is_self_atari(GoState *s, int idx) {
+/* is_suicide: placing at idx would leave own group with 0 liberties. */
+static int is_suicide(GoState *s, int idx) {
     GoState cp = *s;
     cp.board[idx] = cp.to_play;
     int opp = -cp.to_play;
@@ -138,6 +159,26 @@ static int is_self_atari(GoState *s, int idx) {
         if (in_bounds(ni) && cp.board[ni] == opp && group_dead(&cp, ni, opp)) return 0;
     }
     return group_dead(&cp, idx, cp.to_play);
+}
+
+/* True self-atari: placing at idx does not capture but leaves own group
+   with exactly 1 liberty. */
+static int is_self_atari(GoState *s, int idx) {
+    GoState cp = *s;
+    cp.board[idx] = cp.to_play;
+    int opp = -cp.to_play;
+    int captured = 0;
+    for (int d = 0; d < 4; d++) {
+        int ni = idx + DIRS[d];
+        if ((d == 1 && on_left(idx)) || (d == 2 && on_right(idx))) continue;
+        if (in_bounds(ni) && cp.board[ni] == opp && group_dead(&cp, ni, opp)) {
+            captured = 1;
+            int8_t vis[CELLS] = {0};
+            remove_group(&cp, ni, vis);
+        }
+    }
+    if (captured) return 0;
+    return count_liberties(&cp, idx) == 1;
 }
 
 static int move_captures(GoState *s, int idx) {
@@ -167,7 +208,7 @@ static int is_tactical(GoState *s, int idx) {
 static int is_legal(GoState *s, int idx) {
     if (idx == CELLS) return 1;
     if (!in_bounds(idx) || s->board[idx] != 0) return 0;
-    if (is_self_atari(s, idx)) return 0;
+    if (is_suicide(s, idx)) return 0;
     GoState cp = *s;
     cp.board[idx] = cp.to_play;
     int opp = -cp.to_play;
@@ -184,10 +225,15 @@ static int is_legal(GoState *s, int idx) {
 
 static void go_move(GoState *s, int idx) {
     s->last_move = idx;
-    if (idx == CELLS) { s->passes++; s->to_play = -s->to_play; return; }
+    if (idx == CELLS) {
+        s->passes++; s->to_play = -s->to_play;
+        s->zhash ^= zobrist_side;
+        return;
+    }
     s->passes = 0;
     memcpy(s->prev, s->board, sizeof(s->board));
     go_hash_update(s, idx, 0, s->to_play == 1 ? 1 : 2);
+    s->zhash ^= zobrist_side;
     s->board[idx] = s->to_play;
     int opp = -s->to_play;
     for (int d = 0; d < 4; d++) {
@@ -203,16 +249,44 @@ static void go_move(GoState *s, int idx) {
 
 static int go_over(GoState *s) { return s->passes >= 2 || s->moves >= MAX_GAME_MOVES; }
 
+static float go_score(GoState *s) {
+    int black = 0, white = 0;
+    int8_t vis[CELLS] = {0};
+    for (int i = 0; i < CELLS; i++) {
+        if (s->board[i] == 1) black++;
+        else if (s->board[i] == -1) white++;
+        else if (!vis[i]) {
+            int q[CELLS], h = 0, t = 0, hb = 0, hw = 0, cnt = 0;
+            q[t++] = i; vis[i] = 1;
+            while (h < t) {
+                int idx = q[h++]; cnt++;
+                for (int d = 0; d < 4; d++) {
+                    int ni = idx + DIRS[d];
+                    if ((d == 1 && on_left(idx)) || (d == 2 && on_right(idx))) continue;
+                    if (!in_bounds(ni)) continue;
+                    if (s->board[ni] == 1) hb = 1;
+                    else if (s->board[ni] == -1) hw = 1;
+                    else if (!vis[ni]) { vis[ni] = 1; q[t++] = ni; }
+                }
+            }
+            if (hb && !hw) black += cnt;
+            if (hw && !hb) white += cnt;
+        }
+    }
+    return (float)(black - white);
+}
+
 /* ── features ─────────────────────────────────────────────────────────── */
 
 static void go_features(GoState *s, nn_real row[FEATURES]) {
-    memset(row, 0, FEATURES * sizeof(nn_real));
+    memset(row, 0, BOARD_FEATURES * sizeof(nn_real));
     for (int i = 0; i < CELLS; i++) {
         int off = i * 3;
         if (s->board[i] == 1) row[off] = 1.0f;
         else if (s->board[i] == -1) row[off + 1] = 1.0f;
         else row[off + 2] = 1.0f;
     }
+    /* SLOT_MOVE_ID and SLOT_REWARD left zero */
 }
 
 /* ── neural evaluation ────────────────────────────────────────────────── */
@@ -223,7 +297,7 @@ static void go_evaluate(NeuralNet *net, GoState *s, float policy[MAX_MOVES], flo
     for (int m = 0; m < MAX_MOVES; m++) {
         if (!is_legal(s, m)) { policy[m] = 0.0f; continue; }
         nn_real mf[FEATURES]; memcpy(mf, feats, FEATURES * sizeof(nn_real));
-        mf[FEATURES - 1] = (nn_real)m / MAX_MOVES;
+        mf[SLOT_MOVE_ID] = (nn_real)m / MAX_MOVES;
         nn_real sc; nn_forward(net, mf, &sc);
         float sv = (float)sc; if (sv < 0.005f) sv = 0.005f;
         if (m < CELLS && is_self_atari(s, m)) sv *= 0.3f;
@@ -246,6 +320,7 @@ typedef struct GoNode {
 
 static GoNode *gn_new(int move, int to_play, GoNode *parent) {
     GoNode *n = calloc(1, sizeof(GoNode));
+    if (n == NULL) return NULL;
     n->move = move; n->to_play = to_play; n->parent = parent; return n;
 }
 static void gn_free(GoNode *n) {
@@ -259,7 +334,8 @@ static float rave_w[CELLS+1], rave_v[CELLS+1];
 static void go_mcts(NeuralNet *net, GoState *rs, float probs[MAX_MOVES]) {
     memset(rave_w, 0, sizeof(rave_w)); memset(rave_v, 0, sizeof(rave_v));
     GoNode *root = gn_new(-1, rs->to_play, NULL);
-    
+    if (root == NULL) return;
+
     for (int sim = 0; sim < MCTS_SIMULATIONS; sim++) {
         GoState s = *rs; GoNode *node = root;
         while (node->expanded && node->nkids > 0 && !go_over(&s)) {
@@ -276,7 +352,9 @@ static void go_mcts(NeuralNet *net, GoState *rs, float probs[MAX_MOVES]) {
         float v;
         if (go_over(&s)) {
             /* terminal — use final board state as proxy */
-            v = (float)(-s.to_play);
+            float sc = go_score(&s);
+            v = (sc > 0) ? 1.0f : (sc < 0) ? -1.0f : 0.0f;
+            v *= (float)(-node->to_play);
         } else {
             float policy[MAX_MOVES], val;
             go_evaluate(net, &s, policy, &val);
@@ -290,6 +368,7 @@ static void go_mcts(NeuralNet *net, GoState *rs, float probs[MAX_MOVES]) {
                 if (!is_legal(&s, m)) continue;
                 if (node->nkids >= MCTS_MAX_KIDS) break;
                 GoNode *kid = gn_new(m, -node->to_play, node);
+                if (kid == NULL) break;
                 node->kids[node->nkids] = kid;
                 node->prior[node->nkids] = policy[m];
                 node->nkids++;
@@ -298,7 +377,7 @@ static void go_mcts(NeuralNet *net, GoState *rs, float probs[MAX_MOVES]) {
         }
         while (node) {
             node->visits += 1.0f; node->total_val += v; v = -v;
-            if (node->move >= 0) { rave_w[node->move] += (v > 0 ? 1.0f : 0.0f); rave_v[node->move] += 1.0f; }
+            if (node->move >= 0) { rave_w[node->move] += (v < 0 ? 1.0f : 0.0f); rave_v[node->move] += 1.0f; }
             node = node->parent;
         }
     }
@@ -329,13 +408,13 @@ static ReplayEntry replay[REPLAY_BUFFER];
 static int replay_count = 0;
 static pthread_mutex_t replay_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* Ring-buffer add: wraps once full, never drops */
 static void replay_add(nn_real *feats, float reward) {
     pthread_mutex_lock(&replay_lock);
-    if (replay_count < REPLAY_BUFFER) {
-        memcpy(replay[replay_count].features, feats, FEATURES * sizeof(nn_real));
-        replay[replay_count].reward = reward;
-        replay_count++;
-    }
+    int idx = replay_count % REPLAY_BUFFER;
+    memcpy(replay[idx].features, feats, FEATURES * sizeof(nn_real));
+    replay[idx].reward = reward;
+    replay_count++;
     pthread_mutex_unlock(&replay_lock);
 }
 
@@ -346,6 +425,7 @@ static nn_real game_moves[MAX_GAME_MOVES][FEATURES];
 static int game_move_count = 0;
 static int game_our_color = 0;  /* which color we're playing */
 static bool game_active = false;
+static float game_outcome = 0.0f;
 
 /* ── training thread ──────────────────────────────────────────────────── */
 
@@ -353,6 +433,11 @@ static bool train_running = false;
 static pthread_t train_thread;
 static NeuralNet *train_net;
 static const char *save_path = NULL;
+static pthread_rwlock_t net_lock = PTHREAD_RWLOCK_INITIALIZER;
+
+static int validate_net_dims(NeuralNet *net) {
+    return nn_input_size(net) == FEATURES && nn_output_size(net) == 1;
+}
 
 static void *train_loop(void *arg) {
     (void)arg;
@@ -389,8 +474,6 @@ static void *train_loop(void *arg) {
 /* ── GTP with game tracking ───────────────────────────────────────────── */
 
 static NeuralNet *gtp_net;
-static bool gtp_playing_black;
-
 static void gtp_out(const char *fmt, ...) {
     va_list ap; va_start(ap, fmt);
     printf("= "); vprintf(fmt, ap); printf("\n\n"); fflush(stdout);
@@ -400,21 +483,22 @@ static void gtp_err(const char *msg) { printf("? %s\n\n", msg); fflush(stdout); 
 
 static void gtp_boardsize(int n) {
     if (n != BOARD_SIZE) { gtp_err("only 9x9"); return; }
-    go_init(&game_state); game_move_count = 0; game_active = true;
+    go_init(&game_state); game_move_count = 0; game_active = true; game_outcome = 0.0f;
     gtp_out("");
 }
 
 static void gtp_clear_board(void) {
     /* Train on the completed game before clearing */
     if (game_move_count > 0 && game_active && game_our_color != 0) {
-        float outcome = 0.0f; // neutral if unknown
+        float outcome = game_outcome;
         for (int i = 0; i < game_move_count; i++) {
             float r = (game_our_color == 1) ? outcome : -outcome;
             replay_add(game_moves[i], r);
         }
-        fprintf(stderr, "[gtp] game ended, %d moves added to replay\n", game_move_count);
+        fprintf(stderr, "[gtp] game ended outcome=%.0f, %d moves added to replay\n",
+                (double)outcome, game_move_count);
     }
-    go_init(&game_state); game_move_count = 0; game_active = true;
+    go_init(&game_state); game_move_count = 0; game_active = true; game_outcome = 0.0f;
     gtp_out("");
 }
 
@@ -424,7 +508,9 @@ static void gtp_play(const char *color, const char *vertex) {
     
     int move = CELLS;
     if (strcasecmp(vertex, "pass") && strcasecmp(vertex, "resign")) {
-        int x = toupper(vertex[0]) - 'A', y = atoi(vertex + 1) - 1;
+        int x = toupper(vertex[0]) - 'A';
+        if (x > 8) x--;
+        int y = atoi(vertex + 1) - 1;
         if (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE) move = xy(x, y);
         else { gtp_err("invalid vertex"); return; }
     }
@@ -433,11 +519,18 @@ static void gtp_play(const char *color, const char *vertex) {
     /* Record opponent's move as a training sample */
     if (game_our_color != 0 && to_play != game_our_color && game_move_count < MAX_GAME_MOVES) {
         go_features(&game_state, game_moves[game_move_count]);
-        game_moves[game_move_count][FEATURES - 1] = (nn_real)move / MAX_MOVES;
+        game_moves[game_move_count][SLOT_MOVE_ID] = (nn_real)move / MAX_MOVES;
         game_move_count++;
     }
     
     go_move(&game_state, move);
+
+    if (go_over(&game_state)) {
+        float sc = go_score(&game_state);
+        game_outcome = (sc > 0) ? 1.0f : (sc < 0) ? -1.0f : 0.0f;
+        if (game_our_color != 0 && game_our_color == -1) game_outcome = -game_outcome;
+    }
+
     gtp_out("");
 }
 
@@ -453,20 +546,30 @@ static void gtp_genmove(const char *color) {
         go_features(&game_state, game_moves[game_move_count]);
     }
     
+    pthread_rwlock_rdlock(&net_lock);
     int move = go_mcts_move(gtp_net, &game_state);
-    
+    pthread_rwlock_unlock(&net_lock);
+
     /* Store our move as training data */
     if (game_move_count < MAX_GAME_MOVES) {
-        game_moves[game_move_count][FEATURES - 1] = (nn_real)move / MAX_MOVES;
+        game_moves[game_move_count][SLOT_MOVE_ID] = (nn_real)move / MAX_MOVES;
         game_move_count++;
     }
     
     go_move(&game_state, move);
-    
+
+    if (go_over(&game_state)) {
+        float sc = go_score(&game_state);
+        game_outcome = (sc > 0) ? 1.0f : (sc < 0) ? -1.0f : 0.0f;
+        if (game_our_color != 0 && game_our_color == -1) game_outcome = -game_outcome;
+    }
+
     if (move == CELLS) gtp_out("PASS");
     else {
         char buf[4];
-        snprintf(buf, sizeof(buf), "%c%d", 'A' + (move % BOARD_SIZE), (move / BOARD_SIZE) + 1);
+        int col = move % BOARD_SIZE;
+        if (col >= 8) col++;
+        snprintf(buf, sizeof(buf), "%c%d", 'A' + col, (move / BOARD_SIZE) + 1);
         gtp_out("%s", buf);
     }
 }
@@ -492,7 +595,28 @@ int main(int argc, char **argv) {
     
     gtp_net = nn_create_config(&cfg);
     train_net = gtp_net;  /* same net, trained in background */
-    
+
+    if (load_path) {
+        fprintf(stderr, "[gtp] loading checkpoint %s...\n", load_path);
+        NNCheckpointMeta meta;
+        NeuralNet *loaded = nn_load_checkpoint(load_path, &meta);
+        if (loaded) {
+            if (validate_net_dims(loaded)) {
+                nn_free(gtp_net);
+                gtp_net = loaded;
+                train_net = loaded;
+                fprintf(stderr, "[gtp] checkpoint loaded (input=%zu output=%zu)\n",
+                        nn_input_size(loaded), nn_output_size(loaded));
+            } else {
+                fprintf(stderr, "[gtp] checkpoint dimension mismatch (got input=%zu output=%zu, expected input=%d output=1), using fresh net\n",
+                        nn_input_size(loaded), nn_output_size(loaded), FEATURES);
+                nn_free(loaded);
+            }
+        } else {
+            fprintf(stderr, "[gtp] load failed, using untrained net\n");
+        }
+    }
+
     go_init(&game_state);
     game_active = true;
     
@@ -511,8 +635,10 @@ int main(int argc, char **argv) {
         if (*p == '#' || *p == '\n' || *p == '\0') continue;
         
         char cmd[64], a1[64], a2[64];
+        cmd[0] = a1[0] = a2[0] = '\0';
         int n = sscanf(p, "%63s %63s %63s", cmd, a1, a2);
-        
+
+        if (n < 1) continue;
         if (!strcmp(cmd, "quit")) { gtp_out(""); break; }
         else if (!strcmp(cmd, "protocol_version")) gtp_out("2");
         else if (!strcmp(cmd, "name")) gtp_out("SparseMCTS-Go-Continuous");

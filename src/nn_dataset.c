@@ -13,9 +13,11 @@ enum {
     NN_DATASET_BITWISE_FEATURE_COUNT = 15,
     NN_DATASET_HAIKU_FEATURE_COUNT = 12,
     NN_DATASET_MUSIC_FEATURE_COUNT = 18,
+    NN_DATASET_PROOF_FEATURE_COUNT = 16,
 };
 
 #include "nn_dataset_music.c"
+#include "nn_dataset_proof.c"
 
 typedef struct {
     int known;
@@ -2471,6 +2473,21 @@ static const NNDatasetExperiment NN_DATASET_EXPERIMENTS[] = {
         "signal_counterfactual_replay_v1",
         "crlp.engine_evidence.v1",
     },
+    {
+        "proof_resolution",
+        "propositional resolution prover using exact resolution-check verifier",
+        "proof",
+        "proof_res_v1",
+        "resolution_soundness",
+        NN_DATASET_PROOF_FEATURE_COUNT,
+        NN_DATASET_LABEL_SINGLE_TARGET,
+        generate_proof_resolution_adapter,
+        NN_DATASET_CAP_DATASET | NN_DATASET_CAP_REPLAY | NN_DATASET_CAP_EVIDENCE,
+        "proof_resolution_rule_search_v1",
+        "proof_resolution_replay_v1",
+        "crlp.engine_evidence.v1",
+    },
+
     {
         "music_sequence",
         "toy music sequence verifier using corpus-derived note adjacency and phrase structure",

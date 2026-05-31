@@ -14,6 +14,7 @@ typedef struct {
     const char *corpus_path;
     const char *trace_path;
     const char *save_path;
+    const char *load_path;
     const char *evidence_path;
     const char *task_name;
     size_t feature_count;
@@ -495,6 +496,7 @@ static int parse_config(int argc, char **argv, DSConfig *config)
     config->corpus_path = NULL;
     config->trace_path = NULL;
     config->save_path = NULL;
+    config->load_path = NULL;
     config->evidence_path = NULL;
     config->task_name = "dataset_action_score";
     config->feature_count = 0;
@@ -520,6 +522,8 @@ static int parse_config(int argc, char **argv, DSConfig *config)
             config->trace_path = argv[++i];
         } else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) {
             config->save_path = argv[++i];
+        } else if (strcmp(argv[i], "--load") == 0 && i + 1 < argc) {
+            config->load_path = argv[++i];
         } else if (strcmp(argv[i], "--evidence") == 0 && i + 1 < argc) {
             config->evidence_path = argv[++i];
         } else if (strcmp(argv[i], "--task") == 0 && i + 1 < argc) {
@@ -615,7 +619,17 @@ int main(int argc, char **argv)
     if (!loaded) {
         return EXIT_FAILURE;
     }
-    NeuralNet *net = create_model(&config);
+    NeuralNet *net = NULL;
+    if (config.load_path != NULL) {
+        NNCheckpointMeta meta;
+        net = nn_load_checkpoint(config.load_path, &meta);
+        if (net != NULL) {
+            /* Continue training with loaded weights */
+        }
+    }
+    if (net == NULL) {
+        net = create_model(&config);
+    }
     if (net == NULL) {
         nn_dataset_free(&dataset);
         return EXIT_FAILURE;

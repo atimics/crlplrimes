@@ -22,7 +22,11 @@
 #define BOARD_SIZE 9
 #define CELLS (BOARD_SIZE * BOARD_SIZE)
 #define MAX_MOVES (CELLS + 1)
-#define FEATURES (CELLS * 3)
+/* Board encoding: CELLS * 3 one-hot planes + 2 dedicated scratch slots */
+#define BOARD_FEATURES (CELLS * 3)
+#define SLOT_MOVE_ID    (BOARD_FEATURES)
+#define SLOT_REWARD     (BOARD_FEATURES + 1)
+#define FEATURES        (BOARD_FEATURES + 2)
 #define HIDDEN0 128
 #define HIDDEN1 64
 #define GAMES 200
@@ -34,6 +38,8 @@
 #define MCTS_MAX_KIDS 82
 #define MCTS_MIN_EXPAND 2
 #define MCTS_CONFIDENCE_GAP 0.15f
+#define MCTS_BASE_BUDGET  32
+#define MCTS_MAX_BUDGET   200
 #define TT_SIZE 8192
 
 static const int DIRS[4] = {-BOARD_SIZE, -1, 1, BOARD_SIZE};
@@ -51,12 +57,27 @@ typedef struct {
 static uint64_t zobrist[CELLS][3];  /* [pos][empty/black/white] */
 static bool zobrist_init = false;
 
+/* Zobrist side-to-move constant — nonzero so empty board doesn't hash to 0 */
+static uint64_t zobrist_side;
+
 static void z_init(void) {
     if (zobrist_init) return;
-    srand(42);
-    for (int i = 0; i < CELLS; i++)
-        for (int c = 0; c < 3; c++)
-            zobrist[i][c] = ((uint64_t)rand() << 32) | (uint64_t)rand();
+    /* Private LCG — doesn't clobber main's srand/rand state */
+    unsigned int z_seed = 20260531u;
+    for (int i = 0; i < CELLS; i++) {
+        for (int c = 0; c < 3; c++) {
+            z_seed = z_seed * 1103515245u + 12345u;
+            uint64_t lo = ((uint64_t)z_seed) & 0xFFFFFFFFu;
+            z_seed = z_seed * 1103515245u + 12345u;
+            uint64_t hi = ((uint64_t)z_seed) & 0xFFFFFFFFu;
+            zobrist[i][c] = (hi << 32) | lo;
+        }
+    }
+    z_seed = z_seed * 1103515245u + 12345u;
+    uint64_t lo = ((uint64_t)z_seed) & 0xFFFFFFFFu;
+    z_seed = z_seed * 1103515245u + 12345u;
+    uint64_t hi = ((uint64_t)z_seed) & 0xFFFFFFFFu;
+    zobrist_side = (hi << 32) | lo;
     zobrist_init = true;
 }
 
@@ -65,6 +86,7 @@ static void go_init(GoState *s) {
     memset(s, 0, sizeof(*s));
     s->to_play = 1;
     s->last_move = -1;
+    s->zhash = zobrist_side;  /* nonzero seed */
 }
 
 static int xy(int x, int y) { return y * BOARD_SIZE + x; }
@@ -98,7 +120,7 @@ static void remove_group(GoState *s, int i, int8_t *vis) {
 static int has_liberty(GoState *s, int i, int8_t *vis) {
     if (!in_bounds(i) || vis[i]) return 0;
     if (s->board[i] == 0) return 1;
-    int8_t c = s->board[i]; vis[i] = 1;
+    vis[i] = 1;
     for (int d = 0; d < 4; d++) {
         int ni = i + DIRS[d];
         if ((d == 1 && on_left(i)) || (d == 2 && on_right(i))) continue;
@@ -160,7 +182,10 @@ static int move_saves_own(GoState *s, int idx) {
     return 0;
 }
 
-static int is_self_atari(GoState *s, int idx) {
+/* is_suicide: placing at idx would leave own group with 0 liberties.
+   This was formerly called is_self_atari — renamed for clarity.
+   Used for legality checking (suicide is illegal). */
+static int is_suicide(GoState *s, int idx) {
     GoState cp = *s;
     cp.board[idx] = cp.to_play;
     int opp = -cp.to_play;
@@ -168,15 +193,35 @@ static int is_self_atari(GoState *s, int idx) {
         int ni = idx + DIRS[d];
         if ((d == 1 && on_left(idx)) || (d == 2 && on_right(idx))) continue;
         if (in_bounds(ni) && cp.board[ni] == opp && group_dead(&cp, ni, opp))
-            return 0;  /* captures something, so not self-atari */
+            return 0;  /* captures something, so not suicide */
     }
     return group_dead(&cp, idx, cp.to_play);
+}
+
+/* True self-atari: placing at idx does NOT capture, but leaves own group
+   with exactly 1 liberty (not 0). Used for danger discount heuristics. */
+static int is_self_atari(GoState *s, int idx) {
+    GoState cp = *s;
+    cp.board[idx] = cp.to_play;
+    int opp = -cp.to_play;
+    int captured = 0;
+    for (int d = 0; d < 4; d++) {
+        int ni = idx + DIRS[d];
+        if ((d == 1 && on_left(idx)) || (d == 2 && on_right(idx))) continue;
+        if (in_bounds(ni) && cp.board[ni] == opp && group_dead(&cp, ni, opp)) {
+            captured = 1;
+            int8_t vis[CELLS] = {0};
+            remove_group(&cp, ni, vis);
+        }
+    }
+    if (captured) return 0;  /* captured something — not self-atari */
+    return count_liberties(&cp, idx) == 1;
 }
 
 static int is_legal(GoState *s, int idx) {
     if (idx == CELLS) return 1;
     if (!in_bounds(idx) || s->board[idx] != 0) return 0;
-    if (is_self_atari(s, idx)) return 0;
+    if (is_suicide(s, idx)) return 0;
     GoState cp = *s;
     cp.board[idx] = cp.to_play;
     int opp = -cp.to_play;
@@ -204,10 +249,15 @@ static int is_tactical_move(GoState *s, int idx) {
 
 static void go_move(GoState *s, int idx) {
     s->last_move = idx;
-    if (idx == CELLS) { s->passes++; s->to_play = -s->to_play; return; }
+    if (idx == CELLS) {
+        s->passes++; s->to_play = -s->to_play;
+        s->zhash ^= zobrist_side;  /* flip side-to-move in hash */
+        return;
+    }
     s->passes = 0;
     memcpy(s->prev, s->board, sizeof(s->board));
     go_update_hash(s, idx, 0, s->to_play == 1 ? 1 : 2);
+    s->zhash ^= zobrist_side;  /* flip side-to-move */
     s->board[idx] = s->to_play;
     int opp = -s->to_play;
     for (int d = 0; d < 4; d++) {
@@ -259,13 +309,14 @@ static float go_stone_ratio(GoState *s) {
 /* ── features ─────────────────────────────────────────────────────────── */
 
 static void go_features(GoState *s, nn_real row[FEATURES]) {
-    memset(row, 0, FEATURES * sizeof(nn_real));
+    memset(row, 0, BOARD_FEATURES * sizeof(nn_real));
     for (int i = 0; i < CELLS; i++) {
         int off = i * 3;
         if (s->board[i] == 1)       row[off] = 1.0f;
         else if (s->board[i] == -1) row[off + 1] = 1.0f;
         else                         row[off + 2] = 1.0f;
     }
+    /* SLOT_MOVE_ID and SLOT_REWARD left zero — filled by caller */
 }
 
 /* ── neural evaluation ────────────────────────────────────────────────── */
@@ -278,7 +329,7 @@ static void go_evaluate(NeuralNet *net, GoState *s, float policy[MAX_MOVES], flo
         if (!is_legal(s, m)) { policy[m] = 0.0f; continue; }
         nn_real mf[FEATURES];
         memcpy(mf, feats, FEATURES * sizeof(nn_real));
-        mf[FEATURES - 1] = (nn_real)m / MAX_MOVES;
+        mf[SLOT_MOVE_ID] = (nn_real)m / MAX_MOVES;
         nn_real sc;
         nn_forward(net, mf, &sc);
         float sv = (float)sc;
@@ -337,6 +388,7 @@ typedef struct {
     float policy[12];  /* top-12 moves */
     int8_t  moves[12];
     int     n;
+    bool    valid;      /* distinguish empty slot (hash==0) from real entry */
 } TTEntry;
 
 static TTEntry tt[TT_SIZE];
@@ -344,14 +396,15 @@ static int tt_filled = 0;
 
 static TTEntry *tt_lookup(uint64_t hash) {
     int idx = hash % TT_SIZE;
-    if (tt[idx].hash == hash) return &tt[idx];
+    if (tt[idx].valid && tt[idx].hash == hash) return &tt[idx];
     return NULL;
 }
 
 static void tt_store(uint64_t hash, float policy[MAX_MOVES]) {
     int idx = hash % TT_SIZE;
-    if (tt[idx].hash == hash) return;  /* already cached */
+    if (tt[idx].valid && tt[idx].hash == hash) return;  /* already cached */
     tt[idx].hash = hash;
+    tt[idx].valid = true;
     tt[idx].n = 0;
     /* Store top-12 by priority */
     for (int m = 0; m < MAX_MOVES && tt[idx].n < 12; m++) {
@@ -380,6 +433,7 @@ typedef struct GoNode {
 
 static GoNode *gn_alloc(int move, int to_play, GoNode *parent) {
     GoNode *n = calloc(1, sizeof(GoNode));
+    if (n == NULL) return NULL;
     n->move = move; n->to_play = to_play; n->parent = parent;
     return n;
 }
@@ -405,25 +459,27 @@ static int gn_select(GoNode *n) {
     return best;
 }
 
-/* ── sparse MCTS search ───────────────────────────────────────────────── */
 
-static void go_mcts_search(NeuralNet *net, GoState *root_st, float probs[MAX_MOVES]) {
+/* Run MCTS with a given simulation budget, accumulate into probs. */
+static void go_mcts_search_budget(NeuralNet *net, GoState *root_st,
+                                   float probs[MAX_MOVES], int budget) {
     GoNode *root = gn_alloc(-1, root_st->to_play, NULL);
-    
-    for (int sim = 0; sim < MCTS_SIMULATIONS; sim++) {
+    if (root == NULL) return;
+
+    for (int sim = 0; sim < budget; sim++) {
         GoState s = *root_st;
         GoNode *node = root;
-        
+
         while (node->expanded && node->nkids > 0 && !go_over(&s)) {
             node = node->kids[gn_select(node)];
             go_move(&s, node->move);
         }
-        
+
         float v;
         if (go_over(&s)) {
             float sc = go_score(&s);
             v = (sc > 0) ? 1.0f : (sc < 0) ? -1.0f : 0.0f;
-            v *= (float)node->to_play;
+            v *= (float)(-node->to_play);  /* M1: perspective of player who just moved */
         } else {
             float policy[MAX_MOVES];
             /* Check TT cache */
@@ -440,7 +496,7 @@ static void go_mcts_search(NeuralNet *net, GoState *root_st, float probs[MAX_MOV
                 go_evaluate(net, &s, policy, &v);
                 tt_store(h, policy);
             }
-            
+
             /* Phase-dependent expansion width */
             float phase = go_stone_ratio(&s);
             float ent = policy_entropy(policy);
@@ -449,7 +505,7 @@ static void go_mcts_search(NeuralNet *net, GoState *root_st, float probs[MAX_MOV
             int top_k = base_k + entropy_k;
             if (top_k < MCTS_MIN_EXPAND) top_k = MCTS_MIN_EXPAND;
             if (top_k > 30) top_k = 30;
-            
+
             /* Collect legal moves with priors */
             typedef struct { int move; float prior; int tactical; } candidate_t;
             candidate_t cands[MAX_MOVES];
@@ -466,23 +522,24 @@ static void go_mcts_search(NeuralNet *net, GoState *root_st, float probs[MAX_MOV
                 cands[nc].tactical = tactical;
                 nc++;
             }
-            
+
             /* Sort by prior (simple bubble — nc is small) */
             for (int i = 0; i < nc; i++)
                 for (int j = i + 1; j < nc; j++)
                     if (cands[j].prior > cands[i].prior) {
                         candidate_t t = cands[i]; cands[i] = cands[j]; cands[j] = t;
                     }
-            
+
             /* Expand: top_k by prior + tactical forced */
             bool expanded_move[MAX_MOVES] = {false};
             node->nkids = 0;
             float prior_threshold = max_prior * 0.15f;
-            
+
             for (int i = 0; i < nc && node->nkids < top_k; i++) {
                 if (cands[i].tactical || cands[i].prior >= prior_threshold) {
                     int m = cands[i].move;
                     GoNode *kid = gn_alloc(m, -node->to_play, node);
+                    if (kid == NULL) break;
                     node->kids[node->nkids] = kid;
                     node->prior[node->nkids] = cands[i].prior;
                     node->tactical_forced[node->nkids] = cands[i].tactical;
@@ -490,12 +547,13 @@ static void go_mcts_search(NeuralNet *net, GoState *root_st, float probs[MAX_MOV
                     expanded_move[m] = true;
                 }
             }
-            
+
             /* Force-include any remaining tactical moves */
             for (int i = 0; i < nc; i++) {
                 if (!expanded_move[cands[i].move] && cands[i].tactical && node->nkids < MCTS_MAX_KIDS) {
                     int m = cands[i].move;
                     GoNode *kid = gn_alloc(m, -node->to_play, node);
+                    if (kid == NULL) break;
                     node->kids[node->nkids] = kid;
                     node->prior[node->nkids] = cands[i].prior;
                     node->tactical_forced[node->nkids] = 1;
@@ -504,12 +562,15 @@ static void go_mcts_search(NeuralNet *net, GoState *root_st, float probs[MAX_MOV
             }
             node->expanded = true;
         }
-        
+
         /* Backprop with RAVE update */
         while (node) {
             node->visits += 1.0f;
             node->total_val += v;
-            if (v > 0.0f && node->parent && node->move >= 0) {
+            /* RAVE: credit a move when the outcome is good for the mover.
+               At each level, v is from node's perspective; the move was made
+               by node->parent (opponent). v < 0 means good for mover. */
+            if (v < 0.0f && node->parent && node->move >= 0) {
                 rave_wins[node->move] += 1.0f;
                 rave_visits[node->move] += 1.0f;
             } else if (node->parent && node->move >= 0) {
@@ -518,7 +579,7 @@ static void go_mcts_search(NeuralNet *net, GoState *root_st, float probs[MAX_MOV
             v = -v; node = node->parent;
         }
     }
-    
+
     /* Extract visit probabilities */
     float total = 0.0f;
     for (int i = 0; i < root->nkids; i++) {
@@ -527,25 +588,39 @@ static void go_mcts_search(NeuralNet *net, GoState *root_st, float probs[MAX_MOV
     }
     if (total > 0.0f)
         for (int m = 0; m < MAX_MOVES; m++) probs[m] /= total;
-    
+
     gn_free(root);
 }
 
-static int go_mcts_move(NeuralNet *net, GoState *s) {
-    /* Adaptive visit budget */
-    float probs[MAX_MOVES] = {0};
-    int budget = 32;
-    go_mcts_search(net, s, probs);
-    
-    /* Confidence check: if best >> second, stop; else search more */
-    float best_p = 0, second_p = 0;
-    int best_m = CELLS;
-    for (int m = 0; m < CELLS; m++) {
-        if (probs[m] > best_p) { second_p = best_p; best_p = probs[m]; best_m = m; }
-        else if (probs[m] > second_p) second_p = probs[m];
+/* Full MCTS search with adaptive budget (L3).
+   Starts with BASE_BUDGET, checks confidence gap, increases if needed. */
+static void go_mcts_search(NeuralNet *net, GoState *root_st, float probs[MAX_MOVES]) {
+    memset(probs, 0, MAX_MOVES * sizeof(probs[0]));
+
+    int budget = MCTS_BASE_BUDGET;
+    while (budget <= MCTS_MAX_BUDGET) {
+        go_mcts_search_budget(net, root_st, probs, budget);
+
+        /* Check confidence: is the best move clearly ahead? */
+        float best_p = 0, second_p = 0;
+        for (int m = 0; m < CELLS; m++) {
+            if (probs[m] > best_p)      { second_p = best_p; best_p = probs[m]; }
+            else if (probs[m] > second_p) second_p = probs[m];
+        }
+        float gap = best_p - second_p;
+        if (gap >= MCTS_CONFIDENCE_GAP || budget >= MCTS_SIMULATIONS) break;
+        budget *= 2;  /* exponential backoff */
+        if (budget > MCTS_SIMULATIONS) budget = MCTS_SIMULATIONS;
     }
-    (void)budget; (void)second_p;
-    return best_m;
+}
+
+static int go_mcts_move(NeuralNet *net, GoState *s) {
+    float probs[MAX_MOVES] = {0};
+    go_mcts_search(net, s, probs);
+    int best = CELLS;
+    for (int m = 0; m < CELLS; m++)
+        if (probs[m] > probs[best]) best = m;
+    return best;
 }
 
 /* ── baselines ────────────────────────────────────────────────────────── */
@@ -583,7 +658,7 @@ static int go_selfplay(NeuralNet *net, GoSample *samples, int max, int use_mcts)
         sp->to_play = s.to_play;
         
         int move = use_mcts ? go_mcts_move(net, &s) : go_greedy_neural(net, &s);
-        sp->features[FEATURES - 1] = (nn_real)move / MAX_MOVES;
+        sp->features[SLOT_MOVE_ID] = (nn_real)move / MAX_MOVES;
         sp->move = move;
         go_move(&s, move);
         n++;
@@ -592,7 +667,7 @@ static int go_selfplay(NeuralNet *net, GoSample *samples, int max, int use_mcts)
     float winner = (score > 0) ? 1.0f : ((score < 0) ? -1.0f : 0.0f);
     for (int i = 0; i < n; i++) {
         float r = (samples[i].to_play == winner) ? 1.0f : (winner == 0) ? 0.5f : 0.0f;
-        samples[i].features[FEATURES - 2] = r;
+        samples[i].features[SLOT_REWARD] = r;
     }
     return n;
 }
@@ -605,6 +680,7 @@ static float go_match(void *a_ctx, go_agent_t a, void *b_ctx, go_agent_t b, int 
     int wins_a = 0;
     for (int g = 0; g < games; g++) {
         GoState s; go_init(&s);
+        rave_reset();  /* L4: reset RAVE between games */
         while (!go_over(&s)) {
             int move = (s.to_play == 1) ? a(a_ctx, &s) : b(b_ctx, &s);
             go_move(&s, move);
@@ -622,6 +698,7 @@ static int w_mcts(void *c, GoState *s) { return go_mcts_move((NeuralNet *)c, s);
 
 static void go_demo(NeuralNet *net) {
     GoState s; go_init(&s);
+    rave_reset();
     printf("\n  Sparse MCTS Demo\n");
     while (!go_over(&s)) {
         for (int y = 0; y < BOARD_SIZE; y++) {
@@ -675,10 +752,7 @@ int main(int argc, char **argv) {
     }
 
     if (demo) {
-        const char *ckpt = argc > 2 ? argv[2] : "build/float/go_mcts.nnckpt";
-        printf("Loading %s...\n", ckpt);
-        char err[256] = {0};
-        /* Load via nn.h checkpoint API — just run demo with fresh net for now */
+        printf("Starting demo with fresh network...\n");
         go_demo(net); nn_free(net); return 0;
     }
     
@@ -699,7 +773,7 @@ int main(int argc, char **argv) {
         for (int e = 0; e < 3; e++) {
             float loss = 0;
             for (int i = 0; i < total; i++) {
-                nn_real tgt = samples[i].features[FEATURES - 2];
+                nn_real tgt = samples[i].features[SLOT_REWARD];
                 nn_real lv = nn_train_sample(net, samples[i].features, &tgt, lr);
                 loss += (float)lv;
             }
@@ -753,11 +827,13 @@ static void gtp_error(const char *msg) {
 static void gtp_boardsize(int n) {
     if (n != BOARD_SIZE) { gtp_error("only 9x9 supported"); return; }
     go_init(&gtp_state);
+    rave_reset();
     gtp_respond("");
 }
 
 static void gtp_clear_board(void) {
     go_init(&gtp_state);
+    rave_reset();
     gtp_respond("");
 }
 
@@ -797,7 +873,8 @@ static void gtp_genmove(const char *color) {
 static void gtp_loop(NeuralNet *net) {
     gtp_net = net;
     go_init(&gtp_state);
-    
+    rave_reset();
+
     char line[256];
     while (fgets(line, sizeof(line), stdin)) {
         /* Strip newline and comments */
@@ -806,13 +883,15 @@ static void gtp_loop(NeuralNet *net) {
         if (*p == '#' || *p == '\n' || *p == '\0') continue;
         
         char cmd[64], arg1[64], arg2[64];
+        cmd[0] = arg1[0] = arg2[0] = '\0';
         int n = sscanf(p, "%63s %63s %63s", cmd, arg1, arg2);
         
+        if (n < 1) continue;
         if (strcmp(cmd, "quit") == 0) { gtp_respond(""); break; }
         else if (strcmp(cmd, "protocol_version") == 0) gtp_respond("2");
         else if (strcmp(cmd, "name") == 0) gtp_respond("SparseMCTS-Go");
         else if (strcmp(cmd, "version") == 0) gtp_respond("0.1");
-        else if (strcmp(cmd, "boardsize") == 0) gtp_boardsize(atoi(arg1));
+        else if (strcmp(cmd, "boardsize") == 0 && n >= 2) gtp_boardsize(atoi(arg1));
         else if (strcmp(cmd, "clear_board") == 0) gtp_clear_board();
         else if (strcmp(cmd, "play") == 0 && n >= 3) gtp_play(arg1, arg2);
         else if (strcmp(cmd, "genmove") == 0 && n >= 2) gtp_genmove(arg1);
