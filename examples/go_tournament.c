@@ -240,7 +240,8 @@ static int gn_select(GoNode *n) { int best = 0; float best_score = -1e30f, sqrt_
 
 static uint64_t go_hash(GoState *s) { return s->zhash; }
 
-static int go_mcts_move(NeuralNet *net, GoState *root_st) {
+static int go_mcts_move_with_probs(NeuralNet *net, GoState *root_st, float *out_probs) {
+    if (out_probs) memset(out_probs, 0, MAX_MOVES * sizeof(float));
     float probs[MAX_MOVES] = {0};
     GoNode *root = gn_alloc(-1, root_st->to_play, NULL); if (!root) return CELLS;
     rave_reset();
@@ -266,8 +267,13 @@ static int go_mcts_move(NeuralNet *net, GoState *root_st) {
     }
     for (int i=0;i<root->nkids;i++) probs[root->kids[i]->move]=root->kids[i]->visits;
     float total=0; for (int m=0;m<MAX_MOVES;m++) total+=probs[m]; if(total>0) for(int m=0;m<MAX_MOVES;m++)probs[m]/=total;
+    if (out_probs) memcpy(out_probs, probs, MAX_MOVES * sizeof(float));
     int best=CELLS; for(int m=0;m<CELLS;m++) if(probs[m]>probs[best])best=m;
     gn_free(root); return best;
+}
+
+static int go_mcts_move(NeuralNet *net, GoState *root_st) {
+    return go_mcts_move_with_probs(net, root_st, NULL);
 }
 
 
@@ -312,7 +318,7 @@ static int augment_move(int move, int t) {
 
 /* ── Training sample ─────────────────────────────────────────────────── */
 
-typedef struct { nn_real features[FEATURES]; int move, to_play; } GameSample;
+typedef struct { nn_real features[FEATURES]; int move, to_play; float visit_prob; float mcts_entropy; } GameSample;
 
 static float go_score_global(GameSample *samples, int n);
 
@@ -322,8 +328,14 @@ static int play_game(NeuralNet *black_net, NeuralNet *white_net, GameSample *sam
         GameSample *sp = &samples[n];
         go_features(&s, sp->features); sp->to_play = s.to_play;
         NeuralNet *net = (s.to_play == 1) ? black_net : white_net;
-        int move = go_mcts_move(net, &s);
+        float vprobs[MAX_MOVES];
+        int move = go_mcts_move_with_probs(net, &s, vprobs);
         sp->features[SLOT_MOVE_ID] = (nn_real)move / MAX_MOVES; sp->move = move;
+        sp->visit_prob = vprobs[move];
+        /* Compute MCTS entropy for interest weighting */
+        float ent = 0; int n_legal = 0;
+        for (int m = 0; m < MAX_MOVES; m++) if (vprobs[m] > 0.001f) { ent -= vprobs[m] * logf(vprobs[m] + 1e-12f); n_legal++; }
+        sp->mcts_entropy = n_legal > 1 ? ent / logf((float)n_legal) : 0.0f;
         go_move(&s, move);
         n++;
     }
@@ -505,37 +517,41 @@ static NeuralNet *create_net(unsigned seed) {
 
 static void train_on_replay(Player *p) {
     if (p->replay_count < 32) return;
-    float lr = 0.005f;
+    /* Learning rate decay: starts at 0.005, decays to 0.001 over time */
+    float lr = 0.005f / (1.0f + p->games * 0.0001f);
+    if (lr < 0.001f) lr = 0.001f;
     int batch = p->replay_count < 256 ? p->replay_count : 256;
     float loss = 0;
     int trained = 0;
 
-    /* Use target network for stable value targets */
     NeuralNet *value_net = p->target_net;
 
     for (int i = 0; i < batch; i++) {
-        /* Interest-weighted sampling: prefer positions with decisive rewards */
         int ri = rand() % p->replay_count;
         float r = p->replay[ri].features[SLOT_REWARD];
-        float interest = 0.5f + fabsf(r - 0.5f);  /* 0.5=draw, 1.0=decisive */
-        if ((float)rand() / RAND_MAX > interest) continue;  /* skip boring positions */
+        float visit_p = p->replay[ri].visit_prob;
+        float ent = p->replay[ri].mcts_entropy;
 
-        /* 8x data augmentation: train on all D4 symmetries */
+        /* Interest weighting: prefer high-entropy (uncertain) and decisive positions */
+        float interest = 0.3f + 0.4f * fabsf(r - 0.5f) + 0.3f * ent;
+        if ((float)rand() / RAND_MAX > interest) continue;
+
+        /* 8x data augmentation */
         for (int t = 0; t < 8; t++) {
             nn_real aug[FEATURES];
             augment_features(p->replay[ri].features, aug, t);
-            /* Transform move-id slot */
             int orig_move = (int)(p->replay[ri].features[SLOT_MOVE_ID] * MAX_MOVES + 0.5f);
             aug[SLOT_MOVE_ID] = (nn_real)augment_move(orig_move, t) / MAX_MOVES;
-            aug[SLOT_REWARD] = r;  /* reward is invariant under symmetry */
+            aug[SLOT_REWARD] = r;
 
-            /* Compute target using frozen target network for stability */
-            nn_real tgt = r;
-            if (r > 0.1f && r < 0.9f) {
-                /* For non-terminal positions, blend reward with target net value */
+            /* MCTS policy distillation: blend win reward with visit probability */
+            nn_real tgt = 0.7f * r + 0.3f * visit_p;
+
+            /* For non-terminal draws, bootstrap from target network */
+            if (r > 0.3f && r < 0.7f && fabsf(visit_p) < 0.1f) {
                 nn_real vs;
                 nn_forward(value_net, aug, &vs);
-                tgt = 0.5f * r + 0.5f * vs;  /* TD(0) style target */
+                tgt = 0.4f * r + 0.3f * vs + 0.3f * visit_p;
             }
 
             loss += (float)nn_train_sample(p->net, aug, &tgt, lr);
@@ -867,6 +883,8 @@ int main(int argc, char **argv) {
                             memcpy(winner->replay[winner->replay_count].features, samples[i].features, FEATURES*sizeof(nn_real));
                             winner->replay[winner->replay_count].move = samples[i].move;
                             winner->replay[winner->replay_count].to_play = samples[i].to_play;
+                            winner->replay[winner->replay_count].visit_prob = samples[i].visit_prob;
+                            winner->replay[winner->replay_count].mcts_entropy = samples[i].mcts_entropy;
                             /* Assign reward: 1.0 for winner's moves, 0.0 for loser's */
                             float r = (samples[i].to_play == (score > 0 ? 1.0f : -1.0f)) ? 1.0f : 0.0f;
                             winner->replay[winner->replay_count].features[SLOT_REWARD] = r;
