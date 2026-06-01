@@ -29,7 +29,7 @@
 #define HIDDEN0 128
 #define HIDDEN1 64
 
-#define MCTS_SIMULATIONS 100
+#define MCTS_SIMULATIONS 50
 #define MCTS_C_PUCT 1.4f
 #define MCTS_MAX_KIDS 82
 #define MCTS_MIN_EXPAND 2
@@ -407,6 +407,26 @@ static int go_mcts_move(NeuralNet *net, GoState *s) {
     return best;
 }
 
+
+/* ── legal moves helper ──────────────────────────────────────────────── */
+
+static int build_legal_json(GoState *s, char *buf, int bufsz) {
+    int off = 0;
+    off += snprintf(buf + off, bufsz - off, "\"legal\":[");
+    int first = 1;
+    for (int m = 0; m < CELLS; m++) {
+        if (is_legal(s, m)) {
+            off += snprintf(buf + off, bufsz - off, "%s%d", first ? "" : ",", m);
+            first = 0;
+        }
+    }
+    if (is_legal(s, CELLS)) {
+        off += snprintf(buf + off, bufsz - off, "%s%d", first ? "" : ",", CELLS);
+    }
+    off += snprintf(buf + off, bufsz - off, "]");
+    return off;
+}
+
 /* ── HTTP ────────────────────────────────────────────────────────────── */
 
 static char *http_200 = "HTTP/1.1 200 OK\r\n";
@@ -446,6 +466,7 @@ static const char *html =
 ".b{background:radial-gradient(circle at 36% 36%,#555,#111);box-shadow:0 1px 3px rgba(0,0,0,.5)}"
 ".w{background:radial-gradient(circle at 36% 36%,#fff,#bbb);box-shadow:0 1px 3px rgba(0,0,0,.3)}"
 ".last{box-shadow:0 0 0 2px #fc3,0 1px 3px rgba(0,0,0,.5)}"
+".dot{width:10px;height:10px;border-radius:50%;background:#2a3a2a;position:absolute;opacity:.7}"
 ".star{width:6px;height:6px;border-radius:50%;background:#334;position:absolute}"
 ".info{margin:10px 0;font-size:.8rem;display:flex;gap:12px;align-items:center}"
 ".info span{color:#fc3}.btn{padding:5px 14px;background:#1e1e3a;border:1px solid #334;color:#c8d6e5;cursor:pointer;border-radius:4px;font:inherit;font-size:.72rem}"
@@ -455,23 +476,26 @@ static const char *html =
 "<div class=info><span id=turn>Your turn</span><button class=btn onclick=reset()>New Game</button></div>"
 "<div id=st></div><div class=g id=board></div>"
 "<script>"
-"const S=9;let b=Array(S*S).fill(0),t=1,go=false,lm=-1;"
+"const S=9;let b=Array(S*S).fill(0),t=1,go=false,lm=-1,legal=new Set();"
 "function star(i){let x=i%S,y=Math.floor(i/S);return(y===2||y===6)&&(x===2||x===6)||(x===4&&y===4)}"
 "function r(){"
 " let h='';"
 " for(let y=0;y<S;y++)for(let x=0;x<S;x++){"
 "  let i=y*S+x,v=b[i];"
-"  h+='<div class=c onclick=\"cl('+i+')\" id=\"c'+i+'\">'+(v?('<div class=\"s '+(v===1?'b':'w')+(i===lm?' last':'')+'\"></div>'):(star(i)?'<div class=star></div>':''))+'</div>';"
+"  let isL=legal.has(i),cls='c'+(isL?'':' illegal'),oncl=isL?(' onclick=\"cl('+i+')\"'):'';"
+"  let inner=v?('<div class=\"s '+(v===1?'b':'w')+(i===lm?' last':'')+'\"></div>'):(isL?'<div class=dot></div>':(star(i)?'<div class=star></div>':''));"
+"  h+='<div class='+cls+oncl+' id=\"c'+i+'\">'+inner+'</div>';"
 " }"
 " document.getElementById('board').innerHTML=h;"
 "}"
-"async function cl(i){if(go||t!==1||b[i]!==0)return;p(i,1);await em()}"
-"async function em(){"
+"async function cl(i){if(go||t!==1||b[i]!==0||!legal.has(i))return;let x=i%S,y=Math.floor(i/S);p(i,1);await em(x,y)}"
+"async function em(x,y){"
 " t=-1;document.getElementById('turn').textContent='Engine thinking...';"
 " try{"
-"  let resp=await fetch('/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({board:b,last:lm})});"
+"  let resp=await fetch('/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({x:x,y:y})});"
 "  let d=await resp.json();"
 "  if(d.error){document.getElementById('st').textContent=d.error;t=1;return}"
+"  if(d.legal){legal=new Set(d.legal)}else{legal.clear()}"
 "  if(d.game_over){go=true;document.getElementById('st').textContent=d.result;t=0;document.getElementById('turn').textContent='Game over';r();return}"
 "  if(d.move===-1){go=true;document.getElementById('st').textContent='Engine passes. '+d.result;t=0;document.getElementById('turn').textContent='Game over';r();return}"
 "  p(d.move,-1);t=1;document.getElementById('turn').textContent='Your turn';"
@@ -482,7 +506,7 @@ static const char *html =
 " await fetch('/reset',{method:'POST'});b.fill(0);t=1;go=false;lm=-1;"
 " document.getElementById('st').textContent='';document.getElementById('turn').textContent='Your turn';r();"
 "}"
-"r();"
+"(async()=>{let r=await fetch('/legal');let d=await r.json();if(d.legal)legal=new Set(d.legal);r()})();"
 "</script></body></html>";
 
 /* ── JSON helpers ────────────────────────────────────────────────────── */
@@ -540,41 +564,58 @@ int main(int argc, char **argv) {
         } else if (strcmp(path, "/move") == 0 && strcmp(method, "POST") == 0) {
             char body[4096] = {0};
             read(fd, body, sizeof(body) - 1);
-            char resp[512];
+            char resp[4096];
+            int off = 0;
+
             if (go_over(&state)) {
                 float sc = go_score(&state);
-                snprintf(resp, sizeof(resp), "{\"game_over\":true,\"result\":\"%s\"}", sc > 0 ? "Black wins" : sc < 0 ? "White wins" : "Draw");
-            } else if (state.to_play == 1) {
+                off = snprintf(resp, sizeof(resp), "{\"game_over\":true,\"result\":\"%s\"}", sc > 0 ? "Black wins" : sc < 0 ? "White wins" : "Draw");
+            } else if (state.to_play != 1) {
+                off = snprintf(resp, sizeof(resp), "{\"error\":\"not your turn\"}");
+            } else {
                 int x = json_int(body, "x");
                 int y = json_int(body, "y");
                 int move = (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE) ? xy(x, y) : -1;
                 if (move < 0 || !is_legal(&state, move)) {
-                    snprintf(resp, sizeof(resp), "{\"error\":\"illegal\"}");
+                    off = snprintf(resp, sizeof(resp), "{\"error\":\"illegal\",");
+                    off += build_legal_json(&state, resp + off, sizeof(resp) - off);
+                    off += snprintf(resp + off, sizeof(resp) - off, "}");
                 } else {
                     go_move(&state, move);
                     if (go_over(&state)) {
                         float sc = go_score(&state);
-                        snprintf(resp, sizeof(resp), "{\"game_over\":true,\"move\":-1,\"result\":\"%s\"}", sc > 0 ? "Black wins" : "Draw");
+                        off = snprintf(resp, sizeof(resp), "{\"game_over\":true,\"move\":-1,\"result\":\"%s\"}", sc > 0 ? "Black wins" : "Draw");
                     } else {
+                        fprintf(stderr, "[mcts] thinking...\n");
                         int eng = go_mcts_move(net, &state);
+                        fprintf(stderr, "[mcts] done -> %d\n", eng);
                         go_move(&state, eng);
                         if (go_over(&state)) {
                             float sc = go_score(&state);
                             if (eng == CELLS)
-                                snprintf(resp, sizeof(resp), "{\"move\":-1,\"result\":\"%s\"}", sc > 0 ? "Black wins" : sc < 0 ? "White wins" : "Draw");
+                                off = snprintf(resp, sizeof(resp), "{\"move\":-1,\"result\":\"%s\"}", sc > 0 ? "Black wins" : sc < 0 ? "White wins" : "Draw");
                             else
-                                snprintf(resp, sizeof(resp), "{\"move\":%d,\"x\":%d,\"y\":%d,\"result\":\"%s\"}",
+                                off = snprintf(resp, sizeof(resp), "{\"move\":%d,\"x\":%d,\"y\":%d,\"result\":\"%s\"}",
                                          eng, eng % BOARD_SIZE, eng / BOARD_SIZE, sc > 0 ? "Black wins" : sc < 0 ? "White wins" : "Draw");
                         } else {
                             if (eng == CELLS)
-                                snprintf(resp, sizeof(resp), "{\"move\":-1}");
+                                off = snprintf(resp, sizeof(resp), "{\"move\":-1,");
                             else
-                                snprintf(resp, sizeof(resp), "{\"move\":%d,\"x\":%d,\"y\":%d}", eng, eng % BOARD_SIZE, eng / BOARD_SIZE);
+                                off = snprintf(resp, sizeof(resp), "{\"move\":%d,\"x\":%d,\"y\":%d,", eng, eng % BOARD_SIZE, eng / BOARD_SIZE);
+                            off += build_legal_json(&state, resp + off, sizeof(resp) - off);
+                            off += snprintf(resp + off, sizeof(resp) - off, "}");
                         }
                     }
                 }
             }
-            send_response(fd, http_json, resp, (int)strlen(resp));
+            if (off == 0) off = snprintf(resp, sizeof(resp), "{\"error\":\"unknown\"}");
+            send_response(fd, http_json, resp, off);
+        } else if (strcmp(path, "/legal") == 0) {
+            char resp[4096];
+            int off = snprintf(resp, sizeof(resp), "{");
+            off += build_legal_json(&state, resp + off, sizeof(resp) - off);
+            off += snprintf(resp + off, sizeof(resp) - off, "}");
+            send_response(fd, http_json, resp, off);
         } else {
             char *nf = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
             write(fd, nf, (int)strlen(nf));
