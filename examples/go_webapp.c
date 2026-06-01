@@ -454,12 +454,23 @@ static void send_response(int fd, const char *ctype, const char *body, int len) 
     write(fd, body, len);
 }
 
+static char req_body[4096];
+
 static int read_request(int fd, char *method, char *path, int max_path __attribute__((unused))) {
-    char buf[2048];
+    char buf[4096];
     int n = (int)read(fd, buf, sizeof(buf) - 1);
     if (n <= 0) return -1;
     buf[n] = '\0';
     sscanf(buf, "%s %s", method, path);
+    /* Extract body after \r\n\r\n */
+    char *body_start = strstr(buf, "\r\n\r\n");
+    if (body_start) {
+        body_start += 4;
+        strncpy(req_body, body_start, sizeof(req_body) - 1);
+        req_body[sizeof(req_body) - 1] = '\0';
+    } else {
+        req_body[0] = '\0';
+    }
     return 0;
 }
 
@@ -471,13 +482,14 @@ static const char *html =
 "body{font-family:system-ui;background:#0f0f1a;color:#c8d6e5;display:flex;flex-direction:column;align-items:center;padding:16px}"
 "h1{font-size:.9rem;margin-bottom:8px}"
 "#g{display:grid;grid-template-columns:repeat(9,38px);grid-template-rows:repeat(9,38px);gap:1px;background:#1a1a33;border:2px solid #2a2a44;border-radius:3px}"
-".c{width:38px;height:38px;background:#141428;display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative}"
-".c:hover{background:#1e1e3e}"
+".c{width:38px;height:38px;background:#141428;display:flex;align-items:center;justify-content:center;position:relative}"
+".c.legal{cursor:pointer}.c.legal:hover{background:#1e1e3e}"
 ".c.illegal{cursor:default}"
 ".s{width:28px;height:28px;border-radius:50%;position:absolute}"
 ".b{background:radial-gradient(circle at 36% 36%,#555,#111);box-shadow:0 1px 3px rgba(0,0,0,.5)}"
 ".w{background:radial-gradient(circle at 36% 36%,#fff,#bbb);box-shadow:0 1px 3px rgba(0,0,0,.3)}"
-".hl{width:28px;height:28px;border-radius:50%;background:#5a4a1a;position:absolute;opacity:.5}"
+".hl{width:10px;height:10px;border-radius:50%;background:#5a5a2a;position:absolute;opacity:.7}"
+".st{width:6px;height:6px;border-radius:50%;background:#333;position:absolute}"
 "#t{margin:8px 0;font-size:.8rem;color:#fc3;min-height:20px}"
 "button{background:#1e1e3a;color:#c8d6e5;border:1px solid #334;padding:4px 14px;cursor:pointer;border-radius:3px;font:inherit;font-size:.75rem;margin-top:4px}"
 "button:hover{background:#2a2a55}"
@@ -487,20 +499,21 @@ static const char *html =
 "<div id=g></div>"
 "<button onclick=\"fetch('/reset',{method:'POST'}).then(()=>location.reload())\">New Game</button>"
 "<script>"
-"let S=9,b=Array(S*S).fill(0),t=1,go=false;"
+"let S=9,b=Array(S*S).fill(0),t=1,go=false,legal=new Set(),star=new Set([18,20,22,36,38,40,42,58,60,62]);"
 "function r(){"
 " let h='';"
 " for(let y=0;y<S;y++)for(let x=0;x<S;x++){"
 "  let i=y*S+x,v=b[i];"
-"  let inner=v?('<div class=\"s '+(v==1?'b':'w')+'\"></div>'):'';"
-"  h+='<div class=c data-i='+i+' id=\"c'+i+'\">'+inner+'</div>';"
+"  let cls='c'+(v==0?(legal.has(i)?' legal':' illegal'):'');"
+"  let inner=v?('<div class=\"s '+(v==1?'b':'w')+'\"></div>'):(star.has(i)?'<div class=st></div>':'');"
+"  h+='<div class=\"'+cls+'\" data-i='+i+'>'+inner+'</div>';"
 " }"
 " document.getElementById('g').innerHTML=h;"
 "}"
 "document.getElementById('g').addEventListener('mouseover',function(e){"
 " let el=e.target;while(el&&!el.dataset.i)el=el.parentElement;"
 " if(!el||go||t!=1)return;let i=parseInt(el.dataset.i);"
-" if(b[i]!=0)return;"
+" if(b[i]!=0||!legal.has(i))return;"
 " if(!el.querySelector('.hl')){let d=document.createElement('div');d.className='hl';el.appendChild(d);}"
 "});"
 "document.getElementById('g').addEventListener('mouseout',function(e){"
@@ -510,18 +523,20 @@ static const char *html =
 "document.getElementById('g').addEventListener('click',function(e){"
 " let el=e.target;while(el&&!el.dataset.i)el=el.parentElement;"
 " if(!el||go||t!=1)return;let i=parseInt(el.dataset.i);"
-" if(b[i]!=0)return;"
+" if(b[i]!=0||!legal.has(i))return;"
 " b[i]=1;r();t=-1;"
 " document.getElementById('t').textContent='Engine thinking...';"
 " fetch('/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({x:i%S,y:Math.floor(i/S)})})"
 "  .then(r=>r.json()).then(d=>{"
+"   if(d.error){t=1;document.getElementById('t').textContent=d.error;return}"
+"   if(d.legal){legal=new Set(d.legal)}"
 "   if(d.board){b=d.board;r()}"
 "   if(d.game_over){go=true;document.getElementById('t').textContent=d.result}"
 "   else if(d.move==-1){go=true;document.getElementById('t').textContent='Engine passes'}"
 "   else{t=1;document.getElementById('t').textContent='Your turn'}"
 "  }).catch(e=>{t=1;document.getElementById('t').textContent='Error'})"
 "});"
-"r();"
+"fetch('/legal').then(r=>r.json()).then(d=>{if(d.legal)legal=new Set(d.legal);r()});"
 "</script></body></html>";
 
 /* ── JSON helpers ────────────────────────────────────────────────────── */
@@ -585,8 +600,7 @@ int main(int argc, char **argv) {
             go_init(&state);
             send_response(fd, http_json, "{\"ok\":1}", 8);
         } else if (strcmp(path, "/move") == 0 && strcmp(method, "POST") == 0) {
-            char body[4096] = {0};
-            read(fd, body, sizeof(body) - 1);
+            /* body already captured by read_request */
             char resp[4096];
             int off = 0;
 
@@ -596,8 +610,8 @@ int main(int argc, char **argv) {
             } else if (state.to_play != 1) {
                 off = snprintf(resp, sizeof(resp), "{\"error\":\"not your turn\"}");
             } else {
-                int x = json_int(body, "x");
-                int y = json_int(body, "y");
+                int x = json_int(req_body, "x");
+                int y = json_int(req_body, "y");
                 int move = (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE) ? xy(x, y) : -1;
                 if (move < 0 || !is_legal(&state, move)) {
                     off = snprintf(resp, sizeof(resp), "{\"error\":\"illegal\",");
