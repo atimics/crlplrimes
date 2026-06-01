@@ -520,16 +520,17 @@ static const char *html =
 " let el=e.target;while(el&&!el.dataset.i)el=el.parentElement;"
 " if(!el||go||t!=1)return;let i=parseInt(el.dataset.i);"
 " if(b[i]!=0||!legal.has(i))return;"
-" b[i]=1;r();t=-1;"
+" t=-1;"
 " document.getElementById('t').textContent='thinking...';"
 " fetch('/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({x:i%S,y:Math.floor(i/S)})})"
 "  .then(r=>r.json()).then(d=>{"
-"   if(d.error){t=1;document.getElementById('t').textContent=d.error;return}"
 "   if(d.legal){legal=new Set(d.legal)}"
-"   if(d.board){b=d.board;r()}"
-"   if(d.game_over){go=true;document.getElementById('t').textContent=d.result}"
-"   else if(d.move==-1){go=true;document.getElementById('t').textContent='Engine passes'}"
-"   else{t=1;document.getElementById('t').textContent='Your turn'}"
+"   if(d.board){b=d.board}"
+"   r();"
+"   if(d.error){t=1;document.getElementById('t').textContent=d.error;return}"
+"   if(d.game_over){go=true;document.getElementById('t').textContent=d.result;return}"
+"   if(d.move==-1){go=true;document.getElementById('t').textContent='Engine passes';return}"
+"   t=1;document.getElementById('t').textContent='Your turn'"
 "  }).catch(e=>{t=1;document.getElementById('t').textContent='Error'})"
 "});"
 "fetch('/legal').then(r=>r.json()).then(d=>{if(d.legal)legal=new Set(d.legal);r()});"
@@ -610,7 +611,9 @@ int main(int argc, char **argv) {
                 int y = json_int(req_body, "y");
                 int move = (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE) ? xy(x, y) : -1;
                 if (move < 0 || !is_legal(&state, move)) {
-                    off = snprintf(resp, sizeof(resp), "{\"error\":\"illegal\",");
+                    off = snprintf(resp, sizeof(resp), "{\"error\":\"illegal\",\"board\":[");
+                    for (int _i = 0; _i < CELLS; _i++) off += snprintf(resp + off, sizeof(resp) - off, "%s%d", _i ? "," : "", state.board[_i]);
+                    off += snprintf(resp + off, sizeof(resp) - off, "],\"last\":%d,", state.last_move);
                     off += build_legal_json(&state, resp + off, sizeof(resp) - off);
                     off += snprintf(resp + off, sizeof(resp) - off, "}");
                 } else {
