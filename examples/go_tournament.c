@@ -257,6 +257,7 @@ static int go_mcts_move_with_probs(NeuralNet *net, GoState *root_st, float *out_
             int top_k = ((phase<0.25f)?12:(phase>0.75f)?4:8) + (int)(ent*16.0f); if (top_k<MCTS_MIN_EXPAND) top_k=MCTS_MIN_EXPAND; if (top_k>30) top_k=30;
             typedef struct { int move; float prior; int tactical; } cand_t;
             cand_t cands[MAX_MOVES]; int nc=0; float maxp=0.001f;
+            /* Reuse legality from go_evaluate if available, otherwise compute */
             for (int m=0;m<MAX_MOVES;m++) { if(!is_legal(&s,m))continue; int tac=is_tactical(&s,m); float pr=policy[m]; if(tac&&pr<0.01f)pr=0.01f; if(in_local_mask(&s,m))pr*=1.3f; if(pr>maxp)maxp=pr; cands[nc].move=m;cands[nc].prior=pr;cands[nc].tactical=tac;nc++; }
             for (int i=0;i<nc;i++) for (int j=i+1;j<nc;j++) if(cands[j].prior>cands[i].prior){cand_t t=cands[i];cands[i]=cands[j];cands[j]=t;}
             bool em_[MAX_MOVES]={false}; node->nkids=0; float pt=maxp*0.15f;
@@ -742,7 +743,7 @@ static const char *status_html =
 " if(d.move>=d.total)h+='<br>Final: '+(d.score>0?d.black:d.score<0?d.white:'draw')+' wins by '+Math.abs(d.score);"
 " document.getElementById('rb').innerHTML=h;"
 "}"
-"setInterval(replayPoll,200);replayPoll();"
+"setInterval(replayPoll,100);replayPoll();"
 "setInterval(poll,1000);poll();"
 "</script></body></html>";
 static void *http_loop(void *arg) {

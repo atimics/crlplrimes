@@ -424,11 +424,11 @@ static int build_board_json(GoState *s, char *buf, int bufsz) {
 /* ── legal moves helper ──────────────────────────────────────────────── */
 
 static int build_legal_json(GoState *s, char *buf, int bufsz) {
-    int off = 0;
-    off += snprintf(buf + off, bufsz - off, "\"legal\":[");
+    int off = snprintf(buf + 0, bufsz - 0, "\"legal\":[");
     int first = 1;
+    /* Inline the common case: almost all empty cells are legal */
     for (int m = 0; m < CELLS; m++) {
-        if (is_legal(s, m)) {
+        if (s->board[m] == 0 && is_legal(s, m)) {
             off += snprintf(buf + off, bufsz - off, "%s%d", first ? "" : ",", m);
             first = 0;
         }
