@@ -32,8 +32,10 @@
 #define CONV_FEATURES  (CELLS * CONV_FILTERS)
 #define BOARD_FEATURES CONV_FEATURES
 #define SLOT_MOVE_ID   (BOARD_FEATURES)
-#define SLOT_REWARD    (BOARD_FEATURES + 1)
-#define FEATURES       (BOARD_FEATURES + 2)
+/* Reward / training target is stored OUTSIDE the input vector (GameSample.reward)
+ * to prevent label leakage: a slot containing the answer in features[] would let
+ * the network minimize loss by copying its input. */
+#define FEATURES       (BOARD_FEATURES + 1)
 #define HIDDEN0 128
 #define HIDDEN1 64
 
@@ -425,7 +427,7 @@ static int augment_move(int move, int t) {
 
 /* ── Training sample ─────────────────────────────────────────────────── */
 
-typedef struct { nn_real features[FEATURES]; int move, to_play; float visit_prob; float mcts_entropy; } GameSample;
+typedef struct { nn_real features[FEATURES]; int move, to_play; float visit_prob; float mcts_entropy; float reward; } GameSample;
 
 static float go_score_global(GameSample *samples, int n);
 
@@ -451,7 +453,7 @@ static int play_game(NeuralNet *black_net, NeuralNet *white_net, GameSample *sam
     float winner = (score > 0) ? 1.0f : ((score < 0) ? -1.0f : 0.0f);
     for (int i = 0; i < n; i++) {
         float r = (samples[i].to_play == winner) ? 1.0f : (winner == 0) ? 0.5f : 0.0f;
-        samples[i].features[SLOT_REWARD] = r;
+        samples[i].reward = r;
     }
     return n;
 }
@@ -701,7 +703,7 @@ static void train_on_replay(Player *p) {
 
     for (int i = 0; i < batch; i++) {
         int ri = rand() % p->replay_count;
-        float r = p->replay[ri].features[SLOT_REWARD];
+        float r = p->replay[ri].reward;
         float visit_p = p->replay[ri].visit_prob;
         float ent = p->replay[ri].mcts_entropy;
 
@@ -717,7 +719,8 @@ static void train_on_replay(Player *p) {
             augment_features(p->replay[ri].features, aug_buf, t);
             int orig_move = (int)(p->replay[ri].features[SLOT_MOVE_ID] * MAX_MOVES + 0.5f);
             aug_buf[SLOT_MOVE_ID] = (nn_real)augment_move(orig_move, t) / MAX_MOVES;
-            aug_buf[SLOT_REWARD] = r;
+            /* DO NOT write the reward into aug_buf — that was the old leakage path.
+             * The reward is the target only; never the input. */
 
             /* MCTS policy distillation: blend win reward with visit probability */
             nn_real tgt = 0.7f * r + 0.3f * visit_p;
@@ -1206,7 +1209,7 @@ fprintf(stderr, "[tournament] %d players, %d games/pair, %d threads\n", player_c
                     winner->replay[winner->replay_count].visit_prob = job_samples[j][i].visit_prob;
                     winner->replay[winner->replay_count].mcts_entropy = job_samples[j][i].mcts_entropy;
                     float r = (job_samples[j][i].to_play == (score > 0 ? 1.0f : -1.0f)) ? 1.0f : 0.0f;
-                    winner->replay[winner->replay_count].features[SLOT_REWARD] = r;
+                    winner->replay[winner->replay_count].reward = r;
                     winner->replay_count++;
                 }
             }
@@ -1237,12 +1240,14 @@ fprintf(stderr, "[tournament] %d players, %d games/pair, %d threads\n", player_c
     return 0;
 }
 
-/* Helper for score from samples */
+/* Helper for score from samples — uses the per-sample reward field (NOT the
+ * input vector) and treats r == 0.5 explicitly as a draw so a drawn game is
+ * no longer misclassified as a decisive ±1 win/loss. */
 static float go_score_global(GameSample *samples, int n) {
     if (n == 0) return 0.0f;
-    float r = samples[n-1].features[SLOT_REWARD];
+    float r = samples[n-1].reward;
     int last_player = samples[n-1].to_play;
+    if (fabsf(r - 0.5f) < 1e-3f) return 0.0f;          /* draw */
     if (r > 0.5f) return last_player == 1 ? 1.0f : -1.0f;
-    if (r < 0.5f && r > 0.0f) return 0.0f;
     return last_player == 1 ? -1.0f : 1.0f;
 }

@@ -3,9 +3,13 @@
  *
  * Speaks GTPv2 on stdin/stdout. Accumulates self-play samples from
  * every CGOS game. Trains between games. Network improves over time.
- * 
+ *
  * Usage: ./go_gtp [--load checkpoint.nnckpt] [--save checkpoint.nnckpt]
  */
+
+/* pthread_rwlock_* and strcasecmp are XSI / BSD extensions; the project builds
+ * with -std=c11 strict, so enable the GNU feature set explicitly here. */
+#define _GNU_SOURCE
 
 #include "nn.h"
 #include <stdio.h>
@@ -22,11 +26,13 @@
 #define BOARD_SIZE 9
 #define CELLS (BOARD_SIZE * BOARD_SIZE)
 #define MAX_MOVES (CELLS + 1)
-/* Board encoding: CELLS * 3 one-hot planes + 2 dedicated scratch slots */
+/* Board encoding: CELLS * 3 one-hot planes + 1 scratch slot for per-move query id.
+ * The reward / training target is tracked separately (ReplayEntry.reward); it is
+ * never stored in the input vector, so the network cannot learn the trivial
+ * identity-from-input shortcut. */
 #define BOARD_FEATURES (CELLS * 3)
 #define SLOT_MOVE_ID    (BOARD_FEATURES)
-#define SLOT_REWARD     (BOARD_FEATURES + 1)
-#define FEATURES        (BOARD_FEATURES + 2)
+#define FEATURES        (BOARD_FEATURES + 1)
 #define HIDDEN0 128
 #define HIDDEN1 64
 #define MAX_GAME_MOVES 200
@@ -280,14 +286,17 @@ static float go_score(GoState *s) {
 /* ── features ─────────────────────────────────────────────────────────── */
 
 static void go_features(GoState *s, nn_real row[FEATURES]) {
-    memset(row, 0, BOARD_FEATURES * sizeof(nn_real));
+    /* Zero ALL feature bytes so SLOT_MOVE_ID is initialized — callers that
+     * don't set it (e.g., the value-head forward) would otherwise read stack
+     * garbage from that slot. */
+    memset(row, 0, FEATURES * sizeof(nn_real));
     for (int i = 0; i < CELLS; i++) {
         int off = i * 3;
         if (s->board[i] == 1) row[off] = 1.0f;
         else if (s->board[i] == -1) row[off + 1] = 1.0f;
         else row[off + 2] = 1.0f;
     }
-    /* SLOT_MOVE_ID and SLOT_REWARD left zero */
+    /* SLOT_MOVE_ID left zero — filled by caller for per-move policy queries. */
 }
 
 /* ── neural evaluation ────────────────────────────────────────────────── */

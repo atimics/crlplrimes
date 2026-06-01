@@ -22,11 +22,13 @@
 #define BOARD_SIZE 9
 #define CELLS (BOARD_SIZE * BOARD_SIZE)
 #define MAX_MOVES (CELLS + 1)
-/* Board encoding: CELLS * 3 one-hot planes + 2 dedicated scratch slots */
+/* Board encoding: CELLS * 3 one-hot planes + 1 scratch slot for per-move query id.
+ * The reward / training target is NEVER stored in the input vector — it is tracked
+ * separately (GoSample.reward) so the network cannot trivially copy the answer
+ * from its input. */
 #define BOARD_FEATURES (CELLS * 3)
 #define SLOT_MOVE_ID    (BOARD_FEATURES)
-#define SLOT_REWARD     (BOARD_FEATURES + 1)
-#define FEATURES        (BOARD_FEATURES + 2)
+#define FEATURES        (BOARD_FEATURES + 1)
 #define HIDDEN0 128
 #define HIDDEN1 64
 #define GAMES 200
@@ -310,14 +312,16 @@ static float go_stone_ratio(GoState *s) {
 /* ── features ─────────────────────────────────────────────────────────── */
 
 static void go_features(GoState *s, nn_real row[FEATURES]) {
-    memset(row, 0, BOARD_FEATURES * sizeof(nn_real));
+    /* Zero ALL feature bytes (including SLOT_MOVE_ID), not just the board planes —
+     * otherwise the scratch slot reads stack garbage in callers that don't set it. */
+    memset(row, 0, FEATURES * sizeof(nn_real));
     for (int i = 0; i < CELLS; i++) {
         int off = i * 3;
         if (s->board[i] == 1)       row[off] = 1.0f;
         else if (s->board[i] == -1) row[off + 1] = 1.0f;
         else                         row[off + 2] = 1.0f;
     }
-    /* SLOT_MOVE_ID and SLOT_REWARD left zero — filled by caller */
+    /* SLOT_MOVE_ID left zero — filled by caller for per-move policy queries. */
 }
 
 /* ── neural evaluation ────────────────────────────────────────────────── */
@@ -647,6 +651,7 @@ static int go_greedy_neural(NeuralNet *net, GoState *s) {
 typedef struct {
     nn_real features[FEATURES];
     int move, to_play;
+    float reward;  /* training target — stored OUTSIDE the input vector */
 } GoSample;
 
 static int go_selfplay(NeuralNet *net, GoSample *samples, int max, int use_mcts) {
@@ -668,7 +673,7 @@ static int go_selfplay(NeuralNet *net, GoSample *samples, int max, int use_mcts)
     float winner = (score > 0) ? 1.0f : ((score < 0) ? -1.0f : 0.0f);
     for (int i = 0; i < n; i++) {
         float r = (samples[i].to_play == winner) ? 1.0f : (winner == 0) ? 0.5f : 0.0f;
-        samples[i].features[SLOT_REWARD] = r;
+        samples[i].reward = r;
     }
     return n;
 }
@@ -774,7 +779,7 @@ int main(int argc, char **argv) {
         for (int e = 0; e < 3; e++) {
             float loss = 0;
             for (int i = 0; i < total; i++) {
-                nn_real tgt = samples[i].features[SLOT_REWARD];
+                nn_real tgt = samples[i].reward;
                 nn_real lv = nn_train_sample(net, samples[i].features, &tgt, lr);
                 loss += (float)lv;
             }
