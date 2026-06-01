@@ -901,8 +901,20 @@ int main(int argc, char **argv) {
     for (int i = 0; i < num_players; i++) {
         Player *p = &players[player_count++];
         snprintf(p->name, NAME_LEN, "Alpha%d", i+1);
-        p->net = create_net((unsigned)(time(NULL) + i * 1000));
-        p->target_net = create_net((unsigned)(time(NULL) + i * 1000 + 500));
+        /* Try loading existing checkpoint */
+        char ckpt_path[64];
+        snprintf(ckpt_path, sizeof(ckpt_path), "build/float/tournament_%s.nnckpt", p->name);
+        NNCheckpointMeta meta;
+        NeuralNet *loaded = nn_load_checkpoint(ckpt_path, &meta);
+        if (loaded && nn_input_size(loaded) == FEATURES && nn_output_size(loaded) == 1) {
+            p->net = loaded;
+            fprintf(stderr, "[%s] loaded %s\n", p->name, ckpt_path);
+        } else {
+            p->net = create_net((unsigned)(time(NULL) + i * 1000));
+            if (loaded) nn_free(loaded);
+            fprintf(stderr, "[%s] fresh network\n", p->name);
+        }
+        p->target_net = nn_clone(p->net);
         p->replay = calloc(REPLAY_CAPACITY, sizeof(GameSample));
         p->elo = 1500.0;
     }
