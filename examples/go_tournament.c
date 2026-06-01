@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <pthread.h>
 
 #define BOARD_SIZE 9
@@ -884,6 +885,17 @@ static void *http_loop(void *arg) {
     return NULL;
 }
 
+static void handle_signal(int sig) {
+    fprintf(stderr, "\n[tournament] signal %d, saving...\n", sig);
+    for (int i = 0; i < player_count; i++) {
+        char path[64];
+        snprintf(path, sizeof(path), "build/float/tournament_%s.nnckpt", players[i].name);
+        NNCheckpointMeta meta; nn_checkpoint_meta_init(&meta, 1);
+        nn_save_checkpoint(players[i].net, path, &meta);
+    }
+    running = false;
+}
+
 /* ── main ────────────────────────────────────────────────────────────── */
 
 int main(int argc, char **argv) {
@@ -949,7 +961,7 @@ int main(int argc, char **argv) {
     pthread_create(&http_thread, NULL, http_loop, NULL);
 
     /* Tournament loop */
-    fprintf(stderr, "[tournament] %d players, %d games/pair, %d threads\n", player_count, games_per_pair, num_threads);
+fprintf(stderr, "[tournament] %d players, %d games/pair, %d threads\n", player_count, games_per_pair, num_threads);
 
     while (running) {
         /* Collect all game jobs for this round */
