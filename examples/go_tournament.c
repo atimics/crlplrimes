@@ -251,7 +251,7 @@ static void go_features(GoState *s, nn_real row[FEATURES]) {
 }
 
 static void go_evaluate(NeuralNet *net, GoState *s, float policy[MAX_MOVES], float *value) {
-    __thread static nn_real *feats_buf = NULL;
+    static _Thread_local nn_real *feats_buf = NULL;
     if (!feats_buf) feats_buf = calloc(FEATURES, sizeof(nn_real));
     if (!feats_buf) { *value = 0.0f; return; }
     go_features(s, feats_buf); float total = 0.0f;
@@ -711,7 +711,7 @@ static void train_on_replay(Player *p) {
 
         /* 8x data augmentation */
         for (int t = 0; t < 8; t++) {
-            __thread static nn_real *aug_buf = NULL;
+            static _Thread_local nn_real *aug_buf = NULL;
             if (!aug_buf) aug_buf = calloc(FEATURES, sizeof(nn_real));
             if (!aug_buf) continue;
             augment_features(p->replay[ri].features, aug_buf, t);

@@ -1724,5 +1724,4 @@ watch:
 
 tournament: build/float/nn.o build/float/nn_experiment.o build/float/nn_symbolic.o build/float/nn_bitgrid.o build/float/nn_tilebot.o build/float/nn_layer.o build/float/nn_program.o build/float/nn_hypothesis.o build/float/nn_protocol.o build/float/nn_json.o build/float/nn_text.o build/float/nn_dataset.o
 	$(CC) -std=c11 -O3 -Iinclude -DNN_REAL=float -DNN_REAL_IS_FLOAT=1 examples/go_tournament.c $^ -lm -o build/float/go_tournament
-	rm -f build/float/tournament_*.nnckpt build/float/tournament_elo.txt
 	while true; do ./build/float/go_tournament --agents 16 --games 1 --threads 8 --display 4; echo "[make] crashed, restarting in 1s..."; sleep 1; done
