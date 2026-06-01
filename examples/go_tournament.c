@@ -184,6 +184,7 @@ static void go_move(GoState *s, int idx) {
 }
 static inline int go_over(GoState *s) { return s->passes >= 2 || s->moves >= MAX_GAME_MOVES; }
 static float go_score(GoState *s) {
+    /* Komi: White gets 6.5 points compensation for going second */
     int black = 0, white = 0; int8_t vis[CELLS] = {0};
     for (int i = 0; i < CELLS; i++) { if (s->board[i] == 1) black++; else if (s->board[i] == -1) white++; else if (!vis[i]) {
         int q[CELLS], h = 0, t = 0, hb = 0, hw = 0, cnt = 0; q[t++] = i; vis[i] = 1;
@@ -191,7 +192,7 @@ static float go_score(GoState *s) {
             if ((d == 1 && on_left(idx)) || (d == 2 && on_right(idx))) continue; if (!in_bounds(ni)) continue;
             if (s->board[ni] == 1) hb = 1; else if (s->board[ni] == -1) hw = 1; else if (!vis[ni]) { vis[ni] = 1; q[t++] = ni; } } }
         if (hb && !hw) black += cnt; if (hw && !hb) white += cnt; } }
-    return (float)(black - white);
+    return (float)(black - white) - 6.5f;
 }
 static inline float go_stone_ratio(GoState *s) { int n = 0; for (int i = 0; i < CELLS; i++) if (s->board[i] != 0) n++; return (float)n / CELLS; }
 
@@ -239,6 +240,22 @@ static int go_mcts_move_with_probs(NeuralNet *net, GoState *root_st, float *out_
     GoNode *root = gn_alloc(-1, root_st->to_play, NULL); if (!root) return CELLS;
     /* Per-search RAVE arrays on stack for thread safety */
     float rave_w[CELLS+1] = {0}, rave_v[CELLS+1] = {0};
+    /* Dirichlet noise for root exploration (AlphaZero-style) */
+    float dirichlet_alpha = 0.03f * (float)MCTS_SIMULATIONS;
+    float noise[MAX_MOVES] = {0};
+    if (dirichlet_alpha > 0.01f) {
+        /* Generate Dirichlet noise using Gamma approximation */
+        float noise_sum = 0;
+        for (int m = 0; m < MAX_MOVES; m++) {
+            if (is_legal(root_st, m)) {
+                /* Simple exponential approximation of Gamma(alpha, 1) */
+                float u = (float)rand() / RAND_MAX;
+                noise[m] = -logf(u + 1e-12f) * dirichlet_alpha / 82.0f;
+                noise_sum += noise[m];
+            }
+        }
+        if (noise_sum > 0) for (int m = 0; m < MAX_MOVES; m++) noise[m] /= noise_sum;
+    }
     for (int sim = 0; sim < MCTS_SIMULATIONS; sim++) {
         /* Early stop: if best move overwhelming after 8 sims, skip rest */
         if (sim >= 4 && root->nkids > 0) {
@@ -285,6 +302,20 @@ static int go_mcts_move_with_probs(NeuralNet *net, GoState *root_st, float *out_
     for (int i=0;i<root->nkids;i++) probs[root->kids[i]->move]=root->kids[i]->visits;
     float total=0; for (int m=0;m<MAX_MOVES;m++) total+=probs[m]; if(total>0) for(int m=0;m<MAX_MOVES;m++)probs[m]/=total;
     if (out_probs) memcpy(out_probs, probs, MAX_MOVES * sizeof(float));
+    /* Temperature-based selection: first 10 moves use temp=1 for exploration */
+    float temp = root_st->moves < 10 ? 1.0f : 0.1f;
+    if (temp > 0.5f) {
+        /* Sample from visit distribution */
+        float r = (float)rand() / RAND_MAX;
+        float cum = 0;
+        int best = CELLS;
+        for (int m = 0; m < CELLS; m++) {
+            cum += powf(probs[m] + 1e-9f, 1.0f/temp);
+            if (r < cum / (cum + 1e-9f) && best == CELLS) best = m;
+        }
+        if (best == CELLS) { for(int m=0;m<CELLS;m++) if(probs[m]>probs[best])best=m; }
+        gn_free(root); return best;
+    }
     int best=CELLS; for(int m=0;m<CELLS;m++) if(probs[m]>probs[best])best=m;
     gn_free(root); return best;
 }
