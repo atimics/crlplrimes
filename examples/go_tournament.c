@@ -641,7 +641,7 @@ static const char *status_html =
 " if(d.move>=d.total)h+='<br>Final: '+(d.score>0?d.black:d.score<0?d.white:'draw')+' wins by '+Math.abs(d.score);"
 " document.getElementById('rb').innerHTML=h;"
 "}"
-"setInterval(replayPoll,400);replayPoll();"
+"setInterval(replayPoll,200);replayPoll();"
 "setInterval(poll,1000);poll();"
 "</script></body></html>";
 static void *http_loop(void *arg) {
