@@ -221,9 +221,7 @@ typedef struct GoNode { int move, to_play; struct GoNode *parent, *kids[MCTS_MAX
 static GoNode *gn_alloc(int move, int to_play, GoNode *parent) { GoNode *n = calloc(1, sizeof(GoNode)); if (!n) return NULL; n->move=move; n->to_play=to_play; n->parent=parent; return n; }
 static void gn_free(GoNode *n) { if (!n) return; for (int i = 0; i < n->nkids; i++) gn_free(n->kids[i]); free(n); }
 
-static float rave_w[CELLS+1], rave_v[CELLS+1];
-static void rave_reset(void) { memset(rave_w, 0, sizeof(rave_w)); memset(rave_v, 0, sizeof(rave_v)); }
-static float rave_q(int move) { return rave_v[move] < 1.0f ? 0.0f : rave_w[move] / rave_v[move]; }
+/* RAVE arrays are now per-search (stack-allocated in go_mcts_move_with_probs) */
 
 typedef struct { uint64_t hash; float policy[12]; int8_t moves[12]; int n; bool valid; } TTEntry;
 static TTEntry tt[TT_SIZE];
@@ -231,12 +229,6 @@ static TTEntry *tt_lookup(uint64_t hash) { int idx = hash % TT_SIZE; return (tt[
 static void tt_store(uint64_t hash, float policy[MAX_MOVES]) { int idx = hash % TT_SIZE; if (tt[idx].valid && tt[idx].hash == hash) return;
     tt[idx].hash=hash; tt[idx].valid=true; tt[idx].n=0; for (int m=0; m<MAX_MOVES && tt[idx].n<12; m++) if (policy[m]>0.001f) { tt[idx].moves[tt[idx].n]=(int8_t)m; tt[idx].policy[tt[idx].n]=policy[m]; tt[idx].n++; } }
 
-static int gn_select(GoNode *n) { int best = 0; float best_score = -1e30f, sqrt_n = sqrtf(n->visits + 1e-8f);
-    for (int i = 0; i < n->nkids; i++) { GoNode *c = n->kids[i]; float q = c->visits > 0 ? c->total_val/c->visits : 0.0f;
-        float r = rave_q(c->move); float beta = rave_v[c->move]/(rave_v[c->move]+c->visits+50.0f);
-        float u = MCTS_C_PUCT * n->prior[i] * sqrt_n / (1.0f + c->visits);
-        if ((1.0f-beta)*q + beta*r + u > best_score) { best_score = (1.0f-beta)*q + beta*r + u; best = i; } }
-    return best; }
 
 static inline uint64_t go_hash(GoState *s) { return s->zhash; }
 
@@ -244,7 +236,8 @@ static int go_mcts_move_with_probs(NeuralNet *net, GoState *root_st, float *out_
     if (out_probs) memset(out_probs, 0, MAX_MOVES * sizeof(float));
     float probs[MAX_MOVES] = {0};
     GoNode *root = gn_alloc(-1, root_st->to_play, NULL); if (!root) return CELLS;
-    rave_reset();
+    /* Per-search RAVE arrays on stack for thread safety */
+    float rave_w[CELLS+1] = {0}, rave_v[CELLS+1] = {0};
     for (int sim = 0; sim < MCTS_SIMULATIONS; sim++) {
         /* Early stop: if best move overwhelming after 8 sims, skip rest */
         if (sim >= 8 && root->nkids > 0) {
@@ -256,7 +249,15 @@ static int go_mcts_move_with_probs(NeuralNet *net, GoState *root_st, float *out_
             if (best_v > 0 && second_v / (best_v + 0.001f) < 0.5f) break;
         }
         GoState s = *root_st; GoNode *node = root;
-        while (node->expanded && node->nkids > 0 && !go_over(&s)) { node = node->kids[gn_select(node)]; go_move(&s, node->move); }
+        while (node->expanded && node->nkids > 0 && !go_over(&s)) { {
+                GoNode *n = node;
+                int best = 0; float best_score = -1e30f, sqrt_n = sqrtf(n->visits + 1e-8f);
+                for (int i = 0; i < n->nkids; i++) { GoNode *c = n->kids[i]; float q = c->visits > 0 ? c->total_val/c->visits : 0.0f;
+                    float r = (rave_v[c->move] < 1.0f ? 0.0f : rave_w[c->move] / rave_v[c->move]);
+                    float beta = rave_v[c->move]/(rave_v[c->move]+c->visits+50.0f);
+                    float u = MCTS_C_PUCT * n->prior[i] * sqrt_n / (1.0f + c->visits);
+                    if ((1.0f-beta)*q + beta*r + u > best_score) { best_score = (1.0f-beta)*q + beta*r + u; best = i; } }
+                node = node->kids[best]; } go_move(&s, node->move); }
         float v;
         if (go_over(&s)) { float sc = go_score(&s); v = (sc>0)?1.0f:(sc<0)?-1.0f:0.0f; v *= (float)(-node->to_play); }
         else {
