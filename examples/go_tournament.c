@@ -295,6 +295,30 @@ static int play_game(NeuralNet *black_net, NeuralNet *white_net, GameSample *sam
     return n;
 }
 
+
+#define NAME_LEN 32
+
+/* ── Game history ────────────────────────────────────────────────────── */
+
+#define HISTORY_SIZE 200
+typedef struct {
+    char black[NAME_LEN], white[NAME_LEN];
+    float score;
+    int move_count;
+} GameRecord;
+
+static GameRecord history[HISTORY_SIZE];
+static int history_count = 0;
+
+static void record_game(const char *b, const char *w, float score, int moves) {
+    GameRecord *r = &history[history_count % HISTORY_SIZE];
+    snprintf(r->black, NAME_LEN, "%s", b);
+    snprintf(r->white, NAME_LEN, "%s", w);
+    r->score = score;
+    r->move_count = moves;
+    history_count++;
+}
+
 /* ── ELO ─────────────────────────────────────────────────────────────── */
 
 static void update_elo(double *elo_a, double *elo_b, int a_wins, int b_wins, int draws) {
@@ -310,8 +334,6 @@ static void update_elo(double *elo_a, double *elo_b, int a_wins, int b_wins, int
 /* ── Tournament state ────────────────────────────────────────────────── */
 
 #define MAX_PLAYERS 8
-#define NAME_LEN 32
-
 typedef struct {
     NeuralNet *net;
     char name[NAME_LEN];
@@ -374,32 +396,53 @@ static void build_status_json(char *buf, int bufsz) {
         off += snprintf(buf + off, bufsz - off, ",{\"name\":\"%s\",\"elo\":%.0f,\"w\":%d,\"l\":%d,\"d\":%d,\"games\":%d,\"baseline\":true}",
             baseline->name, baseline->elo, baseline->wins, baseline->losses, baseline->draws, baseline->games);
     }
+    off += snprintf(buf + off, bufsz - off, "],\"history\":[");
+    int h_start = history_count > HISTORY_SIZE ? history_count - HISTORY_SIZE : 0;
+    int h_end = history_count;
+    if (h_end - h_start > 50) h_start = h_end - 50;
+    for (int i = h_start; i < h_end; i++) {
+        GameRecord *r = &history[i % HISTORY_SIZE];
+        const char *result = r->score > 0 ? r->black : r->score < 0 ? r->white : "draw";
+        off += snprintf(buf + off, bufsz - off, "%s{\"b\":\"%s\",\"w\":\"%s\",\"s\":%.0f,\"m\":%d,\"r\":\"%s\"}",
+            i > h_start ? "," : "", r->black, r->white, r->score, r->move_count, result);
+    }
     off += snprintf(buf + off, bufsz - off, "]}");
 }
 
 static const char *status_html =
-"<!DOCTYPE html><html><head><meta charset=utf-8><title>Go Tournament</title>"
-"<meta http-equiv=refresh content=3><style>"
+"<!DOCTYPE html><html><head><meta charset=utf-8><title>Tournament</title><style>"
 "*{margin:0;padding:0;box-sizing:border-box}"
 "body{font-family:Menlo,monospace;background:#0f0f1a;color:#c8d6e5;padding:16px}"
-"h1{font-size:.9rem;margin-bottom:4px}.sub{color:#556;font-size:.7rem;margin-bottom:12px}"
-"table{border-collapse:collapse;font-size:.8rem}"
-"th,td{padding:4px 14px;text-align:right;border-bottom:1px solid #1a1a33}"
-"th{color:#556;font-weight:normal}td:first-child,th:first-child{text-align:left}"
+"h1{font-size:.9rem;margin-bottom:2px}.sub{color:#556;font-size:.7rem;margin-bottom:10px}"
+"#tb{font-size:.78rem;margin-bottom:16px}"
+"#tb div{display:flex;gap:14px;padding:2px 0;border-bottom:1px solid #1a1a33}"
+"#tb div span{min-width:50px;text-align:right}"
+"#tb .name{min-width:70px;text-align:left}"
 ".elo{color:#fc3}.w{color:#5a5}.l{color:#a55}.d{color:#556}"
+"#log{font-size:.7rem;max-height:300px;overflow-y:auto}"
+"#log div{padding:2px 0;border-bottom:1px solid #111}"
+"#log .win{color:#5a5}#log .lose{color:#a55}#log .draw{color:#556}"
 "</style></head><body>"
-"<h1>Go Tournament</h1><div class=sub id=info>loading...</div>"
-"<table><thead><tr><th>Player</th><th>ELO</th><th>W</th><th>L</th><th>D</th><th>Games</th></tr></thead><tbody id=tb></tbody></table>"
+"<h1>Go Tournament</h1><div class=sub id=info></div>"
+"<div id=tb></div>"
+"<div id=log></div>"
 "<script>"
-"setInterval(async()=>{"
+"let lastH=0;"
+"async function poll(){"
 " let r=await fetch('/status');let d=await r.json();"
-" document.getElementById('info').textContent=d.games+' games played';"
+" document.getElementById('info').textContent=d.games+' games';"
 " let h='';for(let p of d.players){"
 "  let wr=p.games?Math.round(p.w/p.games*100):0;"
-"  h+='<tr><td>'+(p.baseline?'* ':'')+p.name+'</td><td class=elo>'+Math.round(p.elo)+'</td><td class=w>'+p.w+'</td><td class=l>'+p.l+'</td><td class=d>'+p.d+'</td><td>'+p.games+'</td></tr>';"
+"  h+='<div><span class=name>'+(p.baseline?'* ':'')+p.name+'</span><span class=elo>'+Math.round(p.elo)+'</span><span class=w>'+p.w+'W</span><span class=l>'+p.l+'L</span><span class=d>'+p.d+'D</span><span>'+p.games+'g</span></div>';"
 " }"
 " document.getElementById('tb').innerHTML=h;"
-"},2000);"
+" if(d.history)for(let i=lastH;i<d.history.length;i++){"
+"  let g=d.history[i],cls=g.r==g.b?'win':g.r==g.w?'lose':'draw';"
+"  document.getElementById('log').innerHTML+='<div class='+cls+'>'+g.b+' vs '+g.w+' &rarr; '+g.r+' ('+g.m+' moves)</div>';"
+" }"
+" lastH=d.history?d.history.length:0;"
+"}"
+"setInterval(poll,2000);poll();"
 "</script></body></html>";
 
 static void *http_loop(void *arg) {
@@ -486,6 +529,7 @@ int main(int argc, char **argv) {
                     /* a=Black, b=White */
                     int n = play_game(players[a].net, players[b].net, samples, MAX_GAME_MOVES);
                     float score = go_score_global(samples, n);
+                    record_game(players[a].name, players[b].name, score, n);
                     if (score > 0) { players[a].wins++; players[b].losses++; }
                     else if (score < 0) { players[b].wins++; players[a].losses++; }
                     else { players[a].draws++; players[b].draws++; }
@@ -510,6 +554,7 @@ int main(int argc, char **argv) {
                     /* b=Black, a=White (swap colors) */
                     n = play_game(players[b].net, players[a].net, samples, MAX_GAME_MOVES);
                     score = go_score_global(samples, n);
+                    record_game(players[b].name, players[a].name, score, n);
                     if (score > 0) { players[b].wins++; players[a].losses++; }
                     else if (score < 0) { players[a].wins++; players[b].losses++; }
                     else { players[a].draws++; players[b].draws++; }
@@ -539,6 +584,7 @@ int main(int argc, char **argv) {
         for (int i = 0; i < player_count; i++) {
             int n = play_game(players[i].net, baseline->net, samples, MAX_GAME_MOVES);
             float score = go_score_global(samples, n);
+            record_game(players[i].name, baseline->name, score, n);
             if (score > 0) { players[i].wins++; baseline->losses++; }
             else if (score < 0) { baseline->wins++; players[i].losses++; }
             else { players[i].draws++; baseline->draws++; }
