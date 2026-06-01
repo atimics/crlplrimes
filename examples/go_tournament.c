@@ -31,7 +31,7 @@
 #define HIDDEN0 128
 #define HIDDEN1 64
 
-#define MCTS_SIMULATIONS 15
+#define MCTS_SIMULATIONS 12
 #define MCTS_C_PUCT 1.4f
 #define MCTS_MAX_KIDS 82
 #define MCTS_MIN_EXPAND 2
@@ -78,9 +78,9 @@ static void go_init(GoState *s) {
     z_init(); memset(s, 0, sizeof(*s)); s->to_play = 1; s->last_move = -1; s->zhash = zobrist_side;
 }
 static int xy(int x, int y) { return y * BOARD_SIZE + x; }
-static int in_bounds(int i) { return i >= 0 && i < CELLS; }
-static int on_left(int i)  { return i % BOARD_SIZE == 0; }
-static int on_right(int i) { return i % BOARD_SIZE == BOARD_SIZE - 1; }
+static inline int in_bounds(int i) { return i >= 0 && i < CELLS; }
+static inline int on_left(int i)  { return i % BOARD_SIZE == 0; }
+static inline int on_right(int i) { return i % BOARD_SIZE == BOARD_SIZE - 1; }
 
 static void go_hash_update(GoState *s, int idx, int from, int to) { s->zhash ^= zobrist[idx][from]; s->zhash ^= zobrist[idx][to]; }
 
@@ -181,7 +181,7 @@ static void go_move(GoState *s, int idx) {
         if (in_bounds(ni) && s->board[ni] == opp && group_dead(s, ni, opp)) { int8_t vis[CELLS] = {0}; remove_group(s, ni, vis); } }
     s->to_play = -s->to_play; s->moves++;
 }
-static int go_over(GoState *s) { return s->passes >= 2 || s->moves >= MAX_GAME_MOVES; }
+static inline int go_over(GoState *s) { return s->passes >= 2 || s->moves >= MAX_GAME_MOVES; }
 static float go_score(GoState *s) {
     int black = 0, white = 0; int8_t vis[CELLS] = {0};
     for (int i = 0; i < CELLS; i++) { if (s->board[i] == 1) black++; else if (s->board[i] == -1) white++; else if (!vis[i]) {
@@ -192,7 +192,7 @@ static float go_score(GoState *s) {
         if (hb && !hw) black += cnt; if (hw && !hb) white += cnt; } }
     return (float)(black - white);
 }
-static float go_stone_ratio(GoState *s) { int n = 0; for (int i = 0; i < CELLS; i++) if (s->board[i] != 0) n++; return (float)n / CELLS; }
+static inline float go_stone_ratio(GoState *s) { int n = 0; for (int i = 0; i < CELLS; i++) if (s->board[i] != 0) n++; return (float)n / CELLS; }
 
 static void go_features(GoState *s, nn_real row[FEATURES]) {
     memset(row, 0, BOARD_FEATURES * sizeof(nn_real));
@@ -238,7 +238,7 @@ static int gn_select(GoNode *n) { int best = 0; float best_score = -1e30f, sqrt_
         if ((1.0f-beta)*q + beta*r + u > best_score) { best_score = (1.0f-beta)*q + beta*r + u; best = i; } }
     return best; }
 
-static uint64_t go_hash(GoState *s) { return s->zhash; }
+static inline uint64_t go_hash(GoState *s) { return s->zhash; }
 
 static int go_mcts_move_with_probs(NeuralNet *net, GoState *root_st, float *out_probs) {
     if (out_probs) memset(out_probs, 0, MAX_MOVES * sizeof(float));
@@ -246,13 +246,27 @@ static int go_mcts_move_with_probs(NeuralNet *net, GoState *root_st, float *out_
     GoNode *root = gn_alloc(-1, root_st->to_play, NULL); if (!root) return CELLS;
     rave_reset();
     for (int sim = 0; sim < MCTS_SIMULATIONS; sim++) {
+        /* Early stop: if best move overwhelming after 8 sims, skip rest */
+        if (sim >= 8 && root->nkids > 0) {
+            float best_v = 0, second_v = 0;
+            for (int i = 0; i < root->nkids; i++) {
+                if (root->kids[i]->visits > best_v) { second_v = best_v; best_v = root->kids[i]->visits; }
+                else if (root->kids[i]->visits > second_v) second_v = root->kids[i]->visits;
+            }
+            if (best_v > 0 && second_v / (best_v + 0.001f) < 0.3f) break;
+        }
         GoState s = *root_st; GoNode *node = root;
         while (node->expanded && node->nkids > 0 && !go_over(&s)) { node = node->kids[gn_select(node)]; go_move(&s, node->move); }
         float v;
         if (go_over(&s)) { float sc = go_score(&s); v = (sc>0)?1.0f:(sc<0)?-1.0f:0.0f; v *= (float)(-node->to_play); }
-        else { float policy[MAX_MOVES]; uint64_t h = go_hash(&s); TTEntry *te = tt_lookup(h);
+        else {
+            /* Virtual loss: penalize this path during evaluation to encourage exploration */
+            node->visits += 3.0f; node->total_val -= 3.0f;
+            float policy[MAX_MOVES]; uint64_t h = go_hash(&s); TTEntry *te = tt_lookup(h);
             if (te) { memset(policy,0,sizeof(policy)); for (int i=0;i<te->n;i++) policy[te->moves[i]]=te->policy[i]; nn_real vs; nn_real f[FEATURES]; go_features(&s,f); nn_forward(net,f,&vs); v=(float)vs*2.0f-1.0f; }
             else { go_evaluate(net, &s, policy, &v); tt_store(h, policy); }
+            /* Remove virtual loss */
+            node->visits -= 3.0f; node->total_val += 3.0f;
             float phase = go_stone_ratio(&s), ent = policy_entropy(policy);
             int top_k = ((phase<0.25f)?12:(phase>0.75f)?4:8) + (int)(ent*16.0f); if (top_k<MCTS_MIN_EXPAND) top_k=MCTS_MIN_EXPAND; if (top_k>30) top_k=30;
             typedef struct { int move; float prior; int tactical; } cand_t;
