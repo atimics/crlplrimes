@@ -458,11 +458,27 @@ static char req_body[4096];
 
 static int read_request(int fd, char *method, char *path, int max_path __attribute__((unused))) {
     char buf[4096];
-    int n = (int)read(fd, buf, sizeof(buf) - 1);
-    if (n <= 0) return -1;
-    buf[n] = '\0';
+    int total = 0, n;
+    /* Read until we have full headers + body */
+    while (total < (int)sizeof(buf) - 1) {
+        n = (int)read(fd, buf + total, sizeof(buf) - 1 - total);
+        if (n <= 0) break;
+        total += n;
+        buf[total] = '\0';
+        /* Check if we have complete headers */
+        char *hdr_end = strstr(buf, "\r\n\r\n");
+        if (!hdr_end) continue;
+        /* Got headers. Check Content-Length to see if body is complete */
+        int content_length = 0;
+        char *cl = strstr(buf, "Content-Length:");
+        if (!cl) cl = strstr(buf, "content-length:");
+        if (cl) content_length = atoi(cl + 15);
+        int hdr_len = (int)(hdr_end - buf) + 4;
+        int body_len = total - hdr_len;
+        if (content_length == 0 || body_len >= content_length) break;
+    }
+    buf[total] = '\0';
     sscanf(buf, "%s %s", method, path);
-    /* Extract body after \r\n\r\n */
     char *body_start = strstr(buf, "\r\n\r\n");
     if (body_start) {
         body_start += 4;
@@ -479,59 +495,40 @@ static int read_request(int fd, char *method, char *path, int max_path __attribu
 static const char *html =
 "<!DOCTYPE html><html><head><meta charset=utf-8><title>Go</title><style>"
 "*{margin:0;padding:0;box-sizing:border-box}"
-"body{font-family:'Menlo','Consolas',monospace;background:#0f0f1a;color:#c8d6e5;display:flex;flex-direction:column;align-items:center;padding:16px}"
-"h1{font-size:1rem;margin-bottom:6px}"
+"body{font-family:'Menlo',monospace;background:#0f0f1a;color:#c8d6e5;display:flex;flex-direction:column;align-items:center;padding:16px}"
 "#g{display:inline-block;line-height:1.1;white-space:pre;font-size:20px;letter-spacing:2px}"
 "#g span{display:inline-block;width:17px;height:22px;text-align:center}"
-"#g span.legal{color:#446;cursor:pointer}#g span.legal:hover{color:#8a8}"
-"#g span.X{color:#ccc;font-weight:bold}"
-"#g span.O{color:#ddd;font-weight:bold}"
-".hdr{color:#556}"
-"#t{margin:6px 0;font-size:.8rem;color:#fc3;min-height:18px}"
+"#g span.e{color:#446;cursor:pointer}#g span.e:hover{color:#8a8}"
+"#g span.X{color:#ccc;font-weight:bold}#g span.O{color:#ddd;font-weight:bold}"
+".h{color:#556}"
+"#s{margin:6px 0;font-size:.8rem;color:#fc3;min-height:18px}"
 "button{background:#1e1e3a;color:#c8d6e5;border:1px solid #334;padding:4px 12px;cursor:pointer;border-radius:3px;font:inherit;font-size:.72rem;margin-top:4px}"
-"button:hover{background:#2a2a55}"
 "</style></head><body>"
-"<h1>MCTS Go 9x9</h1>"
-"<div id=t></div>"
-"<div id=g></div>"
+"<div id=s></div><div id=g></div>"
 "<button onclick=\"fetch('/reset',{method:'POST'}).then(()=>location.reload())\">New</button>"
 "<script>"
-"let S=9,b=Array(S*S).fill(0),t=1,go=false,legal=new Set();"
-"let COLS='ABCDEFGHJ'.split('');"
-"function r(){"
-" let h='<span class=hdr> </span>';"
-" for(let x=0;x<S;x++)h+='<span class=hdr>'+COLS[x]+'</span>';h+='\\n';"
-" for(let y=0;y<S;y++){"
-"  h+='<span class=hdr>'+(y+1)+(y<8?' ':'')+'</span>';"
-"  for(let x=0;x<S;x++){"
-"   let i=y*S+x,v=b[i];"
-"   if(v==1)h+='<span class=X>X</span>';"
-"   else if(v==-1)h+='<span class=O>O</span>';"
-"   else h+='<span class=\"'+(legal.has(i)?'legal':'')+'\" data-i='+i+'>'+(legal.has(i)?'.':' ')+'</span>';"
-"  }"
-"  h+='<span class=hdr>'+(y+1)+'</span>\\n';"
-" }"
-" h+='<span class=hdr> </span>';"
-" for(let x=0;x<S;x++)h+='<span class=hdr>'+COLS[x]+'</span>';"
-" document.getElementById('g').innerHTML=h;"
-"}"
-"document.getElementById('g').addEventListener('click',function(e){"
+"let S=9,C='ABCDEFGHJ'.split(''),b=Array(S*S).fill(0),busy=false;"
+"function R(){"
+" let h='<span class=h> </span>';"
+" for(let x=0;x<S;x++)h+='<span class=h>'+C[x]+'</span>';h+='\\n';"
+" for(let y=0;y<S;y++){h+='<span class=h>'+(y+1)+(y<8?' ':'')+'</span>';"
+"  for(let x=0;x<S;x++){let i=y*S+x,v=b[i];"
+"   h+=v==1?'<span class=X>X</span>':v==-1?'<span class=O>O</span>':'<span class=e data-i='+i+'>.</span>';}"
+"  h+='<span class=h>'+(y+1)+'</span>\\n';}"
+" h+='<span class=h> </span>';"
+" for(let x=0;x<S;x++)h+='<span class=h>'+C[x]+'</span>';"
+" document.getElementById('g').innerHTML=h;}"
+"document.getElementById('g').onclick=function(e){"
 " let el=e.target;while(el&&!el.dataset.i)el=el.parentElement;"
-" if(!el||go||t!=1)return;let i=parseInt(el.dataset.i);"
-" if(b[i]!=0||!legal.has(i))return;"
-" t=-1;document.getElementById('t').textContent='thinking...';"
-" fetch('/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({x:i%S,y:Math.floor(i/S)})})"
-"  .then(r=>r.json()).then(d=>{"
-"   if(d.legal)legal=new Set(d.legal);"
-"   if(d.board)b=d.board;"
-"   r();"
-"   if(d.error){t=1;return}"
-"   if(d.game_over){go=true;document.getElementById('t').textContent=d.result;return}"
-"   if(d.move==-1){go=true;document.getElementById('t').textContent='pass';return}"
-"   t=1;"
-"  }).catch(e=>{t=1})"
-"});"
-"fetch('/legal').then(r=>r.json()).then(d=>{if(d.legal)legal=new Set(d.legal);r()});"
+" if(!el||busy)return;let i=parseInt(el.dataset.i);if(b[i])return;"
+" busy=true;document.getElementById('s').textContent='thinking...';"
+" let x=i%S,y=Math.floor(i/S);"
+" fetch('/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({x:x,y:y})})"
+"  .then(r=>{if(!r.ok)throw r.status;return r.json()})"
+"  .then(d=>{b=d.board;R();busy=false;document.getElementById('s').textContent=d.game_over?d.result:''})"
+"  .catch(e=>{busy=false;document.getElementById('s').textContent=''});"
+"};"
+"R();"
 "</script></body></html>";
 
 /* ── JSON helpers ────────────────────────────────────────────────────── */
