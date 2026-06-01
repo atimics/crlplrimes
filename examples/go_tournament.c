@@ -25,7 +25,7 @@
 #define BOARD_SIZE 9
 #define CELLS (BOARD_SIZE * BOARD_SIZE)
 #define MAX_MOVES (CELLS + 1)
-#define CONV_FILTERS 32
+#define CONV_FILTERS 16
 #define CONV_KERNEL  3
 #define CONV_IN_C    3
 #define BOARD_ONEHOT   (CELLS * CONV_IN_C)
@@ -216,6 +216,7 @@ static void conv_init(unsigned seed) {
         conv_weights[i] = ((nn_real)(s & 0xFFFF) / 65535.0f * 2.0f - 1.0f) * scale;
     }
     memset(conv_biases, 0, sizeof(conv_biases));
+
     conv_initialized = 1;
 }
 
