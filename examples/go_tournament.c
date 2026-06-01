@@ -688,9 +688,10 @@ static void build_status_json(char *buf, int bufsz) {
         if (!ranked[i].is_baseline && show_count >= display_count) continue;
         show_count++;
         Player *p = ranked[i].p;
-        off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"elo\":%.0f,\"w\":%d,\"l\":%d,\"d\":%d,\"games\":%d,\"ci\":%d%s}",
+        int rank = ranked[i].is_baseline ? 99 : (show_count <= display_count ? show_count : 99);
+        off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"elo\":%.0f,\"w\":%d,\"l\":%d,\"d\":%d,\"games\":%d,\"ci\":%d,\"rank\":%d%s}",
             i ? "," : "", p->name, p->elo, p->wins, p->losses, p->draws, p->games,
-            ranked[i].is_baseline ? 6 : (int)(p - players),  /* color index */
+            ranked[i].is_baseline ? 6 : (int)(p - players), rank,
             ranked[i].is_baseline ? ",\"baseline\":true" : "");
     }
     off += snprintf(buf + off, bufsz - off, "],\"history\":[");
@@ -712,8 +713,9 @@ static void build_status_json(char *buf, int bufsz) {
     for (int p_idx = 0; p_idx < player_count + (baseline ? 1 : 0); p_idx++) {
         const char *pname = p_idx < player_count ? players[p_idx].name : baseline->name;
         int is_bl = p_idx >= player_count;
-        off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"ci\":%d,\"baseline\":%s,\"data\":[",
-            p_idx ? "," : "", pname, is_bl ? 6 : p_idx, is_bl ? "true" : "false");
+        int crank = is_bl ? 99 : (p_idx < display_count ? p_idx + 1 : 99);
+        off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"ci\":%d,\"rank\":%d,\"baseline\":%s,\"data\":[",
+            p_idx ? "," : "", pname, is_bl ? 6 : p_idx, crank, is_bl ? "true" : "false");
         for (int i = 0; i < ts_count; i++) {
             off += snprintf(buf + off, bufsz - off, "%s%.0f", i ? "," : "", ts[i].elo[p_idx]);
         }
@@ -774,14 +776,15 @@ static const char *status_html =
 " c.fillStyle='#556';c.textAlign='right';c.fillText(ylabel,W-2,top-6);c.textAlign='start';"
 " for(let si=0;si<series.length;si++){"
 "  let s=series[si],col=C[s.ci!=null?s.ci:si];"
-"  c.strokeStyle=col;c.lineWidth=s.moves?1:1.5;c.beginPath();"
+"  let alpha=s.rank>4&&!s.baseline?0.15:1.0;"
+"  c.globalAlpha=alpha;c.strokeStyle=col;c.lineWidth=s.moves?1:1.5;c.beginPath();"
 "  for(let i=0;i<s.data.length;i++){"
 "   let x=pad+(w/(labels.length-1||1))*i;"
 "   let y=top+h-(s.data[i]-yMin)/(yMax-yMin)*h;"
 "   i==0?c.moveTo(x,y):c.lineTo(x,y);"
 "  }"
-"  c.stroke();"
-"  if(!s.moves){c.fillStyle=col;c.font='9px Menlo';c.fillText(s.name,pad+w-5+3,top+h-((s.data[s.data.length-1]-yMin)/(yMax-yMin))*h+3);}"
+"  c.stroke();c.globalAlpha=1.0;"
+"  if(!s.moves){c.fillStyle=col;c.font=\'9px Menlo\';c.globalAlpha=alpha;c.fillText(s.name,pad+w-5+3,top+h-((s.data[s.data.length-1]-yMin)/(yMax-yMin))*h+3);c.globalAlpha=1.0;}"
 " }}"
 "function updateTable(players){"
 " let tb=document.getElementById('tb');"
@@ -792,7 +795,8 @@ static const char *status_html =
 " for(let i=0;i<players.length;i++){"
 "  let p=players[i],sp=rows[i].children;"
 "  sp[0].textContent='#'+(i+1);"
-"  sp[1].innerHTML=(p.baseline?'* ':'')+'<span style=color:'+(C[p.ci]||'#ccc')+'>'+p.name+'</span>';"
+"  let alpha2=p.rank>4&&!p.baseline?0.25:1.0;"
+"  sp[1].innerHTML=(p.baseline?'* ':'')+'<span style=color:'+(C[p.ci]||'#ccc')+';opacity:'+alpha2+'>'+p.name+'</span>';"
 "  sp[2].textContent=Math.round(p.elo);sp[3].textContent=p.w+'W';"
 "  sp[4].textContent=p.l+'L';sp[5].textContent=p.d+'D';sp[6].textContent=p.games+'g';"
 " }}"
