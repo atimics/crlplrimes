@@ -596,8 +596,8 @@ static NeuralNet *create_net(unsigned seed) {
     return nn_create_config(&cfg);
 }
 
-static void train_on_replay(Player *p) {
-    if (p->replay_count < 32) return;
+static void *train_on_replay(void *arg) { Player *p = (Player *)arg;
+    if (p->replay_count < 32) return NULL;
     /* Learning rate decay: starts at 0.005, decays to 0.001 over time */
     float lr = 0.005f / (1.0f + p->games * 0.0001f);
     if (lr < 0.001f) lr = 0.001f;
@@ -655,6 +655,7 @@ static void train_on_replay(Player *p) {
         p->games_since_target_update = 0;
         fprintf(stderr, "[%s] target network updated\n", p->name);
     }
+    return NULL;
 }
 
 /* ── HTTP status page ────────────────────────────────────────────────── */
@@ -1006,11 +1007,11 @@ fprintf(stderr, "[tournament] %d players, %d games/pair, %d threads\n", player_c
                 if (a >= b) continue;
                 for (int g = 0; g < games_per_pair; g++) {
                     job_samples[n_jobs] = calloc(MAX_GAME_MOVES, sizeof(GameSample));
-                    jobs[n_jobs] = (GameJob){players[a].net, players[b].net, players[a].name, players[b].name,
+                    jobs[n_jobs] = (GameJob){players[a].target_net, players[b].target_net, players[a].name, players[b].name,
                         job_samples[n_jobs], MAX_GAME_MOVES, 0, 0, 0};
                     n_jobs++;
                     job_samples[n_jobs] = calloc(MAX_GAME_MOVES, sizeof(GameSample));
-                    jobs[n_jobs] = (GameJob){players[b].net, players[a].net, players[b].name, players[a].name,
+                    jobs[n_jobs] = (GameJob){players[b].target_net, players[a].target_net, players[b].name, players[a].name,
                         job_samples[n_jobs], MAX_GAME_MOVES, 0, 0, 0};
                     n_jobs++;
                 }
@@ -1018,7 +1019,7 @@ fprintf(stderr, "[tournament] %d players, %d games/pair, %d threads\n", player_c
         }
         for (int i = 0; i < player_count; i++) {
             job_samples[n_jobs] = calloc(MAX_GAME_MOVES, sizeof(GameSample));
-            jobs[n_jobs] = (GameJob){players[i].net, baseline->net, players[i].name, baseline->name,
+            jobs[n_jobs] = (GameJob){players[i].target_net, baseline->net, players[i].name, baseline->name,
                 job_samples[n_jobs], MAX_GAME_MOVES, 0, 0, 0};
             n_jobs++;
         }
@@ -1074,11 +1075,27 @@ fprintf(stderr, "[tournament] %d players, %d games/pair, %d threads\n", player_c
         free(jobs);
         free(job_samples);
 
-        /* Train every other round */
+        /* Training: fire-and-forget, join previous cycle's threads */
         static int train_round = 0;
+        static pthread_t prev_train_threads[MAX_PLAYERS];
+        static int prev_train_count = 0;
+        static bool training_in_flight = false;
+
+        /* Join previous training threads if they were running */
+        if (training_in_flight) {
+            for (int i = 0; i < prev_train_count; i++) {
+                pthread_join(prev_train_threads[i], NULL);
+            }
+            training_in_flight = false;
+        }
+
         train_round++;
         if (train_round % 3 == 0) {
-            for (int i = 0; i < player_count; i++) train_on_replay(&players[i]);
+            for (int i = 0; i < player_count; i++) {
+                pthread_create(&prev_train_threads[i], NULL, (void*(*)(void*))train_on_replay, &players[i]);
+            }
+            prev_train_count = player_count;
+            training_in_flight = true;
         }
 
         ts_snapshot();
