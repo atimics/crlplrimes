@@ -305,16 +305,24 @@ static int go_mcts_move_with_probs(NeuralNet *net, GoState *root_st, float *out_
     /* Temperature-based selection: first 10 moves use temp=1 for exploration */
     float temp = root_st->moves < 10 ? 1.0f : 0.1f;
     if (temp > 0.5f) {
-        /* Sample from visit distribution */
-        float r = (float)rand() / RAND_MAX;
-        float cum = 0;
-        int best = CELLS;
+        /* Sample from visit distribution using temperature */
+        float weights[MAX_MOVES];
+        float total_weight = 0;
         for (int m = 0; m < CELLS; m++) {
-            cum += powf(probs[m] + 1e-9f, 1.0f/temp);
-            if (r < cum / (cum + 1e-9f) && best == CELLS) best = m;
+            weights[m] = powf(probs[m] + 1e-9f, 1.0f / temp);
+            total_weight += weights[m];
         }
-        if (best == CELLS) { for(int m=0;m<CELLS;m++) if(probs[m]>probs[best])best=m; }
-        gn_free(root); return best;
+        if (total_weight > 0) {
+            float r = (float)rand() / RAND_MAX * total_weight;
+            float cum = 0;
+            int best = CELLS;
+            for (int m = 0; m < CELLS; m++) {
+                cum += weights[m];
+                if (r < cum) { best = m; break; }
+            }
+            if (best == CELLS) { for(int m=0;m<CELLS;m++) if(probs[m]>probs[best])best=m; }
+            gn_free(root); return best;
+        }
     }
     int best=CELLS; for(int m=0;m<CELLS;m++) if(probs[m]>probs[best])best=m;
     gn_free(root); return best;
@@ -562,6 +570,7 @@ typedef struct {
     int replay_count;
     GameSample *replay;
     int games_since_target_update;
+    pthread_mutex_t target_lock;
 } Player;
 
 static Player players[MAX_PLAYERS];
@@ -681,8 +690,11 @@ static void *train_on_replay(void *arg) { Player *p = (Player *)arg;
     p->games_since_target_update++;
     if (p->games_since_target_update >= 20) {
         /* Copy weights from online net to target net */
-        nn_free(p->target_net);
+        pthread_mutex_lock(&p->target_lock);
+        NeuralNet *old_target = p->target_net;
         p->target_net = nn_clone(p->net);
+        pthread_mutex_unlock(&p->target_lock);
+        if (old_target) nn_free(old_target);
         p->games_since_target_update = 0;
         fprintf(stderr, "[%s] target network updated\n", p->name);
     }
@@ -970,6 +982,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "[%s] fresh network\n", p->name);
         }
         p->target_net = nn_clone(p->net);
+        pthread_mutex_init(&p->target_lock, NULL);
         p->replay = calloc(REPLAY_CAPACITY, sizeof(GameSample));
         p->elo = 1500.0;
     }
