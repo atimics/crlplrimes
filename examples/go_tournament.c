@@ -37,7 +37,7 @@
 #define HIDDEN0 128
 #define HIDDEN1 64
 
-#define MCTS_SIMULATIONS 6
+#define MCTS_SIMULATIONS 4
 #define MCTS_C_PUCT 1.4f
 #define MCTS_MAX_KIDS 82
 #define MCTS_MIN_EXPAND 2
@@ -251,13 +251,15 @@ static void go_features(GoState *s, nn_real row[FEATURES]) {
 }
 
 static void go_evaluate(NeuralNet *net, GoState *s, float policy[MAX_MOVES], float *value) {
-    nn_real feats[FEATURES]; go_features(s, feats); float total = 0.0f;
+    static nn_real *feats_buf = NULL;
+    if (!feats_buf) feats_buf = calloc(FEATURES, sizeof(nn_real));
+    go_features(s, feats_buf); float total = 0.0f;
     for (int m = 0; m < MAX_MOVES; m++) { if (!is_legal(s, m)) { policy[m] = 0.0f; continue; }
-        nn_real mf[FEATURES]; memcpy(mf, feats, FEATURES*sizeof(nn_real)); mf[SLOT_MOVE_ID] = (nn_real)m / MAX_MOVES;
+        nn_real mf[FEATURES]; memcpy(mf, feats_buf, FEATURES*sizeof(nn_real)); mf[SLOT_MOVE_ID] = (nn_real)m / MAX_MOVES;
         nn_real sc; nn_forward(net, mf, &sc); float sv = (float)sc; if (sv < 0.005f) sv = 0.005f;
         /* self-atari discount skipped for tournament speed */ policy[m] = sv; total += sv; }
     if (total > 0.0f) for (int m = 0; m < MAX_MOVES; m++) policy[m] /= total;
-    nn_real vs; nn_forward(net, feats, &vs); *value = (float)vs * 2.0f - 1.0f;
+    nn_real vs; nn_forward(net, feats_buf, &vs); *value = (float)vs * 2.0f - 1.0f;
 }
 static float policy_entropy(float policy[MAX_MOVES]) { float h = 0.0f; int n = 0;
     for (int m = 0; m < MAX_MOVES; m++) if (policy[m] > 0.0f) { h -= policy[m]*logf(policy[m]+1e-12f); n++; }
@@ -561,6 +563,7 @@ static void update_elo(double *elo_a, double *elo_b, int a_wins, int b_wins, int
 
 
 static int num_threads = 1;
+#define MAX_THREADS 16
 
 /* ── Parallel game execution ─────────────────────────────────────────── */
 
@@ -706,11 +709,12 @@ static void train_on_replay(Player *p) {
 
         /* 8x data augmentation */
         for (int t = 0; t < 8; t++) {
-            nn_real aug[FEATURES];
-            augment_features(p->replay[ri].features, aug, t);
+            static nn_real *aug_buf = NULL;
+            if (!aug_buf) aug_buf = calloc(FEATURES, sizeof(nn_real));
+            augment_features(p->replay[ri].features, aug_buf, t);
             int orig_move = (int)(p->replay[ri].features[SLOT_MOVE_ID] * MAX_MOVES + 0.5f);
-            aug[SLOT_MOVE_ID] = (nn_real)augment_move(orig_move, t) / MAX_MOVES;
-            aug[SLOT_REWARD] = r;
+            aug_buf[SLOT_MOVE_ID] = (nn_real)augment_move(orig_move, t) / MAX_MOVES;
+            aug_buf[SLOT_REWARD] = r;
 
             /* MCTS policy distillation: blend win reward with visit probability */
             nn_real tgt = 0.7f * r + 0.3f * visit_p;
@@ -718,11 +722,11 @@ static void train_on_replay(Player *p) {
             /* For non-terminal draws, bootstrap from target network */
             if (r > 0.3f && r < 0.7f && fabsf(visit_p) < 0.1f) {
                 nn_real vs;
-                nn_forward(value_net, aug, &vs);
+                nn_forward(value_net, aug_buf, &vs);
                 tgt = 0.4f * r + 0.3f * vs + 0.3f * visit_p;
             }
 
-            loss += (float)nn_train_sample(p->net, aug, &tgt, lr);
+            loss += (float)nn_train_sample(p->net, aug_buf, &tgt, lr);
             trained++;
         }
     }
@@ -737,8 +741,9 @@ static void train_on_replay(Player *p) {
     p->games_since_target_update++;
     if (p->games_since_target_update >= 20) {
         /* Copy weights from online net to target net */
-        nn_free(p->target_net);
+        if (p->target_net) nn_free(p->target_net);
         p->target_net = nn_clone(p->net);
+        if (!p->target_net) p->target_net = nn_clone(p->net);  /* retry once */
         p->games_since_target_update = 0;
         fprintf(stderr, "[%s] target network updated\n", p->name);
     }
@@ -1035,7 +1040,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--display") == 0 && i+1 < argc) display_count = atoi(argv[++i]);
         else if (strcmp(argv[i], "--games") == 0 && i+1 < argc) games_per_pair = atoi(argv[++i]);
         else if (strcmp(argv[i], "--baseline") == 0 && i+1 < argc) baseline_path = argv[++i];
-        else if (strcmp(argv[i], "--threads") == 0 && i+1 < argc) num_threads = atoi(argv[++i]);
+        else if (strcmp(argv[i], "--threads") == 0 && i+1 < argc) { num_threads = atoi(argv[++i]); if (num_threads > MAX_THREADS) num_threads = MAX_THREADS; if (num_threads < 1) num_threads = 1; }
         else if (strcmp(argv[i], "--port") == 0 && i+1 < argc) http_port = atoi(argv[++i]);
     }
     if (num_players > MAX_PLAYERS) num_players = MAX_PLAYERS;
