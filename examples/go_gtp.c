@@ -638,18 +638,19 @@ int main(int argc, char **argv) {
         char cmd[64], a1[64], a2[64];
         cmd[0] = a1[0] = a2[0] = '\0';
         int n = sscanf(p, "%63s %63s %63s", cmd, a1, a2);
-        if (n < 1) { gtp_err("empty command"); continue; }
+
+        if (n < 1) continue;
         if (!strcmp(cmd, "quit")) { gtp_out(""); break; }
         else if (!strcmp(cmd, "protocol_version")) gtp_out("2");
         else if (!strcmp(cmd, "name")) gtp_out("SparseMCTS-Go-Continuous");
         else if (!strcmp(cmd, "version")) gtp_out("0.2");
-        else if (!strcmp(cmd, "boardsize") && n >= 2) gtp_boardsize(atoi(a1));
+        else if (!strcmp(cmd, "boardsize")) gtp_boardsize(atoi(a1));
         else if (!strcmp(cmd, "clear_board")) gtp_clear_board();
         else if (!strcmp(cmd, "play") && n >= 3) gtp_play(a1, a2);
         else if (!strcmp(cmd, "genmove") && n >= 2) gtp_genmove(a1);
         else if (!strcmp(cmd, "known_command")) gtp_out("true");
         else if (!strcmp(cmd, "list_commands")) gtp_out("protocol_version\nname\nversion\nboardsize\nclear_board\nplay\ngenmove\nquit");
-        else if (!strcmp(cmd, "kgs-genmove_cleanup") && n >= 2) gtp_genmove(a1);
+        else if (!strcmp(cmd, "kgs-genmove_cleanup")) gtp_genmove(a1);
         else gtp_err("unknown command");
     }
     
