@@ -276,12 +276,8 @@ typedef struct { nn_real features[FEATURES]; int move, to_play; } GameSample;
 
 static float go_score_global(GameSample *samples, int n);
 
-static void live_start(const char *b, const char *w, int bci, int wci);
-static void live_move(int idx);
-
 static int play_game(NeuralNet *black_net, NeuralNet *white_net, GameSample *samples, int max_samples, const char *b_name, const char *w_name) {
     GoState s; go_init(&s); int n = 0;
-    live_start(b_name, w_name, 0, 1);  /* color indices set at call site */
     while (!go_over(&s) && n < max_samples) {
         GameSample *sp = &samples[n];
         go_features(&s, sp->features); sp->to_play = s.to_play;
@@ -289,7 +285,6 @@ static int play_game(NeuralNet *black_net, NeuralNet *white_net, GameSample *sam
         int move = go_mcts_move(net, &s);
         sp->features[SLOT_MOVE_ID] = (nn_real)move / MAX_MOVES; sp->move = move;
         go_move(&s, move);
-        live_move(move);
         n++;
     }
     float score = go_score(&s);
@@ -457,32 +452,6 @@ static void ts_record_moves(int moves) {
 
 
 
-/* ── Live game state (for replay viewing) ────────────────────────────── */
-
-static GoState live_board;
-static char live_black[NAME_LEN], live_white[NAME_LEN];
-static int live_bci = 0, live_wci = 0;
-static int live_move_n = 0;
-static int live_last_move = -1;
-static pthread_mutex_t live_lock = PTHREAD_MUTEX_INITIALIZER;
-
-static void live_start(const char *b, const char *w, int bci, int wci) {
-    pthread_mutex_lock(&live_lock);
-    go_init(&live_board);
-    snprintf(live_black, NAME_LEN, "%s", b);
-    snprintf(live_white, NAME_LEN, "%s", w);
-    live_move_n = 0; live_last_move = -1; live_bci = bci; live_wci = wci;
-    pthread_mutex_unlock(&live_lock);
-}
-
-static void live_move(int idx) {
-    pthread_mutex_lock(&live_lock);
-    go_move(&live_board, idx);
-    live_move_n++; live_last_move = idx;
-    pthread_mutex_unlock(&live_lock);
-}
-
-
 static bool running = true;
 
 static NeuralNet *create_net(unsigned seed) {
@@ -583,10 +552,9 @@ static const char *status_html =
 "#tb .name{min-width:58px;text-align:left}"
 ".elo{color:#fc3}.w{color:#5a5}.l{color:#a55}.d{color:#556}"
 "#main{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}"
-"#live{font-size:9px;line-height:1.1;white-space:pre;font-family:Menlo,monospace;margin:8px 0;min-width:120px}"
-"#replay{border:1px solid #2a2a44;border-radius:3px;padding:6px;min-width:120px}"
+"#replay{border:1px solid #2a2a44;border-radius:3px;padding:8px;min-width:130px}"
 "#replay .hdr{color:#fc3;font-size:.7rem;margin-bottom:4px}"
-"#replay .board{font-size:9px;line-height:1.1;white-space:pre;font-family:Menlo,monospace}"
+"#replay .board{font-size:11px;line-height:1.15;white-space:pre;font-family:Menlo,monospace}"
 "canvas{display:block;margin:4px 0;border:1px solid #1a1a33;border-radius:3px}"
 "#log{font-size:.68rem;max-height:120px;overflow-y:auto;margin-top:4px}"
 "#log div{padding:1px 0;border-bottom:1px solid #111}"
@@ -595,7 +563,7 @@ static const char *status_html =
 "<h1>Go Tournament</h1><div class=sub id=info></div>"
 "<div id=tb></div>"
 "<div id=main>"
-"<div><div id=live></div><div id=replay><div class=hdr>Replay</div><div class=board id=rb></div></div></div>"
+"<div id=replay><div class=hdr>Game Replay</div><div class=board id=rb></div></div>"
 "<div><canvas id=elo width=620 height=180></canvas><canvas id=mov width=620 height=80></canvas></div>"
 "</div>"
 "<div id=log></div>"
@@ -631,7 +599,8 @@ static const char *status_html =
 "  tb.appendChild(d);rows.push(d);}"
 " for(let i=0;i<players.length;i++){"
 "  let p=players[i],sp=rows[i].children;"
-"  sp[0].textContent='#'+(i+1);sp[1].textContent=(p.baseline?'* ':'')+p.name;"
+"  sp[0].textContent='#'+(i+1);"
+"  sp[1].innerHTML=(p.baseline?'* ':'')+'<span style=color:'+(C[p.ci]||'#ccc')+'>'+p.name+'</span>';"
 "  sp[2].textContent=Math.round(p.elo);sp[3].textContent=p.w+'W';"
 "  sp[4].textContent=p.l+'L';sp[5].textContent=p.d+'D';sp[6].textContent=p.games+'g';"
 " }}"
@@ -658,18 +627,6 @@ static const char *status_html =
 " }"
 " lastH=d.history?d.history.length:0;"
 "}"
-"async function livePoll(){"
-" let r=await fetch('/live');let d=await r.json();"
-" let bcol=C[d.bci]||'#ccc',wcol=C[d.wci]||'#ddd',cols='ABCDEFGHJ';"
-" let h='<span style=color:'+bcol+'>'+d.black+'</span> vs <span style=color:'+wcol+'>'+d.white+'</span>  m'+d.move_n+'<br>';"
-" h+=' ';for(let x=0;x<9;x++)h+=cols[x];h+='<br>';"
-" for(let y=0;y<9;y++){h+=(y+1)+(y<8?' ':'')+' ';"
-"  for(let x=0;x<9;x++){let i=y*9+x,v=d.board[i];"
-"   h+=v==1?'<b style=color:'+bcol+'>X</b>':v==-1?'<b style=color:'+wcol+'>O</b>':'.';}"
-"  h+=' '+(y+1)+'<br>';}"
-" h+=' ';for(let x=0;x<9;x++)h+=cols[x];"
-" document.getElementById('live').innerHTML=h;"
-"}"
 "async function replayPoll(){"
 " let r=await fetch('/replay');let d=await r.json();"
 " if(d.wait)return;"
@@ -684,7 +641,6 @@ static const char *status_html =
 " if(d.move>=d.total)h+='<br>Final: '+(d.score>0?d.black:d.score<0?d.white:'draw')+' wins by '+Math.abs(d.score);"
 " document.getElementById('rb').innerHTML=h;"
 "}"
-"setInterval(livePoll,800);livePoll();"
 "setInterval(replayPoll,400);replayPoll();"
 "setInterval(poll,1000);poll();"
 "</script></body></html>";
@@ -700,7 +656,9 @@ static void *http_loop(void *arg) {
     while (running) {
         int fd = accept(srv, NULL, NULL); if (fd < 0) continue;
         char buf[2048] = {0}; read(fd, buf, sizeof(buf)-1);
-        if (strstr(buf, "/replay")) {
+        if (strstr(buf, "/live")) {
+            send_http(fd, "application/json", "{}");
+        } else if (strstr(buf, "/replay")) {
             pthread_mutex_lock(&replay_lock);
             /* If no replay active, pick the best pending one */
             if (current_replay_pos < 0) {
@@ -734,15 +692,6 @@ static void *http_loop(void *arg) {
                 off = snprintf(json, sizeof(json), "{\"wait\":true}");
             }
             pthread_mutex_unlock(&replay_lock);
-            send_http(fd, "application/json", json);
-        } else if (strstr(buf, "/live")) {
-            char json[8192];
-            pthread_mutex_lock(&live_lock);
-            int off = snprintf(json, sizeof(json), "{\"board\":[");
-            for (int i = 0; i < CELLS; i++) off += snprintf(json + off, sizeof(json) - off, "%s%d", i ? "," : "", live_board.board[i]);
-            off += snprintf(json + off, sizeof(json) - off, "],\"to_play\":%d,\"last\":%d,\"move_n\":%d,\"black\":\"%s\",\"white\":\"%s\",\"bci\":%d,\"wci\":%d}",
-                live_board.to_play, live_last_move, live_move_n, live_black, live_white, live_bci, live_wci);
-            pthread_mutex_unlock(&live_lock);
             send_http(fd, "application/json", json);
         } else if (strstr(buf, "/status")) {
             char json[4096]; build_status_json(json, sizeof(json));
