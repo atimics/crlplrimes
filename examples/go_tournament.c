@@ -251,8 +251,9 @@ static void go_features(GoState *s, nn_real row[FEATURES]) {
 }
 
 static void go_evaluate(NeuralNet *net, GoState *s, float policy[MAX_MOVES], float *value) {
-    static nn_real *feats_buf = NULL;
+    __thread static nn_real *feats_buf = NULL;
     if (!feats_buf) feats_buf = calloc(FEATURES, sizeof(nn_real));
+    if (!feats_buf) { *value = 0.0f; return; }
     go_features(s, feats_buf); float total = 0.0f;
     for (int m = 0; m < MAX_MOVES; m++) { if (!is_legal(s, m)) { policy[m] = 0.0f; continue; }
         nn_real mf[FEATURES]; memcpy(mf, feats_buf, FEATURES*sizeof(nn_real)); mf[SLOT_MOVE_ID] = (nn_real)m / MAX_MOVES;
@@ -430,6 +431,7 @@ static float go_score_global(GameSample *samples, int n);
 
 static int play_game(NeuralNet *black_net, NeuralNet *white_net, GameSample *samples, int max_samples, const char *b_name, const char *w_name) {
     GoState s; go_init(&s); int n = 0;
+    if (!black_net || !white_net) { if (n == 0) n = -1; return n; }
     while (!go_over(&s) && n < max_samples) {
         GameSample *sp = &samples[n];
         go_features(&s, sp->features); sp->to_play = s.to_play;
@@ -709,8 +711,9 @@ static void train_on_replay(Player *p) {
 
         /* 8x data augmentation */
         for (int t = 0; t < 8; t++) {
-            static nn_real *aug_buf = NULL;
+            __thread static nn_real *aug_buf = NULL;
             if (!aug_buf) aug_buf = calloc(FEATURES, sizeof(nn_real));
+            if (!aug_buf) continue;
             augment_features(p->replay[ri].features, aug_buf, t);
             int orig_move = (int)(p->replay[ri].features[SLOT_MOVE_ID] * MAX_MOVES + 0.5f);
             aug_buf[SLOT_MOVE_ID] = (nn_real)augment_move(orig_move, t) / MAX_MOVES;
@@ -1069,6 +1072,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "[%s] fresh network\n", p->name);
         }
         p->target_net = nn_clone(p->net);
+        if (!p->target_net) { fprintf(stderr, "[%s] FATAL: target network clone failed\n", p->name); }
         p->replay = calloc(REPLAY_CAPACITY, sizeof(GameSample));
         p->elo = 1500.0;
     }
