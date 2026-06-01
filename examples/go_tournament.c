@@ -37,7 +37,7 @@
 #define MCTS_MIN_EXPAND 2
 #define TT_SIZE 8192
 #define MAX_GAME_MOVES 200
-#define REPLAY_CAPACITY 20000
+#define REPLAY_CAPACITY 2000
 
 static const int DIRS[4] = {-BOARD_SIZE, -1, 1, BOARD_SIZE};
 static uint64_t zobrist_side;
@@ -520,7 +520,7 @@ static void play_parallel(GameJob *jobs, int n_jobs) {
 
 /* ── Tournament state ────────────────────────────────────────────────── */
 
-#define MAX_PLAYERS 8
+#define MAX_PLAYERS 64
 typedef struct {
     NeuralNet *net;
     NeuralNet *target_net;   /* frozen copy for stable training targets */
@@ -533,6 +533,7 @@ typedef struct {
 } Player;
 
 static Player players[MAX_PLAYERS];
+static int display_count = 4;  /* show top N on dashboard */
 static int player_count = 0;
 static Player *baseline = NULL;
 static int games_per_pair = 1;
@@ -677,11 +678,14 @@ static void build_status_json(char *buf, int bufsz) {
     int n_ranked = 0;
     for (int i = 0; i < player_count; i++) { ranked[n_ranked].p = &players[i]; ranked[n_ranked].is_baseline = 0; n_ranked++; }
     if (baseline) { ranked[n_ranked].p = baseline; ranked[n_ranked].is_baseline = 1; n_ranked++; }
-    /* Simple sort by ELO descending */
     for (int i = 0; i < n_ranked; i++)
         for (int j = i+1; j < n_ranked; j++)
             if (ranked[j].p->elo > ranked[i].p->elo) { Ranked t = ranked[i]; ranked[i] = ranked[j]; ranked[j] = t; }
+    /* Only show top display_count + baseline on dashboard */
+    int show_count = 0;
     for (int i = 0; i < n_ranked; i++) {
+        if (!ranked[i].is_baseline && show_count >= display_count) continue;
+        show_count++;
         Player *p = ranked[i].p;
         off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"elo\":%.0f,\"w\":%d,\"l\":%d,\"d\":%d,\"games\":%d,\"ci\":%d%s}",
             i ? "," : "", p->name, p->elo, p->wins, p->losses, p->draws, p->games,
@@ -794,7 +798,7 @@ static const char *status_html =
 "function jsonEq(a,b){return JSON.stringify(a)==JSON.stringify(b)}"
 "async function poll(){"
 " let r=await fetch('/status');let d=await r.json();"
-" document.getElementById('info').textContent=d.games+' games';"
+" document.getElementById('info').textContent=d.games+' games, '+d.players.length+' shown of total';"
 " if(!jsonEq(d.players,lastData)){lastData=d.players;updateTable(d.players);}"
 " if(d.chart){"
 "  let eloSeries=d.chart.series.filter(s=>!s.moves),movSeries=d.chart.series.filter(s=>s.moves);"
@@ -888,6 +892,8 @@ int main(int argc, char **argv) {
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--players") == 0 && i+1 < argc) num_players = atoi(argv[++i]);
+        else if (strcmp(argv[i], "--agents") == 0 && i+1 < argc) num_players = atoi(argv[++i]);
+        else if (strcmp(argv[i], "--display") == 0 && i+1 < argc) display_count = atoi(argv[++i]);
         else if (strcmp(argv[i], "--games") == 0 && i+1 < argc) games_per_pair = atoi(argv[++i]);
         else if (strcmp(argv[i], "--baseline") == 0 && i+1 < argc) baseline_path = argv[++i];
         else if (strcmp(argv[i], "--threads") == 0 && i+1 < argc) num_threads = atoi(argv[++i]);
@@ -952,8 +958,36 @@ int main(int argc, char **argv) {
         GameSample **job_samples = calloc(max_jobs, sizeof(GameSample*));
         int n_jobs = 0;
 
+        /* ELO-proximity pairing: each agent plays K nearby opponents */
+        int pairs_per_agent = 3;  /* play 3 opponents per round */
+        if (pairs_per_agent > player_count - 1) pairs_per_agent = player_count - 1;
+        
         for (int a = 0; a < player_count && running; a++) {
-            for (int b = a + 1; b < player_count && running; b++) {
+            /* Find nearest ELO opponents that haven't been paired with 'a' this round */
+            int paired = 0;
+            double best_dist[3] = {1e9, 1e9, 1e9};
+            int best_opp[3] = {-1, -1, -1};
+            
+            for (int b = 0; b < player_count; b++) {
+                if (a == b) continue;
+                double dist = fabs(players[a].elo - players[b].elo);
+                /* Insert into sorted best_dist */
+                for (int k = 0; k < pairs_per_agent; k++) {
+                    if (dist < best_dist[k]) {
+                        for (int m = pairs_per_agent-1; m > k; m--) {
+                            best_dist[m] = best_dist[m-1];
+                            best_opp[m] = best_opp[m-1];
+                        }
+                        best_dist[k] = dist; best_opp[k] = b;
+                        break;
+                    }
+                }
+            }
+            
+            for (int k = 0; k < pairs_per_agent && best_opp[k] >= 0; k++) {
+                int b = best_opp[k];
+                /* Only play each pair once per round (a < b to avoid duplicates) */
+                if (a >= b) continue;
                 for (int g = 0; g < games_per_pair; g++) {
                     job_samples[n_jobs] = calloc(MAX_GAME_MOVES, sizeof(GameSample));
                     jobs[n_jobs] = (GameJob){players[a].net, players[b].net, players[a].name, players[b].name,
