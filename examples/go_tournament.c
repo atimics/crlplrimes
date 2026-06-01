@@ -270,6 +270,46 @@ static int go_mcts_move(NeuralNet *net, GoState *root_st) {
     gn_free(root); return best;
 }
 
+
+/* ── Data augmentation: D4 board symmetry (8x) ────────────────────────── */
+
+/* Map cell index under D4 transformation t (0-7):
+   0=identity, 1=rot90, 2=rot180, 3=rot270,
+   4=reflect, 5=reflect+rot90, 6=reflect+rot180, 7=reflect+rot270 */
+static int transform_cell(int i, int t) {
+    int x = i % BOARD_SIZE, y = i / BOARD_SIZE;
+    int nx, ny;
+    if (t >= 4) { x = BOARD_SIZE - 1 - x; t -= 4; }  /* reflect */
+    switch (t) {
+        case 0: nx = x;     ny = y;     break;
+        case 1: nx = y;     ny = BOARD_SIZE - 1 - x; break;
+        case 2: nx = BOARD_SIZE - 1 - x; ny = BOARD_SIZE - 1 - y; break;
+        case 3: nx = BOARD_SIZE - 1 - y; ny = x;     break;
+        default: nx = x; ny = y; break;
+    }
+    return ny * BOARD_SIZE + nx;
+}
+
+/* Transform board features under D4 symmetry t.
+   Features: 81 cells × 3 one-hot planes. Just permute the cell order. */
+static void augment_features(const nn_real *src, nn_real *dst, int t) {
+    memset(dst, 0, BOARD_FEATURES * sizeof(nn_real));
+    for (int i = 0; i < CELLS; i++) {
+        int j = transform_cell(i, t);
+        dst[j*3]   = src[i*3];
+        dst[j*3+1] = src[i*3+1];
+        dst[j*3+2] = src[i*3+2];
+    }
+}
+
+/* Transform move index under D4 symmetry.
+   Pass (CELLS) is invariant. Regular moves rotate/reflect. */
+static int augment_move(int move, int t) {
+    if (move == CELLS) return CELLS;
+    return transform_cell(move, t);
+}
+
+
 /* ── Training sample ─────────────────────────────────────────────────── */
 
 typedef struct { nn_real features[FEATURES]; int move, to_play; } GameSample;
@@ -408,11 +448,13 @@ static void update_elo(double *elo_a, double *elo_b, int a_wins, int b_wins, int
 #define MAX_PLAYERS 8
 typedef struct {
     NeuralNet *net;
+    NeuralNet *target_net;   /* frozen copy for stable training targets */
     char name[NAME_LEN];
     double elo;
     int wins, losses, draws, games;
     int replay_count;
     GameSample *replay;
+    int games_since_target_update;
 } Player;
 
 static Player players[MAX_PLAYERS];
@@ -464,14 +506,57 @@ static NeuralNet *create_net(unsigned seed) {
 static void train_on_replay(Player *p) {
     if (p->replay_count < 32) return;
     float lr = 0.005f;
-    int batch = p->replay_count < 128 ? p->replay_count : 128;
+    int batch = p->replay_count < 256 ? p->replay_count : 256;
     float loss = 0;
+    int trained = 0;
+
+    /* Use target network for stable value targets */
+    NeuralNet *value_net = p->target_net;
+
     for (int i = 0; i < batch; i++) {
+        /* Interest-weighted sampling: prefer positions with decisive rewards */
         int ri = rand() % p->replay_count;
-        nn_real tgt = p->replay[ri].features[SLOT_REWARD];
-        loss += (float)nn_train_sample(p->net, p->replay[ri].features, &tgt, lr);
+        float r = p->replay[ri].features[SLOT_REWARD];
+        float interest = 0.5f + fabsf(r - 0.5f);  /* 0.5=draw, 1.0=decisive */
+        if ((float)rand() / RAND_MAX > interest) continue;  /* skip boring positions */
+
+        /* 8x data augmentation: train on all D4 symmetries */
+        for (int t = 0; t < 8; t++) {
+            nn_real aug[FEATURES];
+            augment_features(p->replay[ri].features, aug, t);
+            /* Transform move-id slot */
+            int orig_move = (int)(p->replay[ri].features[SLOT_MOVE_ID] * MAX_MOVES + 0.5f);
+            aug[SLOT_MOVE_ID] = (nn_real)augment_move(orig_move, t) / MAX_MOVES;
+            aug[SLOT_REWARD] = r;  /* reward is invariant under symmetry */
+
+            /* Compute target using frozen target network for stability */
+            nn_real tgt = r;
+            if (r > 0.1f && r < 0.9f) {
+                /* For non-terminal positions, blend reward with target net value */
+                nn_real vs;
+                nn_forward(value_net, aug, &vs);
+                tgt = 0.5f * r + 0.5f * vs;  /* TD(0) style target */
+            }
+
+            loss += (float)nn_train_sample(p->net, aug, &tgt, lr);
+            trained++;
+        }
     }
-    if (batch > 0) fprintf(stderr, "[%s] train loss=%.4f samples=%d\n", p->name, loss/batch, batch);
+
+    if (trained > 0) {
+        fprintf(stderr, "[%s] train loss=%.4f samples=%d (augmented %d)\n",
+                p->name, loss/trained, batch, trained);
+    }
+
+    /* Update target network periodically */
+    p->games_since_target_update++;
+    if (p->games_since_target_update >= 20) {
+        /* Copy weights from online net to target net */
+        nn_free(p->target_net);
+        p->target_net = nn_clone(p->net);
+        p->games_since_target_update = 0;
+        fprintf(stderr, "[%s] target network updated\n", p->name);
+    }
 }
 
 /* ── HTTP status page ────────────────────────────────────────────────── */
@@ -727,6 +812,7 @@ int main(int argc, char **argv) {
         Player *p = &players[player_count++];
         snprintf(p->name, NAME_LEN, "Alpha%d", i+1);
         p->net = create_net((unsigned)(time(NULL) + i * 1000));
+        p->target_net = create_net((unsigned)(time(NULL) + i * 1000 + 500));
         p->replay = calloc(REPLAY_CAPACITY, sizeof(GameSample));
         p->elo = 1500.0;
     }
