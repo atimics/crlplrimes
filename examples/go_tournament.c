@@ -25,12 +25,15 @@
 #define BOARD_SIZE 9
 #define CELLS (BOARD_SIZE * BOARD_SIZE)
 #define MAX_MOVES (CELLS + 1)
-#define BOARD_ONEHOT    (CELLS * 3)
-#define BOARD_SPATIAL   (CELLS * 3)  /* own/opp/empty counts in 3x3 window */
-#define BOARD_FEATURES  (BOARD_ONEHOT + BOARD_SPATIAL)
-#define SLOT_MOVE_ID    (BOARD_FEATURES)
-#define SLOT_REWARD     (BOARD_FEATURES + 1)
-#define FEATURES        (BOARD_FEATURES + 2)
+#define CONV_FILTERS 32
+#define CONV_KERNEL  3
+#define CONV_IN_C    3
+#define BOARD_ONEHOT   (CELLS * CONV_IN_C)
+#define CONV_FEATURES  (CELLS * CONV_FILTERS)
+#define BOARD_FEATURES CONV_FEATURES
+#define SLOT_MOVE_ID   (BOARD_FEATURES)
+#define SLOT_REWARD    (BOARD_FEATURES + 1)
+#define FEATURES       (BOARD_FEATURES + 2)
 #define HIDDEN0 128
 #define HIDDEN1 64
 
@@ -198,35 +201,52 @@ static float go_score(GoState *s) {
 }
 static inline float go_stone_ratio(GoState *s) { int n = 0; for (int i = 0; i < CELLS; i++) if (s->board[i] != 0) n++; return (float)n / CELLS; }
 
+/* ── Conv2D feature extractor (32 filters, 3x3) ────────────────────── */
+
+static nn_real conv_weights[CONV_FILTERS * CONV_IN_C * CONV_KERNEL * CONV_KERNEL];
+static nn_real conv_biases[CONV_FILTERS];
+static int conv_initialized = 0;
+
+static void conv_init(unsigned seed) {
+    if (conv_initialized) return;
+    unsigned s = seed;
+    nn_real scale = (nn_real)(2.0 / sqrt((double)(CONV_IN_C * CONV_KERNEL * CONV_KERNEL)));
+    for (int i = 0; i < CONV_FILTERS * CONV_IN_C * CONV_KERNEL * CONV_KERNEL; i++) {
+        s = s * 1103515245u + 12345u;
+        conv_weights[i] = ((nn_real)(s & 0xFFFF) / 65535.0f * 2.0f - 1.0f) * scale;
+    }
+    memset(conv_biases, 0, sizeof(conv_biases));
+    conv_initialized = 1;
+}
+
+static void conv_forward(const nn_real *input, nn_real *output) {
+    int pad = CONV_KERNEL / 2;
+    for (int k = 0; k < CONV_FILTERS; k++)
+        for (int y = 0; y < BOARD_SIZE; y++)
+            for (int x = 0; x < BOARD_SIZE; x++) {
+                nn_real sum = conv_biases[k];
+                for (int c = 0; c < CONV_IN_C; c++)
+                    for (int ky = 0; ky < CONV_KERNEL; ky++)
+                        for (int kx = 0; kx < CONV_KERNEL; kx++) {
+                            int iy = y + ky - pad, ix = x + kx - pad;
+                            if (iy >= 0 && iy < BOARD_SIZE && ix >= 0 && ix < BOARD_SIZE)
+                                sum += input[(c * BOARD_SIZE + iy) * BOARD_SIZE + ix] *
+                                       conv_weights[((k * CONV_IN_C + c) * CONV_KERNEL + ky) * CONV_KERNEL + kx];
+                        }
+                output[(k * BOARD_SIZE + y) * BOARD_SIZE + x] = sum > 0 ? sum : 0;
+            }
+}
+
 static void go_features(GoState *s, nn_real row[FEATURES]) {
-    memset(row, 0, BOARD_FEATURES * sizeof(nn_real));
-    /* One-hot board encoding */
+    memset(row, 0, FEATURES * sizeof(nn_real));
+    nn_real onehot[CELLS * 3];
     for (int i = 0; i < CELLS; i++) {
         int off = i * 3;
-        if (s->board[i] == 1)      row[off]   = 1.0f;
-        else if (s->board[i] == -1) row[off+1] = 1.0f;
-        else                        row[off+2] = 1.0f;
+        if (s->board[i] == 1)      onehot[off]   = 1.0f;
+        else if (s->board[i] == -1) onehot[off+1] = 1.0f;
+        else                        onehot[off+2] = 1.0f;
     }
-    /* Spatial neighbor features: 3x3 window counts per cell */
-    for (int i = 0; i < CELLS; i++) {
-        int x = i % BOARD_SIZE, y = i / BOARD_SIZE;
-        int own = 0, opp = 0, emp = 0;
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-                if (dx == 0 && dy == 0) continue;
-                int nx = x + dx, ny = y + dy;
-                if (nx < 0 || nx >= BOARD_SIZE || ny < 0 || ny >= BOARD_SIZE) continue;
-                int ni = ny * BOARD_SIZE + nx;
-                if (s->board[ni] == s->board[i] && s->board[i] != 0) own++;
-                else if (s->board[ni] == -s->board[i] && s->board[i] != 0) opp++;
-                else if (s->board[ni] == 0) emp++;
-            }
-        }
-        int off = BOARD_ONEHOT + i * 3;
-        row[off]   = (nn_real)own / 8.0f;
-        row[off+1] = (nn_real)opp / 8.0f;
-        row[off+2] = (nn_real)emp / 8.0f;
-    }
+    conv_forward(onehot, row);
 }
 
 static void go_evaluate(NeuralNet *net, GoState *s, float policy[MAX_MOVES], float *value) {
@@ -384,19 +404,10 @@ static int transform_cell(int i, int t) {
    Features: 81 cells × 3 one-hot planes. Just permute the cell order. */
 static void augment_features(const nn_real *src, nn_real *dst, int t) {
     memset(dst, 0, BOARD_FEATURES * sizeof(nn_real));
-    /* Permute one-hot features */
     for (int i = 0; i < CELLS; i++) {
         int j = transform_cell(i, t);
-        dst[j*3]   = src[i*3];
-        dst[j*3+1] = src[i*3+1];
-        dst[j*3+2] = src[i*3+2];
-    }
-    /* Permute spatial features the same way */
-    for (int i = 0; i < CELLS; i++) {
-        int j = transform_cell(i, t);
-        dst[BOARD_ONEHOT + j*3]   = src[BOARD_ONEHOT + i*3];
-        dst[BOARD_ONEHOT + j*3+1] = src[BOARD_ONEHOT + i*3+1];
-        dst[BOARD_ONEHOT + j*3+2] = src[BOARD_ONEHOT + i*3+2];
+        for (int f = 0; f < CONV_FILTERS; f++)
+            dst[j * CONV_FILTERS + f] = src[i * CONV_FILTERS + f];
     }
 }
 
@@ -1030,6 +1041,8 @@ int main(int argc, char **argv) {
     if (num_players < 2) num_players = 2;
 
     srand((unsigned)time(NULL));
+    conv_init((unsigned)time(NULL));
+    conv_init((unsigned)time(NULL));
     load_elo();
 
     /* Create evolving players */
