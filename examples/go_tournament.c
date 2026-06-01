@@ -25,7 +25,9 @@
 #define BOARD_SIZE 9
 #define CELLS (BOARD_SIZE * BOARD_SIZE)
 #define MAX_MOVES (CELLS + 1)
-#define BOARD_FEATURES (CELLS * 3)
+#define BOARD_ONEHOT    (CELLS * 3)
+#define BOARD_SPATIAL   (CELLS * 3)  /* own/opp/empty counts in 3x3 window */
+#define BOARD_FEATURES  (BOARD_ONEHOT + BOARD_SPATIAL)
 #define SLOT_MOVE_ID    (BOARD_FEATURES)
 #define SLOT_REWARD     (BOARD_FEATURES + 1)
 #define FEATURES        (BOARD_FEATURES + 2)
@@ -198,7 +200,33 @@ static inline float go_stone_ratio(GoState *s) { int n = 0; for (int i = 0; i < 
 
 static void go_features(GoState *s, nn_real row[FEATURES]) {
     memset(row, 0, BOARD_FEATURES * sizeof(nn_real));
-    for (int i = 0; i < CELLS; i++) { int off = i * 3; if (s->board[i] == 1) row[off] = 1.0f; else if (s->board[i] == -1) row[off+1]=1.0f; else row[off+2]=1.0f; }
+    /* One-hot board encoding */
+    for (int i = 0; i < CELLS; i++) {
+        int off = i * 3;
+        if (s->board[i] == 1)      row[off]   = 1.0f;
+        else if (s->board[i] == -1) row[off+1] = 1.0f;
+        else                        row[off+2] = 1.0f;
+    }
+    /* Spatial neighbor features: 3x3 window counts per cell */
+    for (int i = 0; i < CELLS; i++) {
+        int x = i % BOARD_SIZE, y = i / BOARD_SIZE;
+        int own = 0, opp = 0, emp = 0;
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                if (dx == 0 && dy == 0) continue;
+                int nx = x + dx, ny = y + dy;
+                if (nx < 0 || nx >= BOARD_SIZE || ny < 0 || ny >= BOARD_SIZE) continue;
+                int ni = ny * BOARD_SIZE + nx;
+                if (s->board[ni] == s->board[i] && s->board[i] != 0) own++;
+                else if (s->board[ni] == -s->board[i] && s->board[i] != 0) opp++;
+                else if (s->board[ni] == 0) emp++;
+            }
+        }
+        int off = BOARD_ONEHOT + i * 3;
+        row[off]   = (nn_real)own / 8.0f;
+        row[off+1] = (nn_real)opp / 8.0f;
+        row[off+2] = (nn_real)emp / 8.0f;
+    }
 }
 
 static void go_evaluate(NeuralNet *net, GoState *s, float policy[MAX_MOVES], float *value) {
@@ -249,7 +277,7 @@ static int go_mcts_move_with_probs(NeuralNet *net, GoState *root_st, float *out_
         for (int m = 0; m < MAX_MOVES; m++) {
             if (is_legal(root_st, m)) {
                 /* Simple exponential approximation of Gamma(alpha, 1) */
-                float u = (float)rand() / RAND_MAX;
+                float u = (float)(rand() ^ (unsigned long)pthread_self()) / RAND_MAX;
                 noise[m] = -logf(u + 1e-12f) * dirichlet_alpha / 82.0f;
                 noise_sum += noise[m];
             }
@@ -356,11 +384,19 @@ static int transform_cell(int i, int t) {
    Features: 81 cells × 3 one-hot planes. Just permute the cell order. */
 static void augment_features(const nn_real *src, nn_real *dst, int t) {
     memset(dst, 0, BOARD_FEATURES * sizeof(nn_real));
+    /* Permute one-hot features */
     for (int i = 0; i < CELLS; i++) {
         int j = transform_cell(i, t);
         dst[j*3]   = src[i*3];
         dst[j*3+1] = src[i*3+1];
         dst[j*3+2] = src[i*3+2];
+    }
+    /* Permute spatial features the same way */
+    for (int i = 0; i < CELLS; i++) {
+        int j = transform_cell(i, t);
+        dst[BOARD_ONEHOT + j*3]   = src[BOARD_ONEHOT + i*3];
+        dst[BOARD_ONEHOT + j*3+1] = src[BOARD_ONEHOT + i*3+1];
+        dst[BOARD_ONEHOT + j*3+2] = src[BOARD_ONEHOT + i*3+2];
     }
 }
 
@@ -876,6 +912,12 @@ static void *http_loop(void *arg) {
     if (bind(srv, (struct sockaddr*)&addr, sizeof(addr)) < 0) { perror("[status] bind"); close(srv); return NULL; }
     listen(srv, 8);
     fprintf(stderr, "[status] listening on http://127.0.0.1:%d\n", http_port); fflush(stderr);
+
+/* ── ELO persistence ────────────────────────────────────────────────── */
+
+
+
+
     while (running) {
         int fd = accept(srv, NULL, NULL); if (fd < 0) continue;
         char buf[2048] = {0}; read(fd, buf, sizeof(buf)-1);
@@ -939,6 +981,36 @@ static void handle_signal(int sig) {
     running = false;
 }
 
+/* ── ELO persistence ────────────────────────────────────────────────── */
+
+
+
+static void save_elo(void) {
+    FILE *f = fopen("build/float/tournament_elo.txt", "w");
+    if (!f) return;
+    for (int i = 0; i < player_count; i++)
+        fprintf(f, "%s %.1f %d %d %d %d\n", players[i].name, players[i].elo,
+                players[i].wins, players[i].losses, players[i].draws, players[i].games);
+    if (baseline) fprintf(f, "%s %.1f %d %d %d %d\n", baseline->name, baseline->elo,
+                baseline->wins, baseline->losses, baseline->draws, baseline->games);
+    fclose(f);
+}
+static void load_elo(void) {
+    FILE *f = fopen("build/float/tournament_elo.txt", "r");
+    if (!f) return;
+    char name[NAME_LEN]; double elo; int w, l, d, g;
+    while (fscanf(f, "%s %lf %d %d %d %d", name, &elo, &w, &l, &d, &g) == 6) {
+        for (int i = 0; i < player_count; i++)
+            if (strcmp(players[i].name, name) == 0) {
+                players[i].elo=elo; players[i].wins=w; players[i].losses=l; players[i].draws=d; players[i].games=g;
+            }
+        if (baseline && strcmp(baseline->name, name) == 0) {
+            baseline->elo=elo; baseline->wins=w; baseline->losses=l; baseline->draws=d; baseline->games=g;
+        }
+    }
+    fclose(f);
+}
+
 /* ── main ────────────────────────────────────────────────────────────── */
 
 int main(int argc, char **argv) {
@@ -958,6 +1030,7 @@ int main(int argc, char **argv) {
     if (num_players < 2) num_players = 2;
 
     srand((unsigned)time(NULL));
+    load_elo();
 
     /* Create evolving players */
     for (int i = 0; i < num_players; i++) {
@@ -1005,6 +1078,12 @@ int main(int argc, char **argv) {
 
     /* Tournament loop */
 fprintf(stderr, "[tournament] %d players, %d games/pair, %d threads\n", player_count, games_per_pair, num_threads);
+
+
+/* ── ELO persistence ────────────────────────────────────────────────── */
+
+
+
 
     while (running) {
         /* Collect all game jobs for this round */
@@ -1120,6 +1199,7 @@ fprintf(stderr, "[tournament] %d players, %d games/pair, %d threads\n", player_c
             for (int i = 0; i < player_count; i++) train_on_replay(&players[i]);
         }
 
+        save_elo();
         ts_snapshot();
         fprintf(stderr, "[tournament] round complete, %d total games, %d threads\n", total_games, num_threads);
 

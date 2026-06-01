@@ -22,7 +22,9 @@
 #define BOARD_SIZE 9
 #define CELLS (BOARD_SIZE * BOARD_SIZE)
 #define MAX_MOVES (CELLS + 1)
-#define BOARD_FEATURES (CELLS * 3)
+#define BOARD_ONEHOT    (CELLS * 3)
+#define BOARD_SPATIAL   (CELLS * 3)  /* own/opp/empty counts in 3x3 window */
+#define BOARD_FEATURES  (BOARD_ONEHOT + BOARD_SPATIAL)
 #define SLOT_MOVE_ID    (BOARD_FEATURES)
 #define SLOT_REWARD     (BOARD_FEATURES + 1)
 #define FEATURES        (BOARD_FEATURES + 2)
