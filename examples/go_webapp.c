@@ -442,7 +442,7 @@ static int build_legal_json(GoState *s, char *buf, int bufsz) {
 
 /* ── HTTP ────────────────────────────────────────────────────────────── */
 
-static char *http_200 = "HTTP/1.1 200 OK\r\n";
+static char *http_200 = "HTTP/1.1 200 OK\r\nCache-Control: no-cache\r\n";
 static char *http_json = "Content-Type: application/json\r\n";
 static char *http_html = "Content-Type: text/html; charset=utf-8\r\n";
 
@@ -483,7 +483,7 @@ static const char *html =
 "h1{font-size:1rem;margin-bottom:6px}"
 "#g{display:inline-block;line-height:1.1;white-space:pre;font-size:20px;letter-spacing:2px}"
 "#g span{display:inline-block;width:17px;height:22px;text-align:center}"
-"#g span.e{cursor:pointer;color:#446}#g span.e:hover{color:#8a8}"
+"#g span.legal{color:#446;cursor:pointer}#g span.legal:hover{color:#8a8}"
 "#g span.X{color:#ccc;font-weight:bold}"
 "#g span.O{color:#ddd;font-weight:bold}"
 ".hdr{color:#556}"
@@ -492,11 +492,11 @@ static const char *html =
 "button:hover{background:#2a2a55}"
 "</style></head><body>"
 "<h1>MCTS Go 9x9</h1>"
-"<div id=t>Your turn</div>"
+"<div id=t></div>"
 "<div id=g></div>"
 "<button onclick=\"fetch('/reset',{method:'POST'}).then(()=>location.reload())\">New</button>"
 "<script>"
-"let S=9,b=Array(S*S).fill(0),t=1,go=false;"
+"let S=9,b=Array(S*S).fill(0),t=1,go=false,legal=new Set();"
 "let COLS='ABCDEFGHJ'.split('');"
 "function r(){"
 " let h='<span class=hdr> </span>';"
@@ -507,7 +507,7 @@ static const char *html =
 "   let i=y*S+x,v=b[i];"
 "   if(v==1)h+='<span class=X>X</span>';"
 "   else if(v==-1)h+='<span class=O>O</span>';"
-"   else h+='<span class=e data-i='+i+'>.</span>';"
+"   else h+='<span class=\"'+(legal.has(i)?'legal':'')+'\" data-i='+i+'>'+(legal.has(i)?'.':' ')+'</span>';"
 "  }"
 "  h+='<span class=hdr>'+(y+1)+'</span>\\n';"
 " }"
@@ -517,17 +517,21 @@ static const char *html =
 "}"
 "document.getElementById('g').addEventListener('click',function(e){"
 " let el=e.target;while(el&&!el.dataset.i)el=el.parentElement;"
-" if(!el||go||t!=1)return;let i=parseInt(el.dataset.i);if(b[i]!=0)return;"
+" if(!el||go||t!=1)return;let i=parseInt(el.dataset.i);"
+" if(b[i]!=0||!legal.has(i))return;"
 " t=-1;document.getElementById('t').textContent='thinking...';"
 " fetch('/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({x:i%S,y:Math.floor(i/S)})})"
 "  .then(r=>r.json()).then(d=>{"
-"   if(d.board){b=d.board;r()}"
+"   if(d.legal)legal=new Set(d.legal);"
+"   if(d.board)b=d.board;"
+"   r();"
+"   if(d.error){t=1;return}"
 "   if(d.game_over){go=true;document.getElementById('t').textContent=d.result;return}"
-"   if(d.move==-1){go=true;document.getElementById('t').textContent='Engine passes';return}"
-"   t=1;document.getElementById('t').textContent='Your turn'"
-"  }).catch(e=>{t=1;document.getElementById('t').textContent=''})"
+"   if(d.move==-1){go=true;document.getElementById('t').textContent='pass';return}"
+"   t=1;"
+"  }).catch(e=>{t=1})"
 "});"
-"r();"
+"fetch('/legal').then(r=>r.json()).then(d=>{if(d.legal)legal=new Set(d.legal);r()});"
 "</script></body></html>";
 
 /* ── JSON helpers ────────────────────────────────────────────────────── */
