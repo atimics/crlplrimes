@@ -944,6 +944,92 @@ int main(int argc, char **argv) {
     /* Tournament loop */
     fprintf(stderr, "[tournament] %d players, %d games/pair, %d threads\n", player_count, games_per_pair, num_threads);
 
+    while (running) {
+        /* Collect all game jobs for this round */
+        int max_jobs = player_count * (player_count - 1) * games_per_pair + player_count;
+        GameJob *jobs = calloc(max_jobs, sizeof(GameJob));
+        GameSample **job_samples = calloc(max_jobs, sizeof(GameSample*));
+        int n_jobs = 0;
+
+        for (int a = 0; a < player_count && running; a++) {
+            for (int b = a + 1; b < player_count && running; b++) {
+                for (int g = 0; g < games_per_pair; g++) {
+                    job_samples[n_jobs] = calloc(MAX_GAME_MOVES, sizeof(GameSample));
+                    jobs[n_jobs] = (GameJob){players[a].net, players[b].net, players[a].name, players[b].name,
+                        job_samples[n_jobs], MAX_GAME_MOVES, 0, 0, 0};
+                    n_jobs++;
+                    job_samples[n_jobs] = calloc(MAX_GAME_MOVES, sizeof(GameSample));
+                    jobs[n_jobs] = (GameJob){players[b].net, players[a].net, players[b].name, players[a].name,
+                        job_samples[n_jobs], MAX_GAME_MOVES, 0, 0, 0};
+                    n_jobs++;
+                }
+            }
+        }
+        for (int i = 0; i < player_count; i++) {
+            job_samples[n_jobs] = calloc(MAX_GAME_MOVES, sizeof(GameSample));
+            jobs[n_jobs] = (GameJob){players[i].net, baseline->net, players[i].name, baseline->name,
+                job_samples[n_jobs], MAX_GAME_MOVES, 0, 0, 0};
+            n_jobs++;
+        }
+
+        play_parallel(jobs, n_jobs);
+
+        for (int j = 0; j < n_jobs; j++) {
+            GameJob *job = &jobs[j];
+            int n = job->n_moves;
+            float score = job->score;
+            replay_store(job->b_name, job->w_name, job_samples[j], n, score);
+            record_game(job->b_name, job->w_name, score, n);
+
+            int a_idx = -1, b_idx = -1;
+            for (int pi = 0; pi < player_count; pi++) {
+                if (strcmp(players[pi].name, job->b_name) == 0) a_idx = pi;
+                if (strcmp(players[pi].name, job->w_name) == 0) b_idx = pi;
+            }
+            if (a_idx >= 0 && b_idx >= 0) {
+                if (score > 0) { players[a_idx].wins++; players[b_idx].losses++; }
+                else if (score < 0) { players[b_idx].wins++; players[a_idx].losses++; }
+                else { players[a_idx].draws++; players[b_idx].draws++; }
+                players[a_idx].games++; players[b_idx].games++;
+                total_games++;
+                update_elo(&players[a_idx].elo, &players[b_idx].elo, score>0?1:0, score<0?1:0, score==0?1:0);
+            } else {
+                int pi = -1;
+                for (int pk = 0; pk < player_count; pk++) if (strcmp(players[pk].name, job->b_name) == 0) pi = pk;
+                if (pi >= 0) {
+                    if (score > 0) { players[pi].wins++; baseline->losses++; }
+                    else if (score < 0) { baseline->wins++; players[pi].losses++; }
+                    else { players[pi].draws++; baseline->draws++; }
+                    players[pi].games++; baseline->games++;
+                    total_games++;
+                }
+            }
+
+            if (score != 0 && a_idx >= 0 && b_idx >= 0) {
+                Player *winner = score > 0 ? &players[a_idx] : &players[b_idx];
+                for (int i = 0; i < n && winner->replay_count < REPLAY_CAPACITY; i++) {
+                    memcpy(winner->replay[winner->replay_count].features, job_samples[j][i].features, FEATURES*sizeof(nn_real));
+                    winner->replay[winner->replay_count].move = job_samples[j][i].move;
+                    winner->replay[winner->replay_count].to_play = job_samples[j][i].to_play;
+                    winner->replay[winner->replay_count].visit_prob = job_samples[j][i].visit_prob;
+                    winner->replay[winner->replay_count].mcts_entropy = job_samples[j][i].mcts_entropy;
+                    float r = (job_samples[j][i].to_play == (score > 0 ? 1.0f : -1.0f)) ? 1.0f : 0.0f;
+                    winner->replay[winner->replay_count].features[SLOT_REWARD] = r;
+                    winner->replay_count++;
+                }
+            }
+            free(job_samples[j]);
+        }
+        free(jobs);
+        free(job_samples);
+
+        /* Train every other round */
+        static int train_round = 0;
+        train_round++;
+        if (train_round % 2 == 0) {
+            for (int i = 0; i < player_count; i++) train_on_replay(&players[i]);
+        }
+
         ts_snapshot();
         fprintf(stderr, "[tournament] round complete, %d total games, %d threads\n", total_games, num_threads);
 
@@ -955,6 +1041,8 @@ int main(int argc, char **argv) {
             nn_save_checkpoint(players[i].net, path, &meta);
         }
     }
+    return 0;
+}
 
 /* Helper for score from samples */
 static float go_score_global(GameSample *samples, int n) {
