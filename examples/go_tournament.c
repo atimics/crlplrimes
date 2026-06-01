@@ -525,8 +525,8 @@ static void build_status_json(char *buf, int bufsz) {
     for (int p_idx = 0; p_idx < player_count + (baseline ? 1 : 0); p_idx++) {
         const char *pname = p_idx < player_count ? players[p_idx].name : baseline->name;
         int is_bl = p_idx >= player_count;
-        off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"baseline\":%s,\"data\":[",
-            p_idx ? "," : "", pname, is_bl ? "true" : "false");
+        off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"ci\":%d,\"baseline\":%s,\"data\":[",
+            p_idx ? "," : "", pname, is_bl ? 6 : p_idx, is_bl ? "true" : "false");
         for (int i = 0; i < ts_count; i++) {
             off += snprintf(buf + off, bufsz - off, "%s%.0f", i ? "," : "", ts[i].elo[p_idx]);
         }
@@ -581,7 +581,7 @@ static const char *status_html =
 "  c.fillStyle='#556';c.font='9px Menlo';c.fillText(Math.round(yMin+(yMax-yMin)*i/4),2,y+4);}"
 " c.fillStyle='#556';c.textAlign='right';c.fillText(ylabel,W-2,top-6);c.textAlign='start';"
 " for(let si=0;si<series.length;si++){"
-"  let s=series[si],col=C[si%C.length];"
+"  let s=series[si],col=C[s.ci!=null?s.ci:si];"
 "  c.strokeStyle=col;c.lineWidth=s.moves?1:1.5;c.beginPath();"
 "  for(let i=0;i<s.data.length;i++){"
 "   let x=pad+(w/(labels.length-1||1))*i;"
