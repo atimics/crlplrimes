@@ -31,7 +31,7 @@
 #define HIDDEN0 128
 #define HIDDEN1 64
 
-#define MCTS_SIMULATIONS 25
+#define MCTS_SIMULATIONS 15
 #define MCTS_C_PUCT 1.4f
 #define MCTS_MAX_KIDS 82
 #define MCTS_MIN_EXPAND 2
@@ -204,7 +204,7 @@ static void go_evaluate(NeuralNet *net, GoState *s, float policy[MAX_MOVES], flo
     for (int m = 0; m < MAX_MOVES; m++) { if (!is_legal(s, m)) { policy[m] = 0.0f; continue; }
         nn_real mf[FEATURES]; memcpy(mf, feats, FEATURES*sizeof(nn_real)); mf[SLOT_MOVE_ID] = (nn_real)m / MAX_MOVES;
         nn_real sc; nn_forward(net, mf, &sc); float sv = (float)sc; if (sv < 0.005f) sv = 0.005f;
-        if (m < CELLS && is_self_atari(s, m)) sv *= 0.3f; policy[m] = sv; total += sv; }
+        /* self-atari discount skipped for tournament speed */ policy[m] = sv; total += sv; }
     if (total > 0.0f) for (int m = 0; m < MAX_MOVES; m++) policy[m] /= total;
     nn_real vs; nn_forward(net, feats, &vs); *value = (float)vs * 2.0f - 1.0f;
 }
@@ -397,16 +397,14 @@ static NeuralNet *create_net(unsigned seed) {
 static void train_on_replay(Player *p) {
     if (p->replay_count < 32) return;
     float lr = 0.005f;
-    int batch = p->replay_count < 256 ? p->replay_count : 256;
-    for (int e = 0; e < 2; e++) {
-        float loss = 0;
-        for (int i = 0; i < batch; i++) {
-            int ri = rand() % p->replay_count;
-            nn_real tgt = p->replay[ri].features[SLOT_REWARD];
-            loss += (float)nn_train_sample(p->net, p->replay[ri].features, &tgt, lr);
-        }
-        if (batch > 0) fprintf(stderr, "[%s] train epoch %d loss=%.4f\n", p->name, e+1, loss/batch);
+    int batch = p->replay_count < 128 ? p->replay_count : 128;
+    float loss = 0;
+    for (int i = 0; i < batch; i++) {
+        int ri = rand() % p->replay_count;
+        nn_real tgt = p->replay[ri].features[SLOT_REWARD];
+        loss += (float)nn_train_sample(p->net, p->replay[ri].features, &tgt, lr);
     }
+    if (batch > 0) fprintf(stderr, "[%s] train loss=%.4f samples=%d\n", p->name, loss/batch, batch);
 }
 
 /* ── HTTP status page ────────────────────────────────────────────────── */
