@@ -476,6 +476,22 @@ static Player *baseline = NULL;
 static int games_per_pair = 1;
 static int total_games = 0;
 
+/* ── Training loss log ───────────────────────────────────────────────── */
+
+#define LOSS_LOG_SIZE 200
+typedef struct { char agent[NAME_LEN]; float loss; int samples; int game_id; } LossEntry;
+static LossEntry loss_log[LOSS_LOG_SIZE];
+static int loss_count = 0;
+
+static void loss_record(const char *agent, float loss, int samples) {
+    LossEntry *e = &loss_log[loss_count % LOSS_LOG_SIZE];
+    snprintf(e->agent, NAME_LEN, "%s", agent);
+    e->loss = loss; e->samples = samples; e->game_id = total_games;
+    loss_count++;
+}
+
+
+
 /* ── Time series for charts ──────────────────────────────────────────── */
 
 #define TS_MAX 500
@@ -563,6 +579,7 @@ static void train_on_replay(Player *p) {
     if (trained > 0) {
         fprintf(stderr, "[%s] train loss=%.4f samples=%d (augmented %d)\n",
                 p->name, loss/trained, batch, trained);
+        loss_record(p->name, loss/trained, trained);
     }
 
     /* Update target network periodically */
@@ -639,38 +656,54 @@ static void build_status_json(char *buf, int bufsz) {
     for (int i = 0; i < ts_count; i++) {
         off += snprintf(buf + off, bufsz - off, "%s%d", i ? "," : "", ts[i].avg_moves);
     }
-    off += snprintf(buf + off, bufsz - off, "]}]}");
+    off += snprintf(buf + off, bufsz - off, "]}],\"loss_log\":[");
+    int l_start = loss_count > LOSS_LOG_SIZE ? loss_count - LOSS_LOG_SIZE : 0;
+    int l_end = loss_count;
+    if (l_end - l_start > 80) l_start = l_end - 80;
+    for (int i = l_start; i < l_end; i++) {
+        LossEntry *e = &loss_log[i % LOSS_LOG_SIZE];
+        off += snprintf(buf + off, bufsz - off, "%s{\"agent\":\"%s\",\"loss\":%.4f,\"samples\":%d,\"game\":%d}",
+            i > l_start ? "," : "", e->agent, e->loss, e->samples, e->game_id);
+    }
+    off += snprintf(buf + off, bufsz - off, "]");
     off += snprintf(buf + off, bufsz - off, "}");
 }
 
 static const char *status_html =
 "<!DOCTYPE html><html><head><meta charset=utf-8><title>Tournament</title><style>"
 "*{margin:0;padding:0;box-sizing:border-box}"
-"body{font-family:Menlo,monospace;background:#0f0f1a;color:#c8d6e5;padding:16px}"
-"h1{font-size:.9rem;margin-bottom:2px}.sub{color:#556;font-size:.7rem;margin-bottom:6px}"
-"#tb{font-size:.73rem;margin-bottom:10px}"
-"#tb div{display:flex;gap:10px;padding:2px 0;border-bottom:1px solid #1a1a33}"
-"#tb div span{min-width:38px;text-align:right}"
-"#tb .name{min-width:58px;text-align:left}"
+"body{font-family:Menlo,monospace;background:#0f0f1a;color:#c8d6e5;padding:12px}"
+"h1{font-size:.85rem;margin-bottom:2px}.sub{color:#556;font-size:.65rem;margin-bottom:6px}"
+"#tb{font-size:.7rem;margin-bottom:8px}"
+"#tb div{display:flex;gap:10px;padding:1px 0;border-bottom:1px solid #1a1a33}"
+"#tb div span{min-width:36px;text-align:right}"
+"#tb .name{min-width:54px;text-align:left}"
 ".elo{color:#fc3}.w{color:#5a5}.l{color:#a55}.d{color:#556}"
-"#main{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}"
-"#replay{border:1px solid #2a2a44;border-radius:3px;padding:8px;min-width:130px}"
-"#replay .hdr{color:#fc3;font-size:.7rem;margin-bottom:4px}"
-"#replay .board{font-size:11px;line-height:1.15;white-space:pre;font-family:Menlo,monospace}"
-"canvas{display:block;margin:4px 0;border:1px solid #1a1a33;border-radius:3px}"
-"#log{font-size:.68rem;max-height:120px;overflow-y:auto;margin-top:4px}"
+"#main{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}"
+"#replay{border:1px solid #2a2a44;border-radius:3px;padding:6px;min-width:120px}"
+"#replay .hdr{color:#fc3;font-size:.65rem;margin-bottom:3px}"
+"#replay .board{font-size:10px;line-height:1.12;white-space:pre;font-family:Menlo,monospace}"
+"canvas{display:block;margin:3px 0;border:1px solid #1a1a33;border-radius:3px}"
+"#charts{display:flex;gap:8px}"
+"#loss{font-size:.58rem;max-height:170px;overflow-y:auto;min-width:220px;border:1px solid #1a1a33;border-radius:3px;padding:3px}"
+"#loss .entry{padding:1px 0;border-bottom:1px solid #111;white-space:nowrap}"
+"#loss .agent{min-width:50px;display:inline-block}"
+"#log{font-size:.62rem;max-height:100px;overflow-y:auto;margin-top:4px}"
 "#log div{padding:1px 0;border-bottom:1px solid #111}"
 "#log .win{color:#5a5}#log .lose{color:#a55}#log .draw{color:#556}"
 "</style></head><body>"
 "<h1>Go Tournament</h1><div class=sub id=info></div>"
 "<div id=tb></div>"
 "<div id=main>"
-"<div id=replay><div class=hdr>Game Replay</div><div class=board id=rb></div></div>"
-"<div><canvas id=elo width=620 height=180></canvas><canvas id=mov width=620 height=80></canvas></div>"
+"<div id=replay><div class=hdr>Replay</div><div class=board id=rb></div></div>"
+"<div id=charts>"
+"<div><canvas id=elo width=560 height=160></canvas><canvas id=mov width=560 height=70></canvas></div>"
+"<div id=loss></div>"
+"</div>"
 "</div>"
 "<div id=log></div>"
 "<script>"
-"let C=['#fc3','#5af','#f5a','#5fa','#a5f','#fa5','#ccc'],lastH=0,lastData=null,rows=[];"
+"let C=['#fc3','#5af','#f5a','#5fa','#a5f','#fa5','#ccc'],lastH=0,lastData=null,rows=[],lastLoss=0;"
 "function drawChart(canvas,labels,series,ylabel){"
 " let c=canvas.getContext('2d'),W=canvas.width,H=canvas.height;"
 " c.clearRect(0,0,W,H);if(!labels.length)return;"
@@ -716,6 +749,18 @@ static const char *status_html =
 "  drawChart(document.getElementById('elo'),d.chart.labels,eloSeries,'ELO');"
 "  drawChart(document.getElementById('mov'),d.chart.labels,movSeries,'moves/game');"
 " }"
+" if(d.loss_log){"
+"  let lc=document.getElementById('loss');"
+"  for(let i=lastLoss;i<d.loss_log.length;i++){"
+"   let e=d.loss_log[i],col=C[0];"
+"   let div=document.createElement('div');div.className='entry';"
+"   div.innerHTML='<span class=agent style=color:'+col+'>'+e.agent+'</span> loss='+e.loss.toFixed(4)+' n='+e.samples;"
+"   lc.appendChild(div);"
+"  }"
+"  while(lc.children.length>150)lc.removeChild(lc.firstChild);"
+"  lc.scrollTop=lc.scrollHeight;"
+" }"
+" lastLoss=d.loss_log?d.loss_log.length:0;"
 " if(d.history){"
 "  let log=document.getElementById('log');"
 "  for(let i=lastH;i<d.history.length;i++){"
