@@ -298,6 +298,9 @@ static int play_game(NeuralNet *black_net, NeuralNet *white_net, GameSample *sam
 
 #define NAME_LEN 32
 
+static void ts_record_moves(int moves);
+static void ts_snapshot(void);
+
 /* ── Game history ────────────────────────────────────────────────────── */
 
 #define HISTORY_SIZE 200
@@ -317,6 +320,7 @@ static void record_game(const char *b, const char *w, float score, int moves) {
     r->score = score;
     r->move_count = moves;
     history_count++;
+    ts_record_moves(moves);
 }
 
 /* ── ELO ─────────────────────────────────────────────────────────────── */
@@ -330,6 +334,8 @@ static void update_elo(double *elo_a, double *elo_b, int a_wins, int b_wins, int
     *elo_a += k * (sa - ea);
     *elo_b += k * ((1.0 - sa) - (1.0 - ea));
 }
+
+/* ── Time series ──────────────────────────────────────────────────── */
 
 /* ── Tournament state ────────────────────────────────────────────────── */
 
@@ -348,6 +354,37 @@ static int player_count = 0;
 static Player *baseline = NULL;
 static int games_per_pair = 1;
 static int total_games = 0;
+
+/* ── Time series for charts ──────────────────────────────────────────── */
+
+#define TS_MAX 500
+typedef struct {
+    int game_id;
+    double elo[MAX_PLAYERS + 1];  /* one per player + baseline */
+    int avg_moves;                 /* average moves over last N games */
+} TSPoint;
+
+static TSPoint ts[TS_MAX];
+static int ts_count = 0;
+static int ts_moves_sum = 0;
+static int ts_moves_n = 0;
+
+static void ts_snapshot(void) {
+    if (ts_count >= TS_MAX) return;
+    TSPoint *p = &ts[ts_count++];
+    p->game_id = total_games;
+    for (int i = 0; i < player_count; i++) p->elo[i] = players[i].elo;
+    if (baseline) p->elo[player_count] = baseline->elo;
+    p->avg_moves = ts_moves_n > 0 ? ts_moves_sum / ts_moves_n : 0;
+    ts_moves_sum = 0; ts_moves_n = 0;
+}
+
+static void ts_record_moves(int moves) {
+    ts_moves_sum += moves;
+    ts_moves_n++;
+}
+
+
 static bool running = true;
 
 static NeuralNet *create_net(unsigned seed) {
@@ -387,14 +424,21 @@ static void send_http(int fd, const char *ctype, const char *body) {
 
 static void build_status_json(char *buf, int bufsz) {
     int off = snprintf(buf, bufsz, "{\"games\":%d,\"players\":[", total_games);
-    for (int i = 0; i < player_count; i++) {
-        Player *p = &players[i];
-        off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"elo\":%.0f,\"w\":%d,\"l\":%d,\"d\":%d,\"games\":%d}",
-            i ? "," : "", p->name, p->elo, p->wins, p->losses, p->draws, p->games);
-    }
-    if (baseline) {
-        off += snprintf(buf + off, bufsz - off, ",{\"name\":\"%s\",\"elo\":%.0f,\"w\":%d,\"l\":%d,\"d\":%d,\"games\":%d,\"baseline\":true}",
-            baseline->name, baseline->elo, baseline->wins, baseline->losses, baseline->draws, baseline->games);
+    /* Collect all players including baseline, sort by ELO descending */
+    typedef struct { Player *p; int is_baseline; } Ranked;
+    Ranked ranked[MAX_PLAYERS + 1];
+    int n_ranked = 0;
+    for (int i = 0; i < player_count; i++) { ranked[n_ranked].p = &players[i]; ranked[n_ranked].is_baseline = 0; n_ranked++; }
+    if (baseline) { ranked[n_ranked].p = baseline; ranked[n_ranked].is_baseline = 1; n_ranked++; }
+    /* Simple sort by ELO descending */
+    for (int i = 0; i < n_ranked; i++)
+        for (int j = i+1; j < n_ranked; j++)
+            if (ranked[j].p->elo > ranked[i].p->elo) { Ranked t = ranked[i]; ranked[i] = ranked[j]; ranked[j] = t; }
+    for (int i = 0; i < n_ranked; i++) {
+        Player *p = ranked[i].p;
+        off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"elo\":%.0f,\"w\":%d,\"l\":%d,\"d\":%d,\"games\":%d%s}",
+            i ? "," : "", p->name, p->elo, p->wins, p->losses, p->draws, p->games,
+            ranked[i].is_baseline ? ",\"baseline\":true" : "");
     }
     off += snprintf(buf + off, bufsz - off, "],\"history\":[");
     int h_start = history_count > HISTORY_SIZE ? history_count - HISTORY_SIZE : 0;
@@ -406,43 +450,98 @@ static void build_status_json(char *buf, int bufsz) {
         off += snprintf(buf + off, bufsz - off, "%s{\"b\":\"%s\",\"w\":\"%s\",\"s\":%.0f,\"m\":%d,\"r\":\"%s\"}",
             i > h_start ? "," : "", r->black, r->white, r->score, r->move_count, result);
     }
-    off += snprintf(buf + off, bufsz - off, "]}");
+    off += snprintf(buf + off, bufsz - off, "],\"chart\":{\"labels\":[");
+    for (int i = 0; i < ts_count; i++) {
+        off += snprintf(buf + off, bufsz - off, "%s%d", i ? "," : "", ts[i].game_id);
+    }
+    off += snprintf(buf + off, bufsz - off, "],\"series\":[");
+    /* One series per player + baseline */
+    for (int p_idx = 0; p_idx < player_count + (baseline ? 1 : 0); p_idx++) {
+        const char *pname = p_idx < player_count ? players[p_idx].name : baseline->name;
+        int is_bl = p_idx >= player_count;
+        off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"baseline\":%s,\"data\":[",
+            p_idx ? "," : "", pname, is_bl ? "true" : "false");
+        for (int i = 0; i < ts_count; i++) {
+            off += snprintf(buf + off, bufsz - off, "%s%.0f", i ? "," : "", ts[i].elo[p_idx]);
+        }
+        off += snprintf(buf + off, bufsz - off, "]}");
+    }
+    /* Moves series */
+    off += snprintf(buf + off, bufsz - off, ",{\"name\":\"avg moves\",\"moves\":true,\"data\":[");
+    for (int i = 0; i < ts_count; i++) {
+        off += snprintf(buf + off, bufsz - off, "%s%d", i ? "," : "", ts[i].avg_moves);
+    }
+    off += snprintf(buf + off, bufsz - off, "]}]}");
+    off += snprintf(buf + off, bufsz - off, "}");
 }
 
 static const char *status_html =
 "<!DOCTYPE html><html><head><meta charset=utf-8><title>Tournament</title><style>"
 "*{margin:0;padding:0;box-sizing:border-box}"
 "body{font-family:Menlo,monospace;background:#0f0f1a;color:#c8d6e5;padding:16px}"
-"h1{font-size:.9rem;margin-bottom:2px}.sub{color:#556;font-size:.7rem;margin-bottom:10px}"
-"#tb{font-size:.78rem;margin-bottom:16px}"
-"#tb div{display:flex;gap:14px;padding:2px 0;border-bottom:1px solid #1a1a33}"
-"#tb div span{min-width:50px;text-align:right}"
-"#tb .name{min-width:70px;text-align:left}"
+"h1{font-size:.9rem;margin-bottom:2px}.sub{color:#556;font-size:.7rem;margin-bottom:6px}"
+"#tb{font-size:.73rem;margin-bottom:12px}"
+"#tb div{display:flex;gap:12px;padding:2px 0;border-bottom:1px solid #1a1a33}"
+"#tb div span{min-width:42px;text-align:right}"
+"#tb .name{min-width:62px;text-align:left}"
 ".elo{color:#fc3}.w{color:#5a5}.l{color:#a55}.d{color:#556}"
-"#log{font-size:.7rem;max-height:300px;overflow-y:auto}"
-"#log div{padding:2px 0;border-bottom:1px solid #111}"
+"canvas{display:block;margin:8px 0;border:1px solid #1a1a33;border-radius:3px}"
+"#log{font-size:.68rem;max-height:200px;overflow-y:auto}"
+"#log div{padding:1px 0;border-bottom:1px solid #111}"
 "#log .win{color:#5a5}#log .lose{color:#a55}#log .draw{color:#556}"
 "</style></head><body>"
 "<h1>Go Tournament</h1><div class=sub id=info></div>"
 "<div id=tb></div>"
+"<canvas id=elo width=720 height=220></canvas>"
+"<canvas id=mov width=720 height=100></canvas>"
 "<div id=log></div>"
 "<script>"
-"let lastH=0;"
+"let lastH=0,colors=['#fc3','#5af','#f5a','#5fa','#a5f','#fa5','#ccc'];"
+"function drawChart(canvas,labels,series,ylabel){"
+" let c=canvas.getContext('2d'),W=canvas.width,H=canvas.height;"
+" c.clearRect(0,0,W,H);if(!labels.length)return;"
+" let pad=40,right=20,top=10,bot=20,w=W-pad-right,h=H-top-bot;"
+" let allData=series.flatMap(s=>s.data);"
+" let yMin=Math.min(...allData),yMax=Math.max(...allData);"
+" if(yMin==yMax){yMin-=50;yMax+=50}"
+" c.strokeStyle='#333';c.lineWidth=.5;"
+" for(let i=0;i<=4;i++){let y=top+h*(1-i/4);c.beginPath();c.moveTo(pad,y);c.lineTo(W-right,y);c.stroke();"
+"  c.fillStyle='#556';c.font='9px Menlo';c.fillText(Math.round(yMin+(yMax-yMin)*i/4),2, y+3);}"
+" c.fillStyle='#556';c.textAlign='right';c.fillText(ylabel,W-2,top-4);c.textAlign='start';"
+" for(let si=0;si<series.length;si++){"
+"  let s=series[si],col=colors[si%colors.length];"
+"  c.strokeStyle=col;c.lineWidth=s.moves?1:1.5;c.beginPath();"
+"  for(let i=0;i<s.data.length;i++){"
+"   let x=pad+(w/(labels.length-1||1))*i;"
+"   let y=top+h-(s.data[i]-yMin)/(yMax-yMin)*h;"
+"   if(i==0)c.moveTo(x,y);else c.lineTo(x,y);"
+"  }"
+"  c.stroke();"
+"  if(!s.moves){"
+"   c.fillStyle=col;c.font='9px Menlo';let lastX=pad+w-5,lastY=top+h-((s.data[s.data.length-1]-yMin)/(yMax-yMin))*h;"
+"   c.fillText(s.name,lastX+3,lastY+3);"
+"  }"
+" }"
+"}"
 "async function poll(){"
 " let r=await fetch('/status');let d=await r.json();"
 " document.getElementById('info').textContent=d.games+' games';"
-" let h='';for(let p of d.players){"
-"  let wr=p.games?Math.round(p.w/p.games*100):0;"
-"  h+='<div><span class=name>'+(p.baseline?'* ':'')+p.name+'</span><span class=elo>'+Math.round(p.elo)+'</span><span class=w>'+p.w+'W</span><span class=l>'+p.l+'L</span><span class=d>'+p.d+'D</span><span>'+p.games+'g</span></div>';"
+" let h='';let rank=0;for(let p of d.players){rank++;"
+"  h+='<div><span style=color:#556;min-width:18px>#'+rank+'</span><span class=name>'+(p.baseline?'* ':'')+p.name+'</span><span class=elo>'+Math.round(p.elo)+'</span><span class=w>'+p.w+'W</span><span class=l>'+p.l+'L</span><span class=d>'+p.d+'D</span><span>'+p.games+'g</span></div>';"
 " }"
 " document.getElementById('tb').innerHTML=h;"
+" if(d.chart){"
+"  let eloSeries=d.chart.series.filter(s=>!s.moves),movSeries=d.chart.series.filter(s=>s.moves);"
+"  drawChart(document.getElementById('elo'),d.chart.labels,eloSeries,'ELO');"
+"  drawChart(document.getElementById('mov'),d.chart.labels,movSeries,'moves/game');"
+" }"
 " if(d.history)for(let i=lastH;i<d.history.length;i++){"
 "  let g=d.history[i],cls=g.r==g.b?'win':g.r==g.w?'lose':'draw';"
-"  document.getElementById('log').innerHTML+='<div class='+cls+'>'+g.b+' vs '+g.w+' &rarr; '+g.r+' ('+g.m+' moves)</div>';"
+"  document.getElementById('log').innerHTML+='<div class='+cls+'>'+g.b+' vs '+g.w+' &rarr; '+g.r+' ('+g.m+'m)</div>';"
 " }"
 " lastH=d.history?d.history.length:0;"
 "}"
-"setInterval(poll,2000);poll();"
+"setInterval(poll,1500);poll();"
 "</script></body></html>";
 
 static void *http_loop(void *arg) {
@@ -592,6 +691,7 @@ int main(int argc, char **argv) {
             total_games++;
         }
 
+        ts_snapshot();
         fprintf(stderr, "[tournament] round complete, %d total games\n", total_games);
 
         /* Save checkpoints */
