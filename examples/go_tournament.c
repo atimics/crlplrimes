@@ -621,6 +621,7 @@ static void send_http(int fd, const char *ctype, const char *body) {
 }
 
 static void build_status_json(char *buf, int bufsz) {
+    if (bufsz < 16384) return;
     int off = snprintf(buf, bufsz, "{\"games\":%d,\"players\":[", total_games);
     /* Collect all players including baseline, sort by ELO descending */
     typedef struct { Player *p; int is_baseline; } Ranked;
@@ -670,7 +671,7 @@ static void build_status_json(char *buf, int bufsz) {
     for (int i = 0; i < ts_count; i++) {
         off += snprintf(buf + off, bufsz - off, "%s%d", i ? "," : "", ts[i].avg_moves);
     }
-    off += snprintf(buf + off, bufsz - off, "]}],\"loss_log\":[");
+    off += snprintf(buf + off, bufsz - off, "]}]},\"loss_log\":[");
     int l_start = loss_count > LOSS_LOG_SIZE ? loss_count - LOSS_LOG_SIZE : 0;
     int l_end = loss_count;
     if (l_end - l_start > 80) l_start = l_end - 80;
@@ -855,7 +856,7 @@ static void *http_loop(void *arg) {
             pthread_mutex_unlock(&replay_lock);
             send_http(fd, "application/json", json);
         } else if (strstr(buf, "/status")) {
-            char json[4096]; build_status_json(json, sizeof(json));
+            char json[16384]; build_status_json(json, sizeof(json));
             send_http(fd, "application/json", json);
         } else {
             send_http(fd, "text/html", status_html);
