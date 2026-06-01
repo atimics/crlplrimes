@@ -576,7 +576,15 @@ int main(int argc, char **argv) {
         char method[16] = {0}, path[256] = {0};
         if (read_request(fd, method, path, sizeof(path)) < 0) { close(fd); continue; }
 
-        if (strcmp(path, "/") == 0) {
+        if (strcmp(method, "OPTIONS") == 0) {
+            char *hdr = "HTTP/1.1 204 No Content\r\n"
+                        "Access-Control-Allow-Origin: *\r\n"
+                        "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+                        "Access-Control-Allow-Headers: Content-Type\r\n"
+                        "Content-Length: 0\r\n"
+                        "Connection: close\r\n\r\n";
+            write(fd, hdr, (int)strlen(hdr));
+        } else if (strcmp(path, "/") == 0) {
             send_response(fd, http_html, html, (int)strlen(html));
         } else if (strcmp(path, "/reset") == 0 && strcmp(method, "POST") == 0) {
             go_init(&state);
