@@ -32,12 +32,12 @@
 #define HIDDEN0 128
 #define HIDDEN1 64
 
-#define MCTS_SIMULATIONS 8
+#define MCTS_SIMULATIONS 6
 #define MCTS_C_PUCT 1.4f
 #define MCTS_MAX_KIDS 82
 #define MCTS_MIN_EXPAND 2
-#define TT_SIZE 8192
-#define MAX_GAME_MOVES 200
+#define TT_SIZE 16384
+#define MAX_GAME_MOVES 150
 #define REPLAY_CAPACITY 2000
 
 static const int DIRS[4] = {-BOARD_SIZE, -1, 1, BOARD_SIZE};
@@ -241,13 +241,13 @@ static int go_mcts_move_with_probs(NeuralNet *net, GoState *root_st, float *out_
     float rave_w[CELLS+1] = {0}, rave_v[CELLS+1] = {0};
     for (int sim = 0; sim < MCTS_SIMULATIONS; sim++) {
         /* Early stop: if best move overwhelming after 8 sims, skip rest */
-        if (sim >= 8 && root->nkids > 0) {
+        if (sim >= 4 && root->nkids > 0) {
             float best_v = 0, second_v = 0;
             for (int i = 0; i < root->nkids; i++) {
                 if (root->kids[i]->visits > best_v) { second_v = best_v; best_v = root->kids[i]->visits; }
                 else if (root->kids[i]->visits > second_v) second_v = root->kids[i]->visits;
             }
-            if (best_v > 0 && second_v / (best_v + 0.001f) < 0.5f) break;
+            if (best_v > 0 && second_v / (best_v + 0.001f) < 0.6f) break;
         }
         GoState s = *root_st; GoNode *node = root;
         while (node->expanded && node->nkids > 0 && !go_over(&s)) { {
@@ -1077,7 +1077,7 @@ fprintf(stderr, "[tournament] %d players, %d games/pair, %d threads\n", player_c
         /* Train every other round */
         static int train_round = 0;
         train_round++;
-        if (train_round % 2 == 0) {
+        if (train_round % 3 == 0) {
             for (int i = 0; i < player_count; i++) train_on_replay(&players[i]);
         }
 
