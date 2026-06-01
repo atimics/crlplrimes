@@ -29,7 +29,7 @@
 #define HIDDEN0 128
 #define HIDDEN1 64
 
-#define MCTS_SIMULATIONS 50
+#define MCTS_SIMULATIONS 25
 #define MCTS_C_PUCT 1.4f
 #define MCTS_MAX_KIDS 82
 #define MCTS_MIN_EXPAND 2
@@ -600,9 +600,7 @@ int main(int argc, char **argv) {
                         float sc = go_score(&state);
                         off = snprintf(resp, sizeof(resp), "{\"game_over\":true,\"move\":-1,\"result\":\"%s\"}", sc > 0 ? "Black wins" : "Draw");
                     } else {
-                        fprintf(stderr, "[mcts] thinking...\n");
                         int eng = go_mcts_move(net, &state);
-                        fprintf(stderr, "[mcts] done -> %d\n", eng);
                         go_move(&state, eng);
                         if (go_over(&state)) {
                             float sc = go_score(&state);
