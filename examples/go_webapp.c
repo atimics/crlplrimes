@@ -408,6 +408,18 @@ static int go_mcts_move(NeuralNet *net, GoState *s) {
 }
 
 
+
+/* ── board JSON helper ───────────────────────────────────────────────── */
+
+static int build_board_json(GoState *s, char *buf, int bufsz) {
+    int off = snprintf(buf, bufsz, "\"board\":[");
+    for (int i = 0; i < CELLS; i++) {
+        off += snprintf(buf + off, bufsz - off, "%s%d", i ? "," : "", s->board[i]);
+    }
+    off += snprintf(buf + off, bufsz - off, "],\"last\":%d", s->last_move);
+    return off;
+}
+
 /* ── legal moves helper ──────────────────────────────────────────────── */
 
 static int build_legal_json(GoState *s, char *buf, int bufsz) {
@@ -496,9 +508,10 @@ static const char *html =
 "  let d=await resp.json();"
 "  if(d.error){document.getElementById('st').textContent=d.error;t=1;return}"
 "  if(d.legal){legal=new Set(d.legal)}else{legal.clear()}"
-"  if(d.game_over){go=true;document.getElementById('st').textContent=d.result;t=0;document.getElementById('turn').textContent='Game over';r();return}"
-"  if(d.move===-1){go=true;document.getElementById('st').textContent='Engine passes. '+d.result;t=0;document.getElementById('turn').textContent='Game over';r();return}"
-"  p(d.move,-1);t=1;document.getElementById('turn').textContent='Your turn';"
+"  if(d.board){b=d.board;lm=d.last;r()}"
+"  if(d.game_over){go=true;document.getElementById('st').textContent=d.result;t=0;document.getElementById('turn').textContent='Game over';return}"
+"  if(d.move===-1){go=true;document.getElementById('st').textContent='Engine passes. '+d.result;t=0;document.getElementById('turn').textContent='Game over';return}"
+"  t=1;document.getElementById('turn').textContent='Your turn';"
 " }catch(e){document.getElementById('st').textContent='Error: '+e;t=1}"
 "}"
 "function p(i,c){b[i]=c;lm=i;r()}"
@@ -602,6 +615,8 @@ int main(int argc, char **argv) {
                                 off = snprintf(resp, sizeof(resp), "{\"move\":-1,");
                             else
                                 off = snprintf(resp, sizeof(resp), "{\"move\":%d,\"x\":%d,\"y\":%d,", eng, eng % BOARD_SIZE, eng / BOARD_SIZE);
+                            off += build_board_json(&state, resp + off, sizeof(resp) - off);
+                            off += snprintf(resp + off, sizeof(resp) - off, ",");
                             off += build_legal_json(&state, resp + off, sizeof(resp) - off);
                             off += snprintf(resp + off, sizeof(resp) - off, "}");
                         }
