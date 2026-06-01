@@ -276,15 +276,21 @@ typedef struct { nn_real features[FEATURES]; int move, to_play; } GameSample;
 
 static float go_score_global(GameSample *samples, int n);
 
-static int play_game(NeuralNet *black_net, NeuralNet *white_net, GameSample *samples, int max_samples) {
+static void live_start(const char *b, const char *w);
+static void live_move(int idx);
+
+static int play_game(NeuralNet *black_net, NeuralNet *white_net, GameSample *samples, int max_samples, const char *b_name, const char *w_name) {
     GoState s; go_init(&s); int n = 0;
+    live_start(b_name, w_name);
     while (!go_over(&s) && n < max_samples) {
         GameSample *sp = &samples[n];
         go_features(&s, sp->features); sp->to_play = s.to_play;
         NeuralNet *net = (s.to_play == 1) ? black_net : white_net;
         int move = go_mcts_move(net, &s);
         sp->features[SLOT_MOVE_ID] = (nn_real)move / MAX_MOVES; sp->move = move;
-        go_move(&s, move); n++;
+        go_move(&s, move);
+        live_move(move);
+        n++;
     }
     float score = go_score(&s);
     float winner = (score > 0) ? 1.0f : ((score < 0) ? -1.0f : 0.0f);
@@ -382,6 +388,32 @@ static void ts_snapshot(void) {
 static void ts_record_moves(int moves) {
     ts_moves_sum += moves;
     ts_moves_n++;
+}
+
+
+
+/* ── Live game state (for replay viewing) ────────────────────────────── */
+
+static GoState live_board;
+static char live_black[NAME_LEN], live_white[NAME_LEN];
+static int live_move_n = 0;
+static int live_last_move = -1;
+static pthread_mutex_t live_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void live_start(const char *b, const char *w) {
+    pthread_mutex_lock(&live_lock);
+    go_init(&live_board);
+    snprintf(live_black, NAME_LEN, "%s", b);
+    snprintf(live_white, NAME_LEN, "%s", w);
+    live_move_n = 0; live_last_move = -1;
+    pthread_mutex_unlock(&live_lock);
+}
+
+static void live_move(int idx) {
+    pthread_mutex_lock(&live_lock);
+    go_move(&live_board, idx);
+    live_move_n++; live_last_move = idx;
+    pthread_mutex_unlock(&live_lock);
 }
 
 
@@ -490,7 +522,7 @@ static const char *status_html =
 "</style></head><body>"
 "<h1>Go Tournament</h1><div class=sub id=info></div>"
 "<div id=tb></div>"
-"<canvas id=elo width=720 height=220></canvas>"
+"<div style=display:flex;gap:20px;align-items:flex-start>"
 "<canvas id=mov width=720 height=100></canvas>"
 "<div id=log></div>"
 "<script>"
@@ -551,6 +583,18 @@ static const char *status_html =
 " }"
 " lastH=d.history?d.history.length:0;"
 "}"
+"async function livePoll(){"
+" let r=await fetch('/live');let d=await r.json();"
+" let C='ABCDEFGHJ'.split(''),h='<span style=color:#556>'+d.black+' (X) vs '+d.white+' (O)  move '+d.move_n+'</span>\n';"
+" h+='<span style=color:#556> </span>';for(let x=0;x<9;x++)h+='<span style=color:#556>'+C[x]+'</span>';h+='\n';"
+" for(let y=0;y<9;y++){h+='<span style=color:#556>'+(y+1)+(y<8?' ':'')+'</span>';"
+"  for(let x=0;x<9;x++){let i=y*9+x,v=d.board[i];"
+"   h+=v==1?'<span style=color:#111;background:#ccc;font-weight:bold>X</span>':v==-1?'<span style=color:#111;background:#ddd;font-weight:bold>O</span>':'<span style=color:#333>.</span>';}"
+"  h+='<span style=color:#556>'+(y+1)+'</span>\n';}"
+" h+='<span style=color:#556> </span>';for(let x=0;x<9;x++)h+='<span style=color:#556>'+C[x]+'</span>';"
+" document.getElementById('live').innerHTML=h;"
+"}"
+"setInterval(livePoll,800);livePoll();"
 "setInterval(poll,1000);poll();"
 "</script></body></html>";
 
@@ -566,7 +610,16 @@ static void *http_loop(void *arg) {
     while (running) {
         int fd = accept(srv, NULL, NULL); if (fd < 0) continue;
         char buf[2048] = {0}; read(fd, buf, sizeof(buf)-1);
-        if (strstr(buf, "/status")) {
+        if (strstr(buf, "/live")) {
+            char json[8192];
+            pthread_mutex_lock(&live_lock);
+            int off = snprintf(json, sizeof(json), "{\"board\":[");
+            for (int i = 0; i < CELLS; i++) off += snprintf(json + off, sizeof(json) - off, "%s%d", i ? "," : "", live_board.board[i]);
+            off += snprintf(json + off, sizeof(json) - off, "],\"to_play\":%d,\"last\":%d,\"move_n\":%d,\"black\":\"%s\",\"white\":\"%s\"}",
+                live_board.to_play, live_last_move, live_move_n, live_black, live_white);
+            pthread_mutex_unlock(&live_lock);
+            send_http(fd, "application/json", json);
+        } else if (strstr(buf, "/status")) {
             char json[4096]; build_status_json(json, sizeof(json));
             send_http(fd, "application/json", json);
         } else {
@@ -636,7 +689,7 @@ int main(int argc, char **argv) {
             for (int b = a + 1; b < player_count && running; b++) {
                 for (int g = 0; g < games_per_pair; g++) {
                     /* a=Black, b=White */
-                    int n = play_game(players[a].net, players[b].net, samples, MAX_GAME_MOVES);
+                    int n = play_game(players[a].net, players[b].net, samples, MAX_GAME_MOVES, players[a].name, players[b].name);
                     float score = go_score_global(samples, n);
                     record_game(players[a].name, players[b].name, score, n);
                     if (score > 0) { players[a].wins++; players[b].losses++; }
@@ -661,7 +714,7 @@ int main(int argc, char **argv) {
                     }
 
                     /* b=Black, a=White (swap colors) */
-                    n = play_game(players[b].net, players[a].net, samples, MAX_GAME_MOVES);
+                    n = play_game(players[b].net, players[a].net, samples, MAX_GAME_MOVES, players[b].name, players[a].name);
                     score = go_score_global(samples, n);
                     record_game(players[b].name, players[a].name, score, n);
                     if (score > 0) { players[b].wins++; players[a].losses++; }
@@ -691,7 +744,7 @@ int main(int argc, char **argv) {
 
         /* Baseline evaluation: each player vs baseline */
         for (int i = 0; i < player_count; i++) {
-            int n = play_game(players[i].net, baseline->net, samples, MAX_GAME_MOVES);
+            int n = play_game(players[i].net, baseline->net, samples, MAX_GAME_MOVES, players[i].name, baseline->name);
             float score = go_score_global(samples, n);
             record_game(players[i].name, baseline->name, score, n);
             if (score > 0) { players[i].wins++; baseline->losses++; }
