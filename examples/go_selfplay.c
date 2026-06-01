@@ -117,14 +117,15 @@ static void remove_group(GoState *s, int i, int8_t *vis) {
     }
 }
 
-static int has_liberty(GoState *s, int i, int8_t *vis) {
+static int has_liberty(GoState *s, int i, int8_t *vis, int8_t color) {
     if (!in_bounds(i) || vis[i]) return 0;
     if (s->board[i] == 0) return 1;
+    if (s->board[i] != color) return 0;  /* opponent stone blocks search */
     vis[i] = 1;
     for (int d = 0; d < 4; d++) {
         int ni = i + DIRS[d];
         if ((d == 1 && on_left(i)) || (d == 2 && on_right(i))) continue;
-        if (has_liberty(s, ni, vis)) return 1;
+        if (has_liberty(s, ni, vis, color)) return 1;
     }
     return 0;
 }
@@ -132,7 +133,7 @@ static int has_liberty(GoState *s, int i, int8_t *vis) {
 static int group_dead(GoState *s, int i, int8_t color) {
     if (!in_bounds(i) || s->board[i] != color) return 0;
     int8_t vis[CELLS] = {0};
-    return !has_liberty(s, i, vis);
+    return !has_liberty(s, i, vis, color);
 }
 
 /* ── tactical sensors ─────────────────────────────────────────────────── */
