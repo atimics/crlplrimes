@@ -31,7 +31,7 @@
 #define HIDDEN0 128
 #define HIDDEN1 64
 
-#define MCTS_SIMULATIONS 12
+#define MCTS_SIMULATIONS 8
 #define MCTS_C_PUCT 1.4f
 #define MCTS_MAX_KIDS 82
 #define MCTS_MIN_EXPAND 2
@@ -253,7 +253,7 @@ static int go_mcts_move_with_probs(NeuralNet *net, GoState *root_st, float *out_
                 if (root->kids[i]->visits > best_v) { second_v = best_v; best_v = root->kids[i]->visits; }
                 else if (root->kids[i]->visits > second_v) second_v = root->kids[i]->visits;
             }
-            if (best_v > 0 && second_v / (best_v + 0.001f) < 0.3f) break;
+            if (best_v > 0 && second_v / (best_v + 0.001f) < 0.5f) break;
         }
         GoState s = *root_st; GoNode *node = root;
         while (node->expanded && node->nkids > 0 && !go_over(&s)) { node = node->kids[gn_select(node)]; go_move(&s, node->move); }
@@ -470,6 +470,53 @@ static void update_elo(double *elo_a, double *elo_b, int a_wins, int b_wins, int
 
 /* ── Time series ──────────────────────────────────────────────────── */
 
+
+static int num_threads = 1;
+
+/* ── Parallel game execution ─────────────────────────────────────────── */
+
+typedef struct {
+    NeuralNet *black_net, *white_net;
+    const char *b_name, *w_name;
+    GameSample *samples;
+    int max_samples;
+    int n_moves;
+    float score;
+    int done;
+} GameJob;
+
+static void *play_game_thread(void *arg) {
+    GameJob *job = (GameJob *)arg;
+    job->n_moves = play_game(job->black_net, job->white_net, job->samples, job->max_samples, job->b_name, job->w_name);
+    job->score = go_score_global(job->samples, job->n_moves);
+    job->done = 1;
+    return NULL;
+}
+
+/* Play all games in a list using up to num_threads threads */
+static void play_parallel(GameJob *jobs, int n_jobs) {
+    int started = 0, completed = 0;
+    pthread_t *threads = calloc(n_jobs, sizeof(pthread_t));
+    
+    while (completed < n_jobs) {
+        /* Start new jobs if threads available */
+        while (started < n_jobs && (started - completed) < num_threads) {
+            jobs[started].done = 0;
+            pthread_create(&threads[started], NULL, play_game_thread, &jobs[started]);
+            started++;
+        }
+        /* Check for completed jobs */
+        for (int i = completed; i < started; i++) {
+            if (jobs[i].done) {
+                pthread_join(threads[i], NULL);
+                completed++;
+            }
+        }
+        usleep(10000);  /* 10ms */
+    }
+    free(threads);
+}
+
 /* ── Tournament state ────────────────────────────────────────────────── */
 
 #define MAX_PLAYERS 8
@@ -551,7 +598,7 @@ static void train_on_replay(Player *p) {
     /* Learning rate decay: starts at 0.005, decays to 0.001 over time */
     float lr = 0.005f / (1.0f + p->games * 0.0001f);
     if (lr < 0.001f) lr = 0.001f;
-    int batch = p->replay_count < 256 ? p->replay_count : 256;
+    int batch = p->replay_count < 128 ? p->replay_count : 128;
     float loss = 0;
     int trained = 0;
 
@@ -842,6 +889,7 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--players") == 0 && i+1 < argc) num_players = atoi(argv[++i]);
         else if (strcmp(argv[i], "--games") == 0 && i+1 < argc) games_per_pair = atoi(argv[++i]);
         else if (strcmp(argv[i], "--baseline") == 0 && i+1 < argc) baseline_path = argv[++i];
+        else if (strcmp(argv[i], "--threads") == 0 && i+1 < argc) num_threads = atoi(argv[++i]);
         else if (strcmp(argv[i], "--port") == 0 && i+1 < argc) http_port = atoi(argv[++i]);
     }
     if (num_players > MAX_PLAYERS) num_players = MAX_PLAYERS;
@@ -882,87 +930,10 @@ int main(int argc, char **argv) {
     pthread_create(&http_thread, NULL, http_loop, NULL);
 
     /* Tournament loop */
-    GameSample *samples = calloc(MAX_GAME_MOVES, sizeof(GameSample));
-    fprintf(stderr, "[tournament] %d players, %d games/pair\n", player_count, games_per_pair);
-
-    while (running) {
-        /* Round-robin: each pair plays */
-        for (int a = 0; a < player_count && running; a++) {
-            for (int b = a + 1; b < player_count && running; b++) {
-                for (int g = 0; g < games_per_pair; g++) {
-                    /* a=Black, b=White */
-                    int n = play_game(players[a].net, players[b].net, samples, MAX_GAME_MOVES, players[a].name, players[b].name);
-                    float score = go_score_global(samples, n);
-                    replay_store(players[a].name, players[b].name, samples, n, score);
-                    record_game(players[a].name, players[b].name, score, n);
-                    if (score > 0) { players[a].wins++; players[b].losses++; }
-                    else if (score < 0) { players[b].wins++; players[a].losses++; }
-                    else { players[a].draws++; players[b].draws++; }
-                    players[a].games++; players[b].games++;
-                    total_games++;
-                    update_elo(&players[a].elo, &players[b].elo, score>0?1:0, score<0?1:0, score==0?1:0);
-
-                    /* Store game data for training */
-                    if (score != 0) {
-                        Player *winner = score > 0 ? &players[a] : &players[b];
-                        for (int i = 0; i < n && winner->replay_count < REPLAY_CAPACITY; i++) {
-                            memcpy(winner->replay[winner->replay_count].features, samples[i].features, FEATURES*sizeof(nn_real));
-                            winner->replay[winner->replay_count].move = samples[i].move;
-                            winner->replay[winner->replay_count].to_play = samples[i].to_play;
-                            winner->replay[winner->replay_count].visit_prob = samples[i].visit_prob;
-                            winner->replay[winner->replay_count].mcts_entropy = samples[i].mcts_entropy;
-                            /* Assign reward: 1.0 for winner's moves, 0.0 for loser's */
-                            float r = (samples[i].to_play == (score > 0 ? 1.0f : -1.0f)) ? 1.0f : 0.0f;
-                            winner->replay[winner->replay_count].features[SLOT_REWARD] = r;
-                            winner->replay_count++;
-                        }
-                    }
-
-                    /* b=Black, a=White (swap colors) */
-                    n = play_game(players[b].net, players[a].net, samples, MAX_GAME_MOVES, players[b].name, players[a].name);
-                    score = go_score_global(samples, n);
-                    replay_store(players[b].name, players[a].name, samples, n, score);
-                    record_game(players[b].name, players[a].name, score, n);
-                    if (score > 0) { players[b].wins++; players[a].losses++; }
-                    else if (score < 0) { players[a].wins++; players[b].losses++; }
-                    else { players[a].draws++; players[b].draws++; }
-                    players[a].games++; players[b].games++;
-                    total_games++;
-                    update_elo(&players[a].elo, &players[b].elo, score<0?1:0, score>0?1:0, score==0?1:0);
-
-                    if (score != 0) {
-                        Player *winner = score > 0 ? &players[b] : &players[a];
-                        for (int i = 0; i < n && winner->replay_count < REPLAY_CAPACITY; i++) {
-                            memcpy(winner->replay[winner->replay_count].features, samples[i].features, FEATURES*sizeof(nn_real));
-                            float r = (samples[i].to_play == (score > 0 ? 1.0f : -1.0f)) ? 1.0f : 0.0f;
-                            winner->replay[winner->replay_count].features[SLOT_REWARD] = r;
-                            winner->replay_count++;
-                        }
-                    }
-                }
-            }
-        }
-
-        /* Train each player on their replay buffer */
-        for (int i = 0; i < player_count; i++) {
-            train_on_replay(&players[i]);
-        }
-
-        /* Baseline evaluation: each player vs baseline */
-        for (int i = 0; i < player_count; i++) {
-            int n = play_game(players[i].net, baseline->net, samples, MAX_GAME_MOVES, players[i].name, baseline->name);
-            float score = go_score_global(samples, n);
-            replay_store(players[i].name, baseline->name, samples, n, score);
-            record_game(players[i].name, baseline->name, score, n);
-            if (score > 0) { players[i].wins++; baseline->losses++; }
-            else if (score < 0) { baseline->wins++; players[i].losses++; }
-            else { players[i].draws++; baseline->draws++; }
-            players[i].games++; baseline->games++;
-            total_games++;
-        }
+    fprintf(stderr, "[tournament] %d players, %d games/pair, %d threads\n", player_count, games_per_pair, num_threads);
 
         ts_snapshot();
-        fprintf(stderr, "[tournament] round complete, %d total games\n", total_games);
+        fprintf(stderr, "[tournament] round complete, %d total games, %d threads\n", total_games, num_threads);
 
         /* Save checkpoints */
         for (int i = 0; i < player_count; i++) {
@@ -972,12 +943,6 @@ int main(int argc, char **argv) {
             nn_save_checkpoint(players[i].net, path, &meta);
         }
     }
-
-    running = false;
-    pthread_join(http_thread, NULL);
-    free(samples);
-    return 0;
-}
 
 /* Helper for score from samples */
 static float go_score_global(GameSample *samples, int n) {
