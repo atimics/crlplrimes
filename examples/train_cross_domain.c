@@ -123,8 +123,8 @@ int main(int argc, char **argv) {
     }
     if (!net) { free(tour_samples); return 1; }
 
-    const char *domains[] = {"prime_gap_candidate", "grid_path", "delayed_claim", "go_position", "signal_wasd"};
-    int n_domains = tournament_only ? 0 : 5;
+    const char *domains[] = {"prime_gap_candidate", "grid_path", "delayed_claim", "go_position", "signal_wasd", "signal_mining"};
+    int n_domains = tournament_only ? 0 : 6;
 
     for (int e = 0; e < epochs; e++) {
         float total_loss = 0;

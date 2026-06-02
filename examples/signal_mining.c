@@ -2208,6 +2208,7 @@ static int sm_parse_config(int argc, char **argv, sm_config_t *config, int *sche
            config->horizon_ticks > 0 && config->epochs > 0u;
 }
 
+
 int main(int argc, char **argv)
 {
     sm_config_t config;

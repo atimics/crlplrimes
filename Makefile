@@ -1738,6 +1738,7 @@ $(GO_EXPERIMENT): build/float/nn.o build/float/nn_experiment.o build/float/nn_sy
 build/float/go_experiment.o: examples/go_experiment.c include/nn.h include/nn_experiment.h include/nn_dataset.h
 	$(CC) -std=c11 -O3 -Iinclude -DNN_REAL=float -DNN_REAL_IS_FLOAT=1 -DGO_EXPERIMENT_LIBRARY_ONLY $(GO_EXP_FLAGS) -c $< -o $@
 
+
 # ── Tournament watch ────────────────────────────────────────────────────
 # ── Tournament watch ────────────────────────────────────────────────────
 watch:

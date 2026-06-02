@@ -2239,6 +2239,118 @@ static void dataset_signal_controls(size_t action, double *turn, double *thrust)
     *thrust = thrusts[action];
 }
 
+/* ── signal_mining adapter (self-contained synthetic generator) ───── */
+#define NN_DATASET_SIGNAL_MINING_FEATURE_COUNT 70
+#define NN_DATASET_SIGNAL_MINING_OPTION_COUNT 14
+
+static int generate_signal_mining_adapter(const NNDatasetAdapterConfig *config,
+                                           NNDataset *dataset)
+{
+    nn_dataset_init(dataset, NN_DATASET_SIGNAL_MINING_FEATURE_COUNT);
+    size_t max_groups = config->max_groups == 0u ? 96u : config->max_groups;
+    size_t train_count = (max_groups * 3u) / 5u;
+    size_t valid_count = max_groups / 5u;
+    unsigned int base_seed = config->seed == 0u ? 20260601u : config->seed;
+
+    for (size_t gi = 0; gi < max_groups; gi++) {
+        unsigned int gs = base_seed + (unsigned int)(gi * 137u);
+        srand(gs);
+
+        /* Generate synthetic mining scenario state */
+        float hull = 0.3f + (float)(rand() % 70) / 100.0f;
+        float speed = (float)(rand() % 100) / 100.0f;
+        float signal_q = 0.4f + (float)(rand() % 60) / 100.0f;
+        int docked = rand() % 3 == 0;
+        float towed = (float)(rand() % 4);
+        int towed_cnt = (int)towed;
+        int damaged = hull < 0.4f ? 1 : 0;
+        float dist_mineable = (float)(rand() % 500) / 100.0f;
+        float dist_clear = (float)(rand() % 500) / 100.0f;
+        float dist_rich = (float)(rand() % 500) / 100.0f;
+        float dist_fragment = (float)(rand() % 300) / 100.0f;
+        float dist_refinery = (float)(rand() % 600) / 100.0f;
+        float dist_dock = (float)(rand() % 400) / 100.0f;
+        int local_fragments = rand() % 8;
+        int mineable_count = rand() % 12;
+        int phase = rand() % 3;
+
+        /* Evaluate 14 mining policy options */
+        float utilities[NN_DATASET_SIGNAL_MINING_OPTION_COUNT];
+        float best_u = -1e9f;
+        for (size_t oi = 0; oi < NN_DATASET_SIGNAL_MINING_OPTION_COUNT; oi++) {
+            float u = 0.0f;
+            /* Hypothesis-specific utility: each option favors different targets */
+            switch (oi) {
+            case 0: u = 0.1f; break;                    /* autopilot loop */
+            case 1: u = 1.0f - dist_clear * 0.3f; break; /* mine clear */
+            case 2: u = 1.5f - dist_rich * 0.2f; break; /* mine rich */
+            case 3: u = 0.5f + (float)local_fragments * 0.2f; break; /* collect local */
+            case 4: u = 2.0f - dist_refinery * 0.15f; break; /* deliver refinery */
+            case 5: u = damaged ? 3.0f - dist_dock * 0.2f : 0.1f; break; /* dock repair */
+            case 6: u = 1.0f - dist_dock * 0.3f; break; /* supply shipyard */
+            case 7: u = 1.2f; break;                    /* export repair kits */
+            case 8: u = 0.8f - dist_clear * 0.25f; break;
+            case 9: u = 1.3f - dist_rich * 0.2f; break;
+            case 10: u = 0.6f + (float)local_fragments * 0.15f; break;
+            case 11: u = 1.8f - dist_refinery * 0.2f; break;
+            case 12: u = damaged ? 2.5f - dist_dock * 0.15f : 0.1f; break;
+            case 13: u = towed_cnt > 0 ? 2.0f : 0.2f; break;
+            }
+            /* Add noise and state-dependent modifiers */
+            u += (float)(rand() % 100) / 200.0f - 0.25f;
+            u += hull * 0.3f - speed * 0.1f;
+            if (docked && oi != 0) u *= 0.5f;
+            utilities[oi] = u;
+            if (u > best_u) best_u = u;
+        }
+
+        NNDatasetSplit split = (gi < train_count) ? NN_DATASET_SPLIT_TRAIN :
+                               (gi < train_count + valid_count) ? NN_DATASET_SPLIT_VALID :
+                               NN_DATASET_SPLIT_TEST;
+        size_t begin = dataset->row_count;
+        for (size_t oi = 0; oi < NN_DATASET_SIGNAL_MINING_OPTION_COUNT; oi++) {
+            nn_real features[NN_DATASET_SIGNAL_MINING_FEATURE_COUNT];
+            memset(features, 0, sizeof(features));
+            features[0] = 1.0f;                                       /* bias */
+            features[1] = (nn_real)oi / (nn_real)(NN_DATASET_SIGNAL_MINING_OPTION_COUNT-1); /* candidate idx */
+            features[oi < 14 ? (size_t)(2 + oi) : 2] = 1.0f;         /* hypothesis one-hot */
+            features[16] = 1.0f;                                      /* route_direct */
+            features[20] = 1.0f;                                      /* speed_cruise */
+            features[23] = 1.0f;                                      /* interaction_none */
+            features[28] = (oi == 0) ? 1.0f : 0.0f;                  /* opportunistic */
+            features[38] = (nn_real)hull;                             /* hull_ratio */
+            features[39] = (nn_real)speed;                            /* speed */
+            features[40] = (nn_real)speed;                            /* forward_speed */
+            features[41] = (nn_real)signal_q;                         /* signal_quality */
+            features[42] = docked ? 1.0f : 0.0f;                     /* docked */
+            features[43] = (nn_real)towed / 4.0f;                    /* towed_ratio */
+            features[44] = (nn_real)towed_cnt / 4.0f;                /* towed_count */
+            features[45] = (nn_real)dist_mineable / 5.0f;            /* nearest_mineable */
+            features[46] = (nn_real)dist_clear / 5.0f;               /* nearest_clear */
+            features[47] = (nn_real)dist_rich / 5.0f;                /* richest */
+            features[48] = (nn_real)dist_fragment / 3.0f;            /* nearest_fragment */
+            features[49] = (nn_real)dist_refinery / 6.0f;            /* nearest_refinery */
+            features[50] = (nn_real)dist_dock / 4.0f;                /* nearest_dock */
+            features[63] = (nn_real)local_fragments / 8.0f;          /* local_fragment_count */
+            features[64] = (nn_real)mineable_count / 12.0f;          /* mineable_rock_count */
+            features[65] = damaged ? 1.0f : 0.0f;                   /* damaged */
+            features[66] = towed_cnt > 0 ? 1.0f : 0.0f;             /* has_tow */
+            features[68] = (nn_real)phase / 3.0f;                   /* prefix_phase */
+            features[69] = (nn_real)(gs % 3) / 3.0f;                /* scenario_kind */
+
+            int target = (utilities[oi] >= best_u - 0.001f) ? 1 : 0;
+            if (!nn_dataset_append_candidate(dataset, split, (uint64_t)gi,
+                                             (uint64_t)gs, (uint32_t)oi,
+                                             target, features))
+                return 0;
+        }
+        if (dataset->row_count > begin &&
+            !nn_dataset_finalize_group(dataset, begin, dataset->row_count))
+            return 0;
+    }
+    return 1;
+}
+
 static int generate_signal_wasd_adapter(const NNDatasetAdapterConfig *config, NNDataset *dataset)
 {
     nn_dataset_init(dataset, NN_DATASET_SIGNAL_FEATURE_COUNT);
@@ -2311,7 +2423,7 @@ static int generate_signal_wasd_adapter(const NNDatasetAdapterConfig *config, NN
 }
 
 
-extern int __attribute__((weak)) gen_go_adapter(const NNDatasetAdapterConfig *cfg, NNDataset *ds);
+extern int gen_go_adapter(const NNDatasetAdapterConfig *cfg, NNDataset *ds);
 static const NNDatasetExperiment NN_DATASET_EXPERIMENTS[] = {
     {
         "threshold",
@@ -2505,6 +2617,21 @@ static const NNDatasetExperiment NN_DATASET_EXPERIMENTS[] = {
         "crlp.engine_evidence.v1",
     },
 
+    {
+        "signal_mining",
+        "Signal tactical mining hypothesis ranker over deterministic replay",
+        "signal",
+        "signal_mining_v1",
+        "deterministic_utility_replay",
+        70,
+        NN_DATASET_LABEL_SINGLE_TARGET,
+        generate_signal_mining_adapter,
+        NN_DATASET_CAP_DATASET | NN_DATASET_CAP_RULE_SEARCH |
+            NN_DATASET_CAP_REPLAY | NN_DATASET_CAP_EVIDENCE,
+        "signal_mining_rule_search_v1",
+        "signal_mining_replay_v1",
+        "crlp.engine_evidence.v1",
+    },
     {
         "go_position",
         "9x9 Go position action scorer under deterministic replay verifier",
