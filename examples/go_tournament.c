@@ -711,9 +711,7 @@ static void train_on_replay(Player *p) {
 
         /* 8x data augmentation */
         for (int t = 0; t < 8; t++) {
-            static _Thread_local nn_real *aug = NULL;
-            if (!aug) aug = calloc(FEATURES, sizeof(nn_real));
-            if (!aug) continue;
+            nn_real aug[FEATURES];
             augment_features(p->replay[ri].features, aug, t);
             int orig_move = (int)(p->replay[ri].features[SLOT_MOVE_ID] * MAX_MOVES + 0.5f);
             aug[SLOT_MOVE_ID] = (nn_real)augment_move(orig_move, t) / MAX_MOVES;
