@@ -94,6 +94,43 @@ nothing to fork.
    `nn_search`-adjacent fix, so the engine could not learn the death intrinsic to
    the domain.
 
+### Signal (maps cleanly — death is already literal and replay-certified)
+Signal is the cleanest place to encode death-as-selection, because the
+authoritative simulator already kills ships and the claim artifacts already log
+`damage` and `death` rates as verified outcomes. Unlike Go, the fitness signal
+does not have to be invented — replay hands it over directly.
+
+1. **Agent / episode** — the ship's hull reaches zero; literal, telemetered,
+   replay-certified death.
+2. **Candidate** — WASD candidates that lead to damage/death should be
+   hard-pruned by replay (the `deterministic_replay` death operator). This
+   partly exists via the safety gates.
+3. **Population** — `signal_live_swarm.mjs` is a *swarm* of pilots with no
+   culling and no reproduction: the same deathless round-robin as the Go
+   tournament. The missing loop is identical — cull the worst pilots by
+   replay-certified survival/utility and respawn them as mutated clones of the
+   best.
+4. **Memory** — shadow/replay frames never expire.
+
+**The two faces of death (Signal's distinctive contribution).** Signal forces a
+split that Go's abstract game let us ignore, and getting it wrong is dangerous:
+
+- **death-as-constraint** (object level, *avoid*): for the live deployed pilot,
+  death must be prevented — the safety gate prunes lethal actions, and the claim
+  requires damage/death no worse than baseline. A pilot must never embrace death.
+- **death-as-selection** (meta level, *exploit*): across the swarm/training loop,
+  death is *information* — a pilot that dies more is culled, one that
+  survives-and-achieves reproduces.
+
+These pull in opposite directions and must stay separated: death-as-selection in
+the live path trains a suicidal ship; death-as-constraint in the training loop
+gives no selection pressure. This is the biology structure (an organism avoids
+its *own* death while evolution *uses* death across the population) and it aligns
+with the project invariant that **the model proposes, the verifier decides, and
+the model never owns safety.** Death-as-selection belongs in the
+training/population loop; death-as-constraint belongs in the replay-gated live
+path; the two never cross.
+
 ### Codebase
 Forks branch but never die. Add a **supersedes registry**: when a fork is added it
 declares what it dominates, and CI fails if a dominated artifact still exists.
