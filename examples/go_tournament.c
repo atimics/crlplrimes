@@ -736,6 +736,13 @@ static void send_http(int fd, const char *ctype, const char *body) {
 
 /* ── Champion color palette ─────────────────────────────────────────── */
 
+/* Display-rank palette: one distinct color per leaderboard position.
+   Kept small (5) to match display_count default. */
+static const char *RANK_COLORS[] = {
+    "#ff5733", "#33a8ff", "#33ff57", "#f5a833", "#a833ff",
+};
+#define RANK_COLORS_SIZE 5
+
 static const char *CHAMPION_PALETTE[] = {
     "#ff5733", "#33ff57", "#3357ff", "#ff33a8", "#a833ff",
     "#33fff5", "#f5ff33", "#ff8c33", "#8cff33", "#33ff8c",
@@ -888,6 +895,21 @@ static void mutate_with_champion(void) {
     for (int i = 0; i < n_ranked; i++)
         for (int j = i+1; j < n_ranked; j++)
             if (ranked[j].p->elo > ranked[i].p->elo) { Ranked t = ranked[i]; ranked[i] = ranked[j]; ranked[j] = t; }
+    /* Build rank lookup: player index -> ELO display rank (1-based).
+       Used by chart series to assign matching colors. */
+    int elo_rank[MAX_PLAYERS + 1];
+    memset(elo_rank, 0, sizeof(elo_rank));
+    { int sc = 0;
+      for (int i = 0; i < n_ranked; i++) {
+          if (ranked[i].is_baseline) continue;
+          sc++;
+          if (sc <= display_count) {
+              int pi = (int)(ranked[i].p - players);
+              if (pi >= 0 && pi < player_count) elo_rank[pi] = sc;
+          }
+      }
+    }
+
     /* Only show top display_count + baseline on dashboard */
     int show_count = 0;
     for (int i = 0; i < n_ranked; i++) {
@@ -898,9 +920,10 @@ static void mutate_with_champion(void) {
         off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"elo\":%.0f,\"w\":%d,\"l\":%d,\"d\":%d,\"games\":%d,\"ci\":%d,\"rank\":%d%s%s%s%s}",
             i ? "," : "", p->name, p->elo, p->wins, p->losses, p->draws, p->games,
             ranked[i].is_baseline ? 6 : (int)(p - players), rank,
-            p->champion_color[0] ? ",\"color\":\"" : "",
-            p->champion_color[0] ? p->champion_color : "",
-            p->champion_color[0] ? "\"" : "",
+            /* Use rank-based color for top-N, champion color for #1 if set */
+            (rank > 0 && rank <= RANK_COLORS_SIZE) ? ",\"color\":\"" : "",
+            (rank > 0 && rank <= RANK_COLORS_SIZE) ? (p->champion_color[0] ? p->champion_color : RANK_COLORS[rank-1]) : "",
+            (rank > 0 && rank <= RANK_COLORS_SIZE) ? "\"" : "",
             ranked[i].is_baseline ? ",\"baseline\":true" : "");
     }
     off += snprintf(buf + off, bufsz - off, "],\"history\":[");
@@ -922,12 +945,13 @@ static void mutate_with_champion(void) {
     for (int p_idx = 0; p_idx < player_count + (baseline ? 1 : 0); p_idx++) {
         const char *pname = p_idx < player_count ? players[p_idx].name : baseline->name;
         int is_bl = p_idx >= player_count;
-        int crank = is_bl ? 99 : (p_idx < display_count ? p_idx + 1 : 99);
+        int crank = is_bl ? 99 : (elo_rank[p_idx] > 0 ? elo_rank[p_idx] : 99);
         off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"ci\":%d,\"rank\":%d,\"baseline\":%s%s%s%s,\"data\":[",
             p_idx ? "," : "", pname, is_bl ? 6 : p_idx, crank, is_bl ? "true" : "false",
-            (p_idx < player_count && players[p_idx].champion_color[0]) ? ",\"color\":\"" : "",
-            (p_idx < player_count && players[p_idx].champion_color[0]) ? players[p_idx].champion_color : "",
-            (p_idx < player_count && players[p_idx].champion_color[0]) ? "\"" : "");
+            /* Find this player's display rank for color assignment */
+            (p_idx < player_count && crank <= RANK_COLORS_SIZE) ? ",\"color\":\"" : "",
+            (p_idx < player_count && crank <= RANK_COLORS_SIZE) ? (players[p_idx].champion_color[0] ? players[p_idx].champion_color : RANK_COLORS[crank-1]) : "",
+            (p_idx < player_count && crank <= RANK_COLORS_SIZE) ? "\"" : "");
         for (int i = 0; i < ts_count; i++) {
             off += snprintf(buf + off, bufsz - off, "%s%.0f", i ? "," : "", ts[i].elo[p_idx]);
         }
@@ -974,7 +998,7 @@ static const char *status_html =
 "<div><canvas id=elo width=580 height=180></canvas><canvas id=mov width=580 height=80></canvas></div>"
 "</div>"
 "<script>"
-"let C=['#fc3','#5af','#f5a','#5fa','#a5f','#fa5','#ccc'],lastData=null,rows=[];"
+"let C=['#ff5733','#33a8ff','#33ff57','#f5a833','#a833ff','#fa5','#ccc'],lastData=null,rows=[];"
 "function drawChart(canvas,labels,series,ylabel){"
 " let c=canvas.getContext('2d'),W=canvas.width,H=canvas.height;"
 " c.clearRect(0,0,W,H);if(!labels.length)return;"
