@@ -123,8 +123,8 @@ int main(int argc, char **argv) {
     }
     if (!net) { free(tour_samples); return 1; }
 
-    const char *domains[] = {"prime_gap_candidate", "grid_path", "delayed_claim", "go_position"};
-    int n_domains = tournament_only ? 0 : 4;
+    const char *domains[] = {"prime_gap_candidate", "grid_path", "delayed_claim", "go_position", "signal_wasd"};
+    int n_domains = tournament_only ? 0 : 5;
 
     for (int e = 0; e < epochs; e++) {
         float total_loss = 0;
@@ -157,29 +157,35 @@ int main(int argc, char **argv) {
                 }
             } else if (n_domains > 0) {
                 int di = rand() % n_domains;
-                NNDatasetExperimentConfig dcfg;
-                memset(&dcfg, 0, sizeof(dcfg));
-                dcfg.feature_count = CD_FEATURES;
-                dcfg.max_groups = 1;
-                dcfg.max_candidates_per_group = CD_MAX_CANDIDATES;
-                dcfg.seed = seed + (unsigned)step * 137;
                 const NNDatasetExperiment *exp = nn_dataset_find_experiment(domains[di]);
                 if (exp) {
+                    NNDatasetExperimentConfig dcfg;
+                    memset(&dcfg, 0, sizeof(dcfg));
+                    dcfg.feature_count = exp->feature_count;  /* use adapter's real width */
+                    dcfg.max_groups = 1;
+                    dcfg.max_candidates_per_group = CD_MAX_CANDIDATES;
+                    dcfg.seed = seed + (unsigned)step * 137;
+
                     NNDataset ds;
                     if (nn_dataset_generate_experiment(exp, &dcfg, &ds) && ds.group_count > 0) {
                         NNDatasetGroup *g = &ds.groups[0];
                         cand_count = g->count;
                         if (cand_count > CD_MAX_CANDIDATES) cand_count = CD_MAX_CANDIDATES;
+                        size_t src_fc = exp->feature_count;
                         for (size_t j = 0; j < cand_count; j++) {
+                            /* Zero-pad to 96 features for the shared scorer */
+                            memset(&rows[j * CD_FEATURES], 0,
+                                   CD_FEATURES * sizeof(nn_real));
                             memcpy(&rows[j * CD_FEATURES],
                                    ds.rows[g->begin + j].features,
-                                   CD_FEATURES * sizeof(nn_real));
+                                   src_fc * sizeof(nn_real));
                             if (ds.rows[g->begin + j].target) target = j;
                         }
                         nn_dataset_free(&ds);
                     }
                 }
             }
+
 
             if (cand_count > 1 && target < cand_count) {
                 nn_real loss = nn_train_action_scorer(net, rows, cand_count, target, lr);

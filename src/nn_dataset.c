@@ -2311,9 +2311,7 @@ static int generate_signal_wasd_adapter(const NNDatasetAdapterConfig *config, NN
 }
 
 
-#ifdef GO_EXPERIMENT_ENABLED
-extern int gen_go_adapter(const NNDatasetAdapterConfig *cfg, NNDataset *ds);
-#endif
+extern int __attribute__((weak)) gen_go_adapter(const NNDatasetAdapterConfig *cfg, NNDataset *ds);
 static const NNDatasetExperiment NN_DATASET_EXPERIMENTS[] = {
     {
         "threshold",
@@ -2507,7 +2505,6 @@ static const NNDatasetExperiment NN_DATASET_EXPERIMENTS[] = {
         "crlp.engine_evidence.v1",
     },
 
-#ifdef GO_EXPERIMENT_ENABLED
     {
         "go_position",
         "9x9 Go position action scorer under deterministic replay verifier",
@@ -2516,14 +2513,13 @@ static const NNDatasetExperiment NN_DATASET_EXPERIMENTS[] = {
         "deterministic_rollout_score_replay",
         96,
         NN_DATASET_LABEL_MULTI_TARGET,
-        gen_go_adapter,
+        (NNDatasetExperimentGenerateFn)gen_go_adapter,
         NN_DATASET_CAP_DATASET | NN_DATASET_CAP_RULE_SEARCH |
             NN_DATASET_CAP_REPLAY | NN_DATASET_CAP_EVIDENCE,
         "go_position_rule_search_v1",
         "go_position_replay_v1",
         "crlp.engine_evidence.v1",
     },
-#endif
 
 };
 

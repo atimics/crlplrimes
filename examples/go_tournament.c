@@ -445,6 +445,7 @@ static int current_replay_pos = -1;  /* -1 = no replay active */
 static pthread_mutex_t replay_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void replay_store(const char *b, const char *w, GameSample *samples, int n, float score) {
+    if (n <= 0 || n > MAX_GAME_MOVES) return;
     pthread_mutex_lock(&replay_lock);
     int idx = replay_write % REPLAY_QUEUE;
     StoredReplay *r = &replay_queue[idx];
@@ -1142,7 +1143,14 @@ static void atomic_save_checkpoint(NeuralNet *net, const char *path) {
 }
 
 static void handle_crash(int sig) {
-    fprintf(stderr, "\n[tournament] CRASH signal %d\n", sig);
+    fprintf(stderr, "\n[tournament] CRASH signal %d at game %d (pid=%d)\n",
+            sig, total_games, getpid());
+    /* Print player states for debugging */
+    for (int _i = 0; _i < player_count && _i < 4; _i++) {
+        fprintf(stderr, "[tournament]   %s elo=%.0f games=%d replay=%d target_updates=%d\n",
+                players[_i].name, players[_i].elo, players[_i].games,
+                players[_i].replay_write, players[_i].games_since_target_update);
+    }
     fflush(stderr);
     _exit(1);
 }
