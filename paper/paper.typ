@@ -160,7 +160,7 @@ budgets. The arithmetic sequence-filter result supplies the clean anchor; the fi
 proposer failure supplies the falsifying negative row that motivates the feedback loop.
 
 The remaining domains are boundary evidence. ARC tests grammar coverage and failure
-taxonomy, not benchmark competence. Signal tests replay and guarded live execution pressure,
+taxonomy, not benchmark competence. Signal and Go test replay-grounded action ranking under deterministic rollout and live execution pressure,
 not comparative live-control performance. Tiny-net and adapter rows bound architecture
 claims. Haiku is a language-adjacent corpus check, not semantic understanding. The
 dataset-first runner is a shared infrastructure surface: it can show that a domain compiles to

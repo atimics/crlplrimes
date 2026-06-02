@@ -392,6 +392,11 @@
 )
 
 #let multitask_shared_vs_single = (
+  go: (
+    (domain: "go", shared_top1: 0.733, single_top1: 0.200, delta_pp: +53.3,
+     shared_nll: 1.701, single_nll: 4.010,
+     note: "32×16, 2 epochs×500 steps, seed 42, 4-domain shared training"),
+  ),
 )
 
 #let gate_ablation = (
