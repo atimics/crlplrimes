@@ -210,9 +210,11 @@ int main(int argc, char **argv) {
     NNDatasetExperimentConfig dc; memset(&dc,0,sizeof(dc));
     dc.feature_count=GO_EXP_FEATURES; dc.max_groups=128;
     dc.max_candidates_per_group=32; dc.seed=20260601u;
+    const char *save_path = NULL;
     for (int i=1;i<argc;i++) {
         if (!strcmp(argv[i],"--groups")&&i+1<argc) dc.max_groups=(size_t)atoi(argv[++i]);
-        if (!strcmp(argv[i],"--seed")&&i+1<argc) dc.seed=(unsigned)atoi(argv[++i]);
+        else if (!strcmp(argv[i],"--seed")&&i+1<argc) dc.seed=(unsigned)atoi(argv[++i]);
+        else if (!strcmp(argv[i],"--save")&&i+1<argc) save_path = argv[++i];
     }
     NNDataset ds;
     if (!gen_go_adapter(&dc,&ds)) {
@@ -244,6 +246,11 @@ int main(int argc, char **argv) {
             nn_real sc; nn_forward(net,ds.rows[ri].features,&sc);
             if ((float)sc>best) { best=(float)sc; bri=ri; } }
         if (ds.rows[bri].target) corr++; tot++;
+    }
+    if (save_path) {
+        NNCheckpointMeta meta; nn_checkpoint_meta_init(&meta, 1);
+        nn_save_checkpoint(net, save_path, &meta);
+        fprintf(stderr,"[go_exp] saved %s\n", save_path);
     }
     if (tot) fprintf(stderr,"[go_exp] test top-1: %zu/%zu (%.1f%%)\n",
                       corr,tot,100.0*(double)corr/(double)tot);

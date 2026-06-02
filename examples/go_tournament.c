@@ -30,8 +30,8 @@
 #define ENVELOPE_FEATURES 96
 #define FEATURES ENVELOPE_FEATURES
 
-#define HIDDEN0 128
-#define HIDDEN1 64
+static int tour_hidden0 = 64;
+static int tour_hidden1 = 32;
 
 #define MCTS_SIMULATIONS 4
 #define MCTS_C_PUCT 1.4f
@@ -652,7 +652,7 @@ static void ts_record_moves(int moves) {
 static bool running = true;
 
 static NeuralNet *create_net(unsigned seed) {
-    size_t layers[] = {FEATURES, HIDDEN0, HIDDEN1, 1};
+    size_t layers[] = {FEATURES, (size_t)tour_hidden0, (size_t)tour_hidden1, 1};
     NNConfig cfg = {0}; cfg.layer_sizes = layers; cfg.layer_count = 4; cfg.seed = seed;
     cfg.hidden_activation = NN_ACTIVATION_RELU; cfg.output_activation = NN_ACTIVATION_SIGMOID; cfg.loss = NN_LOSS_MSE;
     return nn_create_config(&cfg);
@@ -1161,13 +1161,19 @@ static void load_elo(void) {
 int main(int argc, char **argv) {
     int num_players = 4;
     const char *baseline_path = NULL;
+    const char *warm_start_path = NULL;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--players") == 0 && i+1 < argc) num_players = atoi(argv[++i]);
         else if (strcmp(argv[i], "--agents") == 0 && i+1 < argc) num_players = atoi(argv[++i]);
         else if (strcmp(argv[i], "--display") == 0 && i+1 < argc) display_count = atoi(argv[++i]);
+        else if (strcmp(argv[i], "--hidden") == 0 && i+1 < argc) {
+            int h0=0, h1=0;
+            if (sscanf(argv[++i], "%dx%d", &h0, &h1) == 2 && h0 > 0 && h1 > 0)
+                { tour_hidden0 = h0; tour_hidden1 = h1; }}
         else if (strcmp(argv[i], "--games") == 0 && i+1 < argc) games_per_pair = atoi(argv[++i]);
         else if (strcmp(argv[i], "--baseline") == 0 && i+1 < argc) baseline_path = argv[++i];
+        else if (strcmp(argv[i], "--warm-start") == 0 && i+1 < argc) warm_start_path = argv[++i];
         else if (strcmp(argv[i], "--threads") == 0 && i+1 < argc) { num_threads = atoi(argv[++i]); if (num_threads > MAX_THREADS) num_threads = MAX_THREADS; if (num_threads < 1) num_threads = 1; }
         else if (strcmp(argv[i], "--port") == 0 && i+1 < argc) http_port = atoi(argv[++i]);
     }
@@ -1193,6 +1199,17 @@ int main(int argc, char **argv) {
         if (loaded && nn_input_size(loaded) == FEATURES && nn_output_size(loaded) == 1) {
             p->net = loaded;
             fprintf(stderr, "[%s] loaded %s\n", p->name, ckpt_path);
+        } else if (warm_start_path) {
+            NNCheckpointMeta wm;
+            NeuralNet *warm = nn_load_checkpoint(warm_start_path, &wm);
+            if (warm && nn_input_size(warm) == FEATURES && nn_output_size(warm) == 1) {
+                p->net = warm;
+                fprintf(stderr, "[%s] warm-started from %s\n", p->name, warm_start_path);
+            } else {
+                p->net = create_net((unsigned)(time(NULL) + i * 1000));
+                if (warm) nn_free(warm);
+                fprintf(stderr, "[%s] warm-start failed, fresh network\n", p->name);
+            }
         } else {
             p->net = create_net((unsigned)(time(NULL) + i * 1000));
             if (loaded) nn_free(loaded);
