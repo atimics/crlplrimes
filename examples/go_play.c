@@ -19,10 +19,11 @@
 #define BOARD_SIZE 9
 #define CELLS (BOARD_SIZE * BOARD_SIZE)
 #define MAX_MOVES (CELLS + 1)
+/* Board encoding: CELLS * 3 one-hot planes + 1 scratch slot for per-move query id.
+ * Inference-only binary — no training target lives in the input. */
 #define BOARD_FEATURES (CELLS * 3)
 #define SLOT_MOVE_ID    (BOARD_FEATURES)
-#define SLOT_REWARD     (BOARD_FEATURES + 1)
-#define FEATURES        (BOARD_FEATURES + 2)
+#define FEATURES        (BOARD_FEATURES + 1)
 #define HIDDEN0 128
 #define HIDDEN1 64
 
@@ -273,7 +274,9 @@ static float go_stone_ratio(GoState *s) {
 /* ── features ────────────────────────────────────────────────────────── */
 
 static void go_features(GoState *s, nn_real row[FEATURES]) {
-    memset(row, 0, BOARD_FEATURES * sizeof(nn_real));
+    /* Zero ALL feature bytes so SLOT_MOVE_ID is initialized; callers that
+     * don't set it would otherwise read stack garbage from that slot. */
+    memset(row, 0, FEATURES * sizeof(nn_real));
     for (int i = 0; i < CELLS; i++) {
         int off = i * 3;
         if (s->board[i] == 1)       row[off] = 1.0f;

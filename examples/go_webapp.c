@@ -26,8 +26,8 @@
 #define BOARD_SPATIAL   (CELLS * 3)  /* own/opp/empty counts in 3x3 window */
 #define BOARD_FEATURES  (BOARD_ONEHOT + BOARD_SPATIAL)
 #define SLOT_MOVE_ID    (BOARD_FEATURES)
-#define SLOT_REWARD     (BOARD_FEATURES + 1)
-#define FEATURES        (BOARD_FEATURES + 2)
+/* Inference-only binary — no training target lives in the input vector. */
+#define FEATURES        (BOARD_FEATURES + 1)
 #define HIDDEN0 128
 #define HIDDEN1 64
 
@@ -262,7 +262,9 @@ static float go_stone_ratio(GoState *s) {
 /* ── features ────────────────────────────────────────────────────────── */
 
 static void go_features(GoState *s, nn_real row[FEATURES]) {
-    memset(row, 0, BOARD_FEATURES * sizeof(nn_real));
+    /* Zero ALL feature bytes so SLOT_MOVE_ID (and unused spatial bytes) start
+     * at 0 rather than stack garbage at every inference call. */
+    memset(row, 0, FEATURES * sizeof(nn_real));
     for (int i = 0; i < CELLS; i++) {
         int off = i * 3;
         if (s->board[i] == 1) row[off] = 1.0f;
