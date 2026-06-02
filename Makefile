@@ -735,7 +735,7 @@ $(ACTION_SCORE_EXAMPLE): examples/action_score.c $(NN_OBJS) $(NN_HEADERS) | $(BU
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/action_score.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(DATASET_ACTION_SCORE): examples/dataset_action_score.c $(NN_OBJS) $(NN_HEADERS) build/float/go_experiment.o | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/dataset_action_score.c $(NN_OBJS) build/float/go_experiment.o $(LDFLAGS) $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(GO_EXP_FLAGS) $(CFLAGS) examples/dataset_action_score.c $(NN_OBJS) build/float/go_experiment.o $(LDFLAGS) $(LDLIBS) -o $@
 
 $(HAIKU_LM): examples/haiku_lm.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_lm.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
@@ -1721,11 +1721,13 @@ $(GO_SELFPLAY): examples/go_selfplay.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 # ── Go experiment schema ────────────────────────────────────────────────
 go-experiment: $(GO_EXPERIMENT)
 
+GO_EXP_FLAGS = -DGO_EXPERIMENT_ENABLED
+
 $(GO_EXPERIMENT): build/float/nn.o build/float/nn_experiment.o build/float/nn_symbolic.o build/float/nn_bitgrid.o build/float/nn_tilebot.o build/float/nn_layer.o build/float/nn_program.o build/float/nn_hypothesis.o build/float/nn_protocol.o build/float/nn_dataset.o build/float/nn_json.o build/float/nn_text.o
-	$(CC) -std=c11 -O3 -Iinclude -DNN_REAL=float -DNN_REAL_IS_FLOAT=1 examples/go_experiment.c $^ -lm -o $@
+	$(CC) -std=c11 -O3 -Iinclude -DNN_REAL=float -DNN_REAL_IS_FLOAT=1 $(GO_EXP_FLAGS) examples/go_experiment.c $^ -lm -o $@
 
 build/float/go_experiment.o: examples/go_experiment.c include/nn.h include/nn_experiment.h include/nn_dataset.h
-	$(CC) -std=c11 -O3 -Iinclude -DNN_REAL=float -DNN_REAL_IS_FLOAT=1 -DGO_EXPERIMENT_LIBRARY_ONLY -c $< -o $@
+	$(CC) -std=c11 -O3 -Iinclude -DNN_REAL=float -DNN_REAL_IS_FLOAT=1 -DGO_EXPERIMENT_LIBRARY_ONLY $(GO_EXP_FLAGS) -c $< -o $@
 
 # ── Tournament watch ────────────────────────────────────────────────────
 # ── Tournament watch ────────────────────────────────────────────────────
