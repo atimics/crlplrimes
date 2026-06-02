@@ -457,17 +457,27 @@ static void *train_loop(void *arg) {
         pthread_mutex_unlock(&replay_lock);
         
         if (n >= TRAIN_BATCH) {
+            /* Snapshot replay under lock, then train unlocked so replay_add
+             * in the GTP path never stalls on the mutex. */
+            int snap_n = n < REPLAY_BUFFER ? n : REPLAY_BUFFER;
+            static ReplayEntry snap[REPLAY_BUFFER];
             pthread_mutex_lock(&replay_lock);
+            int start = replay_count > REPLAY_BUFFER ? replay_count % REPLAY_BUFFER : 0;
+            for (int i = 0; i < snap_n; i++)
+                snap[i] = replay[(start + i) % REPLAY_BUFFER];
+            pthread_mutex_unlock(&replay_lock);
+
+            pthread_rwlock_wrlock(&net_lock);
             float lr = TRAIN_LR;
             for (int e = 0; e < TRAIN_EPOCHS; e++) {
                 float loss = 0;
-                for (int i = 0; i < n && i < REPLAY_BUFFER; i++) {
-                    nn_real tgt = replay[i].reward;
-                    loss += (float)nn_train_sample(train_net, replay[i].features, &tgt, lr);
+                for (int i = 0; i < snap_n; i++) {
+                    nn_real tgt = snap[i].reward;
+                    loss += (float)nn_train_sample(train_net, snap[i].features, &tgt, lr);
                 }
-                if (n > 0) fprintf(stderr, "[train] epoch %d loss=%.4f samples=%d\n", e+1, loss/n, n);
+                if (snap_n > 0) fprintf(stderr, "[train] epoch %d loss=%.4f samples=%d\n", e+1, loss/snap_n, snap_n);
             }
-            pthread_mutex_unlock(&replay_lock);
+            pthread_rwlock_unlock(&net_lock);
             
             if (save_path) {
                 NNCheckpointMeta meta;
@@ -480,6 +490,7 @@ static void *train_loop(void *arg) {
     }
     return NULL;
 }
+
 
 /* ── GTP with game tracking ───────────────────────────────────────────── */
 
@@ -659,7 +670,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(cmd, "genmove") && n >= 2) gtp_genmove(a1);
         else if (!strcmp(cmd, "known_command")) gtp_out("true");
         else if (!strcmp(cmd, "list_commands")) gtp_out("protocol_version\nname\nversion\nboardsize\nclear_board\nplay\ngenmove\nquit");
-        else if (!strcmp(cmd, "kgs-genmove_cleanup")) gtp_genmove(a1);
+        else if (!strcmp(cmd, "kgs-genmove_cleanup") && n >= 2) gtp_genmove(a1);
         else gtp_err("unknown command");
     }
     
