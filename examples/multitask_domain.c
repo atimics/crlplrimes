@@ -15,7 +15,8 @@ typedef enum {
     MT_TASK_GRID_PATH = 1,
     MT_TASK_DELAYED_CLAIM = 2,
     MT_TASK_ARC_AGI = 3,
-    MT_TASK_COUNT = 4,
+    MT_TASK_GO = 4,
+    MT_TASK_COUNT = 5,
 } MTTask;
 
 typedef enum {
@@ -56,6 +57,10 @@ enum {
     MT_GRID_CELLS = MT_GRID_SIZE * MT_GRID_SIZE,
     MT_GRID_ACTION_COUNT = 4,
     MT_GRID_INF = 1000000,
+    MT_GO_SIZE = 9,
+    MT_GO_CELLS = MT_GO_SIZE * MT_GO_SIZE,
+    MT_GO_ACTION_COUNT = MT_GO_CELLS + 1,
+    MT_GO_MAX_MOVES = 150,
     MT_CLAIM_STATE_FEATURES = 6,
     MT_CLAIM_ACTION_COUNT = 4,
     MT_ARC_INPUT_WIDTH = 7,
@@ -304,6 +309,8 @@ static const char *mt_task_name(MTTask task)
         return "delayed_claim";
     case MT_TASK_ARC_AGI:
         return "arc_agi";
+    case MT_TASK_GO:
+        return "go";
     case MT_TASK_COUNT:
         break;
     }
@@ -335,6 +342,10 @@ static int mt_task_from_name(const char *name, MTTask *out_task)
     if (strcmp(name, "arc") == 0 || strcmp(name, "arc_agi") == 0 ||
         strcmp(name, "arc-agi") == 0 || strcmp(name, "arcagi") == 0) {
         *out_task = MT_TASK_ARC_AGI;
+        return 1;
+    }
+    if (strcmp(name, "go") == 0 || strcmp(name, "go_position") == 0) {
+        *out_task = MT_TASK_GO;
         return 1;
     }
     return 0;
@@ -676,6 +687,8 @@ static NNScorerDomain mt_scorer_domain(MTTask task)
         return NN_SCORER_DOMAIN_DELAYED_CLAIM_ACTION;
     case MT_TASK_ARC_AGI:
         return NN_SCORER_DOMAIN_ARC_AGI_ACTION;
+    case MT_TASK_GO:
+        return NN_SCORER_DOMAIN_GO_POSITION_ACTION;
     case MT_TASK_COUNT:
         break;
     }
@@ -1228,6 +1241,124 @@ static size_t mt_fill_arc_sample(const MTConfig *config,
                                  target_utility);
 }
 
+/* ── Go position task ────────────────────────────────────────────────── */
+
+#include "go_rules.h"
+
+static size_t mt_fill_go_sample(const MTConfig *config,
+                                 uint64_t seed,
+                                 nn_real *candidate_inputs,
+                                 size_t *target_index,
+                                 double *target_utility)
+{
+    /* Generate a random board position by playing random legal moves */
+    GoBoard b; go_init(&b);
+    srand((unsigned)seed);
+    int n_placed = (rand() % 18) + 3;
+    for (int p = 0; p < n_placed && !go_over(&b); p++) {
+        int lg[GO_MM], nl = 0;
+        for (int m = 0; m < GO_MM; m++) if (go_legal(&b, m)) lg[nl++] = m;
+        if (!nl) break;
+        go_move(&b, lg[rand() % nl]);
+    }
+    /* Retry if the random position has no legal moves (rare). */
+    for (int retry = 0; retry < 20; retry++) {
+        int nlc = 0;
+        for (int m = 0; m < GO_MM; m++) if (go_legal(&b, m)) nlc++;
+        if (nlc > 0 && !go_over(&b)) break;
+        /* Regenerate with a different seed */
+        go_init(&b);
+        srand((unsigned)(seed + (uint64_t)retry * 9973u));
+        int np = (rand() % 18) + 3;
+        for (int p = 0; p < np && !go_over(&b); p++) {
+            int lg[GO_MM], nll = 0;
+            for (int m = 0; m < GO_MM; m++) if (go_legal(&b, m)) lg[nll++] = m;
+            if (!nll) break;
+            go_move(&b, lg[rand() % nll]);
+        }
+    }
+    int nlc = 0;
+    for (int m = 0; m < GO_MM; m++) if (go_legal(&b, m)) nlc++;
+    if (!nlc || go_over(&b)) return 0;
+
+    /* Deterministic replay for each legal move */
+    float best = -9999.0f, sc[GO_MM];
+    for (int m = 0; m < GO_MM; m++) {
+        if (go_legal(&b, m)) {
+            sc[m] = go_replay(&b, m, (unsigned)seed + (unsigned)m);
+            if (sc[m] > best) best = sc[m];
+        } else sc[m] = -9999.0f;
+    }
+
+    *target_index = (size_t)-1;
+    *target_utility = 0.0;
+
+    /* Fill candidate rows: two-pass (targets first) to fit within cap */
+    int included[GO_MM]; memset(included, 0, sizeof(included));
+    size_t written = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        for (int m = 0; m < GO_MM; m++) {
+            if (!go_legal(&b, m) || included[m]) continue;
+            int tgt = (sc[m] >= best - 0.001f) ? 1 : 0;
+            if ((pass == 0 && !tgt) || (pass == 1 && tgt)) continue;
+            if (written >= MT_MAX_CANDIDATES) break;
+
+            nn_real *row = &candidate_inputs[written * MT_FEATURE_COUNT];
+            mt_fill_base_row(config, row, MT_TASK_GO, written, GO_MM);
+
+            /* Global state features  */
+            int bk = 0, wh = 0;
+            for (int i = 0; i < GO_CL; i++) {
+                if (b.board[i] == 1) bk++; else if (b.board[i] == -1) wh++; }
+            row[MT_F_COMMON + 0] = (nn_real)bk / (nn_real)GO_CL;
+            row[MT_F_COMMON + 1] = (nn_real)wh / (nn_real)GO_CL;
+            row[MT_F_COMMON + 2] = (nn_real)b.moves / (nn_real)GO_MG;
+            row[MT_F_COMMON + 3] = b.to_play == 1 ? (nn_real)1 : (nn_real)0;
+            row[MT_F_COMMON + 4] = b.passes > 0 ? (nn_real)1 : (nn_real)0;
+
+            /* Move-local features */
+            if (m == GO_CL) {
+                row[MT_F_STATE + 0] = (nn_real)1;  /* is_pass */
+            } else {
+                int x = m % GO_BS, y = m / GO_BS;
+                row[MT_F_STATE + 1] = (nn_real)x / (nn_real)(GO_BS - 1);
+                row[MT_F_STATE + 2] = (nn_real)y / (nn_real)(GO_BS - 1);
+                int no = 0, np = 0, ne = 0;
+                for (int d = 0; d < 4; d++) { int n = m + GO_DR[d];
+                    if ((d == 1 && go_ol(m)) || (d == 2 && go_or(m))) continue;
+                    if (!go_ib(n)) continue;
+                    if (b.board[n] == b.to_play) no++;
+                    else if (b.board[n] == -b.to_play) np++; else ne++; }
+                row[MT_F_STATE + 3] = (nn_real)no / 4.0f;
+                row[MT_F_STATE + 4] = (nn_real)np / 4.0f;
+                row[MT_F_STATE + 5] = (nn_real)ne / 4.0f;
+                row[MT_F_STATE + 6] = go_sa(&b, m) ? (nn_real)1 : (nn_real)0;
+                row[MT_F_STATE + 7] = go_cap(&b, m) ? (nn_real)1 : (nn_real)0;
+                row[MT_F_STATE + 8] = go_save(&b, m) ? (nn_real)1 : (nn_real)0;
+                int caps = 0;
+                for (int d = 0; d < 4; d++) { int n = m + GO_DR[d];
+                    if ((d == 1 && go_ol(m)) || (d == 2 && go_or(m))) continue;
+                    if (go_ib(n) && b.board[n] == -b.to_play && go_dead(&b, n)) caps++; }
+                row[MT_F_STATE + 9] = (nn_real)caps / 4.0f;
+                GoBoard cp = b; cp.board[m] = cp.to_play;
+                int libs = go_lib(&cp, m);
+                row[MT_F_STATE + 10] = libs > 0 ? 1.0f / (nn_real)libs : (nn_real)0;
+            }
+
+            if (tgt && *target_index == (size_t)-1) {
+                *target_index = written;
+                *target_utility = (double)best;
+            }
+
+            included[m] = 1;
+            written++;
+        }
+    }
+
+    return written;
+}
+
+
 static size_t mt_fill_task_sample(const MTData *data,
                                   const MTConfig *config,
                                   MTTask task,
@@ -1265,6 +1396,12 @@ static size_t mt_fill_task_sample(const MTData *data,
                                   candidate_inputs,
                                   target_index,
                                   target_utility);
+    case MT_TASK_GO:
+        return mt_fill_go_sample(config,
+                                 train ? 8000u + seed_or_index : seed_or_index,
+                                 candidate_inputs,
+                                 target_index,
+                                 target_utility);
     case MT_TASK_COUNT:
         break;
     }

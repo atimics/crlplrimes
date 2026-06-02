@@ -2436,6 +2436,9 @@ int nn_scorer_envelope_domain_slot(NNScorerDomain domain, size_t *out_slot)
     case NN_SCORER_DOMAIN_PRIME_RULE_PROPOSE:
         *out_slot = (size_t)NN_SCORER_ENVELOPE_F_DOMAIN_PRIME_RULE;
         return 1;
+    case NN_SCORER_DOMAIN_GO_POSITION_ACTION:
+        *out_slot = (size_t)NN_SCORER_ENVELOPE_F_DOMAIN_GO_ACTION;
+        return 1;
     }
     return 0;
 }
