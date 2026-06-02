@@ -84,11 +84,27 @@ nothing to fork.
    true ring.
 3. **Population** — it is called a *tournament* but implemented as a round-robin
    with shared training: **no agent is ever culled, no winner ever reproduces.**
-   The missing evolutionary loop is: each epoch, kill the bottom-k by ELO and
-   respawn them as mutated clones of the top-k. This is the single highest-signal
-   change — it makes "tournament" true, supplies real selection pressure, and
-   makes the flat-baseline-ELO bug moot because progress comes from replacing the
-   weak rather than from a frozen reference line.
+   The missing evolutionary loop is: each epoch, cull the worst agents and
+   respawn them as mutated clones of the best.
+
+   **Cull on grounded death, not on ELO.** ELO is an *output* — a derived,
+   relative, lagging rating the tournament produces — so using it as the
+   selection signal re-imports the ungrounded proxy this principle exists to
+   remove. The fitness/death signal must come from the grounding operator (the
+   rules engine), exactly as Signal selects on the simulator's verdict:
+   terminal win/loss at minimum, ideally richer life-and-death (groups captured,
+   liberties lost, score margin) — Go is a capture game, so grounded mortality is
+   already on the board. This also makes the flat-baseline-ELO and draw-miscount
+   bugs irrelevant, because selection reads the rules engine directly instead of
+   laundering it through a rating.
+
+   ELO keeps a role, but a demoted one: it is a *reported output* on the
+   dashboard and a *matchmaking input* (ELO-proximity pairing decides who plays
+   whom). To retain the one thing ELO carries that raw survival does not —
+   opponent strength — make the grounded fitness a *margin against the actual
+   opponents faced* (still rules-grounded) rather than a free-floating rating.
+   Selection (who lives) reads grounded death; ELO never enters the cull
+   decision.
 4. **Domain** — Go *is* a game about death (capturing groups, life-and-death);
    the value head meant to learn it was label-leakage-broken until the
    `nn_search`-adjacent fix, so the engine could not learn the death intrinsic to
