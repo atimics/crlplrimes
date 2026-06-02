@@ -1718,6 +1718,14 @@ GO_SELFPLAY := $(BUILD_DIR)/go_selfplay
 $(GO_SELFPLAY): examples/go_selfplay.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/go_selfplay.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
+# ── Cross-domain training ──────────────────────────────────────────────
+TRAIN_CROSS_DOMAIN := $(BUILD_DIR)/train_cross_domain
+
+train-cross-domain: $(TRAIN_CROSS_DOMAIN)
+
+$(TRAIN_CROSS_DOMAIN): examples/train_cross_domain.c build/float/nn.o build/float/nn_experiment.o build/float/nn_symbolic.o build/float/nn_bitgrid.o build/float/nn_tilebot.o build/float/nn_layer.o build/float/nn_program.o build/float/nn_hypothesis.o build/float/nn_protocol.o build/float/nn_dataset.o build/float/nn_json.o build/float/nn_text.o build/float/go_experiment.o
+	$(CC) -std=c11 -O3 -Iinclude -DNN_REAL=float -DNN_REAL_IS_FLOAT=1 -DGO_EXPERIMENT_ENABLED examples/train_cross_domain.c build/float/nn.o build/float/nn_experiment.o build/float/nn_symbolic.o build/float/nn_bitgrid.o build/float/nn_tilebot.o build/float/nn_layer.o build/float/nn_program.o build/float/nn_hypothesis.o build/float/nn_protocol.o build/float/nn_dataset.o build/float/nn_json.o build/float/nn_text.o build/float/go_experiment.o -lm -o $@
+
 # ── Go experiment schema ────────────────────────────────────────────────
 go-experiment: $(GO_EXPERIMENT)
 

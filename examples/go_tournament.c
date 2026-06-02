@@ -18,6 +18,7 @@
 #include <ctype.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <pthread.h>
@@ -1116,6 +1117,11 @@ static void atomic_save_checkpoint(NeuralNet *net, const char *path) {
     rename(tmp, path);
 }
 
+static void handle_crash(int sig) {
+    fprintf(stderr, "\n[tournament] CRASH signal %d\n", sig);
+    fflush(stderr);
+    _exit(1);
+}
 static void handle_signal(int sig) {
     fprintf(stderr, "\n[tournament] signal %d, saving...\n", sig);
     for (int i = 0; i < player_count; i++) {
@@ -1159,9 +1165,13 @@ static void load_elo(void) {
 /* ── main ────────────────────────────────────────────────────────────── */
 
 int main(int argc, char **argv) {
+    signal(SIGSEGV, handle_crash);
+    signal(SIGBUS, handle_crash);
+    fprintf(stderr, "[tournament] pid=%d starting\n", getpid()); fflush(stderr);
     int num_players = 4;
     const char *baseline_path = NULL;
     const char *warm_start_path = NULL;
+    const char *samples_dir = NULL;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--players") == 0 && i+1 < argc) num_players = atoi(argv[++i]);
@@ -1174,6 +1184,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--games") == 0 && i+1 < argc) games_per_pair = atoi(argv[++i]);
         else if (strcmp(argv[i], "--baseline") == 0 && i+1 < argc) baseline_path = argv[++i];
         else if (strcmp(argv[i], "--warm-start") == 0 && i+1 < argc) warm_start_path = argv[++i];
+        else if (strcmp(argv[i], "--save-samples") == 0 && i+1 < argc) samples_dir = argv[++i];
         else if (strcmp(argv[i], "--threads") == 0 && i+1 < argc) { num_threads = atoi(argv[++i]); if (num_threads > MAX_THREADS) num_threads = MAX_THREADS; if (num_threads < 1) num_threads = 1; }
         else if (strcmp(argv[i], "--port") == 0 && i+1 < argc) http_port = atoi(argv[++i]);
     }
@@ -1369,6 +1380,53 @@ fprintf(stderr, "[tournament] %d players, %d games/pair, %d threads\n", player_c
 
         save_elo();
         ts_snapshot();
+
+        /* Export loser replay samples for cross-domain training */
+        if (samples_dir) {
+            static int export_round = 0;
+            export_round++;
+            if (export_round % 5 == 0) {  /* every 5 rounds */
+                /* Find median ELO */
+                float elos[MAX_PLAYERS];
+                for (int i = 0; i < player_count; i++) elos[i] = (float)players[i].elo;
+                /* Simple insertion sort */
+                for (int i = 1; i < player_count; i++) {
+                    float k = elos[i]; int j = i-1;
+                    while (j >= 0 && elos[j] > k) { elos[j+1] = elos[j]; j--; }
+                    elos[j+1] = k;
+                }
+                float median = elos[player_count/2];
+                mkdir(samples_dir, 0755);
+                char spath[256];
+                snprintf(spath, sizeof(spath), "%s/tournament_samples_%d.jsonl",
+                         samples_dir, export_round);
+                FILE *sf = fopen(spath, "w");
+                if (sf) {
+                    int written = 0;
+                    for (int i = 0; i < player_count; i++) {
+                        if (players[i].elo >= median) continue;  /* only below-median */
+                        int n = players[i].replay_write < REPLAY_CAPACITY
+                                ? players[i].replay_write : REPLAY_CAPACITY;
+                        for (int j = 0; j < n; j++) {
+                            GameSample *s = &players[i].replay[j];
+                            fprintf(sf, "{\"domain\":\"go\",\"move\":%d,\"to_play\":%d,\"reward\":%.4f",
+                                    s->move, s->to_play, (double)s->reward);
+                            fputs(",\"features\":[", sf);
+                            for (int k = 0; k < FEATURES; k++) {
+                                if (k) fputc(',', sf);
+                                fprintf(sf, "%.6f", (double)s->features[k]);
+                            }
+                            fprintf(sf, "]}\n");
+                            written++;
+                        }
+                    }
+                    fclose(sf);
+                    if (written > 0)
+                        fprintf(stderr, "[tournament] exported %d loser samples to %s\n",
+                                written, spath);
+                }
+            }
+        }
         fprintf(stderr, "[tournament] round complete, %d total games, %d threads\n", total_games, num_threads);
 
         /* Save checkpoints */

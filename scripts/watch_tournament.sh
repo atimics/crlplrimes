@@ -16,6 +16,9 @@ while true; do
         echo "[watch] $(date +%H:%M:%S) source changed, rebuilding..."
         pkill -f "go_tournament --agents" 2>/dev/null || true
         sleep 3
+        # Ensure old processes are fully gone
+        pkill -9 -f "go_tournament --agents" 2>/dev/null || true
+        sleep 1
         
         # Rebuild object files (headers may have changed)
         make -j4 $OBJS 2>&1 | tail -5
@@ -25,11 +28,11 @@ while true; do
         BUILD_OK=$?
         
         if [ "$BUILD_OK" -eq 0 ] && [ -x "${BIN}.new" ]; then
+            # Wipe old checkpoints before launching (new architecture may differ)
+            rm -f build/float/tournament_Alpha*.nnckpt build/float/tournament_elo.txt build/float/tournament_Alpha*.nnckpt.tmp
             mv "${BIN}.new" "$BIN"
             sync
             sleep 0.5
-            # Wipe old checkpoints (new architecture may be incompatible)
-            rm -f build/float/tournament_Alpha*.nnckpt build/float/tournament_elo.txt
             echo "[watch] build OK, launching..."
             nohup "$BIN" --agents 16 --games 1 --threads 8 --display 4 \
                 > "build/float/tournament_logs/run_$(date +%H%M%S).log" 2>&1 &
