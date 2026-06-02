@@ -11,119 +11,25 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define GO_BOARD_SIZE 9
-#define GO_CELLS (GO_BOARD_SIZE * GO_BOARD_SIZE)
-#define GO_MAX_MOVES (GO_CELLS + 1)
-#define GO_MAX_GAME_MOVES 150
-static const int GO_DIRS[4] = {-GO_BOARD_SIZE, -1, 1, GO_BOARD_SIZE};
+#include "go_rules.h"
 
-typedef struct {
-    int8_t board[GO_CELLS]; int to_play, moves, passes; int8_t prev[GO_CELLS];
-} GoBoard;
-
-static int go_on_left(int i)  { return i % GO_BOARD_SIZE == 0; }
-static int go_on_right(int i) { return i % GO_BOARD_SIZE == GO_BOARD_SIZE - 1; }
-static int go_in_bounds(int i) { return i >= 0 && i < GO_CELLS; }
-static void go_init_board(GoBoard *b) { memset(b, 0, sizeof(*b)); b->to_play = 1; }
-
-static int go_count_liberties(const GoBoard *b, int i) {
-    int8_t c = b->board[i]; if (!c) return 0;
-    int8_t lb[GO_CELLS]={0}, vs[GO_CELLS]={0}; int q[GO_CELLS], h=0, t=0, cnt=0;
-    q[t++]=i; vs[i]=1;
-    while (h<t) { int x=q[h++];
-        for (int d=0;d<4;d++) { int n=x+GO_DIRS[d];
-            if ((d==1&&go_on_left(x))||(d==2&&go_on_right(x))) continue;
-            if (!go_in_bounds(n)) continue;
-            if (!b->board[n]&&!lb[n]) { lb[n]=1; cnt++; }
-            else if (b->board[n]==c&&!vs[n]) { vs[n]=1; q[t++]=n; }}}
-    return cnt;
-}
-
-static void go_remove_group(GoBoard *b, int idx) {
-    int8_t c=b->board[idx], vs[GO_CELLS]={0}; int q[GO_CELLS], h=0, t=0;
-    q[t++]=idx; vs[idx]=1;
-    while (h<t) { int x=q[h++]; b->board[x]=0;
-        for (int d=0;d<4;d++) { int n=x+GO_DIRS[d];
-            if ((d==1&&go_on_left(x))||(d==2&&go_on_right(x))) continue;
-            if (go_in_bounds(n)&&!vs[n]&&b->board[n]==c) { vs[n]=1; q[t++]=n; }}}
-}
-
-static int go_group_dead(const GoBoard *b, int i) {
-    return b->board[i]!=0 && go_count_liberties(b,i)==0;
-}
-
-static int go_is_legal(const GoBoard *b, int idx) {
-    if (idx==GO_CELLS) return 1;
-    if (!go_in_bounds(idx)||b->board[idx]) return 0;
-    GoBoard cp=*b; cp.board[idx]=cp.to_play;
-    int opp=-cp.to_play;
-    for (int d=0;d<4;d++) { int n=idx+GO_DIRS[d];
-        if ((d==1&&go_on_left(idx))||(d==2&&go_on_right(idx))) continue;
-        if (go_in_bounds(n)&&cp.board[n]==opp&&go_group_dead(&cp,n))
-            go_remove_group(&cp,n); }
-    if (go_group_dead(&cp,idx)) return 0;
-    if (!memcmp(cp.board,b->prev,sizeof(b->prev))) return 0;
-    return 1;
-}
-
-static void go_apply_move(GoBoard *b, int idx) {
-    if (idx==GO_CELLS) { b->passes++; b->to_play=-b->to_play; return; }
-    memcpy(b->prev,b->board,sizeof(b->board)); b->passes=0;
-    b->board[idx]=b->to_play; int opp=-b->to_play;
-    for (int d=0;d<4;d++) { int n=idx+GO_DIRS[d];
-        if ((d==1&&go_on_left(idx))||(d==2&&go_on_right(idx))) continue;
-        if (go_in_bounds(n)&&b->board[n]==opp&&go_group_dead(b,n))
-            go_remove_group(b,n); }
-    b->to_play=-b->to_play; b->moves++;
-}
-
-static int go_game_over(const GoBoard *b) {
-    return b->passes>=2 || b->moves>=GO_MAX_GAME_MOVES;
-}
-
-static float go_territory_score(const GoBoard *b) {
-    int8_t ow[GO_CELLS]={0}, vs[GO_CELLS]={0};
-    for (int i=0;i<GO_CELLS;i++) {
-        if (b->board[i]) { ow[i]=b->board[i]; continue; }
-        if (vs[i]) continue;
-        int q[GO_CELLS],h=0,t=0,hb=0,hw=0;
-        q[t++]=i; vs[i]=1;
-        while (h<t) { int x=q[h++];
-            for (int d=0;d<4;d++) { int n=x+GO_DIRS[d];
-                if ((d==1&&go_on_left(x))||(d==2&&go_on_right(x))) continue;
-                if (!go_in_bounds(n)) continue;
-                if (b->board[n]==1) hb=1; else if (b->board[n]==-1) hw=1;
-                else if (!vs[n]) { vs[n]=1; q[t++]=n; }}}
-        int8_t o=(hb&&!hw)?1:(!hb&&hw)?-1:0;
-        memset(vs,0,sizeof(vs)); h=0;t=0;q[t++]=i;vs[i]=1;
-        while (h<t) { int x=q[h++];
-            if (!b->board[x]) ow[x]=o;
-            for (int d=0;d<4;d++) { int n=x+GO_DIRS[d];
-                if ((d==1&&go_on_left(x))||(d==2&&go_on_right(x))) continue;
-                if (go_in_bounds(n)&&!b->board[n]&&!vs[n]) { vs[n]=1;q[t++]=n; }}}
-    }
-    int bk=0,wh=0;
-    for (int i=0;i<GO_CELLS;i++) { if (ow[i]==1) bk++; if (ow[i]==-1) wh++; }
-    return (float)(bk-wh);
-}
-
-/* Deterministic replay */
-static unsigned go_rng_st;
-static void go_rng_seed(unsigned s) { go_rng_st=s; }
-static unsigned go_rng_next(void) { go_rng_st=go_rng_st*1103515245u+12345u; return go_rng_st; }
-
-static float go_replay(const GoBoard *st, int mv, unsigned seed) {
-    GoBoard b=*st; go_apply_move(&b,mv); int mr=-b.to_play;
-    go_rng_seed(seed);
-    while (!go_game_over(&b)) {
-        int lg[GO_MAX_MOVES],nl=0;
-        for (int m=0;m<GO_MAX_MOVES;m++) if (go_is_legal(&b,m)) lg[nl++]=m;
-        if (!nl) break;
-        go_apply_move(&b,lg[go_rng_next()%nl]);
-    }
-    float sc=go_territory_score(&b);
-    return mr==1?sc:-sc;
-}
+/* Aliases for the shared header names */
+#define GO_BOARD_SIZE GO_BS
+#define GO_CELLS GO_CL
+#define GO_MAX_MOVES GO_MM
+#define GO_MAX_GAME_MOVES GO_MG
+#define GO_DIRS GO_DR
+#define go_on_left go_ol
+#define go_on_right go_or
+#define go_in_bounds go_ib
+#define go_init_board go_init
+#define go_count_liberties go_lib
+#define go_remove_group go_rm
+#define go_group_dead go_dead
+#define go_is_legal go_legal
+#define go_apply_move go_move
+#define go_game_over go_over
+#define go_territory_score go_score
 
 /* Features */
 #define GO_EXP_FEATURES 96
@@ -170,28 +76,6 @@ static const NNFeatureSchema GO_EXPERIMENT_FEATURES[] = {
     {"rsv_64_95",NN_FEATURE_STATE_OBSERVATION,0},
 };
 
-static int go_self_atari(const GoBoard *b, int idx) {
-    GoBoard cp=*b; cp.board[idx]=cp.to_play; int opp=-cp.to_play;
-    for (int d=0;d<4;d++) { int n=idx+GO_DIRS[d];
-        if ((d==1&&go_on_left(idx))||(d==2&&go_on_right(idx))) continue;
-        if (go_in_bounds(n)&&cp.board[n]==opp&&go_group_dead(&cp,n))
-            go_remove_group(&cp,n); }
-    return go_count_liberties(&cp,idx)==1;
-}
-static int go_move_caps(const GoBoard *b, int idx) {
-    int opp=-b->to_play;
-    for (int d=0;d<4;d++) { int n=idx+GO_DIRS[d];
-        if ((d==1&&go_on_left(idx))||(d==2&&go_on_right(idx))) continue;
-        if (go_in_bounds(n)&&b->board[n]==opp&&go_group_dead(b,n)) return 1; }
-    return 0;
-}
-static int go_move_saves(const GoBoard *b, int idx) {
-    for (int d=0;d<4;d++) { int n=idx+GO_DIRS[d];
-        if ((d==1&&go_on_left(idx))||(d==2&&go_on_right(idx))) continue;
-        if (go_in_bounds(n)&&b->board[n]==b->to_play&&go_count_liberties(b,n)==1)
-            return 1; }
-    return 0;
-}
 
 static void go_fill_features(const GoBoard *b, int mv, nn_real r[GO_EXP_FEATURES]) {
     memset(r,0,GO_EXP_FEATURES*sizeof(nn_real));
@@ -218,9 +102,9 @@ static void go_fill_features(const GoBoard *b, int mv, nn_real r[GO_EXP_FEATURES
             if (b->board[n]==b->to_play) no++;
             else if (b->board[n]==-b->to_play) np++; else ne++; }
         r[GF_ON]=(nn_real)no/4;r[GF_OP]=(nn_real)np/4;r[GF_EM]=(nn_real)ne/4;
-        r[GF_AT]=go_self_atari(b,mv)?1:0;
-        r[GF_CP]=go_move_caps(b,mv)?1:0;
-        r[GF_SV]=go_move_saves(b,mv)?1:0;
+        r[GF_AT]=go_sa(b,mv)?1:0;
+        r[GF_CP]=go_cap(b,mv)?1:0;
+        r[GF_SV]=go_save(b,mv)?1:0;
         int caps=0;
         for (int d=0;d<4;d++) { int n=mv+GO_DIRS[d];
             if ((d==1&&go_on_left(mv))||(d==2&&go_on_right(mv))) continue;
