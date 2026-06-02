@@ -573,7 +573,7 @@ endif
 
 .PHONY: all run action-score dataset-action-score dataset-action-score-smoke dataset-action-score-replay-smoke dataset-action-score-adapter-smoke dataset-action-score-multitarget-smoke dataset-action-score-bitwise-smoke dataset-action-score-bitwise-macro-smoke dataset-action-score-haiku-smoke dataset-action-score-grid-smoke dataset-action-score-delayed-claim-smoke dataset-action-score-prime-gap-smoke dataset-action-score-arc-smoke dataset-action-score-program-smoke dataset-action-score-signal-smoke dataset-action-score-rest-smoke dataset-action-score-engine-evidence bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit tiny-net-stronger-baseline symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-public-data arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-rule-search haiku-rule-search-baselines haiku-rule-search-smoke haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-verified-self-play arc-verified-self-play-public arc-learned-sketch-ops arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune source-policy-check benchmark test sanitize check experimental-check clean cross-domain-transfer cross-domain-transfer-smoke haiku-line-search haiku-line-search-smoke
 
-all: $(XOR_EXAMPLE) $(BITWISE_RECURSIVE) $(TILE_RECURSIVE) $(TILE_FEATURE_ENTROPY) $(LIFE_CURRICULUM) $(LAYER_DISCOVERY) $(ACTION_SCORE_EXAMPLE) $(DATASET_ACTION_SCORE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(CROSS_DOMAIN_TRANSFER) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(HAIKU_RULE_SEARCH) $(HAIKU_LINE_SEARCH) $(BENCHMARK)
+all: $(GO_EXPERIMENT) $(XOR_EXAMPLE) $(BITWISE_RECURSIVE) $(TILE_RECURSIVE) $(TILE_FEATURE_ENTROPY) $(LIFE_CURRICULUM) $(LAYER_DISCOVERY) $(ACTION_SCORE_EXAMPLE) $(DATASET_ACTION_SCORE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(CROSS_DOMAIN_TRANSFER) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(HAIKU_RULE_SEARCH) $(HAIKU_LINE_SEARCH) $(BENCHMARK)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -734,8 +734,8 @@ $(LAYER_DISCOVERY): examples/layer_discovery.c $(NN_OBJS) $(NN_HEADERS) | $(BUIL
 $(ACTION_SCORE_EXAMPLE): examples/action_score.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/action_score.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(DATASET_ACTION_SCORE): examples/dataset_action_score.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/dataset_action_score.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+$(DATASET_ACTION_SCORE): examples/dataset_action_score.c $(NN_OBJS) $(NN_HEADERS) build/float/go_experiment.o | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/dataset_action_score.c $(NN_OBJS) build/float/go_experiment.o $(LDFLAGS) $(LDLIBS) -o $@
 
 $(HAIKU_LM): examples/haiku_lm.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_lm.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
@@ -997,7 +997,7 @@ haiku-rule-search-baselines: $(HAIKU_RULE_SEARCH)
 	./$(HAIKU_RULE_SEARCH) --corpus $(HAIKU_LM_CORPUS) --max-candidates 48 --max-states 600 --max-rules 16 --proposer random --proposer-seed 20240518
 	./$(HAIKU_RULE_SEARCH) --corpus $(HAIKU_LM_CORPUS) --max-candidates 48 --max-states 600 --max-rules 16 --proposer closed-loop
 
-experiment-schemas: $(PRIME_GAP_EXAMPLE) $(GRID_PATH) $(DELAYED_CLAIM) $(PROGRAM_SYNTHESIS) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING)
+experiment-schemas: $(GO_EXPERIMENT) $(PRIME_GAP_EXAMPLE) $(GRID_PATH) $(DELAYED_CLAIM) $(PROGRAM_SYNTHESIS) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING)
 	./$(PRIME_GAP_EXAMPLE) --schema
 	./$(GRID_PATH) --schema
 	./$(DELAYED_CLAIM) --schema
@@ -1718,6 +1718,16 @@ GO_SELFPLAY := $(BUILD_DIR)/go_selfplay
 $(GO_SELFPLAY): examples/go_selfplay.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/go_selfplay.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
+# ── Go experiment schema ────────────────────────────────────────────────
+go-experiment: $(GO_EXPERIMENT)
+
+$(GO_EXPERIMENT): build/float/nn.o build/float/nn_experiment.o build/float/nn_symbolic.o build/float/nn_bitgrid.o build/float/nn_tilebot.o build/float/nn_layer.o build/float/nn_program.o build/float/nn_hypothesis.o build/float/nn_protocol.o build/float/nn_dataset.o build/float/nn_json.o build/float/nn_text.o
+	$(CC) -std=c11 -O3 -Iinclude -DNN_REAL=float -DNN_REAL_IS_FLOAT=1 examples/go_experiment.c $^ -lm -o $@
+
+build/float/go_experiment.o: examples/go_experiment.c include/nn.h include/nn_experiment.h include/nn_dataset.h
+	$(CC) -std=c11 -O3 -Iinclude -DNN_REAL=float -DNN_REAL_IS_FLOAT=1 -DGO_EXPERIMENT_LIBRARY_ONLY -c $< -o $@
+
+# ── Tournament watch ────────────────────────────────────────────────────
 # ── Tournament watch ────────────────────────────────────────────────────
 watch:
 	./scripts/watch_tournament.sh

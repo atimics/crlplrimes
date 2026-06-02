@@ -2310,6 +2310,8 @@ static int generate_signal_wasd_adapter(const NNDatasetAdapterConfig *config, NN
     return 1;
 }
 
+
+extern int gen_go_adapter(const NNDatasetAdapterConfig *cfg, NNDataset *ds);
 static const NNDatasetExperiment NN_DATASET_EXPERIMENTS[] = {
     {
         "threshold",
@@ -2500,6 +2502,22 @@ static const NNDatasetExperiment NN_DATASET_EXPERIMENTS[] = {
         NN_DATASET_CAP_DATASET | NN_DATASET_CAP_REPLAY | NN_DATASET_CAP_EVIDENCE,
         "music_sequence_rule_search_v1",
         "music_corpus_replay_v1",
+        "crlp.engine_evidence.v1",
+    },
+
+    {
+        "go_position",
+        "9x9 Go position action scorer under deterministic replay verifier",
+        "go",
+        "go_position_v1",
+        "deterministic_rollout_score_replay",
+        96,
+        NN_DATASET_LABEL_MULTI_TARGET,
+        gen_go_adapter,
+        NN_DATASET_CAP_DATASET | NN_DATASET_CAP_RULE_SEARCH |
+            NN_DATASET_CAP_REPLAY | NN_DATASET_CAP_EVIDENCE,
+        "go_position_rule_search_v1",
+        "go_position_replay_v1",
         "crlp.engine_evidence.v1",
     },
 
