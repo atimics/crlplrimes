@@ -294,23 +294,22 @@ int gen_go_adapter(const NNDatasetAdapterConfig *cfg, NNDataset *ds) {
         NNDatasetSplit sp=(gi<tc)?NN_DATASET_SPLIT_TRAIN:
                           (gi<tc+vc)?NN_DATASET_SPLIT_VALID:NN_DATASET_SPLIT_TEST;
         size_t begin=ds->row_count;
-        /* Always include pass (idx 81) as a fallback target, even past the
-         * candidate cap, to guarantee at least one target row per group. */
-        int pass_included = 0;
-        for (int m=0;m<GO_MAX_MOVES;m++) {
-            if (!go_is_legal(&b,m)) continue;
-            size_t in_group = ds->row_count - begin;
-            if (cfg->max_candidates_per_group>0 &&
-                in_group >= cfg->max_candidates_per_group &&
-                m != GO_CELLS) continue;
-            nn_real feats[GO_EXP_FEATURES]; go_fill_features(&b,m,feats);
-            int tgt=(sc[m]>=best-0.001f)?1:0;
-            if (m == GO_CELLS) { tgt = 1; pass_included = 1; }
-            if (!nn_dataset_append_candidate(ds,sp,(uint64_t)gi,
-                                             (uint64_t)ps,(uint32_t)m,tgt,feats))
-                return 0;
-        }
-        (void)pass_included;
+        /* Two-pass insertion: targets first so the candidate cap never
+         * excludes them, then non-targets up to the cap. */
+        int included[GO_MAX_MOVES]; memset(included,0,sizeof(included));
+        for (int pass=0;pass<2;pass++) {
+            for (int m=0;m<GO_MAX_MOVES;m++) {
+                if (!go_is_legal(&b,m) || included[m]) continue;
+                int tgt=(sc[m]>=best-0.001f)?1:0;
+                if ((pass==0 && !tgt) || (pass==1 && tgt)) continue;
+                if (cfg->max_candidates_per_group>0 &&
+                    ds->row_count-begin>=cfg->max_candidates_per_group) break;
+                nn_real feats[GO_EXP_FEATURES]; go_fill_features(&b,m,feats);
+                if (!nn_dataset_append_candidate(ds,sp,(uint64_t)gi,
+                                                 (uint64_t)ps,(uint32_t)m,tgt,feats))
+                    return 0;
+                included[m]=1;
+            }}
         if (ds->row_count>begin &&
             !nn_dataset_finalize_group(ds,begin,ds->row_count))
             return 0;
