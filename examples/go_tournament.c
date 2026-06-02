@@ -25,17 +25,11 @@
 #define BOARD_SIZE 9
 #define CELLS (BOARD_SIZE * BOARD_SIZE)
 #define MAX_MOVES (CELLS + 1)
-#define CONV_FILTERS 16
-#define CONV_KERNEL  3
-#define CONV_IN_C    3
-#define BOARD_ONEHOT   (CELLS * CONV_IN_C)
-#define CONV_FEATURES  (CELLS * CONV_FILTERS)
-#define BOARD_FEATURES CONV_FEATURES
-#define SLOT_MOVE_ID   (BOARD_FEATURES)
-/* Reward / training target is stored OUTSIDE the input vector (GameSample.reward)
- * to prevent label leakage: a slot containing the answer in features[] would let
- * the network minimize loss by copying its input. */
-#define FEATURES       (BOARD_FEATURES + 1)
+
+/* 96-feature scorer envelope: role tags, domain signal, state/move-local features */
+#define ENVELOPE_FEATURES 96
+#define FEATURES ENVELOPE_FEATURES
+
 #define HIDDEN0 128
 #define HIDDEN1 64
 
@@ -203,64 +197,52 @@ static float go_score(GoState *s) {
 }
 static inline float go_stone_ratio(GoState *s) { int n = 0; for (int i = 0; i < CELLS; i++) if (s->board[i] != 0) n++; return (float)n / CELLS; }
 
-/* ── Conv2D feature extractor (32 filters, 3x3) ────────────────────── */
-
-static nn_real conv_weights[CONV_FILTERS * CONV_IN_C * CONV_KERNEL * CONV_KERNEL];
-static nn_real conv_biases[CONV_FILTERS];
-static int conv_initialized = 0;
-
-static void conv_init(unsigned seed) {
-    if (conv_initialized) return;
-    unsigned s = seed;
-    nn_real scale = (nn_real)(2.0 / sqrt((double)(CONV_IN_C * CONV_KERNEL * CONV_KERNEL)));
-    for (int i = 0; i < CONV_FILTERS * CONV_IN_C * CONV_KERNEL * CONV_KERNEL; i++) {
-        s = s * 1103515245u + 12345u;
-        conv_weights[i] = ((nn_real)(s & 0xFFFF) / 65535.0f * 2.0f - 1.0f) * scale;
-    }
-    memset(conv_biases, 0, sizeof(conv_biases));
-
-    conv_initialized = 1;
-}
-
-static void conv_forward(const nn_real *input, nn_real *output) {
-    int pad = CONV_KERNEL / 2;
-    for (int k = 0; k < CONV_FILTERS; k++)
-        for (int y = 0; y < BOARD_SIZE; y++)
-            for (int x = 0; x < BOARD_SIZE; x++) {
-                nn_real sum = conv_biases[k];
-                for (int c = 0; c < CONV_IN_C; c++)
-                    for (int ky = 0; ky < CONV_KERNEL; ky++)
-                        for (int kx = 0; kx < CONV_KERNEL; kx++) {
-                            int iy = y + ky - pad, ix = x + kx - pad;
-                            if (iy >= 0 && iy < BOARD_SIZE && ix >= 0 && ix < BOARD_SIZE)
-                                sum += input[(c * BOARD_SIZE + iy) * BOARD_SIZE + ix] *
-                                       conv_weights[((k * CONV_IN_C + c) * CONV_KERNEL + ky) * CONV_KERNEL + kx];
-                        }
-                output[(k * BOARD_SIZE + y) * BOARD_SIZE + x] = sum > 0 ? sum : 0;
-            }
-}
-
-static void go_features(GoState *s, nn_real row[FEATURES]) {
+static void go_envelope_row(GoState *s, int move, nn_real row[FEATURES]) {
     memset(row, 0, FEATURES * sizeof(nn_real));
-    nn_real onehot[CELLS * 3];
-    for (int i = 0; i < CELLS; i++) {
-        int off = i * 3;
-        if (s->board[i] == 1)      onehot[off]   = 1.0f;
-        else if (s->board[i] == -1) onehot[off+1] = 1.0f;
-        else                        onehot[off+2] = 1.0f;
+    row[0] = 1.0f; row[1] = 1.0f;
+    int n_leg = 0, mk = 0;
+    for (int m = 0; m < MAX_MOVES; m++) if (is_legal(s, m)) n_leg++;
+    for (int m = 0; m < move; m++) if (is_legal(s, m)) mk++;
+    row[3] = n_leg <= 1 ? 0 : (nn_real)mk/(nn_real)(n_leg-1);
+    row[4] = (nn_real)n_leg/(nn_real)MAX_MOVES;
+    row[6] = 1.0f;
+    int bk=0,wh=0;
+    for(int i=0;i<CELLS;i++){if(s->board[i]==1)bk++;else if(s->board[i]==-1)wh++;}
+    row[10]=(nn_real)bk/(nn_real)CELLS; row[11]=(nn_real)wh/(nn_real)CELLS;
+    row[12]=(nn_real)s->moves/(nn_real)MAX_GAME_MOVES;
+    row[13]=s->to_play==1?1.0f:0.0f; row[14]=s->passes>0?1.0f:0.0f;
+    if(move==CELLS){row[20]=1.0f;}else{
+        int x=move%BOARD_SIZE,y=move/BOARD_SIZE;
+        row[21]=(nn_real)x/(nn_real)(BOARD_SIZE-1); row[22]=(nn_real)y/(nn_real)(BOARD_SIZE-1);
+        int no=0,np=0,ne=0;
+        for(int d=0;d<4;d++){int ni=move+DIRS[d];
+            if(d==1&&on_left(move))continue;if(d==2&&on_right(move))continue;
+            if(!in_bounds(ni))continue;
+            if(s->board[ni]==s->to_play)no++;else if(s->board[ni]==-s->to_play)np++;else ne++;}
+        row[23]=(nn_real)no/4.0f;row[24]=(nn_real)np/4.0f;row[25]=(nn_real)ne/4.0f;
+        row[27]=is_self_atari(s,move)?1.0f:0.0f;
+        row[28]=move_captures(s,move)>0?1.0f:0.0f;
+        row[29]=move_saves_own(s,move)?1.0f:0.0f;
+        int caps=0;for(int d=0;d<4;d++){int ni=move+DIRS[d];
+            if(d==1&&on_left(move))continue;if(d==2&&on_right(move))continue;
+            if(in_bounds(ni)&&s->board[ni]==-s->to_play&&is_atari(s,ni,-s->to_play))caps++;}
+        row[30]=(nn_real)caps/4.0f;
+        int libs=count_liberties(s,move);row[31]=libs>0?1.0f/(nn_real)libs:0.0f;
     }
-    conv_forward(onehot, row);
 }
-
 static void go_evaluate(NeuralNet *net, GoState *s, float policy[MAX_MOVES], float *value) {
-    nn_real feats[FEATURES];
-    go_features(s, feats); float total = 0.0f;
-    for (int m = 0; m < MAX_MOVES; m++) { if (!is_legal(s, m)) { policy[m] = 0.0f; continue; }
-        nn_real mf[FEATURES]; memcpy(mf, feats, FEATURES*sizeof(nn_real)); mf[SLOT_MOVE_ID] = (nn_real)m / MAX_MOVES;
-        nn_real sc; nn_forward(net, mf, &sc); float sv = (float)sc; if (sv < 0.005f) sv = 0.005f;
-        /* self-atari discount skipped for tournament speed */ policy[m] = sv; total += sv; }
+    nn_real row[FEATURES];
+    go_envelope_row(s, CELLS, row);
+    nn_real vs; nn_forward(net, row, &vs); *value = (float)vs * 2.0f - 1.0f;
+    float total = 0.0f;
+    for (int m = 0; m < MAX_MOVES; m++) {
+        if (!is_legal(s, m)) { policy[m] = 0.0f; continue; }
+        go_envelope_row(s, m, row);
+        nn_real sc; nn_forward(net, row, &sc);
+        float sv = (float)sc; if (sv < 0.005f) sv = 0.005f;
+        policy[m] = sv; total += sv;
+    }
     if (total > 0.0f) for (int m = 0; m < MAX_MOVES; m++) policy[m] /= total;
-    nn_real vs; nn_forward(net, feats, &vs); *value = (float)vs * 2.0f - 1.0f;
 }
 static float policy_entropy(float policy[MAX_MOVES]) { float h = 0.0f; int n = 0;
     for (int m = 0; m < MAX_MOVES; m++) if (policy[m] > 0.0f) { h -= policy[m]*logf(policy[m]+1e-12f); n++; }
@@ -334,7 +316,7 @@ static int go_mcts_move_with_probs(NeuralNet *net, GoState *root_st, float *out_
             /* Virtual loss: penalize this path during evaluation to encourage exploration */
             node->visits += 3.0f; node->total_val -= 3.0f;
             float policy[MAX_MOVES]; uint64_t h = go_hash(&s); TTEntry *te = tt_lookup(h);
-            if (te) { memset(policy,0,sizeof(policy)); for (int i=0;i<te->n;i++) policy[te->moves[i]]=te->policy[i]; nn_real vs; nn_real f[FEATURES]; go_features(&s,f); nn_forward(net,f,&vs); v=(float)vs*2.0f-1.0f; }
+            if (te) { memset(policy,0,sizeof(policy)); for (int i=0;i<te->n;i++) policy[te->moves[i]]=te->policy[i]; nn_real vs; nn_real f[FEATURES]; go_envelope_row(&s, CELLS, f); nn_forward(net,f,&vs); v=(float)vs*2.0f-1.0f; }
             else { go_evaluate(net, &s, policy, &v); tt_store(h, policy); }
             /* Remove virtual loss */
             node->visits -= 3.0f; node->total_val += 3.0f;
@@ -385,47 +367,9 @@ static int go_mcts_move(NeuralNet *net, GoState *root_st) {
 }
 
 
-/* ── Data augmentation: D4 board symmetry (8x) ────────────────────────── */
-
-/* Map cell index under D4 transformation t (0-7):
-   0=identity, 1=rot90, 2=rot180, 3=rot270,
-   4=reflect, 5=reflect+rot90, 6=reflect+rot180, 7=reflect+rot270 */
-static int transform_cell(int i, int t) {
-    int x = i % BOARD_SIZE, y = i / BOARD_SIZE;
-    int nx, ny;
-    if (t >= 4) { x = BOARD_SIZE - 1 - x; t -= 4; }  /* reflect */
-    switch (t) {
-        case 0: nx = x;     ny = y;     break;
-        case 1: nx = y;     ny = BOARD_SIZE - 1 - x; break;
-        case 2: nx = BOARD_SIZE - 1 - x; ny = BOARD_SIZE - 1 - y; break;
-        case 3: nx = BOARD_SIZE - 1 - y; ny = x;     break;
-        default: nx = x; ny = y; break;
-    }
-    return ny * BOARD_SIZE + nx;
-}
-
-/* Transform board features under D4 symmetry t.
-   Features: 81 cells × 3 one-hot planes. Just permute the cell order. */
-static void augment_features(const nn_real *src, nn_real *dst, int t) {
-    memset(dst, 0, BOARD_FEATURES * sizeof(nn_real));
-    for (int i = 0; i < CELLS; i++) {
-        int j = transform_cell(i, t);
-        for (int f = 0; f < CONV_FILTERS; f++)
-            dst[j * CONV_FILTERS + f] = src[i * CONV_FILTERS + f];
-    }
-}
-
-/* Transform move index under D4 symmetry.
-   Pass (CELLS) is invariant. Regular moves rotate/reflect. */
-static int augment_move(int move, int t) {
-    if (move == CELLS) return CELLS;
-    return transform_cell(move, t);
-}
-
-
 /* ── Training sample ─────────────────────────────────────────────────── */
 
-typedef struct { nn_real features[FEATURES]; int move, to_play; float visit_prob; float mcts_entropy; float reward; } GameSample;
+typedef struct { GoState state; nn_real features[FEATURES]; int move, to_play; float visit_prob; float mcts_entropy; float reward; } GameSample;
 
 static float go_score_global(GameSample *samples, int n);
 
@@ -434,11 +378,12 @@ static int play_game(NeuralNet *black_net, NeuralNet *white_net, GameSample *sam
     if (!black_net || !white_net) { if (n == 0) n = -1; return n; }
     while (!go_over(&s) && n < max_samples) {
         GameSample *sp = &samples[n];
-        go_features(&s, sp->features); sp->to_play = s.to_play;
+        sp->state = s;
+        go_envelope_row(&s, CELLS, sp->features); sp->to_play = s.to_play;
         NeuralNet *net = (s.to_play == 1) ? black_net : white_net;
         float vprobs[MAX_MOVES];
         int move = go_mcts_move_with_probs(net, &s, vprobs);
-        sp->features[SLOT_MOVE_ID] = (nn_real)move / MAX_MOVES; sp->move = move;
+        sp->move = move;
         sp->visit_prob = vprobs[move];
         /* Compute MCTS entropy for interest weighting */
         float ent = 0; int n_legal = 0;
@@ -621,9 +566,34 @@ typedef struct {
     double elo;
     int wins, losses, draws, games;
     int replay_count;
+    int replay_write;
     GameSample *replay;
     int games_since_target_update;
+    int blend_cooldown;
+    char champion_color[8]; /* assigned on first #1 rank */
 } Player;
+
+
+/* ── Internal NeuralNet layout for mutation (matches src/nn.c) ──────── */
+typedef struct {
+    size_t layer_count;
+    size_t *sizes;
+    int hidden_activation;
+    int output_activation;
+    int loss;
+    nn_real **activations;
+    nn_real **biases;
+    nn_real **weights;
+    nn_real **deltas;
+    nn_real **grad_biases;
+    nn_real **grad_weights;
+    nn_real **batch_activations;
+    nn_real **batch_deltas;
+    size_t batch_capacity;
+    size_t batch_cache_sample_count;
+    int batch_cache_valid;
+    uint32_t rng_state;
+} NeuralNetInternal;
 
 static Player players[MAX_PLAYERS];
 static int display_count = 4;  /* show top N on dashboard */
@@ -689,68 +659,66 @@ static NeuralNet *create_net(unsigned seed) {
 }
 
 static void train_on_replay(Player *p) {
-    if (p->replay_count < 32) return;
-    /* Learning rate decay: starts at 0.005, decays to 0.001 over time */
+    int total = p->replay_write < REPLAY_CAPACITY ? p->replay_write : REPLAY_CAPACITY;
+    if (total < 32) return;
     float lr = 0.005f / (1.0f + p->games * 0.0001f);
     if (lr < 0.001f) lr = 0.001f;
-    int batch = p->replay_count < 128 ? p->replay_count : 128;
+    int batch = total < 128 ? total : 128;
     float loss = 0;
     int trained = 0;
 
-    NeuralNet *value_net = p->target_net;
+    nn_real *batch_rows = calloc(MAX_MOVES * FEATURES, sizeof(nn_real));
 
     for (int i = 0; i < batch; i++) {
-        int ri = rand() % p->replay_count;
+        int ri = rand() % total;
         float r = p->replay[ri].reward;
         float visit_p = p->replay[ri].visit_prob;
         float ent = p->replay[ri].mcts_entropy;
 
-        /* Interest weighting: prefer high-entropy (uncertain) and decisive positions */
         float interest = 0.3f + 0.4f * fabsf(r - 0.5f) + 0.3f * ent;
         if ((float)rand() / RAND_MAX > interest) continue;
 
-        /* 8x data augmentation */
-        for (int t = 0; t < 8; t++) {
-            nn_real aug[FEATURES];
-            augment_features(p->replay[ri].features, aug, t);
-            int orig_move = (int)(p->replay[ri].features[SLOT_MOVE_ID] * MAX_MOVES + 0.5f);
-            aug[SLOT_MOVE_ID] = (nn_real)augment_move(orig_move, t) / MAX_MOVES;
-            /* DO NOT write the reward into aug — that was the old leakage path.
-             * The reward is the target only; never the input. */
-
-            /* MCTS policy distillation: blend win reward with visit probability */
-            nn_real tgt = 0.7f * r + 0.3f * visit_p;
-
-            /* For non-terminal draws, bootstrap from target network */
-            if (r > 0.3f && r < 0.7f && fabsf(visit_p) < 0.1f) {
-                nn_real vs;
-                nn_forward(value_net, aug, &vs);
-                tgt = 0.4f * r + 0.3f * vs + 0.3f * visit_p;
+        /* Reconstruct legal moves from stored state */
+        GoState *st = &p->replay[ri].state;
+        int target_move = p->replay[ri].move;
+        int legal_moves[MAX_MOVES], n_leg = 0, target_idx = -1;
+        for (int m = 0; m < MAX_MOVES; m++) {
+            if (is_legal(st, m)) {
+                if (m == target_move) target_idx = n_leg;
+                legal_moves[n_leg++] = m;
             }
-
-            loss += (float)nn_train_sample(p->net, aug, &tgt, lr);
-            trained++;
         }
+        if (target_idx < 0 || n_leg < 2) continue;
+
+        /* Build envelope rows for all legal moves */
+        for (int j = 0; j < n_leg; j++)
+            go_envelope_row(st, legal_moves[j], &batch_rows[j * FEATURES]);
+
+        /* Train action scorer: softmax over legal moves, reinforce target */
+        float sl = (float)nn_train_action_scorer(p->net, batch_rows, (size_t)n_leg,
+                                                  (size_t)target_idx, lr);
+        if (!isnan(sl)) { loss += sl; trained++; }
     }
 
+    free(batch_rows);
+
     if (trained > 0) {
-        fprintf(stderr, "[%s] train loss=%.4f samples=%d (augmented %d)\n",
-                p->name, loss/trained, batch, trained);
+        fprintf(stderr, "[%s] train loss=%.4f samples=%d\n", p->name, loss/trained, trained);
         loss_record(p->name, loss/trained, trained);
     }
 
-    /* Update target network periodically */
     p->games_since_target_update++;
     if (p->games_since_target_update >= 20) {
-        /* Copy weights from online net to target net */
-        if (p->target_net) nn_free(p->target_net);
-        p->target_net = nn_clone(p->net);
-        if (!p->target_net) p->target_net = nn_clone(p->net);  /* retry once */
-        p->games_since_target_update = 0;
-        fprintf(stderr, "[%s] target network updated\n", p->name);
+        NeuralNet *fresh = nn_clone(p->net);
+        if (!fresh) fresh = nn_clone(p->net);
+        if (fresh) {
+            if (p->target_net) nn_free(p->target_net);
+            p->target_net = fresh;
+            p->games_since_target_update = 0;
+            fprintf(stderr, "[%s] target network updated\n", p->name);
+        }
     }
 }
-
 /* ── HTTP status page ────────────────────────────────────────────────── */
 
 static int http_port = 8087;
@@ -764,8 +732,151 @@ static void send_http(int fd, const char *ctype, const char *body) {
     write(fd, hdr, hl); write(fd, body, len);
 }
 
-static void build_status_json(char *buf, int bufsz) {
+
+/* ── Champion color palette ─────────────────────────────────────────── */
+
+static const char *CHAMPION_PALETTE[] = {
+    "#ff5733", "#33ff57", "#3357ff", "#ff33a8", "#a833ff",
+    "#33fff5", "#f5ff33", "#ff8c33", "#8cff33", "#33ff8c",
+    "#338cff", "#8c33ff", "#ff3333", "#33ff33", "#3333ff",
+    "#ffaa00", "#00ffaa", "#aa00ff", "#ff00aa", "#aaff00",
+};
+#define CHAMPION_PALETTE_SIZE 20
+static int next_champion_color = 0;
+
+static void assign_champion_colors(void) {
+    /* Find current #1 and assign a color if they don''t have one.
+       Cap at 7 colored champions: if an 8th would be added, strip the
+       lowest-ranked champion''s color first. */
+    int best_idx = -1;
+    double best_elo = -1e9;
+    for (int i = 0; i < player_count; i++) {
+        if (players[i].elo > best_elo) {
+            best_elo = players[i].elo;
+            best_idx = i;
+        }
+    }
+    if (best_idx >= 0 && players[best_idx].champion_color[0] == 0) {
+        /* Count existing champions */
+        int champ_count = 0;
+        for (int i = 0; i < player_count; i++)
+            if (players[i].champion_color[0]) champ_count++;
+        /* If at 7, revoke the lowest-ranked champion''s color */
+        if (champ_count >= 7) {
+            int worst_idx = -1;
+            double worst_elo = 1e9;
+            for (int i = 0; i < player_count; i++) {
+                if (players[i].champion_color[0] && players[i].elo < worst_elo) {
+                    worst_elo = players[i].elo;
+                    worst_idx = i;
+                }
+            }
+            if (worst_idx >= 0) players[worst_idx].champion_color[0] = 0;
+        }
+        snprintf(players[best_idx].champion_color, 8, "%s",
+                 CHAMPION_PALETTE[next_champion_color % CHAMPION_PALETTE_SIZE]);
+        next_champion_color++;
+    }
+}
+
+
+
+/* ── Champion mutation ──────────────────────────────────────────────── */
+
+static char last_champion[NAME_LEN] = "";
+
+static void mutate_with_champion(void) {
+    /* Find current #1 */
+    int best_idx = -1;
+    double best_elo = -1e9;
+    for (int i = 0; i < player_count; i++) {
+        if (players[i].elo > best_elo) { best_elo = players[i].elo; best_idx = i; }
+    }
+    if (best_idx < 0) return;
+
+    /* Only trigger on NEW champion */
+    if (strcmp(players[best_idx].name, last_champion) == 0) return;
+    snprintf(last_champion, NAME_LEN, "%s", players[best_idx].name);
+
+    /* Decrement cooldowns */
+    for (int i = 0; i < player_count; i++)
+        if (players[i].blend_cooldown > 0) players[i].blend_cooldown--;
+
+    /* Count below-baseline agents */
+    int mutants = 0;
+    for (int i = 0; i < player_count; i++)
+        if (players[i].elo < 1500.0) mutants++;
+    if (mutants == 0) return;
+
+    fprintf(stderr, "[mutate] new champion %s, breeding with %d below-baseline agents\n",
+            players[best_idx].name, mutants);
+
+    NeuralNetInternal *champ = (NeuralNetInternal *)players[best_idx].net;
+
+    for (int i = 0; i < player_count; i++) {
+        if (players[i].elo >= 1500.0) continue;
+
+        /* Cooldown: skip agents blended recently */
+        if (players[i].blend_cooldown > 0) continue;
+        /* Weighted: probability scales with distance below baseline.
+           1490 ELO → 2%, 1400 → 20%, 1300 → 40%, 1100 → 80% (capped 90%) */
+        double deficit = 1500.0 - players[i].elo;
+        int pct = (int)(deficit / 500.0 * 100.0);
+        if (pct > 90) pct = 90;
+        if (pct < 2) pct = 2;
+        if ((rand() % 100) >= pct) continue;
+
+        NeuralNetInternal *loser = (NeuralNetInternal *)players[i].net;
+        /* Blend with jitter: ~70% champion ±5%, rest loser, +5% noise */
+        nn_real jitter = ((nn_real)(rand() % 100) / 1000.0f - 0.05f);  /* ±5% */
+        nn_real champ_w = (nn_real)0.7 + jitter;
+        nn_real loser_w = (nn_real)1.0 - champ_w;
+        nn_real noise_s = (nn_real)0.05;
+
+        for (size_t layer = 1; layer < champ->layer_count && layer < loser->layer_count; layer++) {
+            size_t prev = champ->sizes[layer - 1];
+            size_t curr = champ->sizes[layer];
+            for (size_t j = 0; j < curr; j++) {
+                nn_real blended = champ_w * champ->biases[layer][j] + loser_w * loser->biases[layer][j];
+                nn_real noise = ((nn_real)(rand() % 1000) / 500.0f - 1.0f) * noise_s;
+                loser->biases[layer][j] = blended + noise;
+            }
+            for (size_t j = 0; j < curr * prev; j++) {
+                nn_real blended = champ_w * champ->weights[layer][j] + loser_w * loser->weights[layer][j];
+                nn_real noise = ((nn_real)(rand() % 1000) / 500.0f - 1.0f) * noise_s;
+                loser->weights[layer][j] = blended + noise;
+            }
+        }
+
+        /* Sync target_net with same blend */
+        NeuralNetInternal *ct = (NeuralNetInternal *)players[best_idx].target_net;
+        NeuralNetInternal *lt = (NeuralNetInternal *)players[i].target_net;
+        if (ct && lt) {
+            for (size_t layer = 1; layer < ct->layer_count && layer < lt->layer_count; layer++) {
+                size_t prev = ct->sizes[layer - 1];
+                size_t curr = ct->sizes[layer];
+                for (size_t j = 0; j < curr; j++) {
+                    nn_real blended = champ_w * ct->biases[layer][j] + loser_w * lt->biases[layer][j];
+                    lt->biases[layer][j] = blended + ((nn_real)(rand() % 1000) / 500.0f - 1.0f) * noise_s;
+                }
+                for (size_t j = 0; j < curr * prev; j++) {
+                    nn_real blended = champ_w * ct->weights[layer][j] + loser_w * lt->weights[layer][j];
+                    lt->weights[layer][j] = blended + ((nn_real)(rand() % 1000) / 500.0f - 1.0f) * noise_s;
+                }
+            }
+        }
+
+        /* Reset stats */
+        players[i].elo = 1500.0;
+        players[i].wins = players[i].losses = players[i].draws = players[i].games = 0;
+        players[i].replay_write = 0;
+        players[i].blend_cooldown = 3;
+        players[i].champion_color[0] = 0;
+        fprintf(stderr, "[mutate] %s bred with %s\n", players[i].name, players[best_idx].name);
+    }
+}static void build_status_json(char *buf, int bufsz) {
     if (bufsz < 16384) return;
+    assign_champion_colors();
     int off = snprintf(buf, bufsz, "{\"games\":%d,\"players\":[", total_games);
     /* Collect all players including baseline, sort by ELO descending */
     typedef struct { Player *p; int is_baseline; } Ranked;
@@ -783,9 +894,12 @@ static void build_status_json(char *buf, int bufsz) {
         show_count++;
         Player *p = ranked[i].p;
         int rank = ranked[i].is_baseline ? 99 : (show_count <= display_count ? show_count : 99);
-        off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"elo\":%.0f,\"w\":%d,\"l\":%d,\"d\":%d,\"games\":%d,\"ci\":%d,\"rank\":%d%s}",
+        off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"elo\":%.0f,\"w\":%d,\"l\":%d,\"d\":%d,\"games\":%d,\"ci\":%d,\"rank\":%d%s%s%s%s}",
             i ? "," : "", p->name, p->elo, p->wins, p->losses, p->draws, p->games,
             ranked[i].is_baseline ? 6 : (int)(p - players), rank,
+            p->champion_color[0] ? ",\"color\":\"" : "",
+            p->champion_color[0] ? p->champion_color : "",
+            p->champion_color[0] ? "\"" : "",
             ranked[i].is_baseline ? ",\"baseline\":true" : "");
     }
     off += snprintf(buf + off, bufsz - off, "],\"history\":[");
@@ -808,8 +922,11 @@ static void build_status_json(char *buf, int bufsz) {
         const char *pname = p_idx < player_count ? players[p_idx].name : baseline->name;
         int is_bl = p_idx >= player_count;
         int crank = is_bl ? 99 : (p_idx < display_count ? p_idx + 1 : 99);
-        off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"ci\":%d,\"rank\":%d,\"baseline\":%s,\"data\":[",
-            p_idx ? "," : "", pname, is_bl ? 6 : p_idx, crank, is_bl ? "true" : "false");
+        off += snprintf(buf + off, bufsz - off, "%s{\"name\":\"%s\",\"ci\":%d,\"rank\":%d,\"baseline\":%s%s%s%s,\"data\":[",
+            p_idx ? "," : "", pname, is_bl ? 6 : p_idx, crank, is_bl ? "true" : "false",
+            (p_idx < player_count && players[p_idx].champion_color[0]) ? ",\"color\":\"" : "",
+            (p_idx < player_count && players[p_idx].champion_color[0]) ? players[p_idx].champion_color : "",
+            (p_idx < player_count && players[p_idx].champion_color[0]) ? "\"" : "");
         for (int i = 0; i < ts_count; i++) {
             off += snprintf(buf + off, bufsz - off, "%s%.0f", i ? "," : "", ts[i].elo[p_idx]);
         }
@@ -870,7 +987,7 @@ static const char *status_html =
 " c.fillStyle='#556';c.textAlign='right';c.fillText(ylabel,W-2,top-6);c.textAlign='start';"
 " for(let si=0;si<series.length;si++){"
 "  let s=series[si],col=C[s.ci!=null?s.ci:si];"
-"  let alpha=s.rank>4&&!s.baseline?0.15:1.0;"
+"  let alpha=s.baseline?.5:(s.color?Math.max(0.2,1.0-(s.rank-1)*0.12):1.0);"
 "  c.globalAlpha=alpha;c.strokeStyle=col;c.lineWidth=s.moves?1:1.5;c.beginPath();"
 "  for(let i=0;i<s.data.length;i++){"
 "   let x=pad+(w/(labels.length-1||1))*i;"
@@ -889,8 +1006,8 @@ static const char *status_html =
 " for(let i=0;i<players.length;i++){"
 "  let p=players[i],sp=rows[i].children;"
 "  sp[0].textContent='#'+(i+1);"
-"  let alpha2=p.rank>4&&!p.baseline?0.25:1.0;"
-"  sp[1].innerHTML=(p.baseline?'* ':'')+'<span style=color:'+(C[p.ci]||'#ccc')+';opacity:'+alpha2+'>'+p.name+'</span>';"
+"  let alpha2=p.baseline?.4:(p.color?Math.max(0.2,1.0-(p.rank-1)*0.12):1.0);"
+"  sp[1].innerHTML=(p.baseline?'* ':'')+'<span style=color:'+(p.color||C[p.ci]||'#ccc')+';opacity:'+alpha2+'>'+p.name+'</span>';"
 "  sp[2].textContent=Math.round(p.elo);sp[3].textContent=p.w+'W';"
 "  sp[4].textContent=p.l+'L';sp[5].textContent=p.d+'D';sp[6].textContent=p.games+'g';"
 " }}"
@@ -989,13 +1106,22 @@ static void *http_loop(void *arg) {
     return NULL;
 }
 
+
+/* ── Atomic checkpoint save ─────────────────────────────────────────── */
+static void atomic_save_checkpoint(NeuralNet *net, const char *path) {
+    char tmp[128];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    NNCheckpointMeta meta; nn_checkpoint_meta_init(&meta, 1);
+    nn_save_checkpoint(net, tmp, &meta);
+    rename(tmp, path);
+}
+
 static void handle_signal(int sig) {
     fprintf(stderr, "\n[tournament] signal %d, saving...\n", sig);
     for (int i = 0; i < player_count; i++) {
         char path[64];
         snprintf(path, sizeof(path), "build/float/tournament_%s.nnckpt", players[i].name);
-        NNCheckpointMeta meta; nn_checkpoint_meta_init(&meta, 1);
-        nn_save_checkpoint(players[i].net, path, &meta);
+        atomic_save_checkpoint(players[i].net, path);
     }
     running = false;
 }
@@ -1049,8 +1175,6 @@ int main(int argc, char **argv) {
     if (num_players < 2) num_players = 2;
 
     srand((unsigned)time(NULL));
-    conv_init((unsigned)time(NULL));
-    conv_init((unsigned)time(NULL));
     load_elo();
 
     /* Create evolving players */
@@ -1060,6 +1184,10 @@ int main(int argc, char **argv) {
         /* Try loading existing checkpoint */
         char ckpt_path[64];
         snprintf(ckpt_path, sizeof(ckpt_path), "build/float/tournament_%s.nnckpt", p->name);
+        /* If a .tmp exists from an interrupted atomic save, recover it */
+        { char tmp[128]; snprintf(tmp, sizeof(tmp), "%s.tmp", ckpt_path);
+          FILE *tf = fopen(tmp, "rb");
+          if (tf) { fclose(tf); rename(tmp, ckpt_path); } }
         NNCheckpointMeta meta;
         NeuralNet *loaded = nn_load_checkpoint(ckpt_path, &meta);
         if (loaded && nn_input_size(loaded) == FEATURES && nn_output_size(loaded) == 1) {
@@ -1198,15 +1326,16 @@ fprintf(stderr, "[tournament] %d players, %d games/pair, %d threads\n", player_c
 
             if (score != 0 && a_idx >= 0 && b_idx >= 0) {
                 Player *winner = score > 0 ? &players[a_idx] : &players[b_idx];
-                for (int i = 0; i < n && winner->replay_count < REPLAY_CAPACITY; i++) {
-                    memcpy(winner->replay[winner->replay_count].features, job_samples[j][i].features, FEATURES*sizeof(nn_real));
-                    winner->replay[winner->replay_count].move = job_samples[j][i].move;
-                    winner->replay[winner->replay_count].to_play = job_samples[j][i].to_play;
-                    winner->replay[winner->replay_count].visit_prob = job_samples[j][i].visit_prob;
-                    winner->replay[winner->replay_count].mcts_entropy = job_samples[j][i].mcts_entropy;
+                for (int i = 0; i < n; i++) {
+                    int rwi = winner->replay_write % REPLAY_CAPACITY;
+                    memcpy(winner->replay[rwi].features, job_samples[j][i].features, FEATURES*sizeof(nn_real));
+                    winner->replay[rwi].move = job_samples[j][i].move;
+                    winner->replay[rwi].to_play = job_samples[j][i].to_play;
+                    winner->replay[rwi].visit_prob = job_samples[j][i].visit_prob;
+                    winner->replay[rwi].mcts_entropy = job_samples[j][i].mcts_entropy;
                     float r = (job_samples[j][i].to_play == (score > 0 ? 1.0f : -1.0f)) ? 1.0f : 0.0f;
-                    winner->replay[winner->replay_count].reward = r;
-                    winner->replay_count++;
+                    winner->replay[rwi].reward = r;
+                    winner->replay_write++;
                 }
             }
             free(job_samples[j]);
