@@ -4,7 +4,7 @@
 #import "generated/experiment_matrix.typ": experiment_matrix_rows
 
 #set document(
-  title: "Certificate-Certificate Gated Neural Search with Holographic Memory",
+  title: "Verified Search with Neural Ranking and Executable Claims",
   author: "Anonymous authors",
 )
 
@@ -46,8 +46,8 @@
 
 #align(center)[
   #text(size: 17pt, weight: "bold")[
-    Certificate-Certificate Gated Neural Search \
-    with Holographic Memory
+    Verified Search with Neural Ranking \
+    and Executable Claims
   ]
   #v(4pt)
   #text(size: 11pt)[
