@@ -80,7 +80,7 @@
     rules as vector bindings with fixed O(d) memory
     
     holographic ranker achieves 48.5% accuracy with zero trainable parameters versus 16.0%
-    for a gradient-trained MLP of 1,185 parameters on small-sample tasks. Every empirical
+     Every empirical
     claim in this paper is mechanically checked against generated trace artifacts.
   ]
 ]

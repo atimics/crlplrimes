@@ -1089,7 +1089,7 @@ static void holo_agent_promote_if_needed(HoloAgent *agents, int child_idx, int p
     agents[child_idx].runner = holo_runner_create(HW_HOLO_DIM);
     holo_agent_init_centroid(&agents[child_idx], child_idx);
     agents[child_idx].stored = 0;
-    printf("  promoted agent %d → %d\n", child_idx, parent_idx);
+    // printf("  promoted agent %d → %d\n", child_idx, parent_idx);
 }
 
 static nn_real train_step(NeuralNet *net,
