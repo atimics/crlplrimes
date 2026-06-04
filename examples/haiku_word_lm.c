@@ -103,6 +103,8 @@ typedef struct {
     int strict_adjacency;
     int use_holo_gate;
     int use_anki;
+    int chunk_id;
+    int num_chunks;
     int online;
     const char *save_holo_path;
     const char *merge_holo_path;
@@ -1589,6 +1591,7 @@ static void usage(const char *argv0)
             "       [--max-updates N] [--lr R] [--samples N] [--sample 0|1]\n"
             "       [--top-k N] [--temperature R] [--max-candidates N]\n"
             "       [--strict-adjacency 0|1] [--holo-gate 0|1]\n"
+            "       [--chunk-id N] [--num-chunks N]\n"
             "       [--anki 0|1] [--online 0|1]\n"
             "       [--save-holo path] [--merge-holo path]\n"
             "       [--chunk-start N] [--chunk-end N]\n"
@@ -1614,6 +1617,8 @@ static int parse_config(int argc, char **argv, HWConfig *config)
     config->strict_adjacency = 1;
     config->use_holo_gate = 0;
     config->use_anki = 0;
+    config->chunk_id = -1;
+    config->num_chunks = 1;
     config->online = 0;
     config->save_holo_path = NULL;
     config->merge_holo_path = NULL;
@@ -1675,6 +1680,14 @@ static int parse_config(int argc, char **argv, HWConfig *config)
                 return 0;
             }
             config->use_anki = value != 0;
+        } else if (strcmp(argv[i], "--chunk-id") == 0 && i + 1 < argc) {
+            size_t value = 0;
+            if (!nn_parse_size_nonnegative_text(argv[++i], &value)) return 0;
+            config->chunk_id = (int)value;
+        } else if (strcmp(argv[i], "--num-chunks") == 0 && i + 1 < argc) {
+            size_t value = 0;
+            if (!nn_parse_size_nonnegative_text(argv[++i], &value)) return 0;
+            config->num_chunks = (int)value;
         } else if (strcmp(argv[i], "--holo-gate") == 0 && i + 1 < argc) {
             size_t value = 0;
             if (!nn_parse_size_nonnegative_text(argv[++i], &value)) return 0;
