@@ -200,17 +200,29 @@ represent the full set of promoted and sandbox domains that publish the
 `crlp.experiment_schema.v1` contract.
 
 #figure(
-  table(
-    columns: (1.2fr, 0.9fr, 0.8fr, 0.9fr, 1fr),
-    align: left, inset: 5pt,
-    table.header[*Domain*][*Verifier*][*Certificate Gate*][*Scorer*][*Status*],
-    ..experiment_matrix_rows.map(r =>
-      ([#r.domain], [#r.verifier], [#r.certificate_gate], [#r.scorer_role],
-       [#r.claim #linebreak() #strong[Limit:] #r.limitation])
-    ).flatten()
+  grid(
+    columns: (1fr),
+    rows: experiment_matrix_rows.len(),
+    row-gutter: 4pt,
+    ..experiment_matrix_rows.enumerate().map(((i, r)) => {
+      ([
+        #strong[#r.domain]#label("domain-" + str(i))
+        #h(6pt) #text(size: 9pt, fill: gray)[#r.verifier]
+        #linebreak()
+        #text(size: 9pt)[*Gate:* #r.certificate_gate]
+        #linebreak()
+        #text(size: 9pt)[*Scorer:* #r.scorer_role]
+        #linebreak()
+        #text(size: 9pt)[*Claim:* #r.claim]
+        #linebreak()
+        #text(size: 9pt, fill: rgb("#d62728"))[*Limit:* #r.limitation]
+      ],)
+    }).flatten()
   ),
-  caption: [Frozen evidence matrix. Each row states the checker, learned role, supported
-    claim, and boundary condition.],
+  caption: [Frozen evidence matrix. Each domain states its verifier, gate contract,
+    scorer role, supported claim, and boundary condition. Promoted domains
+    (prime_gap, grid_path, delayed_claim) carry certified claims; sandbox domains
+    carry diagnostic and roadmap claims.],
 ) <tab:frozen-evidence>
 
 Promoted and sandbox task schemas publish the same contract. The promoted spine is
@@ -262,6 +274,86 @@ The hypothesis library stores certified rules. As the rule set grows, flat-file 
 and linear scanning become bottlenecks. We replace the flat file with a vector-symbolic
 memory substrate that stores rules as bindings on the unit hypersphere S^(d-1). Memory
 and computation are the same operation: the memory trace IS the model.
+
+== HoloNet vs Neural Net
+
+A conventional neural layer computes scalar outputs via dot products:
+each neuron produces $y_j = sigma(w_j · x + b_j)$, a single number that
+discards the input structure. A holographic layer computes vector outputs
+via binding and superposition: each neuron produces a full d-dimensional
+vector on the unit hypersphere. Information is preserved through the
+layer---unbind can recover the input given the weight key---and memory
+and computation are the same operation.
+
+#figure(
+  cetz.canvas({
+    import cetz.draw: *
+    let w = 16
+    let h = 9
+
+    // Left: Neural Net
+    set-style(stroke: black+0.8pt, fill: none)
+    // Input layer
+    for y in (1, 3.5, 6) {
+      circle((2, y), radius: 0.3, fill: rgb("#4e79a7"))
+    }
+    // Hidden layer
+    for y in (1.5, 3, 4.5, 6.5) {
+      circle((5, y), radius: 0.3, fill: rgb("#f28e2b"))
+    }
+    // Output
+    circle((8, 3.5), radius: 0.3, fill: rgb("#e15759"))
+    // Connections (simplified)
+    set-style(stroke: gray+0.3pt)
+    line((2.3,1), (4.7,1.5)); line((2.3,1), (4.7,3)); line((2.3,1), (4.7,4.5))
+    line((2.3,3.5), (4.7,1.5)); line((2.3,3.5), (4.7,3)); line((2.3,3.5), (4.7,6.5))
+    line((2.3,6), (4.7,4.5)); line((2.3,6), (4.7,6.5))
+    line((5.3,1.5), (7.7,3.5)); line((5.3,3), (7.7,3.5))
+    line((5.3,4.5), (7.7,3.5)); line((5.3,6.5), (7.7,3.5))
+    // Labels
+    set-style(stroke: none, fill: black)
+    content((2, -0.3), text(size: 7pt)[input $x$])
+    content((5, -0.3), text(size: 7pt)[$sigma(W x + b)$])
+    content((8, -0.3), text(size: 7pt)[output])
+
+    // Right: HoloNet
+    let dx = 9
+    set-style(stroke: black+0.8pt, fill: none)
+    // Input sphere
+    circle((dx+2, 3.5), radius: 0.5, fill: rgb("#4e79a7"))
+    // Holographic layer - bundle of neurons
+    for (i, y) in ((0,1.5), (1,3), (2,4.5), (3,6.5)) {
+      circle((dx+5, y), radius: 0.3, fill: rgb("#f28e2b"))
+    }
+    // Output sphere
+    circle((dx+8, 3.5), radius: 0.5, fill: rgb("#e15759"))
+    // Bind connections (paired wavelengths)
+    set-style(stroke: gray+0.3pt)
+    line((dx+2, 3.5), (dx+4.7, 1.5))
+    line((dx+2, 3.5), (dx+4.7, 3))
+    line((dx+2, 3.5), (dx+4.7, 4.5))
+    line((dx+2, 3.5), (dx+4.7, 6.5))
+    // Bundle
+    line((dx+5.3, 1.5), (dx+5.3, 6.5))
+    line((dx+5.3, 1.5), (dx+7.7, 3.5))
+    // Labels
+    set-style(stroke: none, fill: black)
+    content((dx+2, -0.3), text(size: 7pt)[$x in S^{d-1}$])
+    content((dx+5, -0.3), text(size: 7pt)[bind($w_i$, $x$) bundle])
+    content((dx+8, -0.3), text(size: 7pt)[$y in S^{d-1}$])
+
+    // Mid-label: bind equation
+    set-style(stroke: none, fill: black)
+    content((dx+5, 7.8), text(size: 6.5pt, fill: gray)[$y = "norm"(sum_i "bind"(w_i, x))$])
+    content((5, 7.8), text(size: 6.5pt, fill: gray)[$y_j = sigma(sum_i w_(j i) x_i + b_j)$])
+  }),
+  caption: [Neural layer (left) vs holographic layer (right). A neural layer
+    produces scalar outputs through dot products and activation functions,
+    destroying information. A holographic layer binds each neuron's learned
+    key with the input vector, producing a full hypersphere vector that
+    preserves information---unbind can recover the input given the key.
+    Memory and computation are the same operation.],
+) <fig:holonet-vs-nn>
 
 == VSA Primitives
 
