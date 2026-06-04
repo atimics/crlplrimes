@@ -51,7 +51,7 @@
   ]
   #v(4pt)
   #text(size: 11pt)[
-    Rules decide validity; holographic memory stores what is learned; \
+    Rules decide validity; neural models rank what remains; claims stay bound to evidence \
     neural models rank what remains; claims stay bound to evidence
   ]
   #v(8pt)
@@ -65,25 +65,29 @@
     #set par(justify: true)
     #set text(size: 10pt)
     *Abstract.*
-    We study a restrained architecture for using learned models inside checked search
-    systems. Three components compose: a verifier-grounded framework that separates
-    validity from preference through certificate-checked symbolic rules, a holographic
-    memory substrate that stores rules as fixed-dimension vector bindings with 1/sqrt(N)
-    retrieval fidelity
-    through a universal continuous primitive. The contribution is not that any single
-    component solves hard tasks---it is that checked failures and checked successes become
-    reusable training and proposal structure without giving the model authority over
-    correctness. The clean anchor is arithmetic sequence filtering: in the audited
-    next-prime instance, a learned modular wheel achieves 100% top-1 accuracy with zero
-    false rejections on #claim_C1_prime_gate_delta_sample_count evaluation rows
-    (#claim_C1_prime_gate_delta_summary). Holographic storage encodes these certified
-    rules as vector bindings with fixed O(d) memory
-    
-    holographic ranker achieves 48.5% accuracy with zero trainable parameters versus 16.0%
-     Every empirical
-    claim in this paper is mechanically checked against generated trace artifacts.
+    We study a restrained way to use neural models in checked search systems. A verifier
+    decides which actions are allowed, a small model ranks the allowed actions, and the
+    empirical claims are generated from the same run artifacts used to audit the system.
+    The contribution is not that tiny networks solve hard tasks---it is that checked
+    failures and checked successes become reusable training and proposal structure without
+    giving the model authority over correctness. The clean anchor is arithmetic sequence
+    filtering: in the audited next-prime instance, a learned modular wheel achieves 100%
+    top-1 accuracy with zero false rejections on #claim_C1_prime_gate_delta_sample_count
+    evaluation rows (#claim_C1_prime_gate_delta_summary). The learned proposer's failure
+    (#claim_C2_prime_proposer_fixed_budget_summary) is documented as a negative row,
+    preventing the claim set from becoming a generic "neural proposal wins" story.
+
+    The key mechanism is the claim compiler: a tool that reads the paper, cross-references
+    claims against generated trace artifacts, and mechanically assigns each claim a
+    status---supported, underpowered, contradicted, or missing. Claims that lack evidence
+    are automatically surfaced in the limitations section. This closes the loop between
+    empirical work and scientific reporting: the repository trace owns what the paper is
+    allowed to say.
+
   ]
 ]
+
+
 
 = Introduction
 
@@ -101,15 +105,14 @@ gap under segmented-sieve verification.
 The dataset-first engine accepts new experiments as candidate rows plus verifier
 labels, generating evidence artifacts before any prose claim is written. Two
 architectural extensions are under development and described in companion reports:
-holographic weight storage @paper-holonet2026 for graceful degradation and
-content-addressable weight lookup, for improved neural ranking on structured continuous features.
+for improved neural ranking on structured continuous features.
 This extension is compatible with the framework but not required for the
 results presented here.
 
 The rest of the paper is organized around the data flow. Section 2 positions the work
 against related approaches. Sections 3-4 define the verifier-grounded protocol and
 dataset engine. Section 5 presents the frozen evidence matrix. Section 6 provides the
-arithmetic filtering anchor. Section 7 covers the holographic memory substrate. Section 8
+arithmetic filtering anchor. Sections 7-8 covers boundary evidence. Sections 9-10 cover claim governance and limitations. Section 11
 Sections 8-9 cover feedback loops and boundary
 evidence. Sections 11-12 cover claim governance and limitations.
 
@@ -128,11 +131,8 @@ feedback that turns negative rows into training signal. *Code-generation with so
 is narrower: the model's job is ranking, not generation, and what it learns to rank is
 shaped by verifiable negative evidence, not by reward shaping.
 
-The holographic memory substrate draws on vector symbolic architectures @kleyko2022vsa
-and holographic reduced representations @plate2003holographic. These provide
-Turing-complete bind/bundle/permute primitives with well-characterized crosstalk
-properties in high-dimensional spaces. The leOS-C engine @leosc2026 isolates these
-primitives as a compact C library that can be linked directly into the scorer pipeline.
+The hypothesis library uses vector-symbolic storage @kleyko2022vsa
+@plate2003holographic @leosc2026 for fixed-dimension rule retrieval.
 
 = Protocol
 
@@ -155,7 +155,7 @@ recorded with stable action IDs. The trace becomes the evidence artifact for cla
 Every candidate action is encoded as a 96-dimensional feature row. Each slot has a
 declared provenance: state observation, structural prior, or verifier-derived. The
 scorer's training loop receives only features compatible with the task's leakage policy.
-Holographic retrieval features (4 floats: context similarity, recency signal, candidate
+Retrieval features (context similarity, recency signal, candidate
 alignment, and confidence bound) are appended to the envelope without changing the neural
 architecture. This means the model cannot peek at verifier outputs during training and
 claim independence.
@@ -254,19 +254,10 @@ validity.
 
 = Ongoing Work
 
-Two architectural extensions are under active development and described in
-companion technical reports.
-
-*Holographic weight storage* @paper-holonet2026 replaces flat weight arrays with
-vector-symbolic bindings on the unit hypersphere, giving neural scorers graceful
-degradation (1/sqrt(N)), content-addressable weight lookup, and fixed O(d) memory.
-A zero-parameter holographic ranker achieves 48.5% accuracy versus 16.0% for a
-gradient-trained MLP on small-sample tasks.
-
-universal primitive for continuous functions, analogous to NAND for digital logic.
-Integrated into neural scorers as pairwise feature enrichment, it improves accuracy
-pairwise layers compose correctly at 94.5%. The operator does not yet improve the
-promoted experiments, which are dominated by binary and categorical features.
+The hypothesis library currently stores rules in flat files. A companion memory
+substrate @paper-holonet2026 under development replaces this with fixed-dimension
+vector storage, enabling content-addressable retrieval with graceful degradation
+as the rule set grows.
 
 This extension is compatible with the certified-gate framework. Neither is
 required for the results presented in Sections 2--10.
@@ -288,8 +279,8 @@ improves proposal quality over static search.
 
 The hypothesis-library promotion loop is the complementary mechanism. Rules that pass
 certification are not stored in an inert log. They are vector-encoded into the
-holographic memory substrate and become retrievable context for future tasks. A task
-signature query against the holographic store returns a weighted blend of all previously
+rule library and become retrievable context for future tasks. A task
+signature query against the rule store returns a weighted blend of all previously
 learned rules relevant to the current task in one vector look-up, enabling cross-task
 transfer without explicit rule sharing. #claim_C5_hypothesis_library_promotion_summary
 
@@ -347,12 +338,9 @@ grounds. Extending coverage requires broader verifiers: visual-algebra programs 
 ARC, DSL correctness checkers for program synthesis, and semantic understanding
 transfers for haiku.
 
-The holographic memory substrate is demonstrated at d up to 2048 with hundreds of
-stored rules. Scaling to millions of rules requires dimension scaling (crosstalk
-scales as 1/sqrt(d)) or hierarchical VSA structures. Holographic memory recall requires linear superposition; the bind/unbind
-primitives are well-characterized in this regime, and alternative binding
-operations should be confined to representation-learning layers rather than
-the memory storage path.
+The hypothesis library scales to hundreds of stored rules in its current
+fixed-dimension implementation. Scaling to millions of rules requires
+hierarchical storage structures described in @paper-holonet2026.
 
 The dataset-first engine currently enforces a fixed 300-epoch, hidden-width-24
 baseline. While this provides a consistent calibration point, it does not represent
@@ -375,7 +363,7 @@ than the evidence supports.
 
 The dataset-first engine makes the pipeline repeatable: any experiment that
 exports candidate rows and verifier labels under the shared schema can enter the
-evidence matrix. Two extensions under development---holographic weight storage
+evidence matrix. A companion memory substrate @paper-holonet2026
 framework but not required for the results presented here.
 
 #bibliography("references.bib")
