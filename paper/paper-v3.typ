@@ -102,9 +102,9 @@ The dataset-first engine accepts new experiments as candidate rows plus verifier
 labels, generating evidence artifacts before any prose claim is written. Two
 architectural extensions are under development and described in companion reports:
 holographic weight storage @paper-holonet2026 for graceful degradation and
-content-addressable weight lookup, and the EML operator @paper-eml2026 for
-improved neural ranking on structured continuous features. Both are compatible
-with the framework; neither is required for the results presented here.
+content-addressable weight lookup, for improved neural ranking on structured continuous features.
+This extension is compatible with the framework but not required for the
+results presented here.
 
 The rest of the paper is organized around the data flow. Section 2 positions the work
 against related approaches. Sections 3-4 define the verifier-grounded protocol and
@@ -266,14 +266,13 @@ degradation (1/sqrt(N)), content-addressable weight lookup, and fixed O(d) memor
 A zero-parameter holographic ranker achieves 48.5% accuracy versus 16.0% for a
 gradient-trained MLP on small-sample tasks.
 
-*The EML operator* @paper-eml2026 ---eml(x,y)=exp(x)-ln(|y|+epsilon)---is a
 universal primitive for continuous functions, analogous to NAND for digital logic.
 Integrated into neural scorers as pairwise feature enrichment, it improves accuracy
 on nonlinear benchmarks from 92.2% to 94.8% at identical width. Stacked EML
 pairwise layers compose correctly at 94.5%. The operator does not yet improve the
 promoted experiments, which are dominated by binary and categorical features.
 
-Both extensions are compatible with the certified-gate framework. Neither is
+This extension is compatible with the certified-gate framework. Neither is
 required for the results presented in Sections 2--10.
 
 = Feedback Loops
@@ -387,7 +386,6 @@ than the evidence supports.
 The dataset-first engine makes the pipeline repeatable: any experiment that
 exports candidate rows and verifier labels under the shared schema can enter the
 evidence matrix. Two extensions under development---holographic weight storage
-@paper-holonet2026 and the EML operator @paper-eml2026 ---are compatible with the
 framework but not required for the results presented here.
 
 #bibliography("references.bib")
