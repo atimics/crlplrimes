@@ -1,0 +1,224 @@
+# Paper spine definition — the narrative structure and prose content.
+# The paper compiler reads this + claims.yaml + experiment schemas
+# and generates the complete paper.typ. Never edit paper.typ directly.
+schema: "crlp.paper_spine.v1"
+paper:
+  title: "Verified Search with Neural Ranking and Executable Claims"
+  subtitle: "Rules decide what is allowed; models rank what remains; claims stay bound to evidence"
+  authors: "Anonymous authors"
+  bibliography: "references.bib"
+  font: "New Computer Modern"
+  font_size: 10.5
+  paper_size: "us-letter"
+  margin: [1in, 1in]
+
+sections:
+  - id: abstract
+    heading: null
+    content: |
+      We study a restrained way to use neural models in checked search systems.
+      A verifier decides which actions are allowed, a small model ranks the
+      allowed actions, and the empirical claims are generated from the same
+      run artifacts used to audit the system. The contribution is not that
+      tiny networks solve hard tasks — it is that checked failures and
+      checked successes become reusable training and proposal structure
+      without giving the model authority over correctness.
+
+      The clean anchor is arithmetic sequence filtering: in the audited
+      next-prime instance, a learned modular wheel achieves 100% top-1
+      accuracy with zero false rejections on {{C1.sample_count}} evaluation
+      rows ({{C1.delta_summary}}). The learned proposer's failure
+      ({{C2.fixed_budget_summary}}) is documented as a negative row,
+      preventing the claim set from becoming a generic "neural proposal
+      wins" story.
+
+      The key mechanism is the claim compiler: a tool that reads the paper,
+      cross-references claims against generated trace artifacts, and
+      mechanically assigns each claim a status — supported, underpowered,
+      contradicted, or missing. Claims that lack evidence are automatically
+      surfaced in the limitations section. This closes the loop between
+      empirical work and scientific reporting: the repository trace owns
+      what the paper is allowed to say.
+
+  - id: introduction
+    heading: "Introduction"
+    content: |
+      We study a restrained way to use neural models in checked search
+      systems. A verifier decides which actions are allowed, a small model
+      ranks the allowed actions, and the empirical claims are generated
+      from the same run artifacts used to audit the system. The contribution
+      is not that tiny networks solve hard tasks. It is that checked failures
+      and checked successes become reusable training and proposal structure
+      without giving the model authority over correctness. The clean anchor
+      is arithmetic sequence filtering: in the audited next-prime instance
+      (`prime_gap` in traces), the generated claim row reports
+      {{C1.delta_summary}}.
+
+      The dataset-first engine accepts new experiments as candidate rows
+      plus verifier labels, generating evidence artifacts before any prose
+      claim is written. A companion memory substrate under development
+      provides fixed-dimension vector storage for the hypothesis library.
+
+  - id: positioning
+    heading: "Positioning"
+    content: |
+      A learned component inside a verifier-grounded loop is different from
+      a learned component that owns correctness. The core loop — enumerate
+      candidates, gate with certified rules, rank survivors, verify the top
+      choice — is linear and auditable at every step.
+
+      The gated ranking loop has three comparison frames. Verification-first
+      systems rely on sound checkers but few close the loop on proposal
+      structure. Neuro-symbolic scoring uses LLM ranking without the
+      scoring-gating feedback that turns negative rows into training signal.
+      Code-generation with solvers uses neural proposal around formal
+      environments. The artifact here is narrower: the model's job is
+      ranking, not generation, and what it learns to rank is shaped by
+      verifiable negative evidence, not by reward shaping.
+
+      The hypothesis library uses vector-symbolic storage for fixed-dimension
+      rule retrieval.
+
+  - id: protocol
+    heading: "Protocol"
+    subsections:
+      - id: protocol-loop
+        heading: "The Gated Loop"
+        content: |
+          Every decision follows five steps. (1) Enumerate: given a state,
+          generate the full candidate action set. (2) Gate: apply symbolic
+          rules with machine-checked certificates that prove zero false
+          rejections over declared support. (3) Rank: a neural scorer
+          assigns a score to each survivor. Features are tagged by
+          provenance; leakage from verifier into scorer training is
+          forbidden. (4) Verify: the top-ranked candidate goes to a
+          deterministic verifier — the grounding authority. (5) Trace:
+          every step is recorded with stable action IDs. The trace becomes
+          the evidence artifact for claims.
+
+      - id: protocol-features
+        heading: "Feature Envelope and Leakage Policy"
+        content: |
+          Every candidate action is encoded as a feature row. Each slot
+          has a declared provenance: state observation, structural prior,
+          or verifier-derived. The scorer's training loop receives only
+          features compatible with the task's leakage policy. Retrieval
+          features (context similarity, recency signal, candidate alignment,
+          and confidence bound) are appended without changing the neural
+          architecture. The model cannot peek at verifier outputs during
+          training and claim independence.
+
+      - id: protocol-rules
+        heading: "Rule Grammar and Certificates"
+        content: |
+          Symbolic rules are governed by a domain-specific grammar. Each
+          rule has a kind (reject_action, transform, threshold), typed
+          parameters, and a certificate. The certificate is the
+          machine-checkable proof that the rule produces zero false
+          rejections over its declared support. Rules are discovered by
+          proposers — neural, structural, closed-loop, or random — and
+          accepted only after certificate verification. Accepted rules
+          form a gate set that prunes the candidate space before scoring.
+
+  - id: dataset-engine
+    heading: "Dataset-First Engine"
+    content: |
+      The dataset-first engine is the boundary between experimental code
+      and paper claims. Before any prose, an experiment must produce a
+      candidate-row dataset with verifier labels, train a scorer against
+      target actions, and log evidence JSONL under a fixed schema. The
+      engine runs adapters against a fixed training budget, generating
+      calibration evidence and baseline benchmarks before domain-specific
+      tuning begins.
+
+      This constraint is a quality gate, not a restriction. Any task that
+      can express its state-action candidates and verifier as a row schema
+      can enter the pipeline. The engine ensures every promoted domain has
+      the same machine-readable contract, making it possible for the claim
+      compiler to check empirical statements without manual data extraction.
+
+  - id: evidence-matrix
+    heading: "Evidence Matrix"
+    content: |
+      The promoted spine carries machine-checked claims. Sandbox domains
+      carry diagnostic claims that track progress toward promotion.
+    domains: inline  # rendered as prose list from experiment_matrix data
+
+  - id: anchor
+    heading: "Anchor: Arithmetic Sequence Filtering"
+    content: |
+      The cleanest test case is next-prime gap prediction. Candidate actions
+      are even gaps 2..256 plus an overflow action. Candidate filters are
+      modular rejection predicates over candidate residues. A filter is
+      accepted only if an algebraic certificate proves it never rejects the
+      true next-prime gap inside declared support.
+    figure: prime-gate-table   # generated from claim data
+
+  - id: feedback-loops
+    heading: "Feedback Loops"
+    content: |
+      The main contribution is what happens after the checker has said yes
+      or no. Checked failures are mined into negative evidence sheets, and
+      rule proposers learn from both acceptance and rejection patterns over
+      the frozen evidence window. The rejected-candidate learning loop uses
+      correctly rejected actions to train rule-scoring models that predict
+      certification outcomes. {{C5.rejected_candidate_summary}}
+
+      The hypothesis-library promotion loop is the complementary mechanism.
+      Rules that pass certification are vector-encoded into the rule library
+      and become retrievable context for future tasks, enabling cross-task
+      transfer without explicit rule sharing. {{C5.hypothesis_library_summary}}
+
+  - id: boundary-evidence
+    heading: "Boundary Evidence"
+    content: |
+      The evidence matrix is designed to prevent overclaiming. Each promoted
+      row carries an explicit boundary condition.
+
+      Tiny-net plateau. {{C7.plateau_summary}}
+      Trace determinism. {{C8.trace_determinism_summary}}
+      Dataset engine evidence surface. {{C8.dataset_engine_summary}}
+      Signal flight. {{C9.signal_flight_summary}} {{C9.signal_live_summary}}
+
+  - id: claim-governance
+    heading: "Claim Governance"
+    content: |
+      Claims are not prose. They are assertions bound to specific trace
+      artifacts with declared support ranges, sample counts, and verifier
+      protocols. The claim compiler reads the paper, extracts claim
+      references, cross-references them against generated evidence files,
+      and assigns each claim a status.
+    claim_status: true   # insert auto-generated claim status table
+
+  - id: limitations
+    heading: "Limitations"
+    limitations: true   # insert auto-generated limitations from claim compiler
+
+  - id: ongoing-work
+    heading: "Ongoing Work"
+    content: |
+      The hypothesis library currently stores rules in flat files. A
+      companion memory substrate under development replaces this with
+      fixed-dimension vector storage, enabling content-addressable
+      retrieval with graceful degradation as the rule set grows.
+
+  - id: conclusion
+    heading: "Conclusion"
+    content: |
+      We presented a verifier-grounded architecture for neural search.
+      The core loop is simple: enumerate candidates, gate with certified
+      rules, rank survivors with a neural scorer, verify the top choice,
+      and preserve the trace. The claim compiler closes the loop between
+      empirical work and scientific reporting by mechanically checking
+      every assertion against generated trace artifacts.
+
+      The architecture is honest about its limits. Certified gates do not
+      claim to operate outside their declared verifier support. The learned
+      proposer's failure is documented as a negative row. The dataset-first
+      engine ensures every promoted domain publishes the same contract.
+      The claim compiler ensures the paper never says more than the
+      evidence supports.
+
+      A companion memory substrate is under development for the hypothesis
+      library, compatible with the framework but not required for the
+      results presented here.

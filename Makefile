@@ -1660,6 +1660,10 @@ experimental-results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME
 	$(MAKE) trace-determinism-compare RESULTS_DIR=$(RESULTS_DIR)
 	@if [ -f "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" ]; then cp "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl"; elif [ -f "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl" ]; then echo "reusing existing prime gate seed interval"; else echo "missing prime gate seed interval artifact"; fi
 
+paper-gen:
+	python3 scripts/build_paper.py
+	cd paper && typst compile paper-v3.typ paper-v3.pdf
+
 paper-pdf: experiment-matrix paper/paper.typ
 	cd paper && typst compile paper.typ paper.pdf
 

@@ -17,9 +17,9 @@
 enum {
     HW_FEATURE_COUNT = 32,
     HW_HOLO_DIM = 1024,
-    HW_HOLO_AGENTS = 101,
+    HW_HOLO_AGENTS = 10,
     HW_HOLO_TOP_K = 5,
-    HW_HOLO_PROMOTE_AT = 200,
+    HW_HOLO_PROMOTE_AT = 10000,
     HW_VOCAB_HASH_SIZE = 65536,
     HW_MAX_CANDIDATES = 256,
     HW_MAX_POEMS = 8192,
@@ -1128,8 +1128,8 @@ static nn_real train_step(NeuralNet *net,
         leos_engine_keygen(te, aseed, av); leos_engine_normalize(te, av);
         holo_agent_train(agents, sv, av);
         /* Promote overflow */
-        for (int ai = 0; ai < 100; ++ai) {
-            int parent = ai < 90 ? 90 + (ai / 10) : 100;
+        for (int ai = 0; ai < 9; ++ai) {
+            int parent = ai < 6 ? (ai / 3) * 3 + 2 : 9;
             if (parent != ai) holo_agent_promote_if_needed(agents, ai, parent);
         }
         leos_engine_destroy(te);
@@ -1184,9 +1184,9 @@ static int score_step(NeuralNet *net,
             double *hscores = calloc(candidate_count, sizeof(double));
             double *ensembled = calloc(candidate_count, sizeof(double));
             double total_weight = 0.0;
-            for (int ai = 0; ai < 100; ++ai) {
+            for (int ai = 0; ai < 9; ++ai) {
                 double fi = holo_ranker_fidelity(agents[ai].runner->ranker);
-                if (fi < 0.01) continue;
+                if (fi < 0.05) continue;
                 double w = fi * fi * fi;
                 double sv[HW_HOLO_DIM];
                 holo_runner_embed_state(agents[ai].runner, hash_state(state), sv);
@@ -1499,9 +1499,9 @@ static int generate_one(NeuralNet *net,
             double *hscores = calloc(candidate_count, sizeof(double));
             double *ensembled = calloc(candidate_count, sizeof(double));
             double total_weight = 0.0;
-            for (int ai = 0; ai < 100; ++ai) {
+            for (int ai = 0; ai < 9; ++ai) {
                 double fi = holo_ranker_fidelity(agents[ai].runner->ranker);
-                if (fi < 0.01) continue;
+                if (fi < 0.05) continue;
                 double w = fi * fi * fi;
                 double sv[HW_HOLO_DIM];
                 holo_runner_embed_state(agents[ai].runner, hash_state(&state), sv);
@@ -2055,15 +2055,15 @@ int main(int argc, char **argv)
         for (int ai = 0; ai < HW_HOLO_AGENTS; ++ai) {
             total_stored += holo_ranker_count(agents[ai].runner->ranker);
         }
-        printf("  agents 0-4:  ");
+        printf("  leaves 0-4:  ");
         for (int ai = 0; ai < 5; ++ai)
             printf("%zu ", holo_ranker_count(agents[ai].runner->ranker));
-        printf("\n  agents 95-99: ");
-        for (int ai = 95; ai < 100; ++ai)
+        printf("\n  parents 6-8: ");
+        for (int ai = 20; ai < 9; ++ai)
             printf("%zu ", holo_ranker_count(agents[ai].runner->ranker));
-        printf("\n  root(100):   %zu stored, fidelity=%.4f\n",
-               holo_ranker_count(agents[100].runner->ranker),
-               holo_ranker_fidelity(agents[100].runner->ranker));
+        printf("\n  root(9):     %zu stored, fidelity=%.4f\n",
+               holo_ranker_count(agents[9].runner->ranker),
+               holo_ranker_fidelity(agents[9].runner->ranker));
         printf("  total stored: %zu\n", total_stored);
         if (config.save_holo_path != NULL) {
             if (holo_runner_save(agents[0].runner, config.save_holo_path) != 0) {
