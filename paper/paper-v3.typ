@@ -29,7 +29,7 @@
   #set text(size: 10pt)
   *Abstract.*
   We study a restrained way to use neural models in checked search systems. A verifier decides which actions are allowed, a small model ranks the allowed actions, and empirical claims are mechanically checked against the same run artifacts used to audit the system. The contribution is not that tiny networks solve hard tasks. It is that checked failures and checked successes become reusable training and proposal structure without giving the model authority over correctness.
-  The clean anchor is arithmetic sequence filtering. On a next-prime gap prediction task with 30,000 evaluation rows, a learned modular rejection wheel achieves 68.9% top-1 accuracy with zero false rejections, improving on the hand-coded wheel (45.1%) by 23.7 percentage points and on the ungated baseline (9.1%) by 59.6 points. The learned proposer's failure under fixed budget is documented as a negative row, preventing the claim set from becoming a generic "neural proposal wins" story.
+  The clean anchor is arithmetic sequence filtering. On a next-prime gap prediction task with 30,000 evaluation rows, a learned modular rejection wheel achieves 68.9% top-1 accuracy with 0 false rejections, improving on the hand-coded wheel (45.1%) by +23.7 pp and on the ungated baseline (9.1%) by 59.6 points. Top-10 accuracy reaches 100.0%. The learned proposer's failure under fixed budget is documented as a negative row.
   The key mechanism is the claim compiler: a tool that reads the paper, cross-references claims against generated trace artifacts, and mechanically assigns each claim a status. Claims lacking evidence are automatically surfaced in the limitations section. The repository trace owns what the paper is allowed to say.
 ]]
 

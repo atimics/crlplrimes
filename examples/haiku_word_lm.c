@@ -17,7 +17,7 @@
 enum {
     HW_FEATURE_COUNT = 32,
     HW_HOLO_DIM = 1024,
-    HW_HOLO_AGENTS = 10,
+    HW_HOLO_AGENTS = 50,
     HW_HOLO_TOP_K = 5,
     HW_HOLO_PROMOTE_AT = 10000,
     HW_VOCAB_HASH_SIZE = 65536,
@@ -1130,8 +1130,8 @@ static nn_real train_step(NeuralNet *net,
         leos_engine_keygen(te, aseed, av); leos_engine_normalize(te, av);
         holo_agent_train(agents, sv, av);
         /* Promote overflow */
-        for (int ai = 0; ai < 9; ++ai) {
-            int parent = ai < 6 ? (ai / 3) * 3 + 2 : 9;
+        for (int ai = 0; ai < 45; ++ai) {
+            int parent = ai < 40 ? 40 + (ai / 5) : 49;
             if (parent != ai) holo_agent_promote_if_needed(agents, ai, parent);
         }
         leos_engine_destroy(te);
@@ -1186,7 +1186,7 @@ static int score_step(NeuralNet *net,
             double *hscores = calloc(candidate_count, sizeof(double));
             double *ensembled = calloc(candidate_count, sizeof(double));
             double total_weight = 0.0;
-            for (int ai = 0; ai < 9; ++ai) {
+            for (int ai = 0; ai < 45; ++ai) {
                 double fi = holo_ranker_fidelity(agents[ai].runner->ranker);
                 if (fi < 0.05) continue;
                 double w = fi * fi * fi;
@@ -1501,7 +1501,7 @@ static int generate_one(NeuralNet *net,
             double *hscores = calloc(candidate_count, sizeof(double));
             double *ensembled = calloc(candidate_count, sizeof(double));
             double total_weight = 0.0;
-            for (int ai = 0; ai < 9; ++ai) {
+            for (int ai = 0; ai < 45; ++ai) {
                 double fi = holo_ranker_fidelity(agents[ai].runner->ranker);
                 if (fi < 0.05) continue;
                 double w = fi * fi * fi;
@@ -2071,12 +2071,12 @@ int main(int argc, char **argv)
         printf("  leaves 0-4:  ");
         for (int ai = 0; ai < 5; ++ai)
             printf("%zu ", holo_ranker_count(agents[ai].runner->ranker));
-        printf("\n  parents 6-8: ");
+        printf("\n  parents 40-44: ");
         for (int ai = 20; ai < 9; ++ai)
             printf("%zu ", holo_ranker_count(agents[ai].runner->ranker));
-        printf("\n  root(9):     %zu stored, fidelity=%.4f\n",
-               holo_ranker_count(agents[9].runner->ranker),
-               holo_ranker_fidelity(agents[9].runner->ranker));
+        printf("\n  root(49):     %zu stored, fidelity=%.4f\n",
+               holo_ranker_count(agents[49].runner->ranker),
+               holo_ranker_fidelity(agents[49].runner->ranker));
         printf("  total stored: %zu\n", total_stored);
         if (config.save_holo_path != NULL) {
             if (holo_runner_save(agents[0].runner, config.save_holo_path) != 0) {
