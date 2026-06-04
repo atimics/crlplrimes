@@ -199,17 +199,29 @@ represent the full set of promoted and sandbox domains that publish the
 `crlp.experiment_schema.v1` contract.
 
 #figure(
-  table(
-    columns: (1.2fr, 0.9fr, 0.8fr, 0.9fr, 1fr),
-    align: left, inset: 5pt,
-    table.header[*Domain*][*Verifier*][*Certificate Gate*][*Scorer*][*Status*],
-    ..experiment_matrix_rows.map(r =>
-      ([#r.domain], [#r.verifier], [#r.certificate_gate], [#r.scorer_role],
-       [#r.claim #linebreak() #strong[Limit:] #r.limitation])
-    ).flatten()
+  grid(
+    columns: (1fr),
+    row-gutter: 6pt,
+    column-gutter: 0pt,
+    ..experiment_matrix_rows.enumerate().map(((i, r)) => {
+      let domain_color = if i < 3 { rgb("#2ca02c") } else { rgb("#4e79a7") }
+      ([
+        #strong[#r.domain]  #text(size: 8pt, fill: domain_color)[#r.verifier]
+        #v(2pt)
+        #text(size: 8.5pt)[*Gate:* #r.certificate_gate]
+        #linebreak()
+        #text(size: 8.5pt)[*Scorer:* #r.scorer_role]
+        #linebreak()
+        #text(size: 8.5pt)[*Claim:* #r.claim]
+        #linebreak()
+        #text(size: 8pt, fill: rgb("#d62728"))[*Boundary:* #r.limitation]
+      ],)
+    }).flatten()
   ),
-  caption: [Frozen evidence matrix. Each row states the checker, learned role, supported
-    claim, and boundary condition.],
+  caption: [Frozen evidence matrix. The first three domains (green) are the promoted
+    spine with certified claims. The remaining domains (blue) are sandboxes with
+    diagnostic and roadmap claims. Each entry states the verifier, gate contract,
+    scorer role, supported claim, and boundary condition.],
 ) <tab:frozen-evidence>
 
 Promoted and sandbox task schemas publish the same contract. The promoted spine is
