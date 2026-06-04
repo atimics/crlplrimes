@@ -201,7 +201,10 @@ def generate_typst(spine, claims, families, status_counts, matrix_rows):
                     out.append('')
 
         if sec.get('domains') == 'inline':
+            promoted = {'prime_gap', 'grid_path', 'delayed_claim'}
             for row in matrix_rows:
+                if row.get('domain', '') in promoted:
+                    continue
                 domain = row.get('domain', '')
                 claim_text = row.get('claim', '')
                 verifier = row.get('verifier', '')
@@ -217,6 +220,37 @@ def generate_typst(spine, claims, families, status_counts, matrix_rows):
         if sec.get('limitations'):
             out.append('#paper_claim_limitations')
             out.append('')
+
+        # Render experiment tables
+        table_def = sec.get('table')
+        if table_def:
+            cols = table_def.get('columns', [])
+            rows = table_def.get('rows', [])
+            caption = table_def.get('caption', '')
+            out.append('#figure(')
+            out.append('  table(')
+            col_spec = '(1.5fr,' + ','.join(['1.05fr'] * (len(cols) - 1)) + '),'
+            out.append(f'    columns: {col_spec}')
+            out.append('    align: left, inset: 5pt,')
+            header = '[*' + '*][*'.join(cols) + '*]'
+            out.append(f'    table.header{header},')
+            for row in rows:
+                rendered = [substitute_vars(cell, claims, families) if '{{' in str(cell) else str(cell) for cell in row]
+                out.append(f'    [{"; ".join(rendered)}],')
+            out.append('  ),')
+            out.append(f'  caption: [{caption}],')
+            out.append(')')
+            out.append('')
+
+        # Post-table text
+        post = sec.get('post_table', '')
+        if post:
+            post = substitute_vars(post, claims, families)
+            for para in post.split('\n\n'):
+                para = para.strip()
+                if para:
+                    out.append(para)
+                    out.append('')
 
         if sec.get('figure') == 'prime-gate-table':
             c1 = families.get('C1', {})
@@ -485,7 +519,10 @@ def generate_typst(spine, claims, families, status_counts, matrix_rows):
                     out.append('')
 
         if sec.get('domains') == 'inline':
+            promoted = {'prime_gap', 'grid_path', 'delayed_claim'}
             for row in matrix_rows:
+                if row.get('domain', '') in promoted:
+                    continue
                 domain = row.get('domain', '')
                 claim_text = row.get('claim', '')
                 verifier = row.get('verifier', '')
@@ -501,6 +538,37 @@ def generate_typst(spine, claims, families, status_counts, matrix_rows):
         if sec.get('limitations'):
             out.append('#paper_claim_limitations')
             out.append('')
+
+        # Render experiment tables
+        table_def = sec.get('table')
+        if table_def:
+            cols = table_def.get('columns', [])
+            rows = table_def.get('rows', [])
+            caption = table_def.get('caption', '')
+            out.append('#figure(')
+            out.append('  table(')
+            col_spec = '(1.5fr,' + ','.join(['1.05fr'] * (len(cols) - 1)) + '),'
+            out.append(f'    columns: {col_spec}')
+            out.append('    align: left, inset: 5pt,')
+            header = '[*' + '*][*'.join(cols) + '*]'
+            out.append(f'    table.header{header},')
+            for row in rows:
+                rendered = [substitute_vars(cell, claims, families) if '{{' in str(cell) else str(cell) for cell in row]
+                out.append(f'    [{"; ".join(rendered)}],')
+            out.append('  ),')
+            out.append(f'  caption: [{caption}],')
+            out.append(')')
+            out.append('')
+
+        # Post-table text
+        post = sec.get('post_table', '')
+        if post:
+            post = substitute_vars(post, claims, families)
+            for para in post.split('\n\n'):
+                para = para.strip()
+                if para:
+                    out.append(para)
+                    out.append('')
 
         if sec.get('figure') == 'prime-gate-table':
             c1 = families.get('C1', {})

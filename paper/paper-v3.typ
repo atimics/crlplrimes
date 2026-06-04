@@ -29,7 +29,7 @@
   #set text(size: 10pt)
   *Abstract.*
   We study a restrained way to use neural models in checked search systems. A verifier decides which actions are allowed, a small model ranks the allowed actions, and empirical claims are mechanically checked against the same run artifacts used to audit the system. The contribution is not that tiny networks solve hard tasks. It is that checked failures and checked successes become reusable training and proposal structure without giving the model authority over correctness.
-  The clean anchor is arithmetic sequence filtering. On a next-prime gap prediction task with 30,000 evaluation rows, a learned modular rejection wheel achieves 68.9% top-1 accuracy with 0 false rejections, improving on the hand-coded wheel (45.1%) by +23.7 pp and on the ungated baseline (9.1%) by 59.6 points. Top-10 accuracy reaches 100.0%. The learned proposer's failure under fixed budget is documented as a negative row.
+  The clean anchor is arithmetic sequence filtering. On a next-prime gap prediction task with 30,000 evaluation rows, a learned modular rejection wheel achieves 68.9% top-1 accuracy with 0 false rejections, improving on the hand-coded wheel (45.1%) by +23.7 pp and on the ungated baseline (9.1%) by +59.7 pp. Top-10 accuracy reaches 100.0%. The learned proposer's failure under fixed budget is documented as a negative row.
   The key mechanism is the claim compiler: a tool that reads the paper, cross-references claims against generated trace artifacts, and mechanically assigns each claim a status. Claims lacking evidence are automatically surfaced in the limitations section. The repository trace owns what the paper is allowed to say.
 ]]
 
@@ -67,18 +67,67 @@ The dataset-first engine is the boundary between experimental code and paper cla
 
 This is a quality gate, not a restriction. Any task that can express its candidates and verifier as a row schema enters the pipeline. The engine ensures every promoted domain publishes the same machine-readable contract.
 
-= Evidence Matrix
+= Experiments
 
-The promoted spine carries machine-checked claims verified by the claim compiler against generated trace artifacts. Sandbox domains carry diagnostic claims that track progress toward promotion.
+We evaluate the certified-gate framework on three promoted domains and six sandbox domains. Promoted domains carry machine-checked claims verified by the claim compiler against trace artifacts. Sandbox domains demonstrate that the protocol generalizes but have not yet met the evidence thresholds for promoted claims.
 
-*prime_gap.* certified modular filters shrink the residual action space
-  #text(size: 8.5pt, fill: gray)[(segmented-sieve replay and modular certificate checks)]
+= Prime Gap: Arithmetic Sequence Filtering
 
-*grid_path.* same gate contract works outside residue arithmetic
-  #text(size: 8.5pt, fill: gray)[(BFS shortest-path successor and rule certificate checks)]
+Candidate actions are even gaps 2--256 plus an overflow action. Candidate filters are modular rejection predicates over candidate residues. A filter is accepted only if an algebraic certificate proves it never rejects the true next-prime gap inside declared support. After gating, the scorer ranks remaining candidates.
 
-*delayed_claim.* reason learning needs domain-aware safety constraints
-  #text(size: 8.5pt, fill: gray)[(deterministic hidden-outcome simulator and rule certificate checks)]
+#figure(
+  table(
+    columns: (1.5fr,1.05fr,1.05fr,1.05fr),
+    align: left, inset: 5pt,
+    table.header[*Condition*][*Top-1*][*Top-10*][*False Rejections*],
+    [no gate; 9.1%; 100.0%; 0],
+    [hand wheel; 45.1%; 100.0%; 0],
+    [learned wheel; 68.9%; 100.0%; 0],
+  ),
+  caption: [Next-prime gap prediction with modular divisibility gates.],
+)
+
+The learned wheel improves top-1 by +23.7 pp over the hand wheel on 30,000 evaluation rows. The seed audit confirms zero spread across 5 seeds. The learned proposer's failure under fixed budget (the static fixed-budget proposer is a supported negative baseline: candidate static saves 72.49 vs best deterministic 73.22, and conditional static saves 2.15 vs best deterministic 55.57.) is a documented negative row.
+
+= Grid Path: Spatial Topology Under Budgeted Gates
+
+A 7×7 grid with blocked cells. Four movement actions. The verifier is BFS shortest-path search. Gates apply legality, topology, clear-path, and distance-dominance certificates. The scorer ranks legal moves that survive gating.
+
+#figure(
+  table(
+    columns: (1.5fr,1.05fr,1.05fr,1.05fr),
+    align: left, inset: 5pt,
+    table.header[*Condition*][*Top-1*][*Verifier Steps*][*Budget*],
+    [neural scorer (no gate); 58.0%; —; —],
+    [holographic ranker; 100.0%; —; —],
+    [gated scorer; varies by budget; —; —],
+  ),
+  caption: [Grid pathfinding with budgeted certificate families.],
+)
+
+The holographic ranker achieves 100% top-1 by directly matching state-action pairs in VSA space. The neural scorer achieves 58% without gating. Budgeted gate families trade verifier cost against candidate reduction.
+
+= Delayed Claim: Trust Under Uncertainty
+
+Observable claim features with four actions: trust, ignore, request more evidence, act cautiously. The verifier is a deterministic hidden-outcome simulator. Gates apply threshold and margin predicates with finite-generator safety checks.
+
+#figure(
+  table(
+    columns: (1.5fr,1.05fr,1.05fr,1.05fr),
+    align: left, inset: 5pt,
+    table.header[*Condition*][*Top-1*][*Actions*][*Saved Steps*],
+    [neural scorer; 39.0%; 4; —],
+    [holographic ranker; 30.5%; 4; —],
+    [gated scorer; varies; 4; —],
+  ),
+  caption: [Trust/reject decisions under hidden-outcome verification.],
+)
+
+The neural scorer achieves 39.0% top-1 on clean bands. Stress rows expose noise sensitivity and indirect proxy limits. The domain tests whether gating can safely bound trust decisions when outcomes are hidden during scoring.
+
+= Sandbox Domains
+
+The remaining domains publish the same schema contract but carry diagnostic claims rather than certified ones. They are experimental proving grounds that have not yet met promoted evidence thresholds.
 
 *rejected_candidate_learning.* verifier failures become training signal
   #text(size: 8.5pt, fill: gray)[(original rule/certificate checker that rejected or accepted each row)]
@@ -97,22 +146,6 @@ The promoted spine carries machine-checked claims verified by the claim compiler
 
 *signal_flight.* application pressure for replay-grounded residual ranking and guarded live neural-active execution
   #text(size: 8.5pt, fill: gray)[(offline counterfactual simulator replay, closed-loop rollout replay, live shadow frame comparison, and live active telemetry)]
-
-= Anchor: Arithmetic Sequence Filtering
-
-The cleanest test case is next-prime gap prediction. Candidate actions are even gaps 2--256 plus an overflow action. Candidate filters are modular rejection predicates. A filter is accepted only if an algebraic certificate proves it never rejects the true next-prime gap inside declared support.
-
-#figure(
-  table(
-    columns: (1.5fr, 1.05fr, 1.05fr, 1.05fr),
-    align: left, inset: 5pt,
-    table.header[*Condition*][*Top-1*][*Top-10*][*False rejections*],
-    [no gate], [#pct(0.0913)], [#pct(1)], [0],
-    [hand wheel], [#pct(0.45123333)], [#pct(1)], [0],
-    [learned wheel], [#strong[#pct(0.68866667)]], [#strong[#pct(1)]], [#strong[0]],
-  ),
-  caption: [Arithmetic sequence filtering: the verified learned filter raises top-1 ranking to 68.87% from 45.12% for the hand-coded wheel and 9.13% raw, with 0 verifier-counted true-answer deletions.],
-) <tab:prime-anchor>
 
 = Feedback Loops
 
