@@ -193,42 +193,32 @@ for the claim compiler to check empirical statements without manual data extract
 
 = Evidence Matrix
 
-The frozen evidence matrix is the paper's scoreboard. Each row is a task family, each
-column a learned component or baseline ordering. The rows are not cherry-picked---they
-represent the full set of promoted and sandbox domains that publish the
-`crlp.experiment_schema.v1` contract.
+The promoted spine carries machine-checked claims. Sandbox domains carry
+diagnostic claims that track progress toward promotion.
 
-#figure(
-  grid(
-    columns: (1fr),
-    row-gutter: 6pt,
-    column-gutter: 0pt,
-    ..experiment_matrix_rows.enumerate().map(((i, r)) => {
-      let domain_color = if i < 3 { rgb("#2ca02c") } else { rgb("#4e79a7") }
-      ([
-        #strong[#r.domain]  #text(size: 8pt, fill: domain_color)[#r.verifier]
-        #v(2pt)
-        #text(size: 8.5pt)[*Gate:* #r.certificate_gate]
-        #linebreak()
-        #text(size: 8.5pt)[*Scorer:* #r.scorer_role]
-        #linebreak()
-        #text(size: 8.5pt)[*Claim:* #r.claim]
-        #linebreak()
-        #text(size: 8pt, fill: rgb("#d62728"))[*Boundary:* #r.limitation]
-      ],)
-    }).flatten()
-  ),
-  caption: [Frozen evidence matrix. The first three domains (green) are the promoted
-    spine with certified claims. The remaining domains (blue) are sandboxes with
-    diagnostic and roadmap claims. Each entry states the verifier, gate contract,
-    scorer role, supported claim, and boundary condition.],
-) <tab:frozen-evidence>
+*prime_gap.* Certified modular filters shrink the residual action space.
+(Verifier: segmented-sieve replay and modular certificate checks.)
 
-Promoted and sandbox task schemas publish the same contract. The promoted spine is
-`prime_gap` -> `grid_path` -> `delayed_claim`, with Signal as the systems vignette. ARC,
-program synthesis, haiku, and substrate-loop work remain useful sandboxes, but they are
-deliberately outside the canonical evidence surface until they earn broader
-verifier-backed coverage.
+*grid_path.* The same gate contract works outside residue arithmetic, applying
+legality, topology, and distance-dominance certificates to spatial pathfinding.
+(Verifier: BFS shortest-path successor and rule certificate checks.)
+
+*delayed_claim.* Reason learning needs domain-aware safety constraints: threshold
+and margin predicates operate over observable claim features under a
+deterministic hidden-outcome simulator.
+(Verifier: deterministic replay and finite-generator safety checks.)
+
+*rejected_candidate_learning.* Verifier failures become training signal.
+(Verifier: original rule checker that rejected or accepted each row.)
+
+*hypothesis_library_feedback.* Certified learning accumulates through reusable
+library priors, with zero-false-rejection promotion gates.
+(Verifier: train-pair exactness, type checks, and held-out fixture evaluation.)
+
+*arc_agi, program_synthesis, haiku_word_lm, signal_flight.* These sandbox
+domains publish the same schema contract but carry diagnostic claims. They
+demonstrate generalization beyond arithmetic domains while remaining outside the
+canonical evidence surface until earning broader verifier-backed coverage.
 
 = Anchor: Arithmetic Sequence Filtering
 
