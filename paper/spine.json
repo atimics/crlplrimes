@@ -12,12 +12,12 @@
     {
       "id": "abstract",
       "heading": null,
-      "content": "We study a restrained way to use neural models in checked search systems. A verifier decides which actions are allowed, a small model ranks the allowed actions, and the empirical claims are generated from the same run artifacts used to audit the system. The contribution is not that tiny networks solve hard tasks \u2014 it is that checked failures and checked successes become reusable training and proposal structure without giving the model authority over correctness.\n\nThe clean anchor is arithmetic sequence filtering: in the audited next-prime instance, a learned modular wheel achieves 100% top-1 accuracy with zero false rejections on {{C1.sample_count}} evaluation rows ({{C1.summary}}). The learned proposer's failure ({{C2.summary}}) is documented as a negative row, preventing the claim set from becoming a generic \"neural proposal wins\" story.\n\nThe key mechanism is the claim compiler: a tool that reads the paper, cross-references claims against generated trace artifacts, and mechanically assigns each claim a status \u2014 supported, underpowered, contradicted, or missing. Claims that lack evidence are automatically surfaced in the limitations section. This closes the loop between empirical work and scientific reporting: the repository trace owns what the paper is allowed to say."
+      "content": "We study a restrained way to use neural models in checked search systems. A verifier decides which actions are allowed, a small model ranks the allowed actions, and empirical claims are mechanically checked against the same run artifacts used to audit the system. The contribution is not that tiny networks solve hard tasks. It is that checked failures and checked successes become reusable training and proposal structure without giving the model authority over correctness.\n\nThe clean anchor is arithmetic sequence filtering. On a next-prime gap prediction task with 30,000 evaluation rows, a learned modular rejection wheel achieves 68.9% top-1 accuracy with zero false rejections, improving on the hand-coded wheel (45.1%) by 23.7 percentage points and on the ungated baseline (9.1%) by 59.6 points. The learned proposer's failure under fixed budget is documented as a negative row, preventing the claim set from becoming a generic \"neural proposal wins\" story.\n\nThe key mechanism is the claim compiler: a tool that reads the paper, cross-references claims against generated trace artifacts, and mechanically assigns each claim a status. Claims lacking evidence are automatically surfaced in the limitations section. The repository trace owns what the paper is allowed to say."
     },
     {
       "id": "introduction",
       "heading": "Introduction",
-      "content": "We study a restrained way to use neural models in checked search systems. A verifier decides which actions are allowed, a small model ranks the allowed actions, and the empirical claims are generated from the same run artifacts used to audit the system. The contribution is not that tiny networks solve hard tasks. It is that checked failures and checked successes become reusable training and proposal structure without giving the model authority over correctness. The clean anchor is arithmetic sequence filtering: in the audited next-prime instance (traces tagged `prime_gap`), the generated claim row reports {{C1.summary}}.\n\nThe dataset-first engine accepts new experiments as candidate rows plus verifier labels, generating evidence artifacts before any prose claim is written. A companion memory substrate @paper-holonet2026 is under development for the hypothesis library."
+      "content": "We study a restrained way to use neural models in checked search systems. A verifier decides which actions are allowed, a small model ranks the allowed actions, and empirical claims are generated from the same run artifacts used to audit the system. The contribution is not that tiny networks solve hard tasks. It is that checked failures and checked successes become reusable training and proposal structure without giving the model authority over correctness.\n\nThe clean anchor is arithmetic sequence filtering (`prime_gap` in traces). The dataset-first engine accepts new experiments as candidate rows plus verifier labels, generating evidence artifacts before any prose claim is written. A companion memory substrate @paper-holonet2026 is under development for the hypothesis library."
     },
     {
       "id": "positioning",
@@ -29,48 +29,45 @@
       "heading": "Protocol",
       "subsections": [
         {
-          "id": "protocol-loop",
           "heading": "The Gated Loop",
-          "content": "Every decision follows five steps. (1) Enumerate: given a state, generate the full candidate action set. (2) Gate: apply symbolic rules with machine-checked certificates that prove zero false rejections over declared support. (3) Rank: a neural scorer assigns a score to each survivor. Features are tagged by provenance; leakage from verifier into scorer training is forbidden. (4) Verify: the top-ranked candidate goes to a deterministic verifier \u2014 the grounding authority. (5) Trace: every step is recorded with stable action IDs. The trace becomes the evidence artifact for claims."
+          "content": "Every decision follows five steps. (1) Enumerate: given a state, generate the full candidate action set. (2) Gate: apply symbolic rules with machine-checked certificates proving zero false rejections over declared support. (3) Rank: a neural scorer assigns a score to each survivor. Features are tagged by provenance; leakage from verifier into scorer training is forbidden. (4) Verify: the top-ranked candidate goes to a deterministic verifier. (5) Trace: every step is recorded with stable action IDs."
         },
         {
-          "id": "protocol-features",
           "heading": "Feature Envelope and Leakage Policy",
-          "content": "Every candidate action is encoded as a feature row. Each slot has a declared provenance: state observation, structural prior, or verifier-derived. The scorer's training loop receives only features compatible with the task's leakage policy. Retrieval features (context similarity, recency signal, candidate alignment, and confidence bound) are appended without changing the neural architecture. The model cannot peek at verifier outputs during training and claim independence."
+          "content": "Every candidate action is encoded as a feature row. Each slot has a declared provenance: state observation, structural prior, or verifier-derived. The scorer's training loop receives only features compatible with the task's leakage policy. The model cannot peek at verifier outputs during training and claim independence."
         },
         {
-          "id": "protocol-rules",
           "heading": "Rule Grammar and Certificates",
-          "content": "Symbolic rules are governed by a domain-specific grammar. Each rule has a kind (reject_action, transform, threshold), typed parameters, and a certificate. The certificate is the machine-checkable proof that the rule produces zero false rejections over its declared support. Rules are discovered by proposers \u2014 neural, structural, closed-loop, or random \u2014 and accepted only after certificate verification. Accepted rules form a gate set that prunes the candidate space before scoring."
+          "content": "Symbolic rules are governed by a domain-specific grammar. Each rule has a kind (reject\\_action, transform, threshold), typed parameters, and a certificate \u2014 the machine-checkable proof that the rule produces zero false rejections over its declared support. Rules are discovered by proposers and accepted only after certificate verification. Accepted rules form a gate set that prunes the candidate space before scoring."
         }
       ]
     },
     {
       "id": "dataset-engine",
       "heading": "Dataset-First Engine",
-      "content": "The dataset-first engine is the boundary between experimental code and paper claims. Before any prose, an experiment must produce a candidate-row dataset with verifier labels, train a scorer against target actions, and log evidence JSONL under a fixed schema. The engine runs adapters against a fixed training budget, generating calibration evidence and baseline benchmarks before domain-specific tuning begins.\n\nThis constraint is a quality gate, not a restriction. Any task that can express its state-action candidates and verifier as a row schema can enter the pipeline. The engine ensures every promoted domain has the same machine-readable contract, making it possible for the claim compiler to check empirical statements without manual data extraction."
+      "content": "The dataset-first engine is the boundary between experimental code and paper claims. Before any prose, an experiment must produce a candidate-row dataset with verifier labels, train a scorer against target actions, and log evidence under a fixed schema. The engine runs six adapters against a shared 300-epoch training budget, generating calibration evidence before domain-specific tuning.\n\nThis is a quality gate, not a restriction. Any task that can express its candidates and verifier as a row schema enters the pipeline. The engine ensures every promoted domain publishes the same machine-readable contract."
     },
     {
       "id": "evidence-matrix",
       "heading": "Evidence Matrix",
-      "content": "The promoted spine carries machine-checked claims. Sandbox domains carry diagnostic claims that track progress toward promotion.",
+      "content": "The promoted spine carries machine-checked claims verified by the claim compiler against generated trace artifacts. Sandbox domains carry diagnostic claims that track progress toward promotion.",
       "domains": "inline"
     },
     {
       "id": "anchor",
       "heading": "Anchor: Arithmetic Sequence Filtering",
-      "content": "The cleanest test case is next-prime gap prediction. Candidate actions are even gaps 2..256 plus an overflow action. Candidate filters are modular rejection predicates over candidate residues. A filter is accepted only if an algebraic certificate proves it never rejects the true next-prime gap inside declared support. After gating, the scorer ranks remaining candidates.",
+      "content": "The cleanest test case is next-prime gap prediction. Candidate actions are even gaps 2--256 plus an overflow action. Candidate filters are modular rejection predicates. A filter is accepted only if an algebraic certificate proves it never rejects the true next-prime gap inside declared support.",
       "figure": "prime-gate-table"
     },
     {
       "id": "feedback-loops",
       "heading": "Feedback Loops",
-      "content": "The main contribution is what happens after the checker has said yes or no. Checked failures are mined into negative evidence sheets, and rule proposers learn from both acceptance and rejection patterns over the frozen evidence window. The rejected-candidate learning loop uses correctly rejected actions to train rule-scoring models that predict certification outcomes. {{C5.summary}}\n\nThe hypothesis-library promotion loop is the complementary mechanism. Rules that pass certification are vector-encoded into the rule library and become retrievable context for future tasks, enabling cross-task transfer without explicit rule sharing. {{C5.hypothesis_summary}}"
+      "content": "The main contribution is what happens after the checker has said yes or no. Checked failures are mined into negative evidence sheets, and rule proposers learn from both acceptance and rejection patterns. The rejected-candidate learning loop uses correctly rejected actions to train rule-scoring models that predict certification outcomes. {{C5.summary}}\n\nThe hypothesis-library promotion loop is the complementary mechanism. Rules that pass certification enter the rule library and become retrievable context for future tasks, enabling cross-task transfer without explicit rule sharing."
     },
     {
       "id": "boundary-evidence",
       "heading": "Boundary Evidence",
-      "content": "The evidence matrix is designed to prevent overclaiming. Each promoted row carries an explicit boundary condition.\n\nTiny-net plateau. {{C7.summary}}\n\nTrace determinism. {{C8.trace_summary}}\n\nDataset engine evidence surface. {{C8.dataset_summary}}\n\nSignal flight. {{C9.summary}} {{C9.live_summary}}"
+      "content": "The evidence matrix is designed to prevent overclaiming. Each promoted row carries an explicit boundary condition.\n\n*Tiny-net plateau.* On the multiclass action-scoring benchmark, the neural scorer plateaus at small hidden widths. {{C7.summary}}\n\n*Trace determinism.* The trace replay protocol hashes state representations and checks that independent training runs from the same checkpoint produce identical trace hashes. {{C8.summary}}\n\n*Dataset engine evidence surface.* Six dataset adapters produce valid evidence rows under the shared schema. {{C8.dataset_summary}}\n\n*Signal flight.* The Signal integration replays a deterministic flight simulator as verifier, establishing replay-certified rollout trajectories. {{C9.summary}}"
     },
     {
       "id": "claim-governance",
@@ -91,7 +88,7 @@
     {
       "id": "conclusion",
       "heading": "Conclusion",
-      "content": "We presented a verifier-grounded architecture for neural search. The core loop is simple: enumerate candidates, gate with certified rules, rank survivors with a neural scorer, verify the top choice, and preserve the trace. The claim compiler closes the loop between empirical work and scientific reporting by mechanically checking every assertion against generated trace artifacts.\n\nThe architecture is honest about its limits. Certified gates do not claim to operate outside their declared verifier support. The learned proposer's failure is documented as a negative row. The dataset-first engine ensures every promoted domain publishes the same contract. The claim compiler ensures the paper never says more than the evidence supports.\n\nA companion memory substrate @paper-holonet2026 is under development for the hypothesis library, compatible with the framework but not required for the results presented here."
+      "content": "We presented a verifier-grounded architecture for neural search. The core loop is simple: enumerate candidates, gate with certified rules, rank survivors with a neural scorer, verify the top choice, preserve the trace. The claim compiler closes the loop between empirical work and scientific reporting by mechanically checking every assertion against generated trace artifacts.\n\nThe architecture is honest about its limits. Certified gates do not claim to operate outside their declared verifier support. The learned proposer's failure is a documented negative row. The dataset-first engine ensures every promoted domain publishes the same contract. The claim compiler ensures the paper never says more than the evidence supports.\n\nA companion memory substrate @paper-holonet2026 is under development for the hypothesis library, compatible with the framework but not required for the results here."
     }
   ]
 }
