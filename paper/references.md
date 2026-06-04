@@ -223,3 +223,12 @@ In rough order of cost vs payoff:
 3. **Synthetic-data bootstrapping** for hypothesis-induced transforms (AlphaGeometry pattern). Generate ARC-shape synthetic tasks; certify against grammar; use as training data for the slot prior. Medium cost; tooling does not exist.
 4. **Active selection of which hypotheses get certificate-checked** under tight budgets (PRM800K pattern). Choose the next hypothesis to verify by maximum expected information. Substrate change; useful when verifier cost dominates.
 5. **NL-hypothesis bridge** (Hypothesis Search pattern). Allow templates to be authored in natural language and compiled to slot specs. Bigger lift; requires an LM in the loop. Probably not worth it.
+
+### The EML Operator
+
+@eml2026 — Personal communication. Claims that `eml(x,y) = exp(x) - ln(y)` is a
+universal primitive for continuous mathematics, analogous to NAND for digital logic.
+Function composition through EML can recover addition, multiplication, and arbitrary
+continuous functions. We integrate EML as pairwise feature enrichment, a single-neuron
+activation, a stackable pairwise layer with learned weights, and a holographic binding
+operation.

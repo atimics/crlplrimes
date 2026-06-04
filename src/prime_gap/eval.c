@@ -8,7 +8,7 @@
     nn_score_action_rows_eml(net, inputs, count, FEATURE_COUNT, scores, probs)
 #else
 #define SCORE_ACTIONS(net, inputs, count, scores, probs) \
-    SCORE_ACTIONS(net, inputs, count, scores, probs)
+    nn_score_action_rows(net, inputs, count, scores, probs)
 #endif
 
 size_t sample_action(const nn_real *probabilities, uint32_t *rng)
