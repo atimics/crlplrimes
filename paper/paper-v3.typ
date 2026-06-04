@@ -4,7 +4,7 @@
 #import "generated/experiment_matrix.typ": experiment_matrix_rows
 
 #set document(
-  title: "Certificate-Certificate Gated Neural Search with Holographic Memory and EML Scoring",
+  title: "Certificate-Certificate Gated Neural Search with Holographic Memory",
   author: "Anonymous authors",
 )
 
@@ -47,7 +47,7 @@
 #align(center)[
   #text(size: 17pt, weight: "bold")[
     Certificate-Certificate Gated Neural Search \
-    with Holographic Memory and EML Scoring
+    with Holographic Memory
   ]
   #v(4pt)
   #text(size: 11pt)[
@@ -69,7 +69,7 @@
     systems. Three components compose: a verifier-grounded framework that separates
     validity from preference through certificate-checked symbolic rules, a holographic
     memory substrate that stores rules as fixed-dimension vector bindings with 1/sqrt(N)
-    retrieval fidelity, and an EML-augmented neural scorer that improves ranking accuracy
+    retrieval fidelity
     through a universal continuous primitive. The contribution is not that any single
     component solves hard tasks---it is that checked failures and checked successes become
     reusable training and proposal structure without giving the model authority over
@@ -77,8 +77,8 @@
     next-prime instance, a learned modular wheel achieves 100% top-1 accuracy with zero
     false rejections on #claim_C1_prime_gate_delta_sample_count evaluation rows
     (#claim_C1_prime_gate_delta_summary). Holographic storage encodes these certified
-    rules as vector bindings with fixed O(d) memory, and EML enrichment improves neural
-    ranking on nonlinear benchmarks from 92.2% to 94.8% at identical width. The
+    rules as vector bindings with fixed O(d) memory
+    
     holographic ranker achieves 48.5% accuracy with zero trainable parameters versus 16.0%
     for a gradient-trained MLP of 1,185 parameters on small-sample tasks. Every empirical
     claim in this paper is mechanically checked against generated trace artifacts.
@@ -110,7 +110,7 @@ The rest of the paper is organized around the data flow. Section 2 positions the
 against related approaches. Sections 3-4 define the verifier-grounded protocol and
 dataset engine. Section 5 presents the frozen evidence matrix. Section 6 provides the
 arithmetic filtering anchor. Section 7 covers the holographic memory substrate. Section 8
-describes the EML scorer architecture. Sections 9-10 cover feedback loops and boundary
+Sections 8-9 cover feedback loops and boundary
 evidence. Sections 11-12 cover claim governance and limitations.
 
 = Positioning
@@ -133,11 +133,6 @@ and holographic reduced representations @plate2003holographic. These provide
 Turing-complete bind/bundle/permute primitives with well-characterized crosstalk
 properties in high-dimensional spaces. The leOS-C engine @leosc2026 isolates these
 primitives as a compact C library that can be linked directly into the scorer pipeline.
-
-The EML operator is a new primitive. It is a universal primitive for continuous
-mathematics @eml2026, analogous to NAND for digital logic: repeated composition can
-approximate any continuous function. Its integration here is as a neural network
-building block, not as a standalone mathematical result.
 
 = Protocol
 
@@ -168,7 +163,7 @@ claim independence.
 == Rule Grammar and Certificates
 
 Symbolic rules are governed by a domain-specific grammar. Each rule has a kind
-(reject_action, transform, threshold, eml_transform), typed parameters, and a
+(reject_action, transform, threshold), typed parameters, and a
 certificate. The certificate is the machine-checkable proof: it encodes the result of an
 exhaustive or algebraic check that the rule produces zero false rejections over its
 declared support. Rules are discovered by proposers---neural, structural, closed-loop, or
@@ -270,7 +265,6 @@ gradient-trained MLP on small-sample tasks.
 
 universal primitive for continuous functions, analogous to NAND for digital logic.
 Integrated into neural scorers as pairwise feature enrichment, it improves accuracy
-on nonlinear benchmarks from 92.2% to 94.8% at identical width. Stacked EML
 pairwise layers compose correctly at 94.5%. The operator does not yet improve the
 promoted experiments, which are dominated by binary and categorical features.
 
@@ -355,16 +349,10 @@ transfers for haiku.
 
 The holographic memory substrate is demonstrated at d up to 2048 with hundreds of
 stored rules. Scaling to millions of rules requires dimension scaling (crosstalk
-scales as 1/sqrt(d)) or hierarchical VSA structures. The EML binding operation's
-degradation of memory recall (1.4% vs 48.6%) means EML neurons should be confined
-to the representation-learning layers, not the memory storage path.
-
-The EML scorer improvements are validated on synthetic benchmarks and the three
-promoted experiments. The universal-primitive property is demonstrated through
-stacked layer composition but not yet through formal function-approximation bounds
-for the specific architecture. The pairwise layer requires even layer widths and
-pre-activation clipping; these constraints are manageable for the compact networks
-used here but may limit applicability to very deep architectures.
+scales as 1/sqrt(d)) or hierarchical VSA structures. Holographic memory recall requires linear superposition; the bind/unbind
+primitives are well-characterized in this regime, and alternative binding
+operations should be confined to representation-learning layers rather than
+the memory storage path.
 
 The dataset-first engine currently enforces a fixed 300-epoch, hidden-width-24
 baseline. While this provides a consistent calibration point, it does not represent
