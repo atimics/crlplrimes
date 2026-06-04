@@ -1,4 +1,15 @@
 #include "nn.h"
+#ifdef GRID_PATH_EML
+#include "nn_core.h"
+#endif
+
+#ifdef GRID_PATH_EML
+#define GP_SCORE_ACTIONS(net, inputs, count, scores, probs) \
+    nn_score_action_rows_eml(net, inputs, count, GP_FEATURE_COUNT, scores, probs)
+#else
+#define GP_SCORE_ACTIONS(net, inputs, count, scores, probs) \
+    nn_score_action_rows(net, inputs, count, scores, probs)
+#endif
 
 #include <errno.h>
 #include <math.h>
@@ -21,6 +32,9 @@ enum {
     GP_MAP_FEATURE_OFFSET = 10,
     GP_ACTION_FEATURE_OFFSET = GP_MAP_FEATURE_OFFSET + GP_CELLS,
     GP_FEATURE_COUNT = GP_ACTION_FEATURE_OFFSET + GP_ACTION_COUNT,
+#ifdef GRID_PATH_EML
+    GP_EML_FEATURE_COUNT = GP_FEATURE_COUNT + GP_FEATURE_COUNT / 2,
+#endif
     GP_TRAIN_SAMPLES = 4000,
     GP_VALIDATION_SAMPLES = 1000,
     GP_TEST_SAMPLES = 1000,
@@ -536,6 +550,19 @@ static size_t fill_grid_candidates_with_feature_set(const GridState *state,
         }
     }
 
+#ifdef GRID_PATH_EML
+    /* Enrich with pairwise EML features */
+    {
+        nn_real enriched[GP_ACTION_COUNT * GP_EML_FEATURE_COUNT];
+        for (size_t a = 0; a < GP_ACTION_COUNT; ++a) {
+            nn_eml_enrich_features(candidate_inputs + a * GP_FEATURE_COUNT,
+                                   GP_FEATURE_COUNT,
+                                   enriched + a * GP_EML_FEATURE_COUNT);
+        }
+        memcpy(candidate_inputs, enriched,
+               GP_ACTION_COUNT * GP_EML_FEATURE_COUNT * sizeof(nn_real));
+    }
+#endif
     return GP_ACTION_COUNT;
 }
 
@@ -2129,7 +2156,11 @@ static int run_grid_rule_budget_sweep(const GridRuleSearchConfig *base_config,
 
 static NeuralNet *create_grid_model(unsigned int seed)
 {
+#ifdef GRID_PATH_EML
+    static const size_t layers[] = {GP_EML_FEATURE_COUNT, 48, 24, 1};
+#else
     static const size_t layers[] = {GP_FEATURE_COUNT, 48, 24, 1};
+#endif
     NNConfig config;
     config.layer_sizes = layers;
     config.layer_count = sizeof(layers) / sizeof(layers[0]);
@@ -2195,7 +2226,7 @@ static GridMetrics evaluate_grid_model_with_rules_and_features(NeuralNet *net,
                                            &target_index,
                                            feature_set);
         if (candidate_count == 0 || target_index >= candidate_count ||
-            !nn_score_action_rows(net,
+            !GP_SCORE_ACTIONS(net,
                                   candidate_inputs,
                                   candidate_count,
                                   scores,
@@ -2400,7 +2431,7 @@ static int emit_grid_trace(NeuralNet *net,
         size_t candidate_count =
             fill_grid_candidates(&state, candidate_inputs, action_ids, &target_index);
         ok = candidate_count != 0 && target_index < candidate_count &&
-             nn_score_action_rows(net,
+             GP_SCORE_ACTIONS(net,
                                   candidate_inputs,
                                   candidate_count,
                                   scores,
@@ -2598,7 +2629,11 @@ static int replay_grid_trace(const char *trace_path,
     }
 
     NeuralNet *net = create_grid_model(1717);
+    #ifdef GRID_PATH_EML
+    nn_real *candidate_inputs = calloc((size_t)GP_ACTION_COUNT * GP_EML_FEATURE_COUNT,
+#else
     nn_real *candidate_inputs = calloc((size_t)GP_ACTION_COUNT * GP_FEATURE_COUNT,
+#endif
                                        sizeof(*candidate_inputs));
     uint32_t *action_ids = calloc(GP_ACTION_COUNT, sizeof(*action_ids));
     if (net == NULL || candidate_inputs == NULL || action_ids == NULL) {
@@ -2858,7 +2893,11 @@ static int compare_grid_models(int argc, char **argv)
         print_grid_rule_search_report(&family_rules[i], &family_configs[i]);
     }
 
+    #ifdef GRID_PATH_EML
+    nn_real *candidate_inputs = calloc((size_t)GP_ACTION_COUNT * GP_EML_FEATURE_COUNT,
+#else
     nn_real *candidate_inputs = calloc((size_t)GP_ACTION_COUNT * GP_FEATURE_COUNT,
+#endif
                                        sizeof(*candidate_inputs));
     uint32_t *action_ids = calloc(GP_ACTION_COUNT, sizeof(*action_ids));
     nn_real *scores = calloc(GP_ACTION_COUNT, sizeof(*scores));
@@ -3016,6 +3055,14 @@ static void print_usage(FILE *stream)
           "       grid_path --schema\n",
           stream);
 }
+
+#ifdef GRID_PATH_EML
+#define GP_SCORE_ACTIONS(net, inputs, count, scores, probs) \
+    nn_score_action_rows_eml(net, inputs, count, GP_FEATURE_COUNT, scores, probs)
+#else
+#define GP_SCORE_ACTIONS(net, inputs, count, scores, probs) \
+    GP_SCORE_ACTIONS(net, inputs, count, scores, probs)
+#endif
 
 int main(int argc, char **argv)
 {
@@ -3192,7 +3239,11 @@ int main(int argc, char **argv)
     }
 
     NeuralNet *net = create_grid_model(42424);
+    #ifdef GRID_PATH_EML
+    nn_real *candidate_inputs = calloc((size_t)GP_ACTION_COUNT * GP_EML_FEATURE_COUNT,
+#else
     nn_real *candidate_inputs = calloc((size_t)GP_ACTION_COUNT * GP_FEATURE_COUNT,
+#endif
                                        sizeof(*candidate_inputs));
     uint32_t *action_ids = calloc(GP_ACTION_COUNT, sizeof(*action_ids));
     nn_real *scores = calloc(GP_ACTION_COUNT, sizeof(*scores));

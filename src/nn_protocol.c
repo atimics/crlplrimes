@@ -21,6 +21,8 @@ static const char *nn_protocol_rule_kind_name(NNRuleKind kind)
         return "threshold_rule";
     case NN_RULE_KIND_ARC_TRANSFORM:
         return "arc_transform_rule";
+    case NN_RULE_KIND_EML_TRANSFORM:
+        return "eml_transform_rule";
     case NN_RULE_KIND_CUSTOM:
         return "custom_rule";
     }

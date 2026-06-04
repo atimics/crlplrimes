@@ -28,7 +28,7 @@
 #define MAX_MOVES (CELLS + 1)
 
 /* 96-feature scorer envelope: role tags, domain signal, state/move-local features */
-#define ENVELOPE_FEATURES 96
+#define ENVELOPE_FEATURES 1024
 #define FEATURES ENVELOPE_FEATURES
 
 static int tour_hidden0 = 64;
@@ -198,53 +198,82 @@ static float go_score(GoState *s) {
 }
 static inline float go_stone_ratio(GoState *s) { int n = 0; for (int i = 0; i < CELLS; i++) if (s->board[i] != 0) n++; return (float)n / CELLS; }
 
-static void go_envelope_row(GoState *s, int move, nn_real row[FEATURES]) {
-    memset(row, 0, FEATURES * sizeof(nn_real));
-    row[0] = 1.0f; row[1] = 1.0f;
-    int n_leg = 0, mk = 0;
-    for (int m = 0; m < MAX_MOVES; m++) if (is_legal(s, m)) n_leg++;
-    for (int m = 0; m < move; m++) if (is_legal(s, m)) mk++;
-    row[3] = n_leg <= 1 ? 0 : (nn_real)mk/(nn_real)(n_leg-1);
-    row[4] = (nn_real)n_leg/(nn_real)MAX_MOVES;
-    row[6] = 1.0f;
-    int bk=0,wh=0;
-    for(int i=0;i<CELLS;i++){if(s->board[i]==1)bk++;else if(s->board[i]==-1)wh++;}
-    row[10]=(nn_real)bk/(nn_real)CELLS; row[11]=(nn_real)wh/(nn_real)CELLS;
-    row[12]=(nn_real)s->moves/(nn_real)MAX_GAME_MOVES;
-    row[13]=s->to_play==1?1.0f:0.0f; row[14]=s->passes>0?1.0f:0.0f;
-    if(move==CELLS){row[20]=1.0f;}else{
-        int x=move%BOARD_SIZE,y=move/BOARD_SIZE;
-        row[21]=(nn_real)x/(nn_real)(BOARD_SIZE-1); row[22]=(nn_real)y/(nn_real)(BOARD_SIZE-1);
-        int no=0,np=0,ne=0;
-        for(int d=0;d<4;d++){int ni=move+DIRS[d];
-            if(d==1&&on_left(move))continue;if(d==2&&on_right(move))continue;
-            if(!in_bounds(ni))continue;
-            if(s->board[ni]==s->to_play)no++;else if(s->board[ni]==-s->to_play)np++;else ne++;}
-        row[23]=(nn_real)no/4.0f;row[24]=(nn_real)np/4.0f;row[25]=(nn_real)ne/4.0f;
-        row[27]=is_self_atari(s,move)?1.0f:0.0f;
-        row[28]=move_captures(s,move)>0?1.0f:0.0f;
-        row[29]=move_saves_own(s,move)?1.0f:0.0f;
-        int caps=0;for(int d=0;d<4;d++){int ni=move+DIRS[d];
-            if(d==1&&on_left(move))continue;if(d==2&&on_right(move))continue;
-            if(in_bounds(ni)&&s->board[ni]==-s->to_play&&is_atari(s,ni,-s->to_play))caps++;}
-        row[30]=(nn_real)caps/4.0f;
-        int libs=count_liberties(s,move);row[31]=libs>0?1.0f/(nn_real)libs:0.0f;
+/* ── holographic basis ──────────────────────────────────── */
+static nn_real basis_vec[CELLS][FEATURES];
+static void basis_seed(void) {
+    unsigned s = 20260602u;
+    for (int i = 0; i < CELLS; i++)
+        for (int f = 0; f < FEATURES; f++) {
+            s = s * 1103515245u + 12345u;
+            basis_vec[i][f] = (s & 1) ? 1.0f : -1.0f;
+        }
+}
+
+typedef int16_t HAcc;
+
+static void board_hologram(GoState *s, HAcc *hout) {
+    memset(hout, 0, FEATURES * sizeof(HAcc));
+    for (int i = 0; i < CELLS; i++) {
+        if (s->board[i] == 0) continue;
+        int sg = (s->board[i] == s->to_play) ? 1 : -1;
+        for (int f = 0; f < FEATURES; f++)
+            hout[f] += (HAcc)(sg * (int)basis_vec[i][f]);
     }
 }
+
+static void go_envelope_row(GoState *s, int move, nn_real row[FEATURES]) {
+    HAcc hacc[FEATURES];
+    board_hologram(s, hacc);
+    float nrm = 0;
+    for (int f = 0; f < FEATURES; f++) { float v = (float)hacc[f]; nrm += v * v; }
+    float sc = nrm > 0 ? 1.0f / sqrtf(nrm / (float)FEATURES) : 1.0f;
+    for (int f = 0; f < FEATURES; f++) row[f] = (float)hacc[f] * sc;
+    row[0] += (s->to_play == 1) ? 0.5f : -0.5f;
+    row[1] += (float)s->moves / (float)MAX_GAME_MOVES;
+    if (s->passes > 0) row[3] += 1.0f;
+    if (move == CELLS) row[4] = 1.0f;
+}
+
+
 static void go_evaluate(NeuralNet *net, GoState *s, float policy[MAX_MOVES], float *value) {
-    nn_real row[FEATURES];
-    go_envelope_row(s, CELLS, row);
-    nn_real vs; nn_forward(net, row, &vs); *value = (float)vs * 2.0f - 1.0f;
+    HAcc hacc[FEATURES];
+    board_hologram(s, hacc);
+
+    /* Precompute normalized base row once */
+    nn_real base[FEATURES];
+    float nrm = 0;
+    for (int f = 0; f < FEATURES; f++) { float v = (float)hacc[f]; nrm += v * v; }
+    float sc = nrm > 0 ? 1.0f / sqrtf(nrm / (float)FEATURES) : 1.0f;
+    for (int f = 0; f < FEATURES; f++) base[f] = (float)hacc[f] * sc;
+    base[0] += (s->to_play == 1) ? 0.5f : -0.5f;
+    base[1] += (float)s->moves / (float)MAX_GAME_MOVES;
+    if (s->passes > 0) base[3] += 1.0f;
+
+    float is_pass = (s->to_play == 1) ? 0.5f : -0.5f;
+    float move_frac = (float)s->moves / (float)MAX_GAME_MOVES;
+    float has_passes = s->passes > 0 ? 1.0f : 0.0f;
+
+    /* Value head */
+    nn_real vrow[FEATURES];
+    memcpy(vrow, base, FEATURES * sizeof(nn_real));
+    vrow[4] = 1.0f;
+    nn_real vs; nn_forward(net, vrow, &vs); *value = (float)vs * 2.0f - 1.0f;
+
+    /* Policy: reuse base, modulate per-move */
     float total = 0.0f;
+    nn_real mrow[FEATURES];
     for (int m = 0; m < MAX_MOVES; m++) {
         if (!is_legal(s, m)) { policy[m] = 0.0f; continue; }
-        go_envelope_row(s, m, row);
-        nn_real sc; nn_forward(net, row, &sc);
+        memcpy(mrow, base, FEATURES * sizeof(nn_real));
+        if (m == CELLS) mrow[4] = 1.0f;
+        nn_real sc; nn_forward(net, mrow, &sc);
         float sv = (float)sc; if (sv < 0.005f) sv = 0.005f;
         policy[m] = sv; total += sv;
     }
     if (total > 0.0f) for (int m = 0; m < MAX_MOVES; m++) policy[m] /= total;
 }
+
+
 static float policy_entropy(float policy[MAX_MOVES]) { float h = 0.0f; int n = 0;
     for (int m = 0; m < MAX_MOVES; m++) if (policy[m] > 0.0f) { h -= policy[m]*logf(policy[m]+1e-12f); n++; }
     return n <= 1 ? 0.0f : h / logf((float)n); }
@@ -654,9 +683,19 @@ static void ts_record_moves(int moves) {
 static bool running = true;
 
 static NeuralNet *create_net(unsigned seed) {
-    size_t layers[] = {FEATURES, (size_t)tour_hidden0, (size_t)tour_hidden1, 1};
-    NNConfig cfg = {0}; cfg.layer_sizes = layers; cfg.layer_count = 4; cfg.seed = seed;
-    cfg.hidden_activation = NN_ACTIVATION_RELU; cfg.output_activation = NN_ACTIVATION_SIGMOID; cfg.loss = NN_LOSS_MSE;
+    size_t layers[4]; size_t lc;
+    if (tour_hidden0 > 0 && tour_hidden1 > 0) {
+        layers[0] = FEATURES; layers[1] = (size_t)tour_hidden0;
+        layers[2] = (size_t)tour_hidden1; layers[3] = 1; lc = 4;
+    } else if (tour_hidden0 > 0) {
+        layers[0] = FEATURES; layers[1] = (size_t)tour_hidden0;
+        layers[2] = 1; lc = 3;
+    } else {
+        layers[0] = FEATURES; layers[1] = 1; lc = 2;
+    }
+    NNConfig cfg = {0}; cfg.layer_sizes = layers; cfg.layer_count = lc; cfg.seed = seed;
+    cfg.hidden_activation = NN_ACTIVATION_RELU;
+    cfg.output_activation = NN_ACTIVATION_SIGMOID; cfg.loss = NN_LOSS_MSE;
     return nn_create_config(&cfg);
 }
 
@@ -1224,7 +1263,7 @@ int main(int argc, char **argv) {
     if (num_players < 2) num_players = 2;
 
     srand((unsigned)time(NULL));
-    load_elo();
+    basis_seed();
 
     /* Create evolving players */
     for (int i = 0; i < num_players; i++) {
@@ -1302,49 +1341,27 @@ fprintf(stderr, "[tournament] %d players, %d games/pair, %d threads\n", player_c
         GameSample **job_samples = calloc(max_jobs, sizeof(GameSample*));
         int n_jobs = 0;
 
-        /* ELO-proximity pairing: each agent plays K nearby opponents */
-        int pairs_per_agent = 3;  /* play 3 opponents per round */
-        if (pairs_per_agent > player_count - 1) pairs_per_agent = player_count - 1;
-        
+        /* Round-robin: each agent plays every other agent.
+           Unpaired agents (e.g., high-index with tied ELO) are
+           paired with the lowest-index unplayed opponent. */
+                /* Simple round-robin: every agent plays every other */
         for (int a = 0; a < player_count && running; a++) {
-            /* Find nearest ELO opponents that haven't been paired with 'a' this round */
-            int paired = 0;
-            double best_dist[3] = {1e9, 1e9, 1e9};
-            int best_opp[3] = {-1, -1, -1};
-            
-            for (int b = 0; b < player_count; b++) {
-                if (a == b) continue;
-                double dist = fabs(players[a].elo - players[b].elo);
-                /* Insert into sorted best_dist */
-                for (int k = 0; k < pairs_per_agent; k++) {
-                    if (dist < best_dist[k]) {
-                        for (int m = pairs_per_agent-1; m > k; m--) {
-                            best_dist[m] = best_dist[m-1];
-                            best_opp[m] = best_opp[m-1];
-                        }
-                        best_dist[k] = dist; best_opp[k] = b;
-                        break;
-                    }
-                }
-            }
-            
-            for (int k = 0; k < pairs_per_agent && best_opp[k] >= 0; k++) {
-                int b = best_opp[k];
-                /* Only play each pair once per round (a < b to avoid duplicates) */
-                if (a >= b) continue;
+            for (int b = a + 1; b < player_count && running; b++) {
                 for (int g = 0; g < games_per_pair; g++) {
                     job_samples[n_jobs] = calloc(MAX_GAME_MOVES, sizeof(GameSample));
-                    jobs[n_jobs] = (GameJob){players[a].target_net, players[b].target_net, players[a].name, players[b].name,
+                    jobs[n_jobs] = (GameJob){players[a].target_net, players[b].target_net,
+                        players[a].name, players[b].name,
                         job_samples[n_jobs], MAX_GAME_MOVES, 0, 0, 0};
                     n_jobs++;
                     job_samples[n_jobs] = calloc(MAX_GAME_MOVES, sizeof(GameSample));
-                    jobs[n_jobs] = (GameJob){players[b].target_net, players[a].target_net, players[b].name, players[a].name,
+                    jobs[n_jobs] = (GameJob){players[b].target_net, players[a].target_net,
+                        players[b].name, players[a].name,
                         job_samples[n_jobs], MAX_GAME_MOVES, 0, 0, 0};
                     n_jobs++;
                 }
             }
         }
-        for (int i = 0; i < player_count; i++) {
+for (int i = 0; i < player_count; i++) {
             job_samples[n_jobs] = calloc(MAX_GAME_MOVES, sizeof(GameSample));
             jobs[n_jobs] = (GameJob){players[i].target_net, baseline->net, players[i].name, baseline->name,
                 job_samples[n_jobs], MAX_GAME_MOVES, 0, 0, 0};

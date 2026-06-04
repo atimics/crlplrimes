@@ -664,7 +664,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(cmd, "protocol_version")) gtp_out("2");
         else if (!strcmp(cmd, "name")) gtp_out("SparseMCTS-Go-Continuous");
         else if (!strcmp(cmd, "version")) gtp_out("0.2");
-        else if (!strcmp(cmd, "boardsize")) gtp_boardsize(atoi(a1));
+        else if (!strcmp(cmd, "boardsize") && n >= 2) gtp_boardsize(atoi(a1));
         else if (!strcmp(cmd, "clear_board")) gtp_clear_board();
         else if (!strcmp(cmd, "play") && n >= 3) gtp_play(a1, a2);
         else if (!strcmp(cmd, "genmove") && n >= 2) gtp_genmove(a1);

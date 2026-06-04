@@ -1,6 +1,9 @@
 /* Candidate feature encoding, ranking helpers, and wheel verifier work accounting. */
 
 #include "internal.h"
+#ifdef PRIME_GAP_EML
+#include "nn_core.h"
+#endif
 
 double gap_error_for_action(size_t action, uint32_t true_gap)
 {

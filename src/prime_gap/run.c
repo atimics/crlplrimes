@@ -158,8 +158,13 @@ int nn_prime_gap_main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+#ifdef PRIME_GAP_EML
+    const size_t layers[] = {PRIME_GAP_EML_FEATURE_COUNT, NN_PRIME_GAP_HIDDEN1, NN_PRIME_GAP_HIDDEN2, 1};
+    const size_t linear_layers[] = {PRIME_GAP_EML_FEATURE_COUNT, 1};
+#else
     const size_t layers[] = {FEATURE_COUNT, NN_PRIME_GAP_HIDDEN1, NN_PRIME_GAP_HIDDEN2, 1};
     const size_t linear_layers[] = {FEATURE_COUNT, 1};
+#endif
     NNConfig config;
     config.layer_sizes = layers;
     config.layer_count = sizeof(layers) / sizeof(layers[0]);
@@ -180,7 +185,11 @@ int nn_prime_gap_main(int argc, char **argv)
     NeuralNet *regularized_net = NULL;
     ConditionedFrequencyPolicy conditioned_policy = {0};
     SymbolicRuleSet learned_symbolic_rules = {0};
+#ifdef PRIME_GAP_EML
+    nn_real *candidate_inputs = calloc((size_t)ACTION_COUNT * PRIME_GAP_EML_FEATURE_COUNT, sizeof(*candidate_inputs));
+#else
     nn_real *candidate_inputs = calloc((size_t)ACTION_COUNT * FEATURE_COUNT, sizeof(*candidate_inputs));
+#endif
     nn_real *scores = calloc(ACTION_COUNT, sizeof(*scores));
     nn_real *probabilities = calloc(ACTION_COUNT, sizeof(*probabilities));
     nn_real *reference_scores = calloc(ACTION_COUNT, sizeof(*reference_scores));

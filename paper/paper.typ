@@ -1,6 +1,6 @@
 #import "@preview/cetz:0.3.4"
 #import "@preview/cetz-plot:0.1.1": plot
-#import "generated/claims.typ": paper_claim_limitations, paper_claim_support_ok, paper_claim_support_surfaces, paper_claim_status_counts, claim_C1_prime_gate_delta_summary, claim_C1_prime_gate_delta_ci_summary, claim_C1_prime_gate_delta_raw_top1, claim_C1_prime_gate_delta_hand_top1, claim_C1_prime_gate_delta_learned_top1, claim_C1_prime_gate_delta_learned_top10, claim_C1_prime_gate_delta_learned_vs_hand_delta_pp, claim_C1_prime_gate_delta_false_rejections, claim_C1_prime_gate_delta_sample_count, claim_C2_prime_proposer_fixed_budget_summary, claim_C1_arc_public_evidence_surface_chart_rows, claim_C1_arc_public_evidence_surface_summary, claim_C3_arc_ood_calibration_tradeoff_chart_rows, claim_C3_arc_ood_calibration_tradeoff_summary, claim_C4_delayed_claim_sibling_transfer_summary, claim_C4_multitask_capacity_tradeoff_chart_rows, claim_C4_multitask_capacity_tradeoff_summary, claim_C4_adapter_heads_shared_trunk_summary, claim_C5_rejected_candidate_reason_learning_chart_rows, claim_C5_rejected_candidate_reason_learning_summary, claim_C5_hypothesis_library_promotion_chart_rows, claim_C5_hypothesis_library_promotion_summary, claim_C7_tiny_net_plateau_stop_rule_summary, claim_C8_trace_determinism_audit_summary, claim_C8_dataset_engine_evidence_surface_chart_rows, claim_C8_dataset_engine_evidence_surface_summary, claim_C9_signal_flight_replay_control_chart_rows, claim_C9_signal_flight_replay_control_summary, claim_C9_signal_live_neural_active_chart_rows, claim_C9_signal_live_neural_active_summary
+#import "generated/claims.typ": paper_claim_limitations, paper_claim_support_ok, paper_claim_support_surfaces, paper_claim_status_counts, claim_C1_prime_gate_delta_summary, claim_C1_prime_gate_delta_ci_summary, claim_C1_prime_gate_delta_raw_top1, claim_C1_prime_gate_delta_hand_top1, claim_C1_prime_gate_delta_raw_top10, claim_C1_prime_gate_delta_hand_top10, claim_C1_prime_gate_delta_learned_top1, claim_C1_prime_gate_delta_learned_top10, claim_C1_prime_gate_delta_learned_vs_hand_delta_pp, claim_C1_prime_gate_delta_false_rejections, claim_C1_prime_gate_delta_sample_count, claim_C2_prime_proposer_fixed_budget_summary, claim_C1_arc_public_evidence_surface_chart_rows, claim_C1_arc_public_evidence_surface_summary, claim_C3_arc_ood_calibration_tradeoff_chart_rows, claim_C3_arc_ood_calibration_tradeoff_summary, claim_C4_delayed_claim_sibling_transfer_summary, claim_C4_multitask_capacity_tradeoff_chart_rows, claim_C4_multitask_capacity_tradeoff_summary, claim_C4_adapter_heads_shared_trunk_summary, claim_C5_rejected_candidate_reason_learning_chart_rows, claim_C5_rejected_candidate_reason_learning_summary, claim_C5_hypothesis_library_promotion_chart_rows, claim_C5_hypothesis_library_promotion_summary, claim_C7_tiny_net_plateau_stop_rule_summary, claim_C8_trace_determinism_audit_summary, claim_C8_dataset_engine_evidence_surface_chart_rows, claim_C8_dataset_engine_evidence_surface_summary, claim_C9_signal_flight_replay_control_chart_rows, claim_C9_signal_flight_replay_control_summary, claim_C9_signal_live_neural_active_chart_rows, claim_C9_signal_live_neural_active_summary
 #import "generated/experiment_matrix.typ": experiment_matrix_rows
 
 #set document(
@@ -194,7 +194,7 @@ lesson that failed traces can refine later search rather than disappear as waste
 @clarke2000cegar @marquessilva1999grasp @bayardo1997csp. This protocol inherits that shape
 but uses failures as supervised ranking data, not as sound learned clauses.
 
-Modern verifier-bounded learning asks models to solve or help verify reasoning traces
+Modern verifier-bounded learning is used to verify reasoning traces
 @cobbe2021training @lightman2023verify @uesato2022solving @hosseini2024vstar
 @deepseek2025r1. AlphaGeometry-style systems combine learned proposal with formal checking
 @trinh2024alphageometry @chervonyi2025alphageometry2, and theorem-proving work similarly
@@ -210,7 +210,7 @@ claim compilation.
 
 = Protocol
 
-The protocol has three jobs. First, list the candidates. Second, use a checker or replay to
+The protocol does three things. First, list the candidates. Second, use a checker or replay to
 decide what each candidate is allowed to mean. Third, let a small model rank only the
 remaining choices. Every promoted row records those jobs in the same contract:
 
@@ -228,7 +228,7 @@ Task T = {
 }
 ```
 
-The protocol's invariant is simple:
+The invariant is:
 
 ```text
 The model proposes. The checker decides. The trace remembers.
@@ -310,7 +310,7 @@ through the task grammar and certificate or replay checker. JSONL traces carry s
 candidate ids, ranking policy, score margins, environment identity, and semantic hashes so
 reordered candidates or float ties cannot silently change registered claim meaning.
 
-= Engine Substrate
+= Dataset-First Engine
 
 The implementation has a lower-level substrate beneath the domain reports. A dataset-first
 action-scoring runner consumes grouped candidate rows:
@@ -417,8 +417,8 @@ modular divisibility rules.
     align: left,
     inset: 5pt,
     table.header[*Condition*][*Top-1*][*Top-10*][*False rejections*],
-    [no gate], [#pct(claim_C1_prime_gate_delta_raw_top1)], [78.01%], [0],
-    [hand wheel], [#pct(claim_C1_prime_gate_delta_hand_top1)], [99.77%], [0],
+    [no gate], [#pct(claim_C1_prime_gate_delta_raw_top1)], [#pct(claim_C1_prime_gate_delta_raw_top10)], [0],
+    [hand wheel], [#pct(claim_C1_prime_gate_delta_hand_top1)], [#pct(claim_C1_prime_gate_delta_hand_top10)], [0],
     [learned wheel], [#strong[#pct(claim_C1_prime_gate_delta_learned_top1)]],
       [#strong[#pct(claim_C1_prime_gate_delta_learned_top10)]],
       [#strong[#claim_C1_prime_gate_delta_false_rejections]],
@@ -494,7 +494,7 @@ drift and rebuild cost visible in the evidence surface.
 
 = Boundary Evidence
 
-Boundary rows keep the thesis honest without becoming separate stories.
+Boundary rows constrain the thesis without becoming independent claims.
 
 *ARC.* ARC is a provenance and grammar-coverage stress surface. The reported result is the current
 measured public-corpus surface, not a headline ARC score:
@@ -655,6 +655,23 @@ hypothesis-library promotion show that checked failures and checked successes ca
 into later proposal structure. The dataset-first engine shows how future experiments can
 enter the system as candidate rows plus verifier labels before becoming paper claims. ARC,
 Signal, tiny-net, adapter, and haiku rows mark the boundary rather than widening the thesis.
+
+
+A natural next step for the hypothesis library is a vector-symbolic memory substrate.
+Rather than maintaining a flat file of certified rules, holographic storage @leosc2026
+encodes each rule as \( \text{bind}(\text{task\_sig}, \text{rule\_vec}) \) and
+accumulates them into a single fixed-size memory trace on the unit hypersphere.
+Retrieval --- \( \text{unbind}(M, \text{new\_task\_sig}) \) --- returns a weighted
+blend of all previously learned rules relevant to the current task in one vector look-up.
+This inherits the theoretical guarantees of vector symbolic architectures @kleyko2022vsa
+--- Turing completeness of the bind/bundle/permute primitives, concentration of measure
+in high dimensions, and the blessing of near-orthogonal random vectors --- while keeping
+memory cost fixed at \( O(d) \) regardless of how many rules are stored.
+The leOS project @leos2025 explores the broader agent-operating-system implications of
+this approach; the leOS-C engine isolates the holographic store as a compact C library
+that can be linked directly into the crlplrimes scorer pipeline, adding holographic
+retrieval features to the 96-dimensional scorer envelope without changing the neural
+architecture.
 
 The broader lesson is pragmatic. When correctness, safety, or auditability matter, the model
 should not own the whole decision and prose should not outrun the evidence. The checker or

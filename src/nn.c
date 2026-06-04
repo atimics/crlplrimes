@@ -34,8 +34,11 @@ struct NeuralNet {
     size_t *sizes;
     NNActivation hidden_activation;
     NNActivation output_activation;
+    NNActivation *layer_activations; /* per-layer override, NULL = use hidden/output */
     NNLoss loss;
     nn_real **activations;
+    nn_real **pre_activations; /* pre-activation sums (before activation fn) */
+    nn_real **eml_pre_acts;     /* EML_PAIRWISE: 2N pre-act values for N outputs */
     nn_real **biases;
     nn_real **weights;
     nn_real **deltas;
@@ -85,12 +88,27 @@ static nn_real activate(nn_real x, NNActivation activation)
         return NN_TANH(x);
     case NN_ACTIVATION_LINEAR:
         return x;
+    case NN_ACTIVATION_EML:
+        { nn_real ex = NN_EXP(x); return ex - NN_LOG((nn_real)1 + ex); }
     case NN_ACTIVATION_SIGMOID:
     default:
         return sigmoid(x);
     }
 }
 
+/* EML pairwise activation: output[i] = eml(pre[2i], pre[2i+1]).
+ * pre_activations has 2*output_count elements. */
+static void activate_eml_pairwise(const nn_real *pre, nn_real *out, size_t output_count)
+{
+    for (size_t i = 0; i < output_count; ++i) {
+        out[i] = nn_eml(pre[2 * i], pre[2 * i + 1]);
+    }
+}
+
+/*
+ * Derivative of activation function given the *activation value* (post-activation).
+ * For most activations the derivative is expressible in terms of the output.
+ */
 static nn_real activation_derivative_from_activation(nn_real activation_value,
                                                      NNActivation activation)
 {
@@ -101,14 +119,45 @@ static nn_real activation_derivative_from_activation(nn_real activation_value,
         return (nn_real)1 - activation_value * activation_value;
     case NN_ACTIVATION_LINEAR:
         return (nn_real)1;
+    case NN_ACTIVATION_EML:
+        { nn_real a = activation_value; return a < 2 ? (a < 0 ? 0 : a) : 2; }
     case NN_ACTIVATION_SIGMOID:
     default:
         return sigmoid_derivative_from_activation(activation_value);
     }
 }
 
+/*
+ * Derivative of EML activation given the *pre-activation* value x.
+ * activation = exp(x) - log(1+exp(x))
+ * d/dx = exp(2x) / (1+exp(x))
+ */
+static nn_real eml_activation_derivative(nn_real x) {
+    nn_real ex = NN_EXP(x); nn_real d = (ex*ex)/(1+ex);
+    return d > 10 ? 10 : (d < 0.01f ? 0.01f : d);
+}
+
+/* EML pairwise derivative for backprop.
+ * Given output gradient dL/do[i] and the original pre-activations (z1, z2):
+ *   dL/dz1 = dL/do[i] * exp(z1)
+ *   dL/dz2 = dL/do[i] * (-1/z2)
+ * pre has 2*count elements, out_grad has count elements, pre_grad has 2*count */
+static void eml_pairwise_backward(const nn_real *pre, const nn_real *out_grad,
+                                  nn_real *pre_grad, size_t count)
+{
+    for (size_t i = 0; i < count; ++i) {
+        nn_real z1 = pre[2 * i];
+        nn_real z2 = pre[2 * i + 1];
+        nn_real og = out_grad[i];
+        pre_grad[2 * i]     = og * nn_eml_dx(z1);
+        pre_grad[2 * i + 1] = og * nn_eml_dy(z2);
+    }
+}
+
 static NNActivation activation_for_layer(const NeuralNet *net, size_t layer)
 {
+    if (net->layer_activations != NULL && net->layer_activations[layer] != NN_ACTIVATION_SIGMOID)
+        return net->layer_activations[layer];
     return layer + 1 == net->layer_count ? net->output_activation : net->hidden_activation;
 }
 
@@ -208,7 +257,8 @@ static int sizes_are_valid(const size_t *layer_sizes, size_t layer_count)
 static int activation_is_valid(NNActivation activation)
 {
     return activation == NN_ACTIVATION_SIGMOID || activation == NN_ACTIVATION_RELU ||
-           activation == NN_ACTIVATION_TANH || activation == NN_ACTIVATION_LINEAR;
+           activation == NN_ACTIVATION_TANH || activation == NN_ACTIVATION_LINEAR ||
+           activation == NN_ACTIVATION_EML || activation == NN_ACTIVATION_EML_PAIRWISE;
 }
 
 static int loss_is_valid(NNLoss loss)
@@ -225,7 +275,8 @@ static int config_is_valid(const NNConfig *config)
     }
 
     if (config->loss == NN_LOSS_SOFTMAX_CROSS_ENTROPY &&
-        config->output_activation != NN_ACTIVATION_LINEAR) {
+        (config->output_activation != NN_ACTIVATION_LINEAR &&
+         config->output_activation != NN_ACTIVATION_EML_PAIRWISE)) {
         return 0;
     }
 
@@ -290,13 +341,43 @@ static void dense_forward_layer(const nn_real *restrict previous_activations,
                                 const nn_real *restrict weights,
                                 const nn_real *restrict biases,
                                 nn_real *restrict activations,
+                                nn_real *restrict pre_activations,
                                 size_t previous,
                                 size_t current,
                                 NNActivation activation)
 {
+    if (activation == NN_ACTIVATION_EML_PAIRWISE) {
+        /* EML pairwise: current = output count, weights has 2*current rows.
+         * For each output i: z1 = dot(w[2i], x)+b[2i], z2 = dot(w[2i+1], x)+b[2i+1],
+         *   activations[i] = eml(z1, z2),
+         *   pre_activations stores z1/z2 interleaved if available */
+        for (size_t i = 0; i < current; ++i) {
+            const nn_real *w1 = &weights[(2 * i) * previous];
+            const nn_real *w2 = &weights[(2 * i + 1) * previous];
+            nn_real z1 = biases[2 * i] + dot_product(w1, previous_activations, previous);
+            nn_real z2 = biases[2 * i + 1] + dot_product(w2, previous_activations, previous);
+            /* cap pre-acts to prevent exp overflow in eml */
+            if (z1 > (nn_real)5) z1 = (nn_real)5;
+            if (z1 < (nn_real)-5) z1 = (nn_real)-5;
+            if (z2 > (nn_real)5) z2 = (nn_real)5;
+            if (z2 < (nn_real)-5) z2 = (nn_real)-5;
+            if (pre_activations != NULL) {
+                pre_activations[2 * i]     = z1;
+                pre_activations[2 * i + 1] = z2;
+            }
+            nn_real val = nn_eml(z1, z2);
+            /* clip tightly: stacked EML layers compound exp(exp(x)) */
+            if (val > (nn_real)5) val = (nn_real)5;
+            if (val < (nn_real)-5) val = (nn_real)-5;
+            activations[i] = val;
+        }
+        return;
+    }
+
     for (size_t neuron = 0; neuron < current; ++neuron) {
         const nn_real *neuron_weights = &weights[neuron * previous];
         nn_real sum = biases[neuron] + dot_product(neuron_weights, previous_activations, previous);
+        if (pre_activations != NULL) pre_activations[neuron] = sum;
         activations[neuron] = activate(sum, activation);
     }
 }
@@ -412,6 +493,7 @@ static void dense_forward_layer_batch(const nn_real *restrict previous_activatio
                             weights,
                             biases,
                             &activations[sample * current],
+                            NULL, /* batch path: pre_acts not tracked */
                             previous,
                             current,
                             activation);
@@ -745,12 +827,66 @@ static nn_real compute_deltas_and_loss(NeuralNet *net, const nn_real *target)
         }
 
         for (size_t neuron = 0; neuron < current; ++neuron) {
-            current_deltas[neuron] *= activation_derivative_from_activation(
-                current_activations[neuron], activation_for_layer(net, layer));
+            NNActivation act = activation_for_layer(net, layer);
+            if (act == NN_ACTIVATION_EML && net->pre_activations != NULL) {
+                current_deltas[neuron] *= eml_activation_derivative(
+                    net->pre_activations[layer][neuron]);
+            } else if (act == NN_ACTIVATION_EML_PAIRWISE) {
+                /* derivative applied in eml_pairwise_backprop_post */
+            } else {
+                current_deltas[neuron] *= activation_derivative_from_activation(
+                    current_activations[neuron], act);
+            }
         }
     }
 
     return loss;
+}
+
+/*
+ * Post-process EML_PAIRWISE layers: expand output deltas to pre-activation
+ * deltas, backprop through 2x weight rows, and accumulate into previous layer.
+ * Called after compute_deltas_and_loss, before apply_sample_update.
+ */
+static void eml_pairwise_backprop_post(NeuralNet *net)
+{
+    for (size_t layer = 1; layer < net->layer_count; ++layer) {
+        NNActivation act = activation_for_layer(net, layer);
+        if (act != NN_ACTIVATION_EML_PAIRWISE) continue;
+        if (net->pre_activations == NULL || net->pre_activations[layer] == NULL) continue;
+
+        size_t current = net->sizes[layer];      /* output count (N) */
+        size_t previous = net->sizes[layer - 1]; /* input count */
+        nn_real *deltas = net->deltas[layer];     /* currently size N */
+        const nn_real *pre = net->pre_activations[layer]; /* size 2N */
+        nn_real *prev_deltas = net->deltas[layer - 1];
+        // prev_acts not needed here; backprop flows through weights
+
+        /* Expand N output deltas to 2N pre-activation deltas in-place.
+         * We use a scratch buffer since deltas is only N elements. */
+        nn_real *scratch = malloc(2 * current * sizeof(nn_real));
+        if (!scratch) continue;
+
+        for (size_t i = 0; i < current; ++i) {
+            nn_real d = deltas[i];
+            nn_real z1 = pre[2 * i];
+            nn_real z2 = pre[2 * i + 1];
+            scratch[2 * i]     = d * nn_eml_dx(z1);
+            scratch[2 * i + 1] = d * nn_eml_dy(z2);
+        }
+
+        /* Backprop expanded deltas through the 2N weight rows to previous layer */
+        const nn_real *weights = net->weights[layer]; /* size: 2*current * previous */
+        for (size_t j = 0; j < 2 * current; ++j) {
+            nn_real delta = scratch[j];
+            const nn_real *wrow = &weights[j * previous];
+            for (size_t k = 0; k < previous; ++k) {
+                prev_deltas[k] += delta * wrow[k];
+            }
+        }
+
+        free(scratch);
+    }
 }
 
 static void apply_sample_update(NeuralNet *net, nn_real learning_rate)
@@ -762,8 +898,35 @@ static void apply_sample_update(NeuralNet *net, nn_real learning_rate)
         const nn_real *deltas = net->deltas[layer];
         nn_real *biases = net->biases[layer];
         nn_real *weights = net->weights[layer];
+        NNActivation act = activation_for_layer(net, layer);
 
-        for (size_t neuron = 0; neuron < current; ++neuron) {
+        size_t rows = current;
+        if (act == NN_ACTIVATION_EML_PAIRWISE) {
+            rows = current * 2;
+            /* deltas were expanded in eml_pairwise_backprop_post and stored
+             * in deltas[layer] — but wait, deltas is only current elements.
+             * We need the expanded deltas. Store them in a temporary.
+             * For now: use pre_activations to reconstruct. */
+            /* Re-expand deltas from pre_activations (same as in post fn) */
+            nn_real *scratch = malloc(rows * sizeof(nn_real));
+            if (!scratch) continue;
+            const nn_real *pre = net->pre_activations[layer];
+            for (size_t i = 0; i < current; ++i) {
+                nn_real d = deltas[i];
+                scratch[2 * i]     = d * nn_eml_dx(pre[2 * i]);
+                scratch[2 * i + 1] = d * nn_eml_dy(pre[2 * i + 1]);
+            }
+            for (size_t neuron = 0; neuron < rows; ++neuron) {
+                nn_real step = learning_rate * scratch[neuron];
+                nn_real *nw = &weights[neuron * previous];
+                biases[neuron] -= step;
+                for (size_t j = 0; j < previous; ++j)
+                    nw[j] -= step * previous_activations[j];
+            }
+            free(scratch);
+            continue;
+        }
+        for (size_t neuron = 0; neuron < rows; ++neuron) {
             nn_real step = learning_rate * deltas[neuron];
             nn_real *neuron_weights = &weights[neuron * previous];
 
@@ -1271,12 +1434,16 @@ NeuralNet *nn_create_config(const NNConfig *config)
     net->rng_state = config->seed == 0 ? 1u : config->seed;
     net->sizes = checked_calloc(config->layer_count, sizeof(*net->sizes));
     net->activations = checked_calloc(config->layer_count, sizeof(*net->activations));
+    net->pre_activations = checked_calloc(config->layer_count, sizeof(*net->pre_activations));
+    net->pre_activations = checked_calloc(config->layer_count, sizeof(*net->pre_activations));
+    net->eml_pre_acts = checked_calloc(config->layer_count, sizeof(*net->eml_pre_acts));
     net->biases = checked_calloc(config->layer_count, sizeof(*net->biases));
     net->weights = checked_calloc(config->layer_count, sizeof(*net->weights));
     net->deltas = checked_calloc(config->layer_count, sizeof(*net->deltas));
 
-    if (net->sizes == NULL || net->activations == NULL || net->biases == NULL ||
-        net->weights == NULL || net->deltas == NULL) {
+    if (net->sizes == NULL || net->activations == NULL || net->pre_activations == NULL ||
+        net->eml_pre_acts == NULL ||
+        net->biases == NULL || net->weights == NULL || net->deltas == NULL) {
         nn_free(net);
         return NULL;
     }
@@ -1285,9 +1452,15 @@ NeuralNet *nn_create_config(const NNConfig *config)
 
     for (size_t layer = 0; layer < config->layer_count; ++layer) {
         net->activations[layer] = checked_calloc(net->sizes[layer], sizeof(**net->activations));
+        NNActivation la = layer + 1 == net->layer_count ? config->output_activation : config->hidden_activation;
+        size_t pre_act_size = net->sizes[layer];
+        if (la == NN_ACTIVATION_EML_PAIRWISE) {
+            pre_act_size = net->sizes[layer] * 2;
+        }
+        net->pre_activations[layer] = checked_calloc(pre_act_size, sizeof(**net->pre_activations));
         net->deltas[layer] = checked_calloc(net->sizes[layer], sizeof(**net->deltas));
 
-        if (net->activations[layer] == NULL || net->deltas[layer] == NULL) {
+        if (net->activations[layer] == NULL || net->pre_activations[layer] == NULL || net->deltas[layer] == NULL) {
             nn_free(net);
             return NULL;
         }
@@ -1298,13 +1471,15 @@ NeuralNet *nn_create_config(const NNConfig *config)
 
         size_t previous = net->sizes[layer - 1];
         size_t current = net->sizes[layer];
-        if (previous != 0 && current > SIZE_MAX / previous) {
+        /* EML_PAIRWISE: double weight count (2 pre-act sums per output) */
+        size_t weight_rows = (la == NN_ACTIVATION_EML_PAIRWISE) ? current * 2 : current;
+        if (previous != 0 && weight_rows > SIZE_MAX / previous) {
             nn_free(net);
             return NULL;
         }
-        size_t weight_count = current * previous;
+        size_t weight_count = weight_rows * previous;
 
-        net->biases[layer] = checked_calloc(current, sizeof(**net->biases));
+        net->biases[layer] = checked_calloc(weight_rows, sizeof(**net->biases));
         net->weights[layer] = checked_calloc(weight_count, sizeof(**net->weights));
 
         if (net->biases[layer] == NULL || net->weights[layer] == NULL) {
@@ -1312,13 +1487,29 @@ NeuralNet *nn_create_config(const NNConfig *config)
             return NULL;
         }
 
-        NNActivation layer_activation = activation_for_layer(net, layer);
-        nn_real scale = layer_activation == NN_ACTIVATION_RELU
-                            ? NN_SQRT((nn_real)6 / (nn_real)previous)
-                            : NN_SQRT((nn_real)6 / (nn_real)(previous + current));
+        NNActivation layer_activation = la;
+        nn_real scale;
+        if (layer_activation == NN_ACTIVATION_RELU) {
+            scale = NN_SQRT((nn_real)6 / (nn_real)previous);
+        } else if (layer_activation == NN_ACTIVATION_EML) {
+            /* EML: smaller init to start in the safe exp/log domain */
+            scale = NN_SQRT((nn_real)0.5f / (nn_real)previous);
+        } else {
+            scale = NN_SQRT((nn_real)6 / (nn_real)(previous + current));
+        }
         for (size_t i = 0; i < weight_count; ++i) {
-            net->weights[layer][i] = ((rng_uniform(&net->rng_state) * (nn_real)2) - (nn_real)1) *
-                                     scale;
+            nn_real w = ((rng_uniform(&net->rng_state) * (nn_real)2) - (nn_real)1) * scale;
+            /* for EML: shift mean negative so pre-acts start in safe zone */
+            if (layer_activation == NN_ACTIVATION_EML) {
+                w -= scale * (nn_real)0.5f;
+            }
+            net->weights[layer][i] = w;
+        }
+        /* for EML: zero-centered init with small variance */
+        if (layer_activation == NN_ACTIVATION_EML || layer_activation == NN_ACTIVATION_EML_PAIRWISE) {
+            for (size_t i = 0; i < weight_rows; ++i) {
+                net->biases[layer][i] = (nn_real)0;
+            }
         }
     }
 
@@ -1377,51 +1568,19 @@ void nn_free(NeuralNet *net)
         return;
     }
 
-    if (net->activations != NULL) {
-        for (size_t i = 0; i < net->layer_count; ++i) {
-            free(net->activations[i]);
-        }
-    }
+    free_layer_arrays(net->activations, net->layer_count);
+    free_layer_arrays(net->pre_activations, net->layer_count);
+    free_layer_arrays(net->biases, net->layer_count);
+    free_layer_arrays(net->weights, net->layer_count);
+    free_layer_arrays(net->deltas, net->layer_count);
+    free_layer_arrays(net->grad_biases, net->layer_count);
+    free_layer_arrays(net->grad_weights, net->layer_count);
 
-    if (net->biases != NULL) {
-        for (size_t i = 0; i < net->layer_count; ++i) {
-            free(net->biases[i]);
-        }
-    }
-
-    if (net->weights != NULL) {
-        for (size_t i = 0; i < net->layer_count; ++i) {
-            free(net->weights[i]);
-        }
-    }
-
-    if (net->deltas != NULL) {
-        for (size_t i = 0; i < net->layer_count; ++i) {
-            free(net->deltas[i]);
-        }
-    }
-
-    if (net->grad_biases != NULL) {
-        for (size_t i = 0; i < net->layer_count; ++i) {
-            free(net->grad_biases[i]);
-        }
-    }
-
-    if (net->grad_weights != NULL) {
-        for (size_t i = 0; i < net->layer_count; ++i) {
-            free(net->grad_weights[i]);
-        }
-    }
+    free(net->layer_activations);
 
     free_batch_workspace(net);
 
     free(net->sizes);
-    free(net->activations);
-    free(net->biases);
-    free(net->weights);
-    free(net->deltas);
-    free(net->grad_biases);
-    free(net->grad_weights);
     free(net);
 }
 
@@ -2219,6 +2378,16 @@ int nn_neuron_contract_write_jsonl(FILE *fp, const NNNeuronContract *contract)
     return fputs("}\n", fp) != EOF;
 }
 
+void nn_set_layer_activation(NeuralNet *net, size_t layer, NNActivation activation)
+{
+    if (net == NULL || layer >= net->layer_count) return;
+    if (net->layer_activations == NULL) {
+        net->layer_activations = calloc(net->layer_count, sizeof(NNActivation));
+        if (net->layer_activations == NULL) return;
+    }
+    net->layer_activations[layer] = activation;
+}
+
 size_t nn_forward_flop_count(const NeuralNet *net)
 {
     if (net == NULL) {
@@ -2312,6 +2481,7 @@ void nn_forward(NeuralNet *net, const nn_real *input, nn_real *output)
                             net->weights[layer],
                             net->biases[layer],
                             net->activations[layer],
+                            net->pre_activations[layer],
                             net->sizes[layer - 1],
                             net->sizes[layer],
                             activation_for_layer(net, layer));
@@ -2379,6 +2549,38 @@ int nn_score_action_rows(NeuralNet *net,
         nn_softmax(scores, probabilities, candidate_count);
     }
     return 1;
+}
+
+int nn_score_action_rows_eml(NeuralNet *net,
+                             const nn_real *candidate_inputs,
+                             size_t candidate_count,
+                             size_t feature_count,
+                             nn_real *scores,
+                             nn_real *probabilities)
+{
+    if (net == NULL || candidate_inputs == NULL || candidate_count == 0 ||
+        scores == NULL || feature_count < 2) {
+        return 0;
+    }
+
+    size_t enriched_count = feature_count + feature_count / 2;
+    if (nn_input_size(net) != enriched_count) {
+        return 0;
+    }
+
+    /* allocate enriched feature buffer */
+    nn_real *enriched = malloc(candidate_count * enriched_count * sizeof(nn_real));
+    if (enriched == NULL) return 0;
+
+    for (size_t i = 0; i < candidate_count; ++i) {
+        nn_eml_enrich_features(candidate_inputs + i * feature_count,
+                               feature_count,
+                               enriched + i * enriched_count);
+    }
+
+    int ok = nn_score_action_rows(net, enriched, candidate_count, scores, probabilities);
+    free(enriched);
+    return ok;
 }
 
 const char *nn_scorer_envelope_feature_set(void)
@@ -2488,6 +2690,23 @@ int nn_scorer_envelope_fill_base(nn_real *row,
     return 1;
 }
 
+int nn_scorer_envelope_fill_eml(nn_real *row,
+                                size_t row_capacity,
+                                const NNScorerEnvelopeRow *spec)
+{
+    /* fill the base 96 features first */
+    if (!nn_scorer_envelope_fill_base(row, row_capacity, spec)) {
+        return 0;
+    }
+    if (row_capacity < NN_SCORER_ENVELOPE_EML_FEATURE_COUNT) {
+        return 0;
+    }
+    /* append 48 pairwise EML interaction features in slots 96..143 */
+    nn_eml_pairwise(row, row + NN_SCORER_ENVELOPE_FEATURE_COUNT,
+                    NN_SCORER_ENVELOPE_FEATURE_COUNT / 2);
+    return 1;
+}
+
 static int rank_score_is_better(const nn_real *scores,
                                 const uint32_t *action_ids,
                                 size_t left,
@@ -2592,6 +2811,7 @@ nn_real nn_train_sample(NeuralNet *net,
 
     nn_forward(net, input, NULL);
     nn_real loss = compute_deltas_and_loss(net, target);
+    eml_pairwise_backprop_post(net);
     apply_sample_update(net, learning_rate);
     return loss;
 }

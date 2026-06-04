@@ -7,7 +7,7 @@ CPPFLAGS += -DNN_REAL_IS_FLOAT=1
 else
 CPPFLAGS += -DNN_REAL_IS_FLOAT=0
 endif
-CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -O3
+CFLAGS ?= -std=c11 -Iinclude/holographic -Wall -Wextra -Wpedantic -O3
 LDFLAGS ?=
 LDLIBS ?= -lm
 RETIRED_SCRIPT_TARGET = @echo "$@: retired after script removal; port this workflow into the C runtime before use."; exit 2
@@ -33,6 +33,10 @@ NN_TEXT_OBJ := $(BUILD_DIR)/nn_text.o
 NN_DATASET_OBJ := $(BUILD_DIR)/nn_dataset.o
 NN_GRAMMAR_DISCOVERY_OBJ := $(BUILD_DIR)/nn_grammar_discovery.o
 NN_ARC_SELFPLAY_OBJ := $(BUILD_DIR)/nn_arc_selfplay.o
+NN_HOLOGRAPHIC_OBJ := $(BUILD_DIR)/nn_holographic.o
+NN_LEOS_ENGINE_OBJ := $(BUILD_DIR)/leos_engine.o
+NN_LEOS_HNN_OBJ := $(BUILD_DIR)/leos_hnn.o
+NN_LEOS_BRIDGE_OBJ := $(BUILD_DIR)/leos_bridge.o
 NN_PAPER_OBJ := $(BUILD_DIR)/nn_paper.o
 NN_TEST_OBJ := $(BUILD_DIR)/nn_test.o
 NN_EXPERIMENT_TEST_OBJ := $(BUILD_DIR)/nn_experiment_test.o
@@ -704,15 +708,15 @@ $(NN_PAPER_SANITIZE_OBJ): src/nn_paper.c include/nn_paper.h include/nn.h include
 
 $(BUILD_DIR)/obj/prime_gap/%.o: src/prime_gap/%.c $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
 
 $(BUILD_DIR)/obj/prime_gap_test/%.o: src/prime_gap/%.c $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -ffast-math -c $< -o $@
 
 $(BUILD_DIR)/obj/prime_gap_sanitize/%.o: src/prime_gap/%.c $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -ffast-math -c $< -o $@
 
 $(XOR_EXAMPLE): examples/xor.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/xor.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
@@ -735,14 +739,14 @@ $(LAYER_DISCOVERY): examples/layer_discovery.c $(NN_OBJS) $(NN_HEADERS) | $(BUIL
 $(ACTION_SCORE_EXAMPLE): examples/action_score.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/action_score.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(DATASET_ACTION_SCORE): examples/dataset_action_score.c $(NN_OBJS) $(NN_HEADERS) build/float/go_experiment.o | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(GO_EXP_FLAGS) $(CFLAGS) examples/dataset_action_score.c $(NN_OBJS) build/float/go_experiment.o $(LDFLAGS) $(LDLIBS) -o $@
+$(DATASET_ACTION_SCORE): examples/dataset_action_score.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(GO_EXP_FLAGS) $(CFLAGS) examples/dataset_action_score.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(HAIKU_LM): examples/haiku_lm.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_lm.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(HAIKU_WORD_LM): examples/haiku_word_lm.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_word_lm.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+$(HAIKU_WORD_LM): examples/haiku_word_lm.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o build/double/nn_holo_gate.o $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_word_lm.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o build/double/nn_holo_gate.o $(LDFLAGS) $(LDLIBS) -o $@
 
 $(HAIKU_UNDERSTANDING): examples/haiku_understanding.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_understanding.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
@@ -985,8 +989,6 @@ haiku-rule-search: $(HAIKU_RULE_SEARCH)
 haiku-rule-search-smoke: $(HAIKU_RULE_SEARCH)
 	mkdir -p $(HAIKU_RULE_SEARCH_DIR)
 	./$(HAIKU_RULE_SEARCH) --corpus $(HAIKU_LM_CORPUS) --max-candidates 48 --max-states 600 --max-rules 16 --proposer closed-loop --trace $(HAIKU_RULE_SEARCH_DIR)/smoke_trace.jsonl --save $(HAIKU_RULE_SEARCH_DIR)/haiku_rules_smoke.crlprule
-
-
 haiku-line-search: $(HAIKU_LINE_SEARCH)
 	./$(HAIKU_LINE_SEARCH) --beam 8 --epochs 16 --corpus data/haiku_synthetic_5000.txt
 
@@ -1195,8 +1197,6 @@ modular-gate-search: $(MODULAR_GATE_SEARCH)
 modular-gate-search-smoke: $(MODULAR_GATE_SEARCH)
 	mkdir -p $(BUILD_DIR)/traces
 	./$(MODULAR_GATE_SEARCH) --max-states 128 --max-actions 24 --max-rules 8 --trace $(BUILD_DIR)/traces/modular_gate_search.jsonl
-
-
 cross-domain-transfer: $(CROSS_DOMAIN_TRANSFER)
 	mkdir -p $(BUILD_DIR)/traces
 	./$(CROSS_DOMAIN_TRANSFER) --trace $(BUILD_DIR)/traces/cross_domain_transfer.jsonl --summary $(BUILD_DIR)/traces/cross_domain_transfer_summary.jsonl --leave-out $(BUILD_DIR)/traces/cross_domain_leave_out.jsonl
@@ -1682,7 +1682,8 @@ paper-support: trace-determinism-compare $(NN_GRAMMAR_DISCOVERY_RUNTIME) dataset
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --paper-claims --claims paper/claims.yaml --output-dir paper/generated --paper paper/paper.typ --agent-candidates-dir paper/agent_candidates --support-check --fail-required
 
 editorial-pr-check:
-	@echo "editorial PR check is covered by paper-support after script removal"
+	@echo "editorial PR check: running paper-support and diff-coverage check"
+	@./scripts/check_paper_diff_coverage.sh || true
 
 paper-ci: paper-support editorial-pr-check paper-pdf
 
@@ -1724,21 +1725,19 @@ TRAIN_CROSS_DOMAIN := $(BUILD_DIR)/train_cross_domain
 
 train-cross-domain: $(TRAIN_CROSS_DOMAIN)
 
-$(TRAIN_CROSS_DOMAIN): examples/train_cross_domain.c build/float/nn.o build/float/nn_experiment.o build/float/nn_symbolic.o build/float/nn_bitgrid.o build/float/nn_tilebot.o build/float/nn_layer.o build/float/nn_program.o build/float/nn_hypothesis.o build/float/nn_protocol.o build/float/nn_dataset.o build/float/nn_json.o build/float/nn_text.o build/float/go_experiment.o
-	$(CC) -std=c11 -O3 -Iinclude -DNN_REAL=float -DNN_REAL_IS_FLOAT=1 -DGO_EXPERIMENT_ENABLED examples/train_cross_domain.c build/float/nn.o build/float/nn_experiment.o build/float/nn_symbolic.o build/float/nn_bitgrid.o build/float/nn_tilebot.o build/float/nn_layer.o build/float/nn_program.o build/float/nn_hypothesis.o build/float/nn_protocol.o build/float/nn_dataset.o build/float/nn_json.o build/float/nn_text.o build/float/go_experiment.o -lm -o $@
+$(TRAIN_CROSS_DOMAIN): examples/train_cross_domain.c $(BUILD_DIR)/nn.o $(BUILD_DIR)/nn_experiment.o $(BUILD_DIR)/nn_symbolic.o $(BUILD_DIR)/nn_bitgrid.o $(BUILD_DIR)/nn_tilebot.o $(BUILD_DIR)/nn_layer.o $(BUILD_DIR)/nn_program.o $(BUILD_DIR)/nn_hypothesis.o $(BUILD_DIR)/nn_protocol.o $(BUILD_DIR)/nn_dataset.o $(BUILD_DIR)/nn_json.o $(BUILD_DIR)/nn_text.o $(BUILD_DIR)/go_experiment.o | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DGO_EXPERIMENT_ENABLED examples/train_cross_domain.c $(BUILD_DIR)/nn.o $(BUILD_DIR)/nn_experiment.o $(BUILD_DIR)/nn_symbolic.o $(BUILD_DIR)/nn_bitgrid.o $(BUILD_DIR)/nn_tilebot.o $(BUILD_DIR)/nn_layer.o $(BUILD_DIR)/nn_program.o $(BUILD_DIR)/nn_hypothesis.o $(BUILD_DIR)/nn_protocol.o $(BUILD_DIR)/nn_dataset.o $(BUILD_DIR)/nn_json.o $(BUILD_DIR)/nn_text.o $(BUILD_DIR)/go_experiment.o $(LDFLAGS) $(LDLIBS) -o $@
 
 # ── Go experiment schema ────────────────────────────────────────────────
 go-experiment: $(GO_EXPERIMENT)
 
 GO_EXP_FLAGS = -DGO_EXPERIMENT_ENABLED
 
-$(GO_EXPERIMENT): build/float/nn.o build/float/nn_experiment.o build/float/nn_symbolic.o build/float/nn_bitgrid.o build/float/nn_tilebot.o build/float/nn_layer.o build/float/nn_program.o build/float/nn_hypothesis.o build/float/nn_protocol.o build/float/nn_dataset.o build/float/nn_json.o build/float/nn_text.o
-	$(CC) -std=c11 -O3 -Iinclude -DNN_REAL=float -DNN_REAL_IS_FLOAT=1 $(GO_EXP_FLAGS) examples/go_experiment.c $^ -lm -o $@
+$(GO_EXPERIMENT): $(BUILD_DIR)/nn.o $(BUILD_DIR)/nn_experiment.o $(BUILD_DIR)/nn_symbolic.o $(BUILD_DIR)/nn_bitgrid.o $(BUILD_DIR)/nn_tilebot.o $(BUILD_DIR)/nn_layer.o $(BUILD_DIR)/nn_program.o $(BUILD_DIR)/nn_hypothesis.o $(BUILD_DIR)/nn_protocol.o $(BUILD_DIR)/nn_dataset.o $(BUILD_DIR)/nn_json.o $(BUILD_DIR)/nn_text.o | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(GO_EXP_FLAGS) examples/go_experiment.c $^ $(LDFLAGS) $(LDLIBS) -o $@
 
-build/float/go_experiment.o: examples/go_experiment.c include/nn.h include/nn_experiment.h include/nn_dataset.h
-	$(CC) -std=c11 -O3 -Iinclude -DNN_REAL=float -DNN_REAL_IS_FLOAT=1 -DGO_EXPERIMENT_LIBRARY_ONLY $(GO_EXP_FLAGS) -c $< -o $@
-
-
+$(BUILD_DIR)/go_experiment.o: examples/go_experiment.c include/nn.h include/nn_experiment.h include/nn_dataset.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DGO_EXPERIMENT_LIBRARY_ONLY $(GO_EXP_FLAGS) -ffast-math -c $< -o $@
 # ── Tournament watch ────────────────────────────────────────────────────
 # ── Tournament watch ────────────────────────────────────────────────────
 watch:
@@ -1747,3 +1746,160 @@ watch:
 tournament: build/float/nn.o build/float/nn_experiment.o build/float/nn_symbolic.o build/float/nn_bitgrid.o build/float/nn_tilebot.o build/float/nn_layer.o build/float/nn_program.o build/float/nn_hypothesis.o build/float/nn_protocol.o build/float/nn_json.o build/float/nn_text.o build/float/nn_dataset.o
 	$(CC) -std=c11 -O3 -Iinclude -DNN_REAL=float -DNN_REAL_IS_FLOAT=1 examples/go_tournament.c $^ -lm -o build/float/go_tournament
 	while true; do ./build/float/go_tournament --agents 16 --games 1 --threads 8 --display 4; echo "[make] crashed, restarting in 1s..."; sleep 1; done
+
+
+# ── Holographic subsystem ──────────────────────────────────────────────
+$(BUILD_DIR)/leos_engine.o: src/holographic/leos_engine.c include/holographic/leos_engine.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
+
+$(BUILD_DIR)/leos_hnn.o: src/holographic/leos_hnn.c include/holographic/leos_hnn.h include/holographic/leos_engine.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
+
+$(BUILD_DIR)/leos_bridge.o: src/holographic/leos_bridge.c include/holographic/leos_bridge.h include/holographic/leos_hnn.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
+
+$(BUILD_DIR)/nn_holographic.o: src/nn_holographic.c include/nn_holographic.h include/holographic/leos_bridge.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
+
+# ── Holographic Prime Gap ──────────────────────────────────────────────
+HOLOGRAPHIC_PRIME_GAP := $(BUILD_DIR)/holographic_prime_gap
+$(HOLOGRAPHIC_PRIME_GAP): examples/holographic_prime_gap.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holographic_prime_gap.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+holographic-prime-gap: $(HOLOGRAPHIC_PRIME_GAP)
+	./$(HOLOGRAPHIC_PRIME_GAP)
+
+HOLOGRAPHIC_FULL := $(BUILD_DIR)/fully_holographic
+$(HOLOGRAPHIC_FULL): examples/fully_holographic.c $(NN_OBJS) $(NN_LEOS_ENGINE_OBJ) $(NN_LEOS_HNN_OBJ) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/fully_holographic.c $(NN_OBJS) $(NN_LEOS_ENGINE_OBJ) $(NN_LEOS_HNN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+
+fully-holographic: $(HOLOGRAPHIC_FULL)
+	./$(HOLOGRAPHIC_FULL)
+
+HOLO_RANKER_DEMO := $(BUILD_DIR)/holo_ranker_demo
+$(HOLO_RANKER_DEMO): examples/holographic_ranker_demo.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holographic_ranker_demo.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o $(LDFLAGS) $(LDLIBS) -o $@
+
+build/double/nn_holographic_ranker.o: src/nn_holographic_ranker.c include/nn_holographic_ranker.h include/holographic/leos_engine.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
+
+holo-ranker-demo: $(HOLO_RANKER_DEMO)
+	./$(HOLO_RANKER_DEMO)
+
+HOLO_ALL := $(BUILD_DIR)/holo_all_experiments
+$(HOLO_ALL): examples/holo_all_experiments.c $(NN_OBJS) build/double/nn_holo_experiment.o  build/double/nn_holographic_ranker.o build/double/leos_engine.o | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holo_all_experiments.c $(NN_OBJS) build/double/nn_holo_experiment.o  build/double/nn_holographic_ranker.o build/double/leos_engine.o $(LDFLAGS) $(LDLIBS) -o $@
+
+build/double/nn_holo_experiment.o: src/nn_holo_experiment.c include/nn_holo_experiment.h include/nn_holographic_ranker.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
+
+holo-all: $(HOLO_ALL)
+	./$(HOLO_ALL)
+
+HYBRID := $(BUILD_DIR)/hybrid_holo_nn
+$(HYBRID): examples/hybrid_holo_nn.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/hybrid_holo_nn.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o $(LDFLAGS) $(LDLIBS) -o $@
+
+hybrid: $(HYBRID)
+	./$(HYBRID)
+
+HOLONET := $(BUILD_DIR)/holonet
+$(HOLONET): examples/holonet.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holonet.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o $(LDFLAGS) $(LDLIBS) -o $@
+
+holonet: $(HOLONET)
+	./$(HOLONET)
+
+GATED_DEMO := $(BUILD_DIR)/gated_runner_demo
+$(GATED_DEMO): examples/gated_runner_demo.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o build/double/nn_holo_gate.o | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/gated_runner_demo.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o build/double/nn_holo_gate.o $(LDFLAGS) $(LDLIBS) -o $@
+
+build/double/nn_holo_runner.o: src/nn_holo_runner.c include/nn_holo_runner.h include/nn_holographic_ranker.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
+
+build/double/nn_holo_gate.o: src/nn_holo_gate.c include/nn_holo_gate.h include/nn_holo_runner.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
+
+gated-runner: $(GATED_DEMO)
+	./$(GATED_DEMO)
+
+GATED_ALL := $(BUILD_DIR)/gated_all
+$(GATED_ALL): examples/gated_all.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o build/double/nn_holo_gate.o | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/gated_all.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o build/double/nn_holo_gate.o $(LDFLAGS) $(LDLIBS) -o $@
+
+gated-all: $(GATED_ALL)
+	./$(GATED_ALL)
+
+HOLO_ENV := $(BUILD_DIR)/holo_envelope
+$(HOLO_ENV): examples/holo_envelope.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holo_envelope.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o $(LDFLAGS) $(LDLIBS) -o $@
+
+holo-envelope: $(HOLO_ENV)
+	./$(HOLO_ENV)
+
+HOLO_REPLACE := $(BUILD_DIR)/holo_replace_envelope
+$(HOLO_REPLACE): examples/holo_replace_envelope.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holo_replace_envelope.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o $(LDFLAGS) $(LDLIBS) -o $@
+
+holo-replace: $(HOLO_REPLACE)
+	./$(HOLO_REPLACE)
+
+HOLO_CLAIM := $(BUILD_DIR)/holo_claim_reform
+$(HOLO_CLAIM): examples/holo_claim_reform.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holo_claim_reform.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o $(LDFLAGS) $(LDLIBS) -o $@
+
+holo-claim: $(HOLO_CLAIM)
+	./$(HOLO_CLAIM)
+
+CROSS_BIG := $(BUILD_DIR)/cross_domain_big
+$(CROSS_BIG): examples/cross_domain_big.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/cross_domain_big.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o $(LDFLAGS) $(LDLIBS) -o $@
+
+cross-big: $(CROSS_BIG)
+	./$(CROSS_BIG)
+
+# ── EML targets ──────────────────────────────────────────────────
+
+EML_PRIME_GAP := $(BUILD_DIR)/prime_gap_eml
+EML_GRID_PATH := $(BUILD_DIR)/grid_path_eml
+EML_DELAYED_CLAIM := $(BUILD_DIR)/delayed_claim_eml
+
+$(EML_PRIME_GAP): $(PRIME_GAP_EXAMPLE_OBJS) $(NN_OBJS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+	mkdir -p $(BUILD_DIR)/obj/prime_gap_eml
+	for src in block_verifier data eval features internal replay_compare rule_search run symbolic_wheel train; do \
+		$(CC) -Iinclude -DPRIME_GAP_EML $(CPPFLAGS) $(CFLAGS) -c src/prime_gap/$$src.c -o $(BUILD_DIR)/obj/prime_gap_eml/$$src.o; \
+	done
+	$(CC) -Iinclude $(BUILD_DIR)/obj/prime_gap_eml/*.o $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(EML_GRID_PATH): examples/grid_path.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) -Iinclude -DGRID_PATH_EML $(CPPFLAGS) $(CFLAGS) examples/grid_path.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(EML_DELAYED_CLAIM): examples/delayed_claim_eml.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) -Iinclude $(CPPFLAGS) $(CFLAGS) examples/delayed_claim_eml.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+prime-gap-eml: $(EML_PRIME_GAP)
+	./$(EML_PRIME_GAP) 1000 2000 4 0 5000 2000
+
+grid-path-eml: $(EML_GRID_PATH)
+	./$(EML_GRID_PATH) --trace /tmp/gp_eml.jsonl --save /tmp/gp_eml.nnckpt --trace-train --trace-samples 200
+
+delayed-claim-eml: $(EML_DELAYED_CLAIM)
+	./$(EML_DELAYED_CLAIM) --trace /tmp/dc_eml.jsonl --save /tmp/dc_eml.nnckpt --trace-train --trace-samples 200
+
+eml-benchmarks: $(BUILD_DIR)/eml_benchmarks
+$(BUILD_DIR)/eml_benchmarks: $(EML_PRIME_GAP) $(EML_GRID_PATH)
+	@echo "=== EML Benchmark Suite ==="
+	@echo ""
+	@echo "--- prime_gap EML ---"
+	./$(EML_PRIME_GAP) 1000 2000 1 0 500 200 2>&1 | grep 'model supervised' -A1 | head -2 || true
+	@echo ""
+	@echo "--- grid_path EML ---"
+	./$(EML_GRID_PATH) --trace /tmp/gp_eml_bench.jsonl --save /tmp/gp_eml_bench.nnckpt --trace-train --trace-samples 100 2>&1 | grep 'accuracy=' || true
+	@echo ""
+	@echo "--- delayed_claim EML ---"
+	./$(EML_DELAYED_CLAIM) --trace /tmp/dc_eml_bench.jsonl --save /tmp/dc_eml_bench.nnckpt --trace-train --trace-samples 100 2>&1 | grep 'accuracy=' || true
+
+eml-clean:
+	rm -rf $(BUILD_DIR)/obj/prime_gap_eml $(BUILD_DIR)/prime_gap_eml $(BUILD_DIR)/grid_path_eml $(BUILD_DIR)/delayed_claim_eml
+
+.PHONY: prime-gap-eml grid-path-eml delayed-claim-eml eml-benchmarks eml-clean

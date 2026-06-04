@@ -1,6 +1,8 @@
 #ifndef NN_CORE_H
 #define NN_CORE_H
 
+#include <math.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -24,6 +26,8 @@ typedef struct NeuralNet NeuralNet;
 #define NN_TRACE_ACTION_ID_CONTRACT "stable_unique_action_ids"
 #define NN_RANKING_POLICY "score_desc_action_id_tiebreak_epsilon"
 #define NN_SCORER_ENVELOPE_FEATURE_COUNT 96u
+#define NN_SCORER_ENVELOPE_EML_FEATURE_COUNT 144u
+#define NN_SCORER_ENVELOPE_EML_FEATURE_COUNT 144u
 #define NN_SCORER_ENVELOPE_FEATURE_SET "task_role_tagged_action_rule_rows_v1"
 #if NN_REAL_IS_FLOAT
 #define NN_RANK_SCORE_EPSILON ((nn_real)1e-6f)
@@ -31,11 +35,66 @@ typedef struct NeuralNet NeuralNet;
 #define NN_RANK_SCORE_EPSILON ((nn_real)1e-12)
 #endif
 
+/*
+ * EML operator: eml(x, y) = exp(x) - ln(y).
+ * Universal primitive for continuous mathematics (analogous to NAND for
+ * digital logic). Composition through EML can recover addition,
+ * multiplication, and arbitrary continuous functions.
+ */
+static inline nn_real nn_eml(nn_real x, nn_real y)
+{
+#if NN_REAL_IS_FLOAT
+    return expf(x) - logf(fabsf(y) + 1e-6f);
+#else
+    return exp(x) - log(fabs(y) + 1e-12);
+#endif
+}
+
+/* Pairwise EML: reduces N inputs to N/2 outputs.
+ * output[i] = eml(input[2*i], input[2*i+1]) */
+static inline void nn_eml_pairwise(const nn_real *input, nn_real *output, size_t pair_count)
+{
+    for (size_t i = 0; i < pair_count; ++i)
+        output[i] = nn_eml(input[2 * i], input[2 * i + 1]);
+}
+
+/* EML feature enrichment: given N features, returns N + N/2 features
+ * (original features followed by pairwise EML interaction features).
+ * output must have room for N + N/2 values. */
+static inline void nn_eml_enrich_features(const nn_real *features, size_t n,
+                                           nn_real *enriched)
+{
+    /* copy original features */
+    for (size_t i = 0; i < n; ++i)
+        enriched[i] = features[i];
+    /* append pairwise EML interactions */
+    nn_eml_pairwise(features, enriched + n, n / 2);
+}
+
+/* EML activation derivative for backprop:
+ *   d/dx eml(x,y) = exp(x)
+ *   d/dy eml(x,y) = -1/y
+ */
+static inline nn_real nn_eml_dx(nn_real x)   {
+#if NN_REAL_IS_FLOAT
+    return expf(x);
+#else
+    return exp(x);
+#endif
+}
+static inline nn_real nn_eml_dy(nn_real y)   {
+    nn_real ay = y < (nn_real)0 ? -y : y;
+    if (ay < (nn_real)1e-4f) return y < (nn_real)0 ? (nn_real)1e4f : -(nn_real)1e4f;
+    return -(nn_real)1 / y;
+}
+
 typedef enum {
     NN_ACTIVATION_SIGMOID = 0,
     NN_ACTIVATION_RELU = 1,
     NN_ACTIVATION_TANH = 2,
     NN_ACTIVATION_LINEAR = 3,
+    NN_ACTIVATION_EML = 4,
+    NN_ACTIVATION_EML_PAIRWISE = 5,
 } NNActivation;
 
 typedef enum {
@@ -172,6 +231,11 @@ size_t nn_input_size(const NeuralNet *net);
 size_t nn_output_size(const NeuralNet *net);
 size_t nn_parameter_count(const NeuralNet *net);
 size_t nn_forward_flop_count(const NeuralNet *net);
+void nn_set_layer_activation(NeuralNet *net, size_t layer, NNActivation activation);
+
+/* Set a per-layer activation override. Use NN_ACTIVATION_SIGMOID (default=0)
+ * to clear the override and fall back to hidden/output. */
+void nn_set_layer_activation(NeuralNet *net, size_t layer, NNActivation activation);
 
 void nn_forward(NeuralNet *net, const nn_real *input, nn_real *output);
 void nn_forward_batch(NeuralNet *net,
@@ -181,6 +245,17 @@ void nn_forward_batch(NeuralNet *net,
 void nn_softmax(const nn_real *scores, nn_real *probabilities, size_t count);
 nn_real nn_softmax_cross_entropy(const nn_real *scores, const nn_real *targets, size_t count);
 
+/* Score action candidates with EML feature enrichment.
+ * Enriches each candidate's feature_count features to feature_count*1.5
+ * via nn_eml_enrich_features before scoring. Network input size must be
+ * feature_count * 3 / 2. */
+int nn_score_action_rows_eml(NeuralNet *net,
+                             const nn_real *candidate_inputs,
+                             size_t candidate_count,
+                             size_t feature_count,
+                             nn_real *scores,
+                             nn_real *probabilities);
+
 int nn_score_action_rows(NeuralNet *net,
                          const nn_real *candidate_inputs,
                          size_t candidate_count,
@@ -189,9 +264,17 @@ int nn_score_action_rows(NeuralNet *net,
 const char *nn_scorer_envelope_feature_set(void);
 const char *nn_scorer_envelope_slot_name(size_t slot);
 int nn_scorer_envelope_domain_slot(NNScorerDomain domain, size_t *out_slot);
+int nn_score_action_rows_eml(NeuralNet *net, const nn_real *inputs, size_t count, size_t fc, nn_real *scores, nn_real *probs);
+
 int nn_scorer_envelope_fill_base(nn_real *row,
                                  size_t row_capacity,
                                  const NNScorerEnvelopeRow *spec);
+
+/* Fill envelope with EML enrichment: 96 base features + 48 pairwise EML
+ * interaction features = 144 total. row_capacity must be at least 144. */
+int nn_scorer_envelope_fill_eml(nn_real *row,
+                                size_t row_capacity,
+                                const NNScorerEnvelopeRow *spec);
 int nn_rank_action_scores(const nn_real *scores, size_t count, size_t *ranked_indices);
 int nn_rank_action_scores_with_ids(const nn_real *scores,
                                    const uint32_t *action_ids,

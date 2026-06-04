@@ -1,5 +1,10 @@
 #include "nn.h"
 
+#include "nn_holo_runner.h"
+#include "nn_holo_gate.h"
+#include "nn_holographic_ranker.h"
+#include "leos_engine.h"
+
 #include <ctype.h>
 #include <errno.h>
 #include <math.h>
@@ -11,6 +16,11 @@
 
 enum {
     HW_FEATURE_COUNT = 32,
+    HW_HOLO_DIM = 1024,
+    HW_HOLO_AGENTS = 10,
+    HW_HOLO_TOP_K = 3,
+    HW_HOLO_PROMOTE_AT = 5000,
+    HW_VOCAB_HASH_SIZE = 65536,
     HW_MAX_CANDIDATES = 256,
     HW_MAX_POEMS = 8192,
     HW_MAX_LINE_WORDS = 32,
@@ -40,6 +50,7 @@ typedef struct {
 typedef struct {
     HWVocabEntry entries[HW_MAX_VOCAB];
     int ranked_ids[HW_MAX_VOCAB];
+    int hash_table[HW_VOCAB_HASH_SIZE];
     size_t count;
     size_t max_frequency;
 } HWVocab;
@@ -90,6 +101,13 @@ typedef struct {
     unsigned int seed;
     int sample;
     int strict_adjacency;
+    int use_holo_gate;
+    int use_anki;
+    int online;
+    const char *save_holo_path;
+    const char *merge_holo_path;
+    size_t chunk_start;
+    size_t chunk_end;
 } HWConfig;
 
 typedef enum {
@@ -129,6 +147,19 @@ typedef struct {
     size_t forced_target;
     size_t dead_end;
 } HWRejectStats;
+
+typedef struct {
+    size_t next_epoch;
+    size_t interval;
+    double last_loss;
+    size_t review_count;
+} AnkiEntry;
+
+typedef struct {
+    HoloRunner *runner;
+    double centroid[HW_HOLO_DIM];
+    size_t stored;
+} HoloAgent;
 
 static const HWVocab *g_sort_vocab;
 
@@ -198,31 +229,42 @@ static void strip_line(char *line)
     }
 }
 
+static uint64_t vocab_hash_word(const char *word)
+{
+    uint64_t h = 14695981039346656037ULL;
+    while (*word) { h ^= (uint64_t)(unsigned char)*word++; h *= 1099511628211ULL; }
+    return h;
+}
+
 static int vocab_find(const HWVocab *vocab, const char *word)
 {
-    for (size_t i = 0; i < vocab->count; ++i) {
-        if (strcmp(vocab->entries[i].word, word) == 0) {
-            return (int)i;
-        }
+    if (vocab->count == 0) return -1;
+    uint64_t h = vocab_hash_word(word);
+    size_t idx = (size_t)(h & (uint64_t)(HW_VOCAB_HASH_SIZE - 1));
+    for (;;) {
+        int vi = vocab->hash_table[idx];
+        if (vi < 0) return -1;
+        if (strcmp(vocab->entries[vi].word, word) == 0) return vi;
+        idx = (idx + 1) & (size_t)(HW_VOCAB_HASH_SIZE - 1);
     }
-    return -1;
 }
 
 static int vocab_add(HWVocab *vocab, const char *word)
 {
     int existing = vocab_find(vocab, word);
-    if (existing >= 0) {
-        return existing;
-    }
-    if (vocab->count >= HW_MAX_VOCAB) {
-        return -1;
-    }
+    if (existing >= 0) return existing;
+    if (vocab->count >= HW_MAX_VOCAB) return -1;
     HWVocabEntry *entry = &vocab->entries[vocab->count];
     memset(entry, 0, sizeof(*entry));
     snprintf(entry->word, sizeof(entry->word), "%s", word);
     entry->length = (int)strlen(word);
     entry->syllables = syllable_proxy(word);
     vocab->ranked_ids[vocab->count] = (int)vocab->count;
+    uint64_t h = vocab_hash_word(word);
+    size_t idx = (size_t)(h & (uint64_t)(HW_VOCAB_HASH_SIZE - 1));
+    while (vocab->hash_table[idx] >= 0)
+        idx = (idx + 1) & (size_t)(HW_VOCAB_HASH_SIZE - 1);
+    vocab->hash_table[idx] = (int)vocab->count;
     vocab->count += 1;
     return (int)(vocab->count - 1u);
 }
@@ -377,6 +419,58 @@ static int load_corpus(const char *path, HWVocab *vocab, HWCorpus *corpus)
     return corpus->count > 0;
 }
 
+static int load_poem_stream(FILE *fp, HWVocab *vocab, HWCorpus *corpus)
+{
+    int line_words[3][HW_MAX_LINE_WORDS];
+    size_t line_counts[3] = {0, 0, 0};
+    int current_line = 0;
+    char line[512];
+    int poem_started = 0;
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        strip_line(line);
+        if (line[0] == '\0') {
+            if (current_line == 3) {
+                corpus_add_current(corpus, vocab, line_words, line_counts);
+                return 1;
+            }
+            if (current_line > 0) {
+                corpus->ignored_stanzas += 1;
+                memset(line_words, 0, sizeof(line_words));
+                memset(line_counts, 0, sizeof(line_counts));
+                current_line = 0;
+                poem_started = 0;
+                continue;
+            }
+            continue;
+        }
+        poem_started = 1;
+        if (current_line >= 3) {
+            corpus->ignored_stanzas += 1;
+            memset(line_words, 0, sizeof(line_words));
+            memset(line_counts, 0, sizeof(line_counts));
+            current_line = 0;
+        }
+        int allow_new = 1;
+        if (!parse_line_words(line, vocab, allow_new, line_words[current_line], &line_counts[current_line])) {
+            corpus->ignored_words += 1;
+            memset(line_words, 0, sizeof(line_words));
+            memset(line_counts, 0, sizeof(line_counts));
+            current_line = 0;
+            continue;
+        }
+        current_line += 1;
+        if (current_line == 3) {
+            corpus_add_current(corpus, vocab, line_words, line_counts);
+            return 1;
+        }
+    }
+    if (current_line == 3) {
+        corpus_add_current(corpus, vocab, line_words, line_counts);
+        return 1;
+    }
+    return 0;
+}
+
 static int compare_ranked_words(const void *a, const void *b)
 {
     const HWVocab *vocab = g_sort_vocab;
@@ -421,6 +515,10 @@ static uint64_t hash_adjacency_key(int line, int prev_word_id, int next_word_id)
     }
     return hash;
 }
+
+
+
+
 
 static uint64_t hash_adjacency_out_key(int line, int prev_word_id)
 {
@@ -532,25 +630,17 @@ static void adjacency_finalize_hash(HWAdjacency *adjacency)
     adjacency->hash = hash;
 }
 
-static void build_adjacency(const HWCorpus *corpus, size_t poem_count, HWAdjacency *adjacency)
+static void adjacency_add_poem(HWAdjacency *adjacency, const HWPoem *poem)
 {
-    adjacency_init(adjacency);
-    if (poem_count > corpus->count) {
-        poem_count = corpus->count;
-    }
-    for (size_t p = 0; p < poem_count; ++p) {
-        const HWPoem *poem = &corpus->poems[p];
-        for (int line = 0; line < 3; ++line) {
-            int prev_word_id = HW_ADJ_START;
-            for (size_t i = 0; i < poem->line_counts[line]; ++i) {
-                int word_id = poem->words[line][i];
-                (void)adjacency_add(adjacency, line, prev_word_id, word_id);
-                prev_word_id = word_id;
-            }
-            (void)adjacency_add(adjacency, line, prev_word_id, HW_ADJ_BOUNDARY);
+    for (int line = 0; line < 3; ++line) {
+        int prev_word_id = HW_ADJ_START;
+        for (size_t i = 0; i < poem->line_counts[line]; ++i) {
+            int word_id = poem->words[line][i];
+            (void)adjacency_add(adjacency, line, prev_word_id, word_id);
+            prev_word_id = word_id;
         }
+        (void)adjacency_add(adjacency, line, prev_word_id, HW_ADJ_BOUNDARY);
     }
-    adjacency_finalize_hash(adjacency);
 }
 
 static int adjacency_allows_transition(const HWAdjacency *adjacency,
@@ -590,8 +680,31 @@ static uint64_t hash_state(const HWState *state)
         hash ^= (uint64_t)(uint32_t)values[i];
         hash *= 1099511628211ull;
     }
+
     return hash;
 }
+static void anki_init(AnkiEntry *entries, size_t count)
+{
+    for (size_t i = 0; i < count; ++i) {
+        entries[i].next_epoch = 0;
+        entries[i].interval = 1;
+        entries[i].last_loss = 1e9;
+        entries[i].review_count = 0;
+    }
+}
+
+static void anki_update(AnkiEntry *entry, double poem_loss, size_t current_epoch)
+{
+    entry->review_count += 1;
+    if (poem_loss < entry->last_loss * 0.98) {
+        entry->interval = entry->interval < 32 ? entry->interval * 2 : 32;
+    } else if (poem_loss > entry->last_loss * 1.05) {
+        entry->interval = 1;
+    }
+    entry->last_loss = poem_loss;
+    entry->next_epoch = current_epoch + entry->interval;
+}
+
 
 static int boundary_allowed(const HWState *state)
 {
@@ -890,6 +1003,106 @@ static void build_candidate_inputs(const HWVocab *vocab,
     }
 }
 
+
+
+static size_t train_split_count(const HWCorpus *corpus)
+{
+    if (corpus->count <= 1) return corpus->count;
+    size_t train = (corpus->count * 4u) / 5u;
+    return train == 0 ? 1u : train;
+}
+
+static void holo_agent_init_centroid(HoloAgent *a, int agent_idx)
+{
+    /* Initialize centroid using the hardcoded routing as a prior.
+     * Each agent's centroid starts near the state region it should cover.
+     * agent_idx 0-8: line = idx/3, syllable_bucket = idx%3
+     * agent_idx 9: root — initialized at the mean of all regions */
+    LeosEngine *eng = a->runner ? leos_engine_create(HW_HOLO_DIM) : NULL;
+    if (!eng) return;
+    uint64_t seed;
+    if (agent_idx < 9) {
+        int line = agent_idx / 3;
+        int bucket = agent_idx % 3;
+        int target = HW_TARGET_SYLLABLES[line];
+        int syl = bucket == 2 ? target : (bucket == 1 ? target / 2 : 0);
+        /* Encode line and syllable as a deterministic seed */
+        seed = 14695981039346656037ULL ^ ((uint64_t)line * 7919 + (uint64_t)syl * 6271 + 42);
+    } else {
+        seed = 14695981039346656037ULL ^ 999983ULL;
+    }
+    leos_engine_keygen(eng, seed, a->centroid);
+    leos_engine_normalize(eng, a->centroid);
+    leos_engine_destroy(eng);
+}
+
+static double holo_cosine(const double *a, const double *b)
+{
+    double d = 0.0;
+    for (size_t i = 0; i < HW_HOLO_DIM; ++i) d += a[i] * b[i];
+    return d;
+}
+
+static void holo_agent_route(HoloAgent *agents, const double *state_vec,
+                              int top_k, int *out_indices, double *out_sims)
+{
+    double sims[HW_HOLO_AGENTS];
+    int indices[HW_HOLO_AGENTS];
+    for (int i = 0; i < HW_HOLO_AGENTS; ++i) {
+        sims[i] = holo_cosine(state_vec, agents[i].centroid);
+        indices[i] = i;
+    }
+    for (int i = 0; i < HW_HOLO_AGENTS; ++i)
+        for (int j = i + 1; j < HW_HOLO_AGENTS; ++j)
+            if (sims[j] > sims[i]) {
+                double ts = sims[i]; sims[i] = sims[j]; sims[j] = ts;
+                int ti = indices[i]; indices[i] = indices[j]; indices[j] = ti;
+            }
+    for (int k = 0; k < top_k && k < HW_HOLO_AGENTS; ++k) {
+        out_indices[k] = indices[k];
+        out_sims[k] = sims[k];
+    }
+}
+
+static void holo_agent_train(HoloAgent *agents, const double *state_vec, const double *action_vec)
+{
+    int top_idx[HW_HOLO_TOP_K];
+    double top_sim[HW_HOLO_TOP_K];
+    holo_agent_route(agents, state_vec, HW_HOLO_TOP_K, top_idx, top_sim);
+    double sim_total = 0.0;
+    for (int k = 0; k < HW_HOLO_TOP_K; ++k) if (top_sim[k] > 0.0) sim_total += top_sim[k];
+    if (sim_total <= 0.0) sim_total = 1.0;
+    for (int k = 0; k < HW_HOLO_TOP_K; ++k) {
+        int ai = top_idx[k];
+        double w = top_sim[k] / sim_total;
+        holo_runner_train(agents[ai].runner, state_vec, action_vec);
+        agents[ai].stored += 1;
+        /* Hebbian centroid update: decaying lr, move toward activated state */
+        double lr = 0.001 / (1.0 + (double)agents[ai].stored / 1000.0);
+        for (size_t d = 0; d < HW_HOLO_DIM; ++d)
+            agents[ai].centroid[d] = (1.0 - lr) * agents[ai].centroid[d] + lr * w * state_vec[d];
+        /* Renormalize */
+        double norm = 0.0;
+        for (size_t d = 0; d < HW_HOLO_DIM; ++d) norm += agents[ai].centroid[d] * agents[ai].centroid[d];
+        if (norm > 0.0) { norm = sqrt(norm); for (size_t d = 0; d < HW_HOLO_DIM; ++d) agents[ai].centroid[d] /= norm; }
+    }
+}
+
+static void holo_agent_promote_if_needed(HoloAgent *agents, int child_idx, int parent_idx)
+{
+    if (agents[child_idx].stored < HW_HOLO_PROMOTE_AT) return;
+    if (parent_idx < 0 || parent_idx >= HW_HOLO_AGENTS) return;
+    /* Promote: reset child, but first reinforce parent with child's centroid */
+    holo_runner_train(agents[parent_idx].runner, agents[child_idx].centroid, agents[child_idx].centroid);
+    agents[parent_idx].stored += 1;
+    /* Reset child: new runner, new centroid */
+    holo_runner_destroy(agents[child_idx].runner);
+    agents[child_idx].runner = holo_runner_create(HW_HOLO_DIM);
+    holo_agent_init_centroid(&agents[child_idx], child_idx);
+    agents[child_idx].stored = 0;
+    printf("  promoted agent %d → %d\n", child_idx, parent_idx);
+}
+
 static nn_real train_step(NeuralNet *net,
                           const HWVocab *vocab,
                           const HWAdjacency *adjacency,
@@ -899,38 +1112,43 @@ static nn_real train_step(NeuralNet *net,
                           size_t max_candidates,
                           int strict_adjacency,
                           double learning_rate,
-                          int *trained)
+                          int *trained,
+                          HoloAgent *agents,
+                          int use_holo_gate)
 {
     HWCandidate candidates[HW_MAX_CANDIDATES];
     nn_real inputs[HW_MAX_CANDIDATES * HW_FEATURE_COUNT];
     size_t candidate_count = build_candidates(vocab,
-                                              adjacency,
-                                              state,
-                                              target_kind,
-                                              target_word_id,
-                                              max_candidates,
-                                              strict_adjacency,
-                                              NULL,
-                                              candidates);
+                                              adjacency, state,
+                                              target_kind, target_word_id,
+                                              max_candidates, strict_adjacency,
+                                              NULL, candidates);
     size_t target = 0;
     *trained = 0;
     if (candidate_count == 0 ||
-        !target_index(candidates, candidate_count, target_kind, target_word_id, &target)) {
+        !target_index(candidates, candidate_count, target_kind, target_word_id, &target))
         return (nn_real)0;
-    }
     build_candidate_inputs(vocab, state, candidates, candidate_count, inputs);
     *trained = 1;
+    if (use_holo_gate) {
+        double sv[HW_HOLO_DIM], av[HW_HOLO_DIM];
+        uint64_t sseed = hash_state(state);
+        uint64_t aseed = (uint64_t)action_id_for_candidate(&candidates[target]);
+        LeosEngine *te = leos_engine_create(HW_HOLO_DIM);
+        leos_engine_keygen(te, sseed, sv); leos_engine_normalize(te, sv);
+        leos_engine_keygen(te, aseed, av); leos_engine_normalize(te, av);
+        holo_agent_train(agents, sv, av);
+        /* Promote overflow */
+        for (int ai = 0; ai < 9; ++ai) {
+            int parent = ai < 6 ? (ai / 3) * 3 + 2 : 9;
+            if (parent != ai) holo_agent_promote_if_needed(agents, ai, parent);
+        }
+        leos_engine_destroy(te);
+    }
     return nn_train_softmax_scorer(net, inputs, candidate_count, target, (nn_real)learning_rate);
 }
 
-static size_t train_split_count(const HWCorpus *corpus)
-{
-    if (corpus->count <= 1) {
-        return corpus->count;
-    }
-    size_t train = (corpus->count * 4u) / 5u;
-    return train == 0 ? 1u : train;
-}
+
 
 static int score_step(NeuralNet *net,
                       const HWVocab *vocab,
@@ -940,7 +1158,8 @@ static int score_step(NeuralNet *net,
                       int target_word_id,
                       size_t max_candidates,
                       int strict_adjacency,
-                      HWEval *eval)
+                      HWEval *eval,
+                      HoloAgent *agents, int use_holo_gate)
 {
     HWCandidate candidates[HW_MAX_CANDIDATES];
     nn_real inputs[HW_MAX_CANDIDATES * HW_FEATURE_COUNT];
@@ -967,8 +1186,45 @@ static int score_step(NeuralNet *net,
         action_ids[i] = candidates[i].action_id;
     }
     build_candidate_inputs(vocab, state, candidates, candidate_count, inputs);
-    if (!nn_score_action_rows(net, inputs, candidate_count, scores, probabilities) ||
-        !nn_rank_action_scores_with_ids(scores, action_ids, candidate_count, ranked, NN_RANK_SCORE_EPSILON)) {
+    if (!nn_score_action_rows(net, inputs, candidate_count, scores, probabilities)) {
+        eval->skipped += 1;
+        return 0;
+    }
+    if (use_holo_gate) {
+            double *av = calloc(candidate_count * HW_HOLO_DIM, sizeof(double));
+            double *hscores = calloc(candidate_count, sizeof(double));
+            double *ensembled = calloc(candidate_count, sizeof(double));
+            double total_weight = 0.0;
+            for (int ai = 0; ai < 9; ++ai) {
+                double fi = holo_ranker_fidelity(agents[ai].runner->ranker);
+                if (fi < 0.01) continue;
+                double w = fi * fi * fi;
+                double sv[HW_HOLO_DIM];
+                holo_runner_embed_state(agents[ai].runner, hash_state(state), sv);
+                memset(av, 0, candidate_count * HW_HOLO_DIM * sizeof(double));
+                for (size_t hi = 0; hi < candidate_count; ++hi)
+                    holo_runner_embed_state(agents[ai].runner, (uint64_t)action_ids[hi], &av[hi * HW_HOLO_DIM]);
+                holo_ranker_score(agents[ai].runner->ranker, sv, av, candidate_count, hscores);
+                double mx = hscores[0]; int valid = isfinite(mx);
+                for (size_t hi = 1; hi < candidate_count; ++hi) { if (!isfinite(hscores[hi])) valid = 0; if (hscores[hi] > mx) mx = hscores[hi]; }
+                if (valid) {
+                    double sm = 0.0;
+                    for (size_t hi = 0; hi < candidate_count; ++hi) { hscores[hi] = exp(hscores[hi] - mx); sm += hscores[hi]; }
+                    if (sm > 0.0) {
+                        for (size_t hi = 0; hi < candidate_count; ++hi) hscores[hi] /= sm;
+                        for (size_t hi = 0; hi < candidate_count; ++hi) ensembled[hi] += w * hscores[hi];
+                        total_weight += w;
+                    }
+                }
+            }
+            if (total_weight > 0.0) {
+                double blend_alpha = total_weight / (total_weight + 1.0);
+                for (size_t hi = 0; hi < candidate_count; ++hi)
+                    scores[hi] = (nn_real)(blend_alpha * ensembled[hi] / total_weight + (1.0 - blend_alpha) * (double)scores[hi]);
+            }
+            free(av); free(hscores); free(ensembled);
+        }
+    if (!nn_rank_action_scores_with_ids(scores, action_ids, candidate_count, ranked, NN_RANK_SCORE_EPSILON)) {
         eval->skipped += 1;
         return 0;
     }
@@ -989,7 +1245,8 @@ static HWEval evaluate_split(NeuralNet *net,
                              size_t start,
                              size_t end,
                              size_t max_candidates,
-                             int strict_adjacency)
+                             int strict_adjacency,
+                             HoloAgent *agents, int use_holo_gate)
 {
     HWEval eval;
     memset(&eval, 0, sizeof(eval));
@@ -1009,7 +1266,8 @@ static HWEval evaluate_split(NeuralNet *net,
                                  word_id,
                                  max_candidates,
                                  strict_adjacency,
-                                 &eval);
+                                 &eval,
+                                 agents, use_holo_gate);
                 apply_word(&state, vocab, word_id);
             }
             HWCandidateKind boundary = line < 2 ? HW_CAND_NEWLINE : HW_CAND_EOS;
@@ -1021,7 +1279,8 @@ static HWEval evaluate_split(NeuralNet *net,
                              -1,
                              max_candidates,
                              strict_adjacency,
-                             &eval);
+                             &eval,
+                             agents, use_holo_gate);
             apply_boundary(&state, boundary);
         }
     }
@@ -1207,7 +1466,8 @@ static int generate_one(NeuralNet *net,
                         const HWConfig *config,
                         const char *model_hash,
                         FILE *trace,
-                        size_t sample_index)
+                        size_t sample_index,
+                        HoloAgent *agents, int use_holo_gate)
 {
     char generated[HW_MAX_GENERATED];
     size_t length = 0;
@@ -1242,8 +1502,44 @@ static int generate_one(NeuralNet *net,
             action_ids[i] = candidates[i].action_id;
         }
         build_candidate_inputs(vocab, &state, candidates, candidate_count, inputs);
-        if (!nn_score_action_rows(net, inputs, candidate_count, scores, probabilities) ||
-            !nn_rank_action_scores_with_ids(scores,
+        if (!nn_score_action_rows(net, inputs, candidate_count, scores, probabilities)) {
+            return 0;
+        }
+        if (use_holo_gate) {
+            double *av = calloc(candidate_count * HW_HOLO_DIM, sizeof(double));
+            double *hscores = calloc(candidate_count, sizeof(double));
+            double *ensembled = calloc(candidate_count, sizeof(double));
+            double total_weight = 0.0;
+            for (int ai = 0; ai < 9; ++ai) {
+                double fi = holo_ranker_fidelity(agents[ai].runner->ranker);
+                if (fi < 0.01) continue;
+                double w = fi * fi * fi;
+                double sv[HW_HOLO_DIM];
+                holo_runner_embed_state(agents[ai].runner, hash_state(&state), sv);
+                memset(av, 0, candidate_count * HW_HOLO_DIM * sizeof(double));
+                for (size_t hi = 0; hi < candidate_count; ++hi)
+                    holo_runner_embed_state(agents[ai].runner, (uint64_t)action_ids[hi], &av[hi * HW_HOLO_DIM]);
+                holo_ranker_score(agents[ai].runner->ranker, sv, av, candidate_count, hscores);
+                double mx = hscores[0]; int valid = isfinite(mx);
+                for (size_t hi = 1; hi < candidate_count; ++hi) { if (!isfinite(hscores[hi])) valid = 0; if (hscores[hi] > mx) mx = hscores[hi]; }
+                if (valid) {
+                    double sm = 0.0;
+                    for (size_t hi = 0; hi < candidate_count; ++hi) { hscores[hi] = exp(hscores[hi] - mx); sm += hscores[hi]; }
+                    if (sm > 0.0) {
+                        for (size_t hi = 0; hi < candidate_count; ++hi) hscores[hi] /= sm;
+                        for (size_t hi = 0; hi < candidate_count; ++hi) ensembled[hi] += w * hscores[hi];
+                        total_weight += w;
+                    }
+                }
+            }
+            if (total_weight > 0.0) {
+                double blend_alpha = total_weight / (total_weight + 1.0);
+                for (size_t hi = 0; hi < candidate_count; ++hi)
+                    scores[hi] = (nn_real)(blend_alpha * ensembled[hi] / total_weight + (1.0 - blend_alpha) * (double)scores[hi]);
+            }
+            free(av); free(hscores); free(ensembled);
+        }
+        if (!nn_rank_action_scores_with_ids(scores,
                                             action_ids,
                                             candidate_count,
                                             ranked,
@@ -1303,8 +1599,11 @@ static void usage(const char *argv0)
             "usage: %s [--corpus path] [--word-list path] [--epochs N]\n"
             "       [--max-updates N] [--lr R] [--samples N] [--sample 0|1]\n"
             "       [--top-k N] [--temperature R] [--max-candidates N]\n"
-            "       [--strict-adjacency 0|1]\n"
-            "       [--trace path] [--save path] [--seed N]\n",
+            "       [--strict-adjacency 0|1] [--holo-gate 0|1]\n"
+            "       [--anki 0|1] [--online 0|1]\n"
+            "       [--save-holo path] [--merge-holo path]\n"
+            "       [--chunk-start N] [--chunk-end N]\n"
+            "       [--holo-dim N] [--trace path] [--save path] [--seed N]\n",
             argv0);
 }
 
@@ -1324,6 +1623,13 @@ static int parse_config(int argc, char **argv, HWConfig *config)
     config->seed = 20240518u;
     config->sample = 1;
     config->strict_adjacency = 1;
+    config->use_holo_gate = 0;
+    config->use_anki = 0;
+    config->online = 0;
+    config->save_holo_path = NULL;
+    config->merge_holo_path = NULL;
+    config->chunk_start = 0;
+    config->chunk_end = 0;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--corpus") == 0 && i + 1 < argc) {
@@ -1374,6 +1680,28 @@ static int parse_config(int argc, char **argv, HWConfig *config)
                 return 0;
             }
             config->strict_adjacency = value != 0;
+        } else if (strcmp(argv[i], "--anki") == 0 && i + 1 < argc) {
+            size_t value = 0;
+            if (!nn_parse_size_nonnegative_text(argv[++i], &value)) {
+                return 0;
+            }
+            config->use_anki = value != 0;
+        } else if (strcmp(argv[i], "--holo-gate") == 0 && i + 1 < argc) {
+            size_t value = 0;
+            if (!nn_parse_size_nonnegative_text(argv[++i], &value)) return 0;
+            config->use_holo_gate = value != 0;
+        } else if (strcmp(argv[i], "--online") == 0 && i + 1 < argc) {
+            size_t value = 0;
+            if (!nn_parse_size_nonnegative_text(argv[++i], &value)) return 0;
+            config->online = value != 0;
+        } else if (strcmp(argv[i], "--save-holo") == 0 && i + 1 < argc) {
+            config->save_holo_path = argv[++i];
+        } else if (strcmp(argv[i], "--merge-holo") == 0 && i + 1 < argc) {
+            config->merge_holo_path = argv[++i];
+        } else if (strcmp(argv[i], "--chunk-start") == 0 && i + 1 < argc) {
+            if (!nn_parse_size_nonnegative_text(argv[++i], &config->chunk_start)) return 0;
+        } else if (strcmp(argv[i], "--chunk-end") == 0 && i + 1 < argc) {
+            if (!nn_parse_size_nonnegative_text(argv[++i], &config->chunk_end)) return 0;
         } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
             size_t value = 0;
             if (!nn_parse_size_nonnegative_text(argv[++i], &value)) {
@@ -1390,6 +1718,8 @@ static int parse_config(int argc, char **argv, HWConfig *config)
 
 int main(int argc, char **argv)
 {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
     HWConfig config;
     if (!parse_config(argc, argv, &config)) {
         usage(argv[0]);
@@ -1398,27 +1728,42 @@ int main(int argc, char **argv)
 
     static HWVocab vocab;
     memset(&vocab, 0, sizeof(vocab));
+    for (size_t hi = 0; hi < HW_VOCAB_HASH_SIZE; ++hi) vocab.hash_table[hi] = -1;
     if (config.word_list_path != NULL && !load_word_list(config.word_list_path, &vocab)) {
         return EXIT_FAILURE;
     }
 
     static HWCorpus corpus;
-    if (!load_corpus(config.corpus_path, &vocab, &corpus)) {
-        return EXIT_FAILURE;
+    memset(&corpus, 0, sizeof(corpus));
+    FILE *corpus_fp = NULL;
+    if (config.online) {
+        corpus_fp = fopen(config.corpus_path, "r");
+        if (corpus_fp == NULL) {
+            fprintf(stderr, "failed to open corpus %s: %s\n", config.corpus_path, strerror(errno));
+            return EXIT_FAILURE;
+        }
+        while (load_poem_stream(corpus_fp, &vocab, &corpus)) {
+            if (corpus.count >= HW_MAX_POEMS) break;
+        }
+        fclose(corpus_fp);
+    } else {
+        if (!load_corpus(config.corpus_path, &vocab, &corpus)) {
+            return EXIT_FAILURE;
+        }
     }
     sort_vocab(&vocab);
     size_t train_count = train_split_count(&corpus);
     static HWAdjacency adjacency;
-    build_adjacency(&corpus, train_count, &adjacency);
-    if (adjacency.overflow != 0) {
-        fprintf(stderr,
-                "adjacency graph exceeds HW_MAX_ADJ_EDGES=%d (overflow=%zu)\n",
-                HW_MAX_ADJ_EDGES,
-                adjacency.overflow);
-        return EXIT_FAILURE;
+    adjacency_init(&adjacency);
+    if (!config.online) {
+        for (size_t p = 0; p < train_count; ++p) {
+            if (config.strict_adjacency)
+                adjacency_add_poem(&adjacency, &corpus.poems[p]);
+        }
+        adjacency_finalize_hash(&adjacency);
     }
 
-    const size_t layers[] = {HW_FEATURE_COUNT, 64, 32, 1};
+    const size_t layers[] = {HW_FEATURE_COUNT, 256, 128, 64, 1};
     NNConfig nn_config;
     nn_config.layer_sizes = layers;
     nn_config.layer_count = sizeof(layers) / sizeof(layers[0]);
@@ -1430,6 +1775,26 @@ int main(int argc, char **argv)
     if (net == NULL) {
         fputs("failed to create haiku_word_lm network\n", stderr);
         return EXIT_FAILURE;
+    }
+
+    HoloAgent agents[HW_HOLO_AGENTS];
+    memset(agents, 0, sizeof(agents));
+    if (config.use_holo_gate) {
+        for (int ai = 0; ai < HW_HOLO_AGENTS; ++ai) {
+            agents[ai].runner = holo_runner_create(HW_HOLO_DIM);
+            if (agents[ai].runner == NULL) {
+                fputs("failed to create HoloRunner\n", stderr);
+                return EXIT_FAILURE;
+            }
+            holo_agent_init_centroid(&agents[ai], ai);
+        }
+        printf("holo-agent swarm initialized: %d agents dim=%d top-k=%d\n", HW_HOLO_AGENTS, HW_HOLO_DIM, HW_HOLO_TOP_K);
+        if (config.merge_holo_path != NULL) {
+            /* merge only affects runner 0 for now */
+            if (holo_runner_load(agents[0].runner, config.merge_holo_path) != 0) {
+                fprintf(stderr, "failed to load holographic trace: %s\n", config.merge_holo_path);
+            }
+        }
     }
 
     printf("haiku_word_lm corpus=%s poems=%zu train=%zu valid=%zu ignored_stanzas=%zu "
@@ -1450,6 +1815,16 @@ int main(int argc, char **argv)
            adjacency.count,
            (unsigned long long)adjacency.hash);
 
+    AnkiEntry *anki = NULL;
+    if (config.use_anki) {
+        anki = calloc(train_count, sizeof(AnkiEntry));
+        if (anki == NULL) {
+            fputs("failed to allocate anki schedule\n", stderr);
+            return EXIT_FAILURE;
+        }
+        anki_init(anki, train_count);
+    }
+
     size_t updates = 0;
     size_t skipped = 0;
     double training_seconds = 0.0;
@@ -1458,11 +1833,26 @@ int main(int argc, char **argv)
         double loss = 0.0;
         size_t epoch_updates = 0;
         size_t epoch_skipped = 0;
-        for (size_t p = 0; p < train_count; ++p) {
+        size_t poems_reviewed = 0;
+        size_t poems_deferred = 0;
+        size_t loop_start = config.chunk_end > 0 && config.chunk_start < train_count ? config.chunk_start : 0;
+        size_t loop_end = config.chunk_end > 0 && config.chunk_end <= train_count ? config.chunk_end : train_count;
+        for (size_t p = loop_start; p < loop_end; ++p) {
+            if (config.use_anki && anki[p].next_epoch > epoch) {
+                poems_deferred += 1;
+                continue;
+            }
             const HWPoem *poem = &corpus.poems[p];
+            if (config.strict_adjacency && anki != NULL && anki[p].review_count == 0) {
+                adjacency_add_poem(&adjacency, poem);
+            } else if (config.strict_adjacency && anki == NULL) {
+                adjacency_add_poem(&adjacency, poem);
+            }
             HWState state;
             memset(&state, 0, sizeof(state));
             state.prev_word_id = -1;
+            double poem_loss = 0.0;
+            size_t poem_trained = 0;
             for (int line = 0; line < 3; ++line) {
                 for (size_t i = 0; i < poem->line_counts[line]; ++i) {
                     int trained = 0;
@@ -1476,9 +1866,13 @@ int main(int argc, char **argv)
                                                    config.max_candidates,
                                                    config.strict_adjacency,
                                                    config.learning_rate,
-                                                   &trained);
+                                                   &trained,
+                                                   agents,
+                                                   config.use_holo_gate);
                     if (trained) {
                         loss += (double)step_loss;
+                        poem_loss += (double)step_loss;
+                        poem_trained += 1;
                         epoch_updates += 1;
                         updates += 1;
                     } else {
@@ -1504,9 +1898,13 @@ int main(int argc, char **argv)
                                                config.max_candidates,
                                                config.strict_adjacency,
                                                config.learning_rate,
-                                               &trained);
+                                               &trained,
+                                               agents,
+                                               config.use_holo_gate);
                 if (trained) {
                     loss += (double)step_loss;
+                    poem_loss += (double)step_loss;
+                    poem_trained += 1;
                     epoch_updates += 1;
                     updates += 1;
                 } else {
@@ -1518,23 +1916,33 @@ int main(int argc, char **argv)
                     break;
                 }
             }
+            if (config.use_anki && poem_trained > 0) {
+                double avg_poem_loss = poem_loss / (double)poem_trained;
+                anki_update(&anki[p], avg_poem_loss, epoch);
+                poems_reviewed += 1;
+            }
             if (config.max_updates != 0 && updates >= config.max_updates) {
                 break;
             }
         }
         double elapsed = now_seconds() - started;
         training_seconds += elapsed;
-        printf("epoch %zu loss=%.4f updates=%zu skipped=%zu %.0f rows/s\n",
+        printf("epoch %zu loss=%.4f updates=%zu skipped=%zu",
                epoch,
                epoch_updates > 0 ? loss / (double)epoch_updates : 0.0,
                epoch_updates,
-               epoch_skipped,
+               epoch_skipped);
+        if (config.use_anki) {
+            printf(" reviewed=%zu deferred=%zu", poems_reviewed, poems_deferred);
+        }
+        printf(" %.0f rows/s\n",
                elapsed > 0.0 ? (double)epoch_updates / elapsed : 0.0);
         if (config.max_updates != 0 && updates >= config.max_updates) {
             break;
         }
     }
 
+    adjacency_finalize_hash(&adjacency);
     HWEval train_eval = evaluate_split(net,
                                        &vocab,
                                        &adjacency,
@@ -1542,7 +1950,8 @@ int main(int argc, char **argv)
                                        0,
                                        train_count,
                                        config.max_candidates,
-                                       config.strict_adjacency);
+                                       config.strict_adjacency,
+                                       agents, config.use_holo_gate);
     HWEval valid_eval =
         evaluate_split(net,
                        &vocab,
@@ -1551,7 +1960,8 @@ int main(int argc, char **argv)
                        train_count,
                        corpus.count,
                        config.max_candidates,
-                       config.strict_adjacency);
+                       config.strict_adjacency,
+                       agents, config.use_holo_gate);
     double train_acc = train_eval.rows > 0 ? (double)train_eval.top1 / (double)train_eval.rows : 0.0;
     double valid_acc = valid_eval.rows > 0 ? (double)valid_eval.top1 / (double)valid_eval.rows : 0.0;
     double train_nll = train_eval.rows > 0 ? train_eval.nll / (double)train_eval.rows : 0.0;
@@ -1608,7 +2018,7 @@ int main(int argc, char **argv)
         }
     }
     for (size_t i = 0; i < config.samples; ++i) {
-        if (!generate_one(net, &vocab, &adjacency, &config, model_hash, trace, i)) {
+        if (!generate_one(net, &vocab, &adjacency, &config, model_hash, trace, i, agents, config.use_holo_gate)) {
             if (trace != NULL) {
                 fclose(trace);
             }
@@ -1628,7 +2038,7 @@ int main(int argc, char **argv)
            "\"verifier_skipped\":%zu,\"vocab_entries\":%zu,\"max_candidates\":%zu,"
            "\"strict_adjacency\":%s,\"adjacency_edges\":%zu,"
            "\"adjacency_transitions\":%zu,\"adjacency_hash\":\"%016llx\","
-           "\"model_hash\":\"%s\"}\n",
+           "\"model_hash\":\"%s\",\"holo_gate\":%s,\"holo_dim\":%zu,\"holo_stored\":%zu}\n",
            corpus.count,
            train_eval.rows,
            valid_eval.rows,
@@ -1645,8 +2055,30 @@ int main(int argc, char **argv)
            adjacency.count,
            adjacency.transitions,
            (unsigned long long)adjacency.hash,
-           model_hash);
+           model_hash,
+           config.use_holo_gate ? "true" : "false",
+           (size_t)HW_HOLO_DIM,
+           (agents[0].runner ? holo_ranker_count(agents[0].runner->ranker) : 0));
 
+    free(anki);
+    if (config.use_holo_gate) {
+        size_t total_stored = 0;
+        for (int ai = 0; ai < HW_HOLO_AGENTS; ++ai) {
+            size_t s = holo_ranker_count(agents[ai].runner->ranker);
+            total_stored += s;
+            printf("  agent %d: %zu stored, fidelity=%.4f centroid_norm=%.3f\n",
+                   ai, s, holo_ranker_fidelity(agents[ai].runner->ranker),
+                   holo_cosine(agents[ai].centroid, agents[ai].centroid));
+        }
+        printf("  total stored: %zu\n", total_stored);
+        if (config.save_holo_path != NULL) {
+            if (holo_runner_save(agents[0].runner, config.save_holo_path) != 0) {
+                fprintf(stderr, "failed to save holographic trace: %s\n", config.save_holo_path);
+            } else {
+                printf("saved holographic trace: %s\n", config.save_holo_path);
+            }
+        }
+    }
     nn_free(net);
     return EXIT_SUCCESS;
 }

@@ -1418,6 +1418,8 @@ typedef struct {
     double raw_top1;
     double hand_top1;
     double learned_top1;
+    double raw_top10;
+    double hand_top10;
     double learned_top10;
     double learned_vs_hand_delta_pp;
     long false_rejections;
@@ -2955,9 +2957,11 @@ static void paper_eval_prime_gate_delta(PaperClaimResult *claim) {
         mode = paper_json_dup_key_string(line, "evaluation_mode");
         if (mode != NULL && strcmp(mode, "raw") == 0 && !have_raw) {
             have_raw = paper_json_get_double(line, "top1", &claim->raw_top1);
+            (void)paper_json_get_double(line, "top10", &claim->raw_top10);
         } else if (mode != NULL && strcmp(mode, "hand_wheel_model") == 0 &&
                    !have_hand) {
             have_hand = paper_json_get_double(line, "top1", &claim->hand_top1);
+            (void)paper_json_get_double(line, "top10", &claim->hand_top10);
         } else if (mode != NULL && strcmp(mode, "expanded_rule_model") == 0 &&
                    !have_learned) {
             long false_rejections = 0;
@@ -4729,6 +4733,10 @@ static int paper_write_claims_typ(const char *path,
     paper_write_typ_float(fp, claims[0].raw_top1);
     fputs("\n#let claim_C1_prime_gate_delta_hand_top1 = ", fp);
     paper_write_typ_float(fp, claims[0].hand_top1);
+    fputs("\n#let claim_C1_prime_gate_delta_raw_top10 = ", fp);
+    paper_write_typ_float(fp, claims[0].raw_top10);
+    fputs("\n#let claim_C1_prime_gate_delta_hand_top10 = ", fp);
+    paper_write_typ_float(fp, claims[0].hand_top10);
     fputs("\n#let claim_C1_prime_gate_delta_learned_top1 = ", fp);
     paper_write_typ_float(fp, claims[0].learned_top1);
     fputs("\n#let claim_C1_prime_gate_delta_learned_top10 = ", fp);

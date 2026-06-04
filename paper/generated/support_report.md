@@ -22,5 +22,5 @@ Status: passing
 - `C9.signal_flight_replay_control`: supported - in offline Signal replay, the model ranks recorded WASD choices at top-1 79.76% vs baseline 67.86% (+11.90pp), utility 0.1432 vs 0.1359, regret 0.0073 vs 0.0146, damage 2.38% vs 2.38%, deaths 0.00% vs 0.00%; live shadow frames=74.
 - `C9.signal_live_neural_active`: supported - the live Signal pilot did run checkpoint-ranked neural actions, but only behind guards: 74 recent neural-source rows from checkpoint f12b644ed9, p95 inference 0.089 ms, 74 replay-ready rows, protocol-compatible rows=74, safety-gate rows=74, damage events=2, deaths=0; no baseline comparison is claimed.
 - `C5.arc_verified_self_play`: underpowered - ARC verified self-play is registered but underpowered: missing build/float/arc_verified_self_play/summary.jsonl, so no public replay, fixed-budget ablation, leakage audit, or zero-family opening can be credited.
-- `C10.cross_domain_structural_transfer`: underpowered - Sensor-transfer insufficient data (target rows=0).
+- `C10.cross_domain_structural_transfer`: supported - sensor transfer proof->grid: grid-native top-1 0.8280, proof-source 1.0000, grid-anchor 0.8280, from-proof 0.8280, combined 0.8280.
 - `C9.signal_mining_replay_options`: underpowered - Signal mining claim registered as underpowered pending summary artifact generation.

@@ -2594,7 +2594,7 @@ static const NNDatasetExperiment NN_DATASET_EXPERIMENTS[] = {
         "proof_res_v1",
         "resolution_soundness",
         NN_DATASET_PROOF_FEATURE_COUNT,
-        NN_DATASET_LABEL_SINGLE_TARGET,
+        NN_DATASET_LABEL_MULTI_TARGET,
         generate_proof_resolution_adapter,
         NN_DATASET_CAP_DATASET | NN_DATASET_CAP_REPLAY | NN_DATASET_CAP_EVIDENCE,
         "proof_resolution_rule_search_v1",

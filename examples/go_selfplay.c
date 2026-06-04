@@ -718,7 +718,7 @@ static void go_demo(NeuralNet *net) {
         printf("  %s: ", s.to_play == 1 ? "X" : "O");
         int move = go_mcts_move(net, &s);
         if (move == CELLS) printf("PASS\n\n");
-        else printf("%c%d\n\n", 'A' + (move % BOARD_SIZE), (move / BOARD_SIZE) + 1);
+        else { int col = move % BOARD_SIZE; if (col >= 8) col++; printf("%c%d\n\n", 'A' + col, (move / BOARD_SIZE) + 1); }
         go_move(&s, move);
     }
     float sc = go_score(&s);
@@ -850,6 +850,7 @@ static void gtp_play(const char *color, const char *vertex) {
     int move = CELLS; /* pass */
     if (strcasecmp(vertex, "pass") != 0 && strcasecmp(vertex, "resign") != 0) {
         int x = toupper(vertex[0]) - 'A';
+        if (x > 8) x--;  /* GTP skips 'I' */
         int y = atoi(vertex + 1) - 1;
         if (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE)
             move = xy(x, y);
@@ -871,7 +872,9 @@ static void gtp_genmove(const char *color) {
     if (move == CELLS) gtp_respond("PASS");
     else {
         char buf[4];
-        snprintf(buf, sizeof(buf), "%c%d", 'A' + (move % BOARD_SIZE), (move / BOARD_SIZE) + 1);
+        int col = move % BOARD_SIZE;
+        if (col >= 8) col++;  /* GTP skips 'I' */
+        snprintf(buf, sizeof(buf), "%c%d", 'A' + col, (move / BOARD_SIZE) + 1);
         gtp_respond("%s", buf);
     }
 }

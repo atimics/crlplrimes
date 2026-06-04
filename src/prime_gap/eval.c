@@ -1,6 +1,15 @@
 /* Policy sampling, calibration metrics, model evaluation, traces, and frequency baselines. */
 
 #include "internal.h"
+#include "nn_core.h"
+
+#ifdef PRIME_GAP_EML
+#define SCORE_ACTIONS(net, inputs, count, scores, probs) \
+    nn_score_action_rows_eml(net, inputs, count, FEATURE_COUNT, scores, probs)
+#else
+#define SCORE_ACTIONS(net, inputs, count, scores, probs) \
+    SCORE_ACTIONS(net, inputs, count, scores, probs)
+#endif
 
 size_t sample_action(const nn_real *probabilities, uint32_t *rng)
 {
@@ -400,7 +409,7 @@ EvalMetrics evaluate_model(NeuralNet *net,
 
         double scorer_started = now_seconds();
         fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
-        if (!nn_score_action_rows(net, candidate_inputs, ACTION_COUNT, scores, NULL)) {
+        if (!SCORE_ACTIONS(net, candidate_inputs, ACTION_COUNT, scores, NULL)) {
             continue;
         }
         softmax_temperature(scores, probabilities, ACTION_COUNT, temperature);
@@ -459,7 +468,7 @@ EvalMetrics evaluate_model_symbolic_masked(NeuralNet *net,
                                                                   survivor_actions);
 
         if (survivor_count == 0 ||
-            !nn_score_action_rows(net, candidate_inputs, survivor_count, scores, NULL)) {
+            !SCORE_ACTIONS(net, candidate_inputs, survivor_count, scores, NULL)) {
             continue;
         }
         softmax_temperature(scores, compact_probabilities, survivor_count, temperature);
@@ -523,7 +532,7 @@ EvalMetrics evaluate_model_expanded_masked(NeuralNet *net,
                                                                   survivor_actions);
 
         if (survivor_count == 0 ||
-            !nn_score_action_rows(net, candidate_inputs, survivor_count, scores, NULL)) {
+            !SCORE_ACTIONS(net, candidate_inputs, survivor_count, scores, NULL)) {
             continue;
         }
         softmax_temperature(scores, compact_probabilities, survivor_count, temperature);
@@ -577,7 +586,7 @@ EvalMetrics evaluate_model_feature_wheel_masked(NeuralNet *net,
 
         double scorer_started = now_seconds();
         fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
-        if (!nn_score_action_rows(net, candidate_inputs, ACTION_COUNT, scores, NULL)) {
+        if (!SCORE_ACTIONS(net, candidate_inputs, ACTION_COUNT, scores, NULL)) {
             continue;
         }
         softmax_temperature(scores, probabilities, ACTION_COUNT, temperature);
@@ -628,7 +637,7 @@ static double temperature_nll(NeuralNet *net,
                                        dataset->prime[index],
                                        log_scale,
                                        mask);
-        if (!nn_score_action_rows(net, candidate_inputs, ACTION_COUNT, scores, NULL)) {
+        if (!SCORE_ACTIONS(net, candidate_inputs, ACTION_COUNT, scores, NULL)) {
             continue;
         }
         softmax_temperature(scores, probabilities, ACTION_COUNT, temperature);
@@ -673,7 +682,7 @@ static double temperature_nll_symbolic_masked(NeuralNet *net,
             survivor_index_for_action(survivor_actions, survivor_count, target);
 
         if (survivor_count == 0 || survivor_target == survivor_count ||
-            !nn_score_action_rows(net, candidate_inputs, survivor_count, scores, NULL)) {
+            !SCORE_ACTIONS(net, candidate_inputs, survivor_count, scores, NULL)) {
             nll += -log(safe_probability(0.0));
             continue;
         }
@@ -1113,7 +1122,7 @@ int emit_prime_gap_trace(NeuralNet *net,
             break;
         }
         fill_candidate_features_masked(candidate_inputs, p, log_scale, mask);
-        ok = nn_score_action_rows(net, candidate_inputs, ACTION_COUNT, scores, probabilities) &&
+        ok = SCORE_ACTIONS(net, candidate_inputs, ACTION_COUNT, scores, probabilities) &&
              nn_rank_action_scores_with_ids(scores,
                                             action_ids,
                                             ACTION_COUNT,
