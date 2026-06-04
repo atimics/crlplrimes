@@ -98,14 +98,13 @@ the audited next-prime instance (`prime_gap` in traces), the generated claim row
 as Pisano-period residue gates, but the strictly audited portion remains the next-prime
 gap under segmented-sieve verification.
 
-Three novel components support this framework. First, a holographic memory substrate
-replaces flat-file rule storage with vector-symbolic bindings on the unit hypersphere,
-enabling content-addressable retrieval in fixed O(d) memory regardless of how many rules
-are stored. Second, the EML operator---eml(x,y)=exp(x)-ln(|y|+epsilon)---a universal
-primitive for continuous functions, is integrated into the neural scorer as pairwise
-feature enrichment, a smooth activation, and a stackable pairwise layer with learned
-weights. Third, a dataset-first engine accepts new experiments as candidate rows plus
-verifier labels, generating evidence artifacts before any prose claim is written.
+The dataset-first engine accepts new experiments as candidate rows plus verifier
+labels, generating evidence artifacts before any prose claim is written. Two
+architectural extensions are under development and described in companion reports:
+holographic weight storage @paper-holonet2026 for graceful degradation and
+content-addressable weight lookup, and the EML operator @paper-eml2026 for
+improved neural ranking on structured continuous features. Both are compatible
+with the framework; neither is required for the results presented here.
 
 The rest of the paper is organized around the data flow. Section 2 positions the work
 against related approaches. Sections 3-4 define the verifier-grounded protocol and
@@ -256,222 +255,26 @@ until proposal economics improve. In this protocol, negative rows are not cleanu
 after the fact. They are the training substrate that separates model ranking from
 validity.
 
-= Holographic Weight Storage
+= Ongoing Work
 
-The neural scorer's weights are conventionally flat arrays---one float per connection,
-loaded and saved as checkpoint files. We replace this with holographic storage: each
-weight vector lives as a vector-symbolic binding in a fixed-dimension memory trace on
-the unit hypersphere S^(d-1). The memory trace IS the weight matrix. Retrieval IS the
-forward pass. Memory and computation are the same operation.
+Two architectural extensions are under active development and described in
+companion technical reports.
 
-Three properties make this attractive. *Graceful degradation*: recall fidelity is
-proportional to 1/sqrt(N), so adding more weights (from new tasks or fine-tuning)
-degrades existing ones smoothly. *Content-addressable lookup*: weights are retrieved
-by key similarity, enabling implicit weight sharing across related tasks.
-*Fixed memory*: the entire weight store occupies O(d) memory regardless of count.
+*Holographic weight storage* @paper-holonet2026 replaces flat weight arrays with
+vector-symbolic bindings on the unit hypersphere, giving neural scorers graceful
+degradation (1/sqrt(N)), content-addressable weight lookup, and fixed O(d) memory.
+A zero-parameter holographic ranker achieves 48.5% accuracy versus 16.0% for a
+gradient-trained MLP on small-sample tasks.
 
-The same substrate also stores certified rules from the hypothesis library (Section 3),
-retrieves context for the scorer (Section 3.2), and accumulates reinforced state-action
-pairs over time. But its primary role is as the weight substrate for the neural scorer:
-the bind operation IS both weight storage and forward computation.
+*The EML operator* @paper-eml2026 ---eml(x,y)=exp(x)-ln(|y|+epsilon)---is a
+universal primitive for continuous functions, analogous to NAND for digital logic.
+Integrated into neural scorers as pairwise feature enrichment, it improves accuracy
+on nonlinear benchmarks from 92.2% to 94.8% at identical width. Stacked EML
+pairwise layers compose correctly at 94.5%. The operator does not yet improve the
+promoted experiments, which are dominated by binary and categorical features.
 
-== VSA Primitives
-
-The memory operates on d-dimensional real vectors normalized to unit length. Three
-primitives provide a Turing-complete computational substrate @kleyko2022vsa:
-
-- *bind(k, v)*: normalize(ifft(fft(k) times fft(v))). Binds a key vector to a value
-  vector via circular convolution. Implemented efficiently through FFT with pre-computed
-  twiddle factors. Zero malloc in the hot path.
-- *unbind(S, k)*: normalize(ifft(fft(S) times conj(fft(k)))). Recovers an approximation
-  of v from a superposition S given key k.
-- *bundle(a, b)*: normalize(a + b). Superposes vectors.
-
-These are implemented in leOS-C @leosc2026, a compact C engine (~400 lines) with
-pre-allocated FFT twiddle factors, bit-reversal LUTs, and scratch buffers. Performance at
-d=4096 reaches ~10,500 bind/s on an M-series Mac.
-
-== Content-Addressable Rule Storage
-
-To store a rule: M += bind(task_signature, rule_vector). The memory trace M is a single
-d-dimensional vector, regardless of how many rules are stored. To recall: rule_hat =
-unbind(M, query_task). The recalled vector is a weighted blend of all stored rules, with
-weight proportional to the cosine similarity between the query and each stored key.
-
-The holographic layer---a bundle of holographic neurons---can be stacked. Each neuron
-applies either bind, unbind, or eml_bind (a complex exp/log variant) to its learned
-key vector and the input. The outputs are bundled and normalized, preserving the
-hypersphere constraint across layers. A mixed-mode layer can allocate specific fractions
-of neurons to each operation type.
-
-== Holographic Ranker
-
-The holographic ranker replaces the neural scorer entirely with VSA memory lookup.
-Training is a single store operation per example: M += bind(state_embedding,
-action_embedding). Inference is one unbind and dot-product sweep across candidates. No
-weights, no gradient descent, no epochs.
-
-#figure(
-  table(
-    columns: (1.4fr, 1fr, 1fr, 1fr),
-    align: left, inset: 5pt,
-    table.header[*Metric*][*Holographic*][*Neural MLP*][*Notes*],
-    [Accuracy], [48.5%], [16.0%], [7 classes, 300 train, 200 test],
-    [Parameters], [0], [1,185], [16 KB fixed memory vs 9 KB weights],
-    [Query latency], [44 us], [1 us], [d=2048, M-series Mac],
-    [Training], [O(N) store], [O(N#sym.times E) SGD], [Single pass vs 10 epochs],
-    [Forgetting], [1/sqrt(N)], [catastrophic], [Graceful degradation vs abrupt],
-  ),
-  caption: [Holographic ranker vs neural scorer on a 7-class task. The holographic
-    approach wins with zero parameters on small sample counts; the neural approach wins
-    with more data and task-specific embeddings.],
-) <tab:holo-ranker>
-
-The holographic ranker's accuracy declines gracefully as N grows (fidelity proportional
-to 1/sqrt(N)), whereas the neural scorer forgets catastrophically when retrained on new
-data. On the promoted experiments, the holographic ranker achieves 100% on grid_path
-(vs 58% neural) by directly matching state-action pairs, while the neural scorer achieves
-39% on delayed_claim (vs 30.5% holographic) where the learned feature representation
-matters more than exact memory.
-
-== EML Binding in Holographic Space
-
-We introduce an additional binding primitive, eml_bind, which applies the EML operator in
-the frequency domain:
-
-eml_bind(a, b) = normalize(ifft(exp(fft(a)) - log(fft(b))))
-
-Complex exp and log are applied elementwise to the FFT coefficients. This produces a
-genuinely different computational primitive---bind/unbind live in the multiplicative
-Fourier domain; eml_bind lives in the exp/log domain. At d=4096, eml_bind runs at 1.9x
-the cost of bind after optimization (inline decomposition avoiding glibc branch overhead).
-
-However, we find that EML binding degrades holographic memory recall (1.4% vs 48.6% for
-standard bind/unbind at N=200 stored pairs). The reason is architectural: holographic
-memory depends on linear superposition (M = sum bind(k_i, v_i)), and EML's nonlinearity
-breaks the decomposition that content-addressable retrieval depends on. We retain EML
-binding as a neuron mode in holographic layers---useful for representation learning in
-the VSA pipeline---but standard bind/unbind remain the correct choice for memory storage
-and recall.
-
-= EML Neural Scoring
-
-The neural scorer's role is to rank candidates that survive the symbolic gate. It is a
-compact feedforward network trained by gradient descent. We introduce the EML operator as
-a new architectural primitive that improves the scorer's representational capacity.
-
-== The EML Operator
-
-The EML operator is defined as:
-
-$ "eml"(x, y) = exp(x) - ln(|y| + epsilon) $
-
-where the absolute value and small epsilon ensure safe operation for all real inputs. The
-operator is a universal primitive for continuous mathematics @eml2026, analogous to the
-NAND gate for digital logic: repeated composition of EML operations can approximate any
-continuous function. We integrate EML into the scorer in three forms, ordered by
-increasing architectural novelty.
-
-== Feature Enrichment
-
-Before the first dense layer, pairwise EML features are appended to the 96-dimensional
-envelope. For each adjacent feature pair (f_2i, f_2i+1), we compute eml(f_2i, f_2i+1),
-adding 48 interaction terms for a total of 144 dimensions. This is a fixed nonlinear
-transform; the subsequent dense layers learn which interactions matter.
-
-#figure(
-  table(
-    columns: (1.3fr, 0.9fr, 0.9fr, 0.9fr),
-    align: left, inset: 5pt,
-    table.header[*Config*][*Test acc.*][*Params*][*Notes*],
-    [plain ReLU 32->16], [92.2%], [4,792], [baseline],
-    [EML-enriched 32->16], [#strong[94.8%]], [6,840], [+48 EML features],
-    [wider ReLU 48->24], [93.2%], [7,568], [more params, still loses],
-    [deeper ReLU 48->32->16], [91.5%], [8,424], [more depth, still loses],
-  ),
-  caption: [EML feature enrichment vs ReLU baselines on a 5-class nonlinear synthetic
-    benchmark (800 train, 200 test, 64 base features). EML enrichment outperforms both
-    wider and deeper ReLU alternatives with fewer parameters than the deeper variant.],
-) <tab:eml-enrich>
-
-On this benchmark, the 48 EML interaction features capture pairwise structure that ReLU
-alone needs more width or depth to learn. The improvement is consistent across learning
-rates and initialization seeds.
-
-== EML Activation
-
-As a drop-in replacement for sigmoid or ReLU, the activation function:
-
-$ "eml"(x, 1 + e^x) = exp(x) - "softplus"(x) $
-
-is smooth, non-negative, and has non-zero gradient everywhere. It approaches 0 from above
-for large negative inputs (like ReLU) and grows as exp(x) for positive inputs. With
-appropriate initialization---smaller variance (sqrt(0.5/prev) vs Xavier) and zero
-bias---it matches ReLU at 93.0% on the synthetic benchmark while eliminating the
-dead-neuron problem. The derivative is computed exactly via pre-activation tracking:
-d/dx = exp(2x)/(1+exp(x)), capped at [0.01, 10.0] for gradient stability.
-
-#figure(
-  table(
-    columns: (1.3fr, 0.9fr, 0.9fr),
-    align: left, inset: 5pt,
-    table.header[*Activation*][*Test acc.*][*Notes*],
-    [ReLU], [93.0%], [baseline, dead neurons possible],
-    [EML (ours)], [93.0%], [smooth, non-zero gradient everywhere],
-    [sigmoid], [94.0%], [wider net needed, saturates],
-  ),
-  caption: [Activation function comparison on 5-class synthetic benchmark (800 train,
-    200 test, 64->24->16->5 architecture). EML matches ReLU while providing smooth
-    gradients; sigmoid requires more width to match.],
-) <tab:eml-activation>
-
-== EML Pairwise Layer
-
-The most architecturally novel form is a dedicated layer that applies EML to adjacent
-pre-activation pairs. For a layer with N output neurons, there are 2N pre-activation
-units (two learned weight vectors per output). Each output i computes:
-
-$ "output"_i = "eml"(z_(2i), z_(2i+1)), quad z_j = w_j · x + b_j $
-
-The layer halves the effective width while doubling the per-output parameter budget.
-Forward pass, backpropagation (d/dx eml = exp(x), d/dy eml = -1/y), and weight update
-are all handled inside the standard training loop. Pre-activation clipping at [-5, 5]
-prevents exponential overflow in deep stacks, and the output is clipped at [-5, 5] for
-downstream stability.
-
-#figure(
-  table(
-    columns: (1.4fr, 0.9fr, 0.9fr, 0.9fr),
-    align: left, inset: 5pt,
-    table.header[*Config*][*Test acc.*][*Params*][*Notes*],
-    [ReLU 24->16->8->3], [100%], [563], [baseline],
-    [1x eml_pair: 24->eml(8)->relu(8)->3], [100%], [499], [single EML layer],
-    [2x eml_pair: 24->eml(16)->eml(8)->3], [#strong[94.5%]], [563], [stacked, same params as ReLU],
-  ),
-  caption: [EML pairwise layers on 3-class nonlinear synthetic benchmark. Stacked EML
-    layers compose correctly, demonstrating the universal-primitive property under
-    gradient-based optimization. Accuracy is slightly below ReLU due to the more
-    challenging optimization landscape of stacked nonlinear transforms.],
-) <tab:eml-pairwise>
-
-== Domain Fit
-
-EML improves accuracy when features have meaningful pairwise continuous structure. The
-synthetic benchmark (sinusoidal feature interactions) benefits from EML enrichment by 2.6
-percentage points. On the promoted experiments, the results are mixed:
-
-- *prime_gap*: No improvement. The symbolic wheel already achieves 100% top-1 with
-  modular divisibility predicates. EML interactions between log(p) and gap size add no
-  signal that the gates don't already capture.
-- *grid_path*: Degradation (30.5% vs 75.9%). The 49 binary cell occupancy bits dominate
-  the 63-dim feature vector; EML pairwise interactions between cell states are noise.
-- *delayed_claim*: Degradation (60.6% vs 93.5%). The 6 continuous state features do not
-  carry enough pairwise structure for EML enrichment to overcome the increased
-  input dimensionality.
-
-EML is a tool for continuous structure. It is not a universal replacement for standard
-activations or architectures. The domains where it helps are those with real-valued
-features that have meaningful pairwise relationships.
+Both extensions are compatible with the certified-gate framework. Neither is
+required for the results presented in Sections 2--10.
 
 = Feedback Loops
 
@@ -568,24 +371,23 @@ the optimal configuration for any individual task.
 
 = Conclusion
 
-We presented an integrated architecture for verifier-grounded neural search. Three
-components compose: a certified gate framework that separates validity from preference
-through machine-checked symbolic rules, a holographic memory substrate that stores rules
-as vector bindings with 1/sqrt(N) retrieval fidelity on the unit hypersphere, and an
-EML-augmented neural scorer that improves ranking accuracy through a universal continuous
-primitive.
+We presented a verifier-grounded architecture for neural search. The core loop is
+simple: enumerate candidates, gate with certified rules, rank survivors with a neural
+scorer, verify the top choice, and preserve the trace. The claim compiler closes the
+loop between empirical work and scientific reporting by mechanically checking every
+assertion against generated trace artifacts.
 
-The integration is honest about what each component contributes and where it fails. EML
-does not improve binary-feature domains (prime_gap, grid_path). Holographic memory recall
-degrades under EML binding (1.4% vs 48.6%). Certified gates do not claim to operate
-outside their declared verifier support. But together they form a disciplined pipeline:
-enumerate, check, rank, trace, claim---with every assertion bound to machine-readable
-trace artifacts and mechanically verified by the claim compiler.
+The architecture is honest about its limits. Certified gates do not claim to
+operate outside their declared verifier support. The learned proposer's failure
+(#claim_C2_prime_proposer_fixed_budget_summary) is documented as a negative row.
+The dataset-first engine ensures every promoted domain publishes the same
+machine-readable contract. The claim compiler ensures the paper never says more
+than the evidence supports.
 
-The dataset-first engine turns the pipeline into a repeatable process: any experiment
-that exports candidate rows and verifier labels under the shared schema can enter the
-evidence matrix. The holographic store preserves what is learned as retrievable context.
-The EML scorer provides ranking pressure where continuous structure exists. The claim
-compiler ensures that the paper never says more than the evidence supports.
+The dataset-first engine makes the pipeline repeatable: any experiment that
+exports candidate rows and verifier labels under the shared schema can enter the
+evidence matrix. Two extensions under development---holographic weight storage
+@paper-holonet2026 and the EML operator @paper-eml2026 ---are compatible with the
+framework but not required for the results presented here.
 
 #bibliography("references.bib")
