@@ -33,10 +33,12 @@ NN_TEXT_OBJ := $(BUILD_DIR)/nn_text.o
 NN_DATASET_OBJ := $(BUILD_DIR)/nn_dataset.o
 NN_GRAMMAR_DISCOVERY_OBJ := $(BUILD_DIR)/nn_grammar_discovery.o
 NN_ARC_SELFPLAY_OBJ := $(BUILD_DIR)/nn_arc_selfplay.o
-NN_HOLOGRAPHIC_OBJ := $(BUILD_DIR)/nn_holographic.o
+NN_MEMORY_NEURON_OBJ := $(BUILD_DIR)/memory_neuron.o
+NN_HOLO_RANKER_OBJ := $(BUILD_DIR)/nn_holographic_ranker.o
+NN_HOLO_RUNNER_OBJ := $(BUILD_DIR)/nn_holo_runner.o
+NN_HOLO_GATE_OBJ := $(BUILD_DIR)/nn_holo_gate.o
 NN_LEOS_ENGINE_OBJ := $(BUILD_DIR)/leos_engine.o
 NN_LEOS_HNN_OBJ := $(BUILD_DIR)/leos_hnn.o
-NN_LEOS_BRIDGE_OBJ := $(BUILD_DIR)/leos_bridge.o
 NN_PAPER_OBJ := $(BUILD_DIR)/nn_paper.o
 NN_TEST_OBJ := $(BUILD_DIR)/nn_test.o
 NN_EXPERIMENT_TEST_OBJ := $(BUILD_DIR)/nn_experiment_test.o
@@ -50,6 +52,7 @@ NN_PROTOCOL_TEST_OBJ := $(BUILD_DIR)/nn_protocol_test.o
 NN_JSON_TEST_OBJ := $(BUILD_DIR)/nn_json_test.o
 NN_TEXT_TEST_OBJ := $(BUILD_DIR)/nn_text_test.o
 NN_DATASET_TEST_OBJ := $(BUILD_DIR)/nn_dataset_test.o
+NN_DATASET_TEST_STUBS_OBJ := $(BUILD_DIR)/nn_dataset_test_stubs.o
 NN_PAPER_TEST_OBJ := $(BUILD_DIR)/nn_paper_test.o
 NN_SANITIZE_OBJ := $(BUILD_DIR)/nn_sanitize.o
 NN_EXPERIMENT_SANITIZE_OBJ := $(BUILD_DIR)/nn_experiment_sanitize.o
@@ -664,6 +667,9 @@ $(NN_TEXT_TEST_OBJ): src/nn_text.c include/nn_text.h include/nn_core.h | $(BUILD
 $(NN_DATASET_TEST_OBJ): src/nn_dataset.c include/nn_dataset.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_dataset.c -o $@
 
+$(NN_DATASET_TEST_STUBS_OBJ): src/nn_dataset_test_stubs.c include/nn_dataset.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_dataset_test_stubs.c -o $@
+
 $(NN_PAPER_TEST_OBJ): src/nn_paper.c include/nn_paper.h include/nn.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_paper.c -o $@
 
@@ -745,8 +751,8 @@ $(DATASET_ACTION_SCORE): examples/dataset_action_score.c $(NN_OBJS) $(NN_HEADERS
 $(HAIKU_LM): examples/haiku_lm.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_lm.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(HAIKU_WORD_LM): examples/haiku_word_lm.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o build/double/nn_holo_gate.o $(NN_HEADERS) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_word_lm.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o build/double/nn_holo_gate.o $(LDFLAGS) $(LDLIBS) -o $@
+$(HAIKU_WORD_LM): examples/haiku_word_lm.c $(NN_OBJS) $(NN_HOLO_RANKER_OBJ) $(NN_LEOS_ENGINE_OBJ) $(NN_HOLO_RUNNER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_word_lm.c $(NN_OBJS) $(NN_HOLO_RANKER_OBJ) $(NN_LEOS_ENGINE_OBJ) $(NN_HOLO_RUNNER_OBJ) $(NN_HOLO_GATE_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(HAIKU_UNDERSTANDING): examples/haiku_understanding.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_understanding.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
@@ -801,17 +807,17 @@ $(SIGNAL_FLIGHT): examples/signal_flight.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DI
 $(SIGNAL_FLIGHT_ROLLOUT): examples/signal_flight_rollout.c $(NN_OBJS) $(NN_HEADERS) $(SIGNAL_FLIGHT_SIM_SOURCES) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(SIGNAL_FLIGHT_INCLUDE_FLAGS) $(CFLAGS) examples/signal_flight_rollout.c $(NN_OBJS) $(SIGNAL_FLIGHT_SIM_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(SIGNAL_MINING): examples/signal_mining.c $(NN_OBJS) $(NN_HEADERS) $(SIGNAL_FLIGHT_SIM_SOURCES) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(SIGNAL_FLIGHT_INCLUDE_FLAGS) $(CFLAGS) examples/signal_mining.c $(NN_OBJS) $(SIGNAL_FLIGHT_SIM_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
+$(SIGNAL_MINING): examples/signal_mining.c $(NN_OBJS) $(NN_LEOS_HNN_OBJ) $(NN_HEADERS) $(SIGNAL_FLIGHT_SIM_SOURCES) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(SIGNAL_FLIGHT_INCLUDE_FLAGS) $(CFLAGS) examples/signal_mining.c $(NN_OBJS) $(NN_LEOS_HNN_OBJ) $(SIGNAL_FLIGHT_SIM_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(BENCHMARK): benchmarks/benchmark.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) benchmarks/benchmark.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(TEST_RUNNER): tests/test_nn.c $(PRIME_GAP_TEST_OBJS) $(NN_TEST_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) tests/test_nn.c $(NN_TEST_OBJS) $(PRIME_GAP_TEST_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+$(TEST_RUNNER): tests/test_nn.c $(PRIME_GAP_TEST_OBJS) $(NN_DATASET_TEST_STUBS_OBJ) $(NN_TEST_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) tests/test_nn.c $(NN_TEST_OBJS) $(PRIME_GAP_TEST_OBJS) $(NN_DATASET_TEST_STUBS_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(SANITIZE_TEST_RUNNER): tests/test_nn.c $(PRIME_GAP_SANITIZE_OBJS) $(NN_SANITIZE_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) tests/test_nn.c $(NN_SANITIZE_OBJS) $(PRIME_GAP_SANITIZE_OBJS) $(LDFLAGS) $(SANITIZE_LDFLAGS) $(LDLIBS) -o $@
+$(SANITIZE_TEST_RUNNER): tests/test_nn.c $(PRIME_GAP_SANITIZE_OBJS) $(NN_DATASET_TEST_STUBS_OBJ) $(NN_SANITIZE_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) tests/test_nn.c $(NN_SANITIZE_OBJS) $(PRIME_GAP_SANITIZE_OBJS) $(NN_DATASET_TEST_STUBS_OBJ) $(LDFLAGS) $(LDLIBS) -fsanitize=address,undefined -o $@
 
 run: $(XOR_EXAMPLE)
 	./$(XOR_EXAMPLE)
@@ -1753,111 +1759,42 @@ tournament: build/float/nn.o build/float/nn_experiment.o build/float/nn_symbolic
 
 
 # ── Holographic subsystem ──────────────────────────────────────────────
+$(BUILD_DIR)/memory_neuron.o: src/memory_neuron.c include/memory_neuron.h include/nn_holographic_ranker.h include/holographic/leos_engine.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/memory_neuron.c -o $@
+
+$(BUILD_DIR)/nn_holographic_ranker.o: src/nn_holographic_ranker.c include/nn_holographic_ranker.h include/holographic/leos_engine.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_holographic_ranker.c -o $@
+
+
+MEMORY_DEMO := $(BUILD_DIR)/memory_neuron_demo
+$(MEMORY_DEMO): examples/memory_neuron_demo.c $(NN_OBJS) $(NN_MEMORY_NEURON_OBJ) $(NN_HOLO_RANKER_OBJ) $(NN_LEOS_ENGINE_OBJ) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/memory_neuron_demo.c $(NN_OBJS) $(NN_MEMORY_NEURON_OBJ) $(NN_HOLO_RANKER_OBJ) $(NN_LEOS_ENGINE_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+
+memory-neuron-demo: $(MEMORY_DEMO)
+	./$(MEMORY_DEMO)
+$(BUILD_DIR)/leos_hnn.o: src/holographic/leos_hnn.c include/holographic/leos_hnn.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/holographic/leos_hnn.c -o $@
+
 $(BUILD_DIR)/leos_engine.o: src/holographic/leos_engine.c include/holographic/leos_engine.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
 
-$(BUILD_DIR)/leos_hnn.o: src/holographic/leos_hnn.c include/holographic/leos_hnn.h include/holographic/leos_engine.h | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
-
-$(BUILD_DIR)/leos_bridge.o: src/holographic/leos_bridge.c include/holographic/leos_bridge.h include/holographic/leos_hnn.h | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
-
-$(BUILD_DIR)/nn_holographic.o: src/nn_holographic.c include/nn_holographic.h include/holographic/leos_bridge.h | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
-
 # ── Holographic Prime Gap ──────────────────────────────────────────────
-HOLOGRAPHIC_PRIME_GAP := $(BUILD_DIR)/holographic_prime_gap
-$(HOLOGRAPHIC_PRIME_GAP): examples/holographic_prime_gap.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holographic_prime_gap.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
-
-holographic-prime-gap: $(HOLOGRAPHIC_PRIME_GAP)
-	./$(HOLOGRAPHIC_PRIME_GAP)
-
-HOLOGRAPHIC_FULL := $(BUILD_DIR)/fully_holographic
-$(HOLOGRAPHIC_FULL): examples/fully_holographic.c $(NN_OBJS) $(NN_LEOS_ENGINE_OBJ) $(NN_LEOS_HNN_OBJ) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/fully_holographic.c $(NN_OBJS) $(NN_LEOS_ENGINE_OBJ) $(NN_LEOS_HNN_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
-
-fully-holographic: $(HOLOGRAPHIC_FULL)
-	./$(HOLOGRAPHIC_FULL)
-
-HOLO_RANKER_DEMO := $(BUILD_DIR)/holo_ranker_demo
-$(HOLO_RANKER_DEMO): examples/holographic_ranker_demo.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holographic_ranker_demo.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o $(LDFLAGS) $(LDLIBS) -o $@
-
-build/double/nn_holographic_ranker.o: src/nn_holographic_ranker.c include/nn_holographic_ranker.h include/holographic/leos_engine.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
-
-holo-ranker-demo: $(HOLO_RANKER_DEMO)
-	./$(HOLO_RANKER_DEMO)
-
-HOLO_ALL := $(BUILD_DIR)/holo_all_experiments
-$(HOLO_ALL): examples/holo_all_experiments.c $(NN_OBJS) build/double/nn_holo_experiment.o  build/double/nn_holographic_ranker.o build/double/leos_engine.o | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holo_all_experiments.c $(NN_OBJS) build/double/nn_holo_experiment.o  build/double/nn_holographic_ranker.o build/double/leos_engine.o $(LDFLAGS) $(LDLIBS) -o $@
 
 build/double/nn_holo_experiment.o: src/nn_holo_experiment.c include/nn_holo_experiment.h include/nn_holographic_ranker.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
 
-holo-all: $(HOLO_ALL)
-	./$(HOLO_ALL)
-
-HYBRID := $(BUILD_DIR)/hybrid_holo_nn
-$(HYBRID): examples/hybrid_holo_nn.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/hybrid_holo_nn.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o $(LDFLAGS) $(LDLIBS) -o $@
-
 hybrid: $(HYBRID)
 	./$(HYBRID)
 
-HOLONET := $(BUILD_DIR)/holonet
-$(HOLONET): examples/holonet.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holonet.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o $(LDFLAGS) $(LDLIBS) -o $@
-
-holonet: $(HOLONET)
-	./$(HOLONET)
-
-GATED_DEMO := $(BUILD_DIR)/gated_runner_demo
-$(GATED_DEMO): examples/gated_runner_demo.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o build/double/nn_holo_gate.o | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/gated_runner_demo.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o build/double/nn_holo_gate.o $(LDFLAGS) $(LDLIBS) -o $@
-
-build/double/nn_holo_runner.o: src/nn_holo_runner.c include/nn_holo_runner.h include/nn_holographic_ranker.h | $(BUILD_DIR)
+$(BUILD_DIR)/nn_holo_runner.o: src/nn_holo_runner.c include/nn_holo_runner.h include/nn_holographic_ranker.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
 
-build/double/nn_holo_gate.o: src/nn_holo_gate.c include/nn_holo_gate.h include/nn_holo_runner.h | $(BUILD_DIR)
+$(BUILD_DIR)/nn_holo_gate.o: src/nn_holo_gate.c include/nn_holo_gate.h include/nn_holo_runner.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffast-math -c $< -o $@
 
 gated-runner: $(GATED_DEMO)
 	./$(GATED_DEMO)
-
-GATED_ALL := $(BUILD_DIR)/gated_all
-$(GATED_ALL): examples/gated_all.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o build/double/nn_holo_gate.o | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/gated_all.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o build/double/nn_holo_gate.o $(LDFLAGS) $(LDLIBS) -o $@
-
-gated-all: $(GATED_ALL)
-	./$(GATED_ALL)
-
-HOLO_ENV := $(BUILD_DIR)/holo_envelope
-$(HOLO_ENV): examples/holo_envelope.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holo_envelope.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o build/double/nn_holo_runner.o $(LDFLAGS) $(LDLIBS) -o $@
-
-holo-envelope: $(HOLO_ENV)
-	./$(HOLO_ENV)
-
-HOLO_REPLACE := $(BUILD_DIR)/holo_replace_envelope
-$(HOLO_REPLACE): examples/holo_replace_envelope.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holo_replace_envelope.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o $(LDFLAGS) $(LDLIBS) -o $@
-
-holo-replace: $(HOLO_REPLACE)
-	./$(HOLO_REPLACE)
-
-HOLO_CLAIM := $(BUILD_DIR)/holo_claim_reform
-$(HOLO_CLAIM): examples/holo_claim_reform.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holo_claim_reform.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o $(LDFLAGS) $(LDLIBS) -o $@
-
-holo-claim: $(HOLO_CLAIM)
-	./$(HOLO_CLAIM)
-
-CROSS_BIG := $(BUILD_DIR)/cross_domain_big
-$(CROSS_BIG): examples/cross_domain_big.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/cross_domain_big.c $(NN_OBJS)  build/double/nn_holographic_ranker.o build/double/leos_engine.o $(LDFLAGS) $(LDLIBS) -o $@
 
 cross-big: $(CROSS_BIG)
 	./$(CROSS_BIG)

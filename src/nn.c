@@ -2707,6 +2707,36 @@ int nn_scorer_envelope_fill_eml(nn_real *row,
     return 1;
 }
 
+/* Fill envelope with EML enrichment plus 4 memory-neuron context features.
+ * 96 base + 48 EML pairwise + 4 memory context = 148 total.
+ * row_capacity must be at least 148. memory_context may be NULL for zeros. */
+int nn_scorer_envelope_fill_memory(nn_real *row,
+                                   size_t row_capacity,
+                                   const NNScorerEnvelopeRow *spec,
+                                   const nn_real *memory_context)
+{
+    if (!nn_scorer_envelope_fill_base(row, row_capacity, spec)) {
+        return 0;
+    }
+    if (row_capacity < NN_SCORER_ENVELOPE_MEMORY_FEATURE_COUNT) {
+        return 0;
+    }
+    /* append 48 pairwise EML interaction features in slots 96..143 */
+    nn_eml_pairwise(row, row + NN_SCORER_ENVELOPE_FEATURE_COUNT,
+                    NN_SCORER_ENVELOPE_FEATURE_COUNT / 2);
+    /* append 4 memory context features in slots 144..147 */
+    if (memory_context != NULL) {
+        for (size_t i = 0; i < NN_SCORER_ENVELOPE_MEMORY_CONTEXT_COUNT; i++) {
+            row[NN_SCORER_ENVELOPE_EML_FEATURE_COUNT + i] = memory_context[i];
+        }
+    } else {
+        for (size_t i = 0; i < NN_SCORER_ENVELOPE_MEMORY_CONTEXT_COUNT; i++) {
+            row[NN_SCORER_ENVELOPE_EML_FEATURE_COUNT + i] = (nn_real)0.0;
+        }
+    }
+    return 1;
+}
+
 static int rank_score_is_better(const nn_real *scores,
                                 const uint32_t *action_ids,
                                 size_t left,

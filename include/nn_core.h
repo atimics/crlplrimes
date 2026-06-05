@@ -28,6 +28,11 @@ typedef struct NeuralNet NeuralNet;
 #define NN_SCORER_ENVELOPE_FEATURE_COUNT 96u
 #define NN_SCORER_ENVELOPE_EML_FEATURE_COUNT 144u
 #define NN_SCORER_ENVELOPE_EML_FEATURE_COUNT 144u
+
+/* Memory-neuron context extension: 4 features beyond EML envelope. */
+#define NN_SCORER_ENVELOPE_MEMORY_CONTEXT_COUNT 4u
+#define NN_SCORER_ENVELOPE_MEMORY_FEATURE_COUNT (NN_SCORER_ENVELOPE_EML_FEATURE_COUNT + NN_SCORER_ENVELOPE_MEMORY_CONTEXT_COUNT)
+
 #define NN_SCORER_ENVELOPE_FEATURE_SET "task_role_tagged_action_rule_rows_v1"
 #if NN_REAL_IS_FLOAT
 #define NN_RANK_SCORE_EPSILON ((nn_real)1e-6f)
@@ -148,6 +153,11 @@ typedef enum {
     NN_SCORER_ENVELOPE_F_ACTION_STATE = 20,
     NN_SCORER_ENVELOPE_F_ROLE_PAYLOAD = 32,
     NN_SCORER_ENVELOPE_F_RESIDUAL_FEATURES = NN_SCORER_ENVELOPE_F_ROLE_PAYLOAD,
+    NN_SCORER_ENVELOPE_F_MEMORY_CTX_0 = 96,
+    NN_SCORER_ENVELOPE_F_MEMORY_CTX_1 = 97,
+    NN_SCORER_ENVELOPE_F_MEMORY_CTX_2 = 98,
+    NN_SCORER_ENVELOPE_F_MEMORY_CTX_3 = 99,
+
 } NNScorerEnvelopeSlot;
 
 typedef struct {
@@ -275,6 +285,14 @@ int nn_scorer_envelope_fill_base(nn_real *row,
 int nn_scorer_envelope_fill_eml(nn_real *row,
                                 size_t row_capacity,
                                 const NNScorerEnvelopeRow *spec);
+
+/* Fill envelope with EML enrichment plus 4 memory-neuron context features.
+ * 96 base + 48 EML pairwise + 4 memory context = 148 total.
+ * row_capacity must be at least 148. memory_context may be NULL for zeros. */
+int nn_scorer_envelope_fill_memory(nn_real *row,
+                                   size_t row_capacity,
+                                   const NNScorerEnvelopeRow *spec,
+                                   const nn_real *memory_context);
 int nn_rank_action_scores(const nn_real *scores, size_t count, size_t *ranked_indices);
 int nn_rank_action_scores_with_ids(const nn_real *scores,
                                    const uint32_t *action_ids,

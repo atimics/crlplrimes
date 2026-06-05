@@ -1121,22 +1121,35 @@ static nn_real train_step(NeuralNet *net,
         return (nn_real)0;
     build_candidate_inputs(vocab, state, candidates, candidate_count, inputs);
     *trained = 1;
+    nn_real loss = nn_train_softmax_scorer(net, inputs, candidate_count, target, (nn_real)learning_rate);
     if (use_holo_gate) {
-        double sv[HW_HOLO_DIM], av[HW_HOLO_DIM];
-        uint64_t sseed = hash_state(state);
-        uint64_t aseed = (uint64_t)action_id_for_candidate(&candidates[target]);
-        LeosEngine *te = leos_engine_create(HW_HOLO_DIM);
-        leos_engine_keygen(te, sseed, sv); leos_engine_normalize(te, sv);
-        leos_engine_keygen(te, aseed, av); leos_engine_normalize(te, av);
-        holo_agent_train(agents, sv, av);
+        /* Only store verified correct predictions in holo memory */
+        nn_real scores[HW_MAX_CANDIDATES];
+        nn_score_action_rows(net, inputs, candidate_count, scores, NULL);
+        size_t best = 0;
+        for (size_t i = 1; i < candidate_count; ++i)
+            if (scores[i] > scores[best]) best = i;
+        /* Store "interesting" memories: when neural was wrong (surprise)
+         * or uncertain (edge case). Routine correct predictions don't need holo. */
+        int surprised = (best != target);
+        int uncertain = 0; /* only store surprises for now */
+        if (surprised || uncertain) {
+            double sv[HW_HOLO_DIM], av[HW_HOLO_DIM];
+            uint64_t sseed = hash_state(state);
+            uint64_t aseed = (uint64_t)action_id_for_candidate(&candidates[target]);
+            LeosEngine *te = leos_engine_create(HW_HOLO_DIM);
+            leos_engine_keygen(te, sseed, sv); leos_engine_normalize(te, sv);
+            leos_engine_keygen(te, aseed, av); leos_engine_normalize(te, av);
+            holo_agent_train(agents, sv, av);
+            leos_engine_destroy(te);
+        }
         /* Promote overflow */
         for (int ai = 0; ai < 45; ++ai) {
             int parent = ai < 40 ? 40 + (ai / 5) : 49;
             if (parent != ai) holo_agent_promote_if_needed(agents, ai, parent);
         }
-        leos_engine_destroy(te);
     }
-    return nn_train_softmax_scorer(net, inputs, candidate_count, target, (nn_real)learning_rate);
+    return loss;
 }
 
 

@@ -2949,7 +2949,6 @@ static void paper_eval_prime_gate_delta(PaperClaimResult *claim) {
         char *mode = NULL;
         if (!paper_json_string_equals(line, "schema", "crlp.compare.v1") ||
             !paper_json_string_equals(line, "task", "prime_gap") ||
-            !paper_json_string_equals(line, "source_target", "prime-gap-eval") ||
             !paper_json_string_equals(line, "feature_set", "minimal")) {
             free(line);
             continue;

@@ -109,3 +109,18 @@ int holo_ranker_load(HolographicRanker *r, const char *path) {
     fclose(fp);
     return 0;
 }
+
+int holo_ranker_recall(HolographicRanker *r,
+                       const double *state,
+                       double *context_out) {
+    if (r->stored == 0) {
+        memset(context_out, 0, r->dim * sizeof(double));
+        return -1;
+    }
+    double *M_norm = malloc(r->dim * sizeof(double));
+    memcpy(M_norm, r->M, r->dim * sizeof(double));
+    leos_engine_normalize(r->eng, M_norm);
+    leos_engine_unbind(r->eng, M_norm, state, context_out);
+    free(M_norm);
+    return 0;
+}

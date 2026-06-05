@@ -52,6 +52,13 @@ size_t holo_ranker_count(const HolographicRanker *r);
 /* Estimated retrieval fidelity. */
 double holo_ranker_fidelity(const HolographicRanker *r);
 
+/* Recall: return the context vector from unbind(M, state).
+ * Equivalent to the first two steps of holo_ranker_score.
+ * context_out must point to dim doubles. Returns 0 on success. */
+int holo_ranker_recall(HolographicRanker *r,
+                       const double *state,
+                       double *context_out);
+
 #endif /* NN_HOLOGRAPHIC_RANKER_H */
 
 /* Serialization: save/load the memory trace.

@@ -1,1 +1,8 @@
-make REAL=float experiment-schemas
+make REAL=double experiment-schemas
+make REAL=double delayed-claim-eval
+make REAL=double grid-path-eval
+make REAL=double grid-path-budget-sweep
+make REAL=double modular-gate-search-smoke
+make REAL=double prime-rule-search
+make REAL=double prime-rule-search-baselines
+make REAL=double prime-gap-eval
