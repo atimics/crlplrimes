@@ -226,6 +226,8 @@ static int evaluate_split(NeuralNet *net,
             record.verifier_result = "dataset_target";
             record.seed = config->seed;
             record.extra_json = "\"authority\":\"dataset_or_programmatic_verifier\"";
+            record.features = &inputs[group->target_offset * dataset->feature_count];
+            record.feature_count = dataset->feature_count;
             if (!nn_trace_write_jsonl(trace, &record)) {
                 free(inputs);
                 free(scores);

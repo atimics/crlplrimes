@@ -204,6 +204,8 @@ typedef struct {
     const char *verifier_cost_json;
     uint64_t seed;
     const char *extra_json;
+    const nn_real *features;
+    size_t feature_count;
 } NNTraceRecord;
 
 typedef struct {

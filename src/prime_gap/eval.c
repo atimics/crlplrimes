@@ -1185,6 +1185,8 @@ int emit_prime_gap_trace(NeuralNet *net,
         record.verifier_cost_json = verifier_cost;
         record.seed = seed + (uint64_t)sample;
         record.extra_json = extra;
+        record.features = &candidate_inputs[target_index * FEATURE_COUNT];
+        record.feature_count = FEATURE_COUNT;
         ok = nn_trace_write_jsonl(fp, &record);
     }
 

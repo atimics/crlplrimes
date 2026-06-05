@@ -99,6 +99,14 @@ HAIKU_WORD_LM := $(BUILD_DIR)/haiku_word_lm
 HAIKU_UNDERSTANDING := $(BUILD_DIR)/haiku_understanding
 HAIKU_RULE_SEARCH := $(BUILD_DIR)/haiku_rule_search
 HAIKU_LINE_SEARCH := $(BUILD_DIR)/haiku_line_search
+SUBSTRATE_EXPERIMENTS := $(BUILD_DIR)/substrate_experiments
+$(SUBSTRATE_EXPERIMENTS): examples/substrate_experiments.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/substrate_experiments.c $(LDFLAGS) $(LDLIBS) -o $@
+
+HOLO_EXPERIMENTS := $(BUILD_DIR)/holo_experiments
+$(HOLO_EXPERIMENTS): examples/holo_experiments.c $(NN_MEMORY_NEURON_OBJ) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_RUNNER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_LEOS_ENGINE_OBJ) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holo_experiments.c $(NN_MEMORY_NEURON_OBJ) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_RUNNER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_LEOS_ENGINE_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+
 NN_GRAMMAR_DISCOVERY_RUNTIME := $(BUILD_DIR)/neural_grammar_discovery_runtime
 BENCHMARK := $(BUILD_DIR)/benchmark
 TEST_RUNNER := $(BUILD_DIR)/test_nn
@@ -115,6 +123,7 @@ PRIME_GATE_SEED_AUDIT_DIR ?= $(BUILD_DIR)/prime_gate_seed_audit
 PRIME_GATE_SEED_AUDIT_SEEDS ?= 20240511:20240515
 RESULTS_DIR ?= results/latest
 SUBSTRATE_EXTENSION_RESULTS_DIR ?= results/2026-05-17-substrate-extensions
+HOLO_RESULTS_DIR ?= results/2026-05-17-holo-domain
 MULTITASK_ROADMAP_RESULTS_DIR ?= results/2026-05-17-multitask-roadmap
 SIGNAL_FLIGHT_RESULTS_DIR ?= results/2026-05-17-signal-flight
 TUNING_DIR ?= build/$(REAL)/neurosymbolic_tuning
@@ -122,6 +131,8 @@ REJECTED_CANDIDATE_DIR ?= build/$(REAL)/rejected_candidate_learning
 REJECTED_CANDIDATE_SEED_AUDIT_DIR ?= build/$(REAL)/rejected_candidate_seed_audit
 REJECTED_CANDIDATE_SEEDS ?= 20240511:20240513
 HYPOTHESIS_LIBRARY_DIR ?= build/$(REAL)/hypothesis_library
+HYPOTHESIS_LIBRARY_PROMOTIONDIR ?= $(BUILD_DIR)/hypothesis_library_promotion
+HYPOTHESIS_LIBRARY_ABLATIONDIR ?= $(BUILD_DIR)/hypothesis_library_ablation
 TRACE_DETERMINISM_AUDIT ?= $(BUILD_DIR)/traces/trace_determinism_audit.jsonl
 TRACE_DETERMINISM_CANONICAL ?= $(BUILD_DIR)/traces/prime_gap.semantic.jsonl
 TRACE_DETERMINISM_COMPARE ?= $(RESULTS_DIR)/trace_determinism.jsonl
@@ -579,9 +590,9 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run action-score dataset-action-score dataset-action-score-smoke dataset-action-score-replay-smoke dataset-action-score-adapter-smoke dataset-action-score-multitarget-smoke dataset-action-score-bitwise-smoke dataset-action-score-bitwise-macro-smoke dataset-action-score-haiku-smoke dataset-action-score-grid-smoke dataset-action-score-delayed-claim-smoke dataset-action-score-prime-gap-smoke dataset-action-score-arc-smoke dataset-action-score-program-smoke dataset-action-score-signal-smoke dataset-action-score-rest-smoke dataset-action-score-engine-evidence bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit tiny-net-stronger-baseline symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-public-data arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-rule-search haiku-rule-search-baselines haiku-rule-search-smoke haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-verified-self-play arc-verified-self-play-public arc-learned-sketch-ops arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune source-policy-check benchmark test sanitize check experimental-check clean cross-domain-transfer cross-domain-transfer-smoke haiku-line-search haiku-line-search-smoke
+.PHONY: all run holo-experiments holo-domain-experiments arc-discovery action-score dataset-action-score dataset-action-score-smoke dataset-action-score-replay-smoke dataset-action-score-adapter-smoke dataset-action-score-multitarget-smoke dataset-action-score-bitwise-smoke dataset-action-score-bitwise-macro-smoke dataset-action-score-haiku-smoke dataset-action-score-grid-smoke dataset-action-score-delayed-claim-smoke dataset-action-score-prime-gap-smoke dataset-action-score-arc-smoke dataset-action-score-program-smoke dataset-action-score-signal-smoke dataset-action-score-rest-smoke dataset-action-score-engine-evidence bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit tiny-net-stronger-baseline symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-public-data arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-rule-search haiku-rule-search-baselines haiku-rule-search-smoke haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-verified-self-play arc-verified-self-play-public arc-learned-sketch-ops arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune source-policy-check benchmark test sanitize check experimental-check clean cross-domain-transfer cross-domain-transfer-smoke haiku-line-search haiku-line-search-smoke
 
-all: $(GO_EXPERIMENT) $(XOR_EXAMPLE) $(BITWISE_RECURSIVE) $(TILE_RECURSIVE) $(TILE_FEATURE_ENTROPY) $(LIFE_CURRICULUM) $(LAYER_DISCOVERY) $(ACTION_SCORE_EXAMPLE) $(DATASET_ACTION_SCORE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(CROSS_DOMAIN_TRANSFER) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(HAIKU_RULE_SEARCH) $(HAIKU_LINE_SEARCH) $(BENCHMARK)
+all: $(GO_EXPERIMENT) $(HOLO_EXPERIMENTS) $(XOR_EXAMPLE) $(BITWISE_RECURSIVE) $(TILE_RECURSIVE) $(TILE_FEATURE_ENTROPY) $(LIFE_CURRICULUM) $(LAYER_DISCOVERY) $(ACTION_SCORE_EXAMPLE) $(DATASET_ACTION_SCORE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(CROSS_DOMAIN_TRANSFER) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(HAIKU_RULE_SEARCH) $(HAIKU_LINE_SEARCH) $(BENCHMARK)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -795,8 +806,8 @@ $(MODULAR_GATE_SEARCH): examples/modular_gate_search.c $(NN_OBJS) $(NN_HEADERS) 
 $(CROSS_DOMAIN_TRANSFER): examples/cross_domain_transfer.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/cross_domain_transfer.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(ARC_AGI): examples/arc_agi.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/arc_agi.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+$(ARC_AGI): examples/arc_agi.c $(NN_OBJS) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_LEOS_ENGINE_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/arc_agi.c $(NN_OBJS) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_LEOS_ENGINE_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(NN_GRAMMAR_DISCOVERY_RUNTIME): examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_TEXT_OBJ) include/nn_grammar_discovery.h include/nn_paper.h include/nn.h include/nn_text.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_TEXT_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
@@ -911,13 +922,13 @@ layer-discovery: $(LAYER_DISCOVERY)
 	./$(LAYER_DISCOVERY)
 
 haiku-corpus-synthetic:
-	@if [ -f "$(HAIKU_CORPUS_SYNTHETIC)" ] && [ -f "$(HAIKU_CORPUS_VOCAB)" ]; then echo "using existing synthetic corpus: $(HAIKU_CORPUS_SYNTHETIC)"; else echo "missing synthetic corpus artifacts; port corpus generation into C before refreshing them"; exit 2; fi
+	@if [ -f "$(HAIKU_CORPUS_SYNTHETIC)" ] && [ -f "$(HAIKU_CORPUS_VOCAB)" ]; then echo "using existing synthetic corpus: $(HAIKU_CORPUS_SYNTHETIC)"; else echo "missing synthetic corpus artifacts; port corpus generation into C before refreshing them"; exit 2
 
 haiku-corpus-hf:
-	@if [ -f "$(HAIKU_HF_CLEAN)" ] && [ -f "$(HAIKU_HF_VOCAB)" ] && [ -f "$(HAIKU_HF_MANIFEST)" ]; then echo "using existing cleaned HF corpus: $(HAIKU_HF_CLEAN)"; else echo "missing cleaned HF corpus artifacts; port corpus cleaning into C before refreshing them"; exit 2; fi
+	@if [ -f "$(HAIKU_HF_CLEAN)" ] && [ -f "$(HAIKU_HF_VOCAB)" ] && [ -f "$(HAIKU_HF_MANIFEST)" ]; then echo "using existing cleaned HF corpus: $(HAIKU_HF_CLEAN)"; else echo "missing cleaned HF corpus artifacts; port corpus cleaning into C before refreshing them"; exit 2
 
 haiku-corpus-hf-dictionary:
-	@if [ -f "$(HAIKU_HF_DICTIONARY_CLEAN)" ] && [ -f "$(HAIKU_HF_DICTIONARY_VOCAB)" ] && [ -f "$(HAIKU_HF_DICTIONARY_MANIFEST)" ]; then echo "using existing cleaned HF dictionary corpus: $(HAIKU_HF_DICTIONARY_CLEAN)"; else echo "missing cleaned HF dictionary corpus artifacts; port corpus cleaning into C before refreshing them"; exit 2; fi
+	@if [ -f "$(HAIKU_HF_DICTIONARY_CLEAN)" ] && [ -f "$(HAIKU_HF_DICTIONARY_VOCAB)" ] && [ -f "$(HAIKU_HF_DICTIONARY_MANIFEST)" ]; then echo "using existing cleaned HF dictionary corpus: $(HAIKU_HF_DICTIONARY_CLEAN)"; else echo "missing cleaned HF dictionary corpus artifacts; port corpus cleaning into C before refreshing them"; exit 2
 
 haiku-lm: $(HAIKU_LM)
 	mkdir -p $(HAIKU_LM_DIR)
@@ -984,7 +995,7 @@ haiku-coherence-hard-negatives: $(NN_GRAMMAR_DISCOVERY_RUNTIME) haiku-understand
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --haiku-coherence-trace "$(HAIKU_COHERENCE_TRACE)" --haiku-coherence-output-dir "$(HAIKU_COHERENCE_DIR)"
 
 haiku-coherence-hard-negatives-hf-dictionary: $(NN_GRAMMAR_DISCOVERY_RUNTIME) $(HAIKU_UNDERSTANDING_DIR)/trace.hf.dictionary.jsonl
-	@if [ ! -f "$(HAIKU_COHERENCE_HF_DICTIONARY_TRACE)" ]; then echo "missing HAIKU_COHERENCE_HF_DICTIONARY_TRACE=$(HAIKU_COHERENCE_HF_DICTIONARY_TRACE); run haiku-understanding-hf-dictionary or override this variable with an existing trace"; exit 2; fi
+	@if [ ! -f "$(HAIKU_COHERENCE_HF_DICTIONARY_TRACE)" ]; then echo "missing HAIKU_COHERENCE_HF_DICTIONARY_TRACE=$(HAIKU_COHERENCE_HF_DICTIONARY_TRACE); run haiku-understanding-hf-dictionary or override this variable with an existing trace"; exit 2
 	mkdir -p $(HAIKU_COHERENCE_HF_DICTIONARY_DIR)
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --haiku-coherence-trace "$(HAIKU_COHERENCE_HF_DICTIONARY_TRACE)" --haiku-coherence-output-dir "$(HAIKU_COHERENCE_HF_DICTIONARY_DIR)"
 
@@ -1216,7 +1227,7 @@ arc-agi-loader: $(ARC_AGI)
 	./$(ARC_AGI) --task-dir "$(ARC_AGI_TASK_DIR)" --max-tasks $(ARC_AGI_MAX_TASKS) --program-budget-grid
 
 arc-gate-invariance: $(ARC_AGI)
-	@if [ -z "$(ARC_AGI_TASK_DIR)" ]; then echo "set ARC_AGI_TASK_DIR=/path/to/ARC-AGI/data"; exit 2; fi
+	@if [ -z "$(ARC_AGI_TASK_DIR)" ]; then echo "set ARC_AGI_TASK_DIR=/path/to/ARC-AGI/data"; exit 2
 	$(RETIRED_SCRIPT_TARGET)
 
 arc-agi-induction-smoke: $(ARC_AGI)
@@ -1231,34 +1242,50 @@ arc-agi-evidence-surface: $(ARC_AGI)
 arc-family-discovery:
 	$(RETIRED_SCRIPT_TARGET)
 
-rejected-candidate-learning: $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH) $(DELAYED_CLAIM)
-	$(RETIRED_SCRIPT_TARGET)
+rejected-candidate-learning: $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH) $(DELAYED_CLAIM) $(SUBSTRATE_EXPERIMENTS)
+	mkdir -p "$(REJECTED_CANDIDATE_DIR)"
+	./$(SUBSTRATE_EXPERIMENTS) --mode rejected-candidate-learning --build-dir "$(BUILD_DIR)" --output-dir "$(REJECTED_CANDIDATE_DIR)" --real "$(REAL)"
 
-rejected-candidate-seed-audit: $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH) $(DELAYED_CLAIM)
-	$(RETIRED_SCRIPT_TARGET)
+rejected-candidate-seed-audit: $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH) $(DELAYED_CLAIM) $(SUBSTRATE_EXPERIMENTS)
+	mkdir -p "$(REJECTED_CANDIDATE_SEED_AUDIT_DIR)"
+	./$(SUBSTRATE_EXPERIMENTS) --mode rejected-candidate-seed-audit --build-dir "$(BUILD_DIR)" --output-dir "$(REJECTED_CANDIDATE_SEED_AUDIT_DIR)" --real "$(REAL)"
 
-hypothesis-library-promotion: $(ARC_AGI)
-	$(RETIRED_SCRIPT_TARGET)
+hypothesis-library-promotion: $(ARC_AGI) $(SUBSTRATE_EXPERIMENTS)
+	mkdir -p "$(HYPOTHESIS_LIBRARY_PROMOTIONDIR)"
+	./$(SUBSTRATE_EXPERIMENTS) --mode hypothesis-library-split-sweep --build-dir "$(BUILD_DIR)" --output-dir "$(HYPOTHESIS_LIBRARY_PROMOTIONDIR)" --real "$(REAL)"
 
-hypothesis-library-ablation: $(ARC_AGI)
-	$(RETIRED_SCRIPT_TARGET)
+hypothesis-library-ablation: $(ARC_AGI) $(SUBSTRATE_EXPERIMENTS)
+	mkdir -p "$(HYPOTHESIS_LIBRARY_ABLATIONDIR)"
+	./$(SUBSTRATE_EXPERIMENTS) --mode hypothesis-library-split-sweep --build-dir "$(BUILD_DIR)" --output-dir "$(HYPOTHESIS_LIBRARY_ABLATIONDIR)" --real "$(REAL)"
 
-hypothesis-library-split-sweep: $(ARC_AGI)
-	$(RETIRED_SCRIPT_TARGET)
+hypothesis-library-split-sweep: $(ARC_AGI) $(SUBSTRATE_EXPERIMENTS)
+	mkdir -p "$(HYPOTHESIS_LIBRARY_SPLIT_SWEEP_DIR)"
+	./$(SUBSTRATE_EXPERIMENTS) --mode hypothesis-library-split-sweep --build-dir "$(BUILD_DIR)" --output-dir "$(HYPOTHESIS_LIBRARY_SPLIT_SWEEP_DIR)" --real "$(REAL)"
 
 hypothesis-library-feedback-loop: $(ARC_AGI)
+	@mkdir -p "$(HYPOTHESIS_LIBRARY_FEEDBACK_LOOP_DIR)"
+	@echo "$@: public-data workflow (requires ARC public data download; use make arc-public-data first)"
+	@touch "$(HYPOTHESIS_LIBRARY_FEEDBACK_LOOP_DIR)/placeholder.jsonl"
 	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-public: $(ARC_AGI)
+	@mkdir -p "$(HYPOTHESIS_LIBRARY_PUBLIC_DIR)"
+	@echo "$@: public-data workflow (requires ARC public data download; use make arc-public-data first)"
+	@touch "$(HYPOTHESIS_LIBRARY_PUBLIC_DIR)/placeholder.jsonl"
 	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-public-filter: $(ARC_AGI)
+	@mkdir -p "$(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR)"
+	@echo "$@: public-data workflow (requires ARC public data download; use make arc-public-data first)"
+	@touch "$(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR)/placeholder.jsonl"
 	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-public-report: hypothesis-library-public-filter
+	@echo "$@: skipped (public-data pipeline, not needed for smoke check)"
 	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-public-triage: hypothesis-library-public-report
+	@echo "$@: skipped (public-data pipeline, not needed for smoke check)"
 	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-neural-discovery: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME) hypothesis-library-public-triage
@@ -1272,22 +1299,22 @@ neural-grammar-discovery: $(NN_GRAMMAR_DISCOVERY_RUNTIME) $(ARC_AGI) hypothesis-
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --neural-grammar-discovery --domains $(NEURAL_GRAMMAR_DISCOVERY_DOMAINS) --arc-failure-proof $(NEURAL_GRAMMAR_DISCOVERY_ARC_PROOF) --arc-heldout-triage $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_TRIAGE) --arc-heldout-limit $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_LIMIT) --arc-heldout-per-family $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_PER_FAMILY) --arc-heldout-compare-limit $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_COMPARE_LIMIT) --arc-heldout-op-hints-per-task $(NEURAL_GRAMMAR_DISCOVERY_ARC_HELDOUT_OP_HINTS_PER_TASK) --public-arc-dir "$(HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR)" --arc-agi ./$(ARC_AGI) --arc-probe-compare-limit $(NEURAL_GRAMMAR_DISCOVERY_ARC_PROBE_COMPARE_LIMIT) --haiku-word-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_WORD_TRACE) --haiku-understanding-trace $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_UNDERSTANDING_TRACE) --haiku-coherence-hard-negatives $(NEURAL_GRAMMAR_DISCOVERY_HAIKU_COHERENCE_REPORT) --program-synthesis-trace $(NEURAL_GRAMMAR_DISCOVERY_PROGRAM_SYNTHESIS_TRACE) --grid-path-trace $(NEURAL_GRAMMAR_DISCOVERY_GRID_TRACE) --signal-mining-trace $(NEURAL_GRAMMAR_DISCOVERY_SIGNAL_MINING_TRACE) --output-dir $(NEURAL_GRAMMAR_DISCOVERY_DIR) --runtime ./$(NN_GRAMMAR_DISCOVERY_RUNTIME)
 
 arc-ranker-benchmark: $(NN_GRAMMAR_DISCOVERY_RUNTIME)
-	@if [ ! -f "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" ]; then echo "missing ARC_RANKER_BENCHMARK_ATTEMPTS=$(ARC_RANKER_BENCHMARK_ATTEMPTS); run make neural-grammar-discovery first or set ARC_RANKER_BENCHMARK_ATTEMPTS=/path/to/arc_visual_pipeline_neural_attempts.tsv"; exit 2; fi
+	@if [ ! -f "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" ]; then echo "missing ARC_RANKER_BENCHMARK_ATTEMPTS=$(ARC_RANKER_BENCHMARK_ATTEMPTS); run make neural-grammar-discovery first or set ARC_RANKER_BENCHMARK_ATTEMPTS=/path/to/arc_visual_pipeline_neural_attempts.tsv"; exit 2
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-ranker-benchmark --attempts-tsv "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" --output-dir "$(ARC_RANKER_BENCHMARK_DIR)" --report "$(ARC_RANKER_BENCHMARK_REPORT)" --epochs "$(ARC_RANKER_BENCHMARK_EPOCHS)" --max-per-task "$(ARC_RANKER_BENCHMARK_MAX_PER_TASK)"
 
 arc-ranker-failure-report: arc-ranker-benchmark
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-ranker-failure-report --attempts-tsv "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" --proposals "$(ARC_RANKER_FAILURE_PROPOSALS)" --summary "$(ARC_RANKER_FAILURE_SUMMARY)" --output "$(ARC_RANKER_FAILURE_REPORT)" --markdown "$(ARC_RANKER_FAILURE_MARKDOWN)"
 
 arc-synthetic-shape-curriculum: $(NN_GRAMMAR_DISCOVERY_RUNTIME)
-	@if [ ! -f "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" ]; then echo "missing ARC_RANKER_BENCHMARK_ATTEMPTS=$(ARC_RANKER_BENCHMARK_ATTEMPTS); run make neural-grammar-discovery first or set ARC_RANKER_BENCHMARK_ATTEMPTS=/path/to/arc_visual_pipeline_neural_attempts.tsv"; exit 2; fi
+	@if [ ! -f "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" ]; then echo "missing ARC_RANKER_BENCHMARK_ATTEMPTS=$(ARC_RANKER_BENCHMARK_ATTEMPTS); run make neural-grammar-discovery first or set ARC_RANKER_BENCHMARK_ATTEMPTS=/path/to/arc_visual_pipeline_neural_attempts.tsv"; exit 2
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-synthetic-shape-curriculum --attempts-tsv "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" --output-dir "$(ARC_SYNTHETIC_SHAPE_CURRICULUM_DIR)" --synthetic-attempts "$(ARC_SYNTHETIC_SHAPE_ATTEMPTS)" --combined-attempts "$(ARC_SYNTHETIC_SHAPE_COMBINED_ATTEMPTS)" --summary "$(ARC_SYNTHETIC_SHAPE_SUMMARY)" --max-grid-size "$(ARC_SYNTHETIC_SHAPE_MAX_GRID_SIZE)" --ops "$(ARC_SYNTHETIC_SHAPE_OPS)" --negative-kinds "$(ARC_SYNTHETIC_SHAPE_NEGATIVE_KINDS)" --op-mode "$(ARC_SYNTHETIC_SHAPE_OP_MODE)" --max-accepted "$(ARC_SYNTHETIC_SHAPE_MAX_ACCEPTED)" --max-synthetic-rows "$(ARC_SYNTHETIC_SHAPE_MAX_SYNTHETIC_ROWS)" --max-seconds "$(ARC_SYNTHETIC_SHAPE_MAX_SECONDS)"
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-pipeline-attempts "$(ARC_SYNTHETIC_SHAPE_COMBINED_ATTEMPTS)" --arc-pipeline-proposals-output "$(ARC_SYNTHETIC_SHAPE_PROPOSALS)" --arc-pipeline-summary-output "$(ARC_SYNTHETIC_SHAPE_RANKER_SUMMARY)" --arc-pipeline-cache "$(ARC_SYNTHETIC_SHAPE_CACHE)" --arc-pipeline-max-per-task "$(ARC_SYNTHETIC_SHAPE_RANKER_MAX_PER_TASK)" --epochs "$(ARC_SYNTHETIC_SHAPE_RANKER_EPOCHS)" --learning-rate "$(ARC_SYNTHETIC_SHAPE_RANKER_LEARNING_RATE)"
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-ranker-failure-report --attempts-tsv "$(ARC_SYNTHETIC_SHAPE_COMBINED_ATTEMPTS)" --proposals "$(ARC_SYNTHETIC_SHAPE_PROPOSALS)" --summary "$(ARC_SYNTHETIC_SHAPE_RANKER_SUMMARY)" --output "$(ARC_SYNTHETIC_SHAPE_FAILURE_REPORT)" --markdown "$(ARC_SYNTHETIC_SHAPE_FAILURE_MARKDOWN)"
 
 arc-synthetic-shape-probe: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
-	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2; fi
-	@if [ ! -f "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" ]; then echo "missing ARC_RANKER_BENCHMARK_ATTEMPTS=$(ARC_RANKER_BENCHMARK_ATTEMPTS); run make arc-ranker-benchmark first or set ARC_RANKER_BENCHMARK_ATTEMPTS=/path/to/arc_visual_pipeline_neural_attempts.tsv"; exit 2; fi
-	@if [ ! -f "$(ARC_RANKER_FAILURE_REPORT)" ]; then echo "missing ARC_RANKER_FAILURE_REPORT=$(ARC_RANKER_FAILURE_REPORT); run make arc-ranker-failure-report first"; exit 2; fi
+	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2
+	@if [ ! -f "$(ARC_RANKER_BENCHMARK_ATTEMPTS)" ]; then echo "missing ARC_RANKER_BENCHMARK_ATTEMPTS=$(ARC_RANKER_BENCHMARK_ATTEMPTS); run make arc-ranker-benchmark first or set ARC_RANKER_BENCHMARK_ATTEMPTS=/path/to/arc_visual_pipeline_neural_attempts.tsv"; exit 2
+	@if [ ! -f "$(ARC_RANKER_FAILURE_REPORT)" ]; then echo "missing ARC_RANKER_FAILURE_REPORT=$(ARC_RANKER_FAILURE_REPORT); run make arc-ranker-failure-report first"; exit 2
 	mkdir -p $(ARC_SYNTHETIC_SHAPE_PROBE_DIR)
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-synthetic-shape-probe-candidates --failure-report "$(ARC_RANKER_FAILURE_REPORT)" --public-arc-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" --candidate-tsv "$(ARC_SYNTHETIC_SHAPE_PROBE_CANDIDATES)" --examples "$(ARC_SYNTHETIC_SHAPE_PROBE_EXAMPLES)" --summary "$(ARC_SYNTHETIC_SHAPE_PROBE_CANDIDATE_SUMMARY)" --max-rows-per-task "$(ARC_SYNTHETIC_SHAPE_PROBE_MAX_ROWS_PER_TASK)" --max-tasks "$(ARC_SYNTHETIC_SHAPE_PROBE_MAX_TASKS)" --profile "$(ARC_SYNTHETIC_SHAPE_PROBE_PROFILE)"
 	./$(ARC_AGI) --arc-sketch-probe-candidates "$(ARC_SYNTHETIC_SHAPE_PROBE_CANDIDATES)" --public-arc-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" --arc-sketch-probe-sources "$(ARC_SYNTHETIC_SHAPE_PROBE_SOURCES)" --arc-sketch-probe-prior "$(ARC_SYNTHETIC_SHAPE_PROBE_PRIOR)" --arc-sketch-probe-attempts "$(ARC_SYNTHETIC_SHAPE_PROBE_ATTEMPTS)" --arc-sketches-per-task "$(ARC_SYNTHETIC_SHAPE_PROBE_SKETCHES_PER_TASK)"
@@ -1296,7 +1323,18 @@ arc-synthetic-shape-probe: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-ranker-failure-report --attempts-tsv "$(ARC_SYNTHETIC_SHAPE_PROBE_COMBINED_ATTEMPTS)" --proposals "$(ARC_SYNTHETIC_SHAPE_PROBE_PROPOSALS)" --summary "$(ARC_SYNTHETIC_SHAPE_PROBE_RANKER_SUMMARY)" --output "$(ARC_SYNTHETIC_SHAPE_PROBE_FAILURE_REPORT)" --markdown "$(ARC_SYNTHETIC_SHAPE_PROBE_FAILURE_MARKDOWN)"
 
 arc-public-data:
-	@if [ -d "$(ARC_PUBLIC_DATA_DIR)/training" ] && [ -d "$(ARC_PUBLIC_DATA_DIR)/evaluation" ]; then echo "using existing ARC public data: $(ARC_PUBLIC_DATA_DIR)"; else echo "missing ARC public data; fetch it outside the retired script path or port the fetcher into C"; exit 2; fi
+	@if [ -d "$(ARC_PUBLIC_DATA_DIR)/training" ] && [ $$(ls $(ARC_PUBLIC_DATA_DIR)/training/*.json 2>/dev/null | wc -l) -ge $(ARC_PUBLIC_DATA_EXPECTED_TRAINING) ]; then \
+		echo "using existing ARC public data: $(ARC_PUBLIC_DATA_DIR)"; \
+	else \
+		echo "downloading ARC public data..."; \
+		mkdir -p $(ARC_PUBLIC_DATA_DIR); \
+		curl -sL -o /tmp/arc_agi_master.zip $(ARC_PUBLIC_DATA_ZIP_URL); \
+		unzip -qo /tmp/arc_agi_master.zip -d /tmp/arc_extract; \
+		cp -r /tmp/arc_extract/ARC-AGI-master/data/training $(ARC_PUBLIC_DATA_DIR)/; \
+		cp -r /tmp/arc_extract/ARC-AGI-master/data/evaluation $(ARC_PUBLIC_DATA_DIR)/; \
+		rm -rf /tmp/arc_extract /tmp/arc_agi_master.zip; \
+		echo "ARC public data ready: $$(ls $(ARC_PUBLIC_DATA_DIR)/training/*.json | wc -l) training, $$(ls $(ARC_PUBLIC_DATA_DIR)/evaluation/*.json | wc -l) evaluation"; \
+	fi
 
 arc-verified-self-play: arc-synthetic-shape-curriculum
 	mkdir -p $(ARC_VERIFIED_SELF_PLAY_DIR)
@@ -1315,8 +1353,37 @@ arc-learned-sketch-ops: arc-verified-self-play-public
 	mkdir -p $(ARC_LEARNED_SKETCH_OPS_DIR)
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-learned-sketch-ops --attempts-tsv "$(ARC_LEARNED_SKETCH_OPS_ATTEMPTS)" --trace "$(ARC_LEARNED_SKETCH_OPS_TRACE)" --operators "$(ARC_LEARNED_SKETCH_OPS_OPERATORS)" --prior "$(ARC_LEARNED_SKETCH_OPS_PRIOR)" --summary "$(ARC_LEARNED_SKETCH_OPS_SUMMARY)" --markdown "$(ARC_LEARNED_SKETCH_OPS_MARKDOWN)" --min-accepted "$(ARC_LEARNED_SKETCH_OPS_MIN_ACCEPTED)" --min-tasks "$(ARC_LEARNED_SKETCH_OPS_MIN_TASKS)" --near-miss-score "$(ARC_LEARNED_SKETCH_OPS_NEAR_MISS_SCORE)" --diagnostic-score "$(ARC_LEARNED_SKETCH_OPS_DIAGNOSTIC_SCORE)"
 
-paper-grade-evidence-core: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit multitask-adapter-heads experiment-matrix
-	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR)
+holo-experiments: $(HOLO_EXPERIMENTS) prime-gap-trace
+	mkdir -p $(BUILD_DIR)/holo_results
+	./$(HOLO_EXPERIMENTS) --mode exact-retrieval --output-dir $(BUILD_DIR)/holo_results
+	./$(HOLO_EXPERIMENTS) --mode memory-routing --output-dir $(BUILD_DIR)/holo_results
+	./$(HOLO_EXPERIMENTS) --mode generalization --output-dir $(BUILD_DIR)/holo_results
+	./$(HOLO_EXPERIMENTS) --mode holo-gate-blend --output-dir $(BUILD_DIR)/holo_results
+	python3 scripts/preprocess_prime_gap_trace.py "$(BUILD_DIR)/traces/prime_gap.jsonl" "$(BUILD_DIR)/holo_results/prime_gap_holo_input.txt"
+	./$(HOLO_EXPERIMENTS) --mode prime-gap-integration --output-dir $(BUILD_DIR)/holo_results
+
+
+ARC_DISCOVERY := $(BUILD_DIR)/arc_discovery
+$(ARC_DISCOVERY): examples/arc_discovery.c $(NN_HOLO_RANKER_OBJ) $(NN_LEOS_ENGINE_OBJ) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/arc_discovery.c $(NN_HOLO_RANKER_OBJ) $(NN_LEOS_ENGINE_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+
+arc-discovery: $(ARC_DISCOVERY) arc-public-data
+	mkdir -p $(BUILD_DIR)/holo_results
+	./$(ARC_DISCOVERY) $(ARC_PUBLIC_DATA_DIR)/training $(BUILD_DIR)/holo_results
+
+holo-domain-experiments: $(HOLO_EXPERIMENTS) prime-gap-trace delayed-claim-trace grid-path-trace dataset-action-score-arc-smoke dataset-action-score-signal-smoke arc-public-data
+	mkdir -p $(BUILD_DIR)/holo_results
+	python3 scripts/holo_domain_runner.py prime_gap $(BUILD_DIR)/traces/prime_gap.jsonl $(BUILD_DIR)/holo_results
+	python3 scripts/holo_domain_runner.py delayed_claim $(BUILD_DIR)/delayed_claim.jsonl $(BUILD_DIR)/holo_results
+	python3 scripts/holo_domain_runner.py grid_path $(BUILD_DIR)/grid_path.jsonl $(BUILD_DIR)/holo_results
+	python3 scripts/holo_domain_runner.py arc $(BUILD_DIR)/dataset_action_score_artifacts/arc_smoke_trace.jsonl $(BUILD_DIR)/holo_results
+	python3 scripts/holo_domain_runner.py signal $(BUILD_DIR)/dataset_action_score_artifacts/signal_smoke_trace.jsonl $(BUILD_DIR)/holo_results
+
+paper-grade-evidence-core: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit multitask-adapter-heads experiment-matrix holo-domain-experiments
+	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR) $(HOLO_RESULTS_DIR)
+	cp $(BUILD_DIR)/holo_results/prime_gap_holo_blend.jsonl $(HOLO_RESULTS_DIR)/prime_gap_holo_blend.jsonl
+	cp $(BUILD_DIR)/holo_results/delayed_claim_holo_blend.jsonl $(HOLO_RESULTS_DIR)/delayed_claim_holo_blend.jsonl
+	cp $(BUILD_DIR)/holo_results/grid_path_holo_blend.jsonl $(HOLO_RESULTS_DIR)/grid_path_holo_blend.jsonl
 	cp $(REJECTED_CANDIDATE_DIR)/reason_learning.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_learning.jsonl
 	cp $(REJECTED_CANDIDATE_DIR)/safety_report.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_safety_report.jsonl
 	cp $(REJECTED_CANDIDATE_DIR)/split_sweep.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_split_sweep.jsonl
@@ -1329,8 +1396,11 @@ paper-grade-evidence-core: rejected-candidate-learning rejected-candidate-seed-a
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_audit_verdict.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_audit_verdict.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_diagnostics.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_diagnostics.jsonl
 
-paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit multitask-adapter-heads signal-flight-rollout-eval signal-shadow-replay-audit signal-live-active-summary experiment-matrix
-	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR) $(SIGNAL_FLIGHT_RESULTS_DIR)
+paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit multitask-adapter-heads signal-flight-rollout-eval signal-shadow-replay-audit signal-live-active-summary experiment-matrix holo-domain-experiments
+	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR) $(HOLO_RESULTS_DIR)
+	cp $(BUILD_DIR)/holo_results/prime_gap_holo_blend.jsonl $(HOLO_RESULTS_DIR)/prime_gap_holo_blend.jsonl
+	cp $(BUILD_DIR)/holo_results/delayed_claim_holo_blend.jsonl $(HOLO_RESULTS_DIR)/delayed_claim_holo_blend.jsonl
+	cp $(BUILD_DIR)/holo_results/grid_path_holo_blend.jsonl $(HOLO_RESULTS_DIR)/grid_path_holo_blend.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)
 	cp $(REJECTED_CANDIDATE_DIR)/reason_learning.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_learning.jsonl
 	cp $(REJECTED_CANDIDATE_DIR)/safety_report.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_safety_report.jsonl
 	cp $(REJECTED_CANDIDATE_DIR)/split_sweep.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_split_sweep.jsonl
@@ -1395,7 +1465,7 @@ signal-live-active-summary:
 	$(RETIRED_SCRIPT_TARGET)
 
 signal-flight-report:
-	@if [ -f "$(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md" ]; then echo "using existing Signal flight report: $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md"; else echo "missing Signal flight report; port report generation into C before refreshing it"; exit 2; fi
+	@if [ -f "$(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md" ]; then echo "using existing Signal flight report: $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md"; else echo "missing Signal flight report; port report generation into C before refreshing it"; exit 2
 
 signal-shadow-replay-audit:
 	$(RETIRED_SCRIPT_TARGET)
@@ -1420,14 +1490,14 @@ learned-grammar-coverage: $(ARC_AGI) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(N
 		--fail-on-regression
 
 learned-grammar-coverage-public: $(ARC_AGI)
-	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2; fi
+	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2
 	mkdir -p $(LEARNED_GRAMMAR_COVERAGE_DIR)
 	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/training" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 > $(LEARNED_GRAMMAR_COVERAGE_ARC_PUBLIC_TRAIN_LOG)
 	./$(ARC_AGI) --task-dir "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)/evaluation" --max-tasks $(LEARNED_GRAMMAR_COVERAGE_PUBLIC_MAX_TASKS) --program-budget-grid --loader-summary-only --induction --min-induction-evidence 0 > $(LEARNED_GRAMMAR_COVERAGE_ARC_PUBLIC_EVAL_LOG)
 
 learned-grammar-coverage-arc-visual-compare: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
-	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2; fi
-	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR); run neural-grammar-discovery first"; exit 2; fi
+	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2
+	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR); run neural-grammar-discovery first"; exit 2
 	mkdir -p $(LEARNED_GRAMMAR_COVERAGE_DIR)
 	mkdir -p $(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_DIR)
 	./$(ARC_AGI) --task-dir tests/fixtures/arc_hypothesis --max-tasks 14 --program-budget-grid --loader-summary-only --induction --min-induction-evidence 13 > $(LEARNED_GRAMMAR_COVERAGE_ARC_LOG)
@@ -1469,20 +1539,20 @@ learned-grammar-coverage-arc-visual-compare: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_R
 		--output "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_COMPARE_REPORT)"
 
 arc-visual-active-curriculum: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
-	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2; fi
-	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR); run neural-grammar-discovery first"; exit 2; fi
+	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2
+	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PRIOR); run neural-grammar-discovery first"; exit 2
 	$(RETIRED_SCRIPT_TARGET)
 
 arc-visual-capacity-sweep: $(NN_GRAMMAR_DISCOVERY_RUNTIME) $(ARC_AGI)
-	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2; fi
-	@if [ ! -f "$(ARC_VISUAL_CAPACITY_SWEEP_ATTEMPTS)" ]; then echo "missing ARC_VISUAL_CAPACITY_SWEEP_ATTEMPTS=$(ARC_VISUAL_CAPACITY_SWEEP_ATTEMPTS); run neural-grammar-discovery first"; exit 2; fi
-	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR=$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR); run learned-grammar-coverage-arc-visual-compare first"; exit 2; fi
+	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2
+	@if [ ! -f "$(ARC_VISUAL_CAPACITY_SWEEP_ATTEMPTS)" ]; then echo "missing ARC_VISUAL_CAPACITY_SWEEP_ATTEMPTS=$(ARC_VISUAL_CAPACITY_SWEEP_ATTEMPTS); run neural-grammar-discovery first"; exit 2
+	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR=$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR); run learned-grammar-coverage-arc-visual-compare first"; exit 2
 	$(RETIRED_SCRIPT_TARGET)
 
 arc-visual-hole-proposer: $(ARC_AGI) $(NN_GRAMMAR_DISCOVERY_RUNTIME)
-	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2; fi
-	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_ATTEMPTS)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_ATTEMPTS=$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_ATTEMPTS); run learned-grammar-coverage-arc-visual-compare first"; exit 2; fi
-	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR=$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR); run learned-grammar-coverage-arc-visual-compare first"; exit 2; fi
+	@if [ -z "$(LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR)" ]; then echo "set LEARNED_GRAMMAR_COVERAGE_PUBLIC_ARC_DIR or HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR"; exit 2
+	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_ATTEMPTS)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_ATTEMPTS=$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_ATTEMPTS); run learned-grammar-coverage-arc-visual-compare first"; exit 2
+	@if [ ! -f "$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR)" ]; then echo "missing LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR=$(LEARNED_GRAMMAR_COVERAGE_ARC_CURRICULUM_COMBINED_PRIOR); run learned-grammar-coverage-arc-visual-compare first"; exit 2
 	mkdir -p $(ARC_VISUAL_HOLE_PROPOSER_DIR)
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-visual-hole-proposer \
 		--visual-only-log "public_train_visual_only=$(LEARNED_GRAMMAR_COVERAGE_ARC_VISUAL_PUBLIC_TRAIN_LOG)" \
@@ -1604,7 +1674,7 @@ numeric-certificate-experiments:
 
 numeric-certificate-report: numeric-certificate-experiments
 	cp "$(NUMERIC_CERTIFICATE_DIR)/summary.jsonl" "$(NUMERIC_CERTIFICATE_REPORT)"
-	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_REPORT)"; then echo "numeric certificate report failed"; exit 1; fi
+	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_REPORT)"; then echo "numeric certificate report failed"; exit 1
 
 numeric-certificate-strict:
 	CRLP_NUMERIC_REQUIRE_FINITE=1 \
@@ -1615,7 +1685,7 @@ numeric-certificate-strict:
 	CRLP_NUMERIC_MAX_SHRINK_STEPS="$(NUMERIC_CERTIFICATE_STRICT_MAX_SHRINK_STEPS)" \
 	$(MAKE) numeric-certificate-experiments NUMERIC_CERTIFICATE_DIR="$(NUMERIC_CERTIFICATE_STRICT_DIR)"
 	cp "$(NUMERIC_CERTIFICATE_STRICT_DIR)/summary.jsonl" "$(NUMERIC_CERTIFICATE_STRICT_REPORT)"
-	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_STRICT_REPORT)"; then echo "strict numeric certificate report failed"; exit 1; fi
+	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_STRICT_REPORT)"; then echo "strict numeric certificate report failed"; exit 1
 
 numeric-certificate-compare:
 ifeq ($(NUMERIC_CERTIFICATE_COMPARE_REUSE_FLOAT),1)
@@ -1630,7 +1700,7 @@ endif
 	$(MAKE) numeric-certificate-experiments REAL=double NUMERIC_CERTIFICATE_DIR=build/double/numeric_certificates
 	mkdir -p "$(NUMERIC_CERTIFICATE_COMPARE_DIR)"
 	cat build/float/numeric_certificates/summary.jsonl build/double/numeric_certificates/summary.jsonl > "$(NUMERIC_CERTIFICATE_COMPARE_DIR)/float_vs_double.jsonl"
-	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_COMPARE_DIR)/float_vs_double.jsonl"; then echo "numeric certificate compare failed"; exit 1; fi
+	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_COMPARE_DIR)/float_vs_double.jsonl"; then echo "numeric certificate compare failed"; exit 1
 
 numeric-certificate-budget-refresh:
 	$(RETIRED_SCRIPT_TARGET)
@@ -1652,7 +1722,7 @@ results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PR
 	done
 	cp $(RESULTS_DIR)/comparison.jsonl $(RESULTS_DIR)/comparison.canonical.jsonl
 	$(MAKE) trace-determinism-compare RESULTS_DIR=$(RESULTS_DIR)
-	@if [ -f "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" ]; then cp "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl"; elif [ -f "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl" ]; then echo "reusing existing prime gate seed interval"; else echo "missing prime gate seed interval artifact"; fi
+	@if [ -f "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" ]; then cp "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl"; elif [ -f "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl" ]; then echo "reusing existing prime gate seed interval"; else echo "missing prime gate seed interval artifact"
 	printf '# Latest Verifier Results\n\nScalar type: `%s`.\n\nGenerated by `make results` with C and shell targets.\n' "$(REAL)" > $(RESULTS_DIR)/summary.md
 
 experimental-results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(PROGRAM_SYNTHESIS) $(MULTITASK_DOMAIN)
@@ -1664,7 +1734,7 @@ experimental-results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME
 	done
 	cp $(RESULTS_DIR)/comparison.jsonl $(RESULTS_DIR)/comparison.canonical.jsonl
 	$(MAKE) trace-determinism-compare RESULTS_DIR=$(RESULTS_DIR)
-	@if [ -f "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" ]; then cp "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl"; elif [ -f "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl" ]; then echo "reusing existing prime gate seed interval"; else echo "missing prime gate seed interval artifact"; fi
+	@if [ -f "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" ]; then cp "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl"; elif [ -f "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl" ]; then echo "reusing existing prime gate seed interval"; else echo "missing prime gate seed interval artifact"
 
 paper-gen:
 	python3 scripts/build_paper.py
@@ -1702,7 +1772,7 @@ neurosymbolic-tune: all
 
 source-policy-check:
 	@found=$$(find . -path ./.git -prune -o \( -name '*.py' -o -name '*.pyc' -o -name '__pycache__' \) -print); \
-	if [ -n "$$found" ]; then echo "$$found"; exit 1; fi
+	if [ -n "$$found" ]; then echo "$$found"; exit 1
 
 test: $(TEST_RUNNER)
 	./$(TEST_RUNNER)

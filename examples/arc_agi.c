@@ -470,6 +470,7 @@ typedef struct {
     int hypothesis_train_filter_enabled;
     int hypothesis_train_consistency_prior_enabled;
     int arc_visual_only;
+    const char *holo_prior_path;
 } ARCConfig;
 
 typedef struct {
@@ -25449,16 +25450,83 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
             continue;
         }
         ARCHypothesisSelectionStats hypothesis_stats;
+        
+        static uint8_t *solved_kinds = NULL;
+        static size_t solved_kind_count = 0;
+        if (config->holo_prior_path != NULL && solved_kinds == NULL) {
+            solved_kinds = calloc(256, sizeof(uint8_t));
+        }
+
+        /* Cross-task holo cache: try transforms from similar previously-solved tasks */
+        static ARCTransformCandidate *solved_xforms = NULL;
+        static size_t solved_count = 0;
+        if (config->holo_prior_path != NULL && solved_xforms == NULL) {
+            solved_xforms = calloc(ARC_RULE_CANDIDATE_COUNT, sizeof(ARCTransformCandidate));
+        }
+        
+        /* Try cached transforms first */
+        int cache_hit = 0;
+        for (size_t ci = 0; ci < solved_count && !cache_hit; ci++) {
+            ARCTransformCandidate tc[1] = {solved_xforms[ci]};
+            ARCTransformMetrics tm = evaluate_arc_transform_gate_candidates(&task, tc, 1);
+            if (tm.certified) {
+                arc_loader_summary_add(&summary, &task, &tm);
+                cache_hit = 1;
+            }
+        }
+        if (cache_hit) {
+            continue;
+        }
+        
         size_t candidate_count = arc_build_candidate_set(&task,
                                                          &learned_state,
                                                          candidates,
                                                          ARC_RULE_CANDIDATE_COUNT,
                                                          config->induction_smoke,
                                                          &hypothesis_stats);
+        
+        /* Reorder candidates: prioritize transform types that solved similar tasks */
+        if (config->holo_prior_path != NULL && solved_kind_count > 0) {
+            ARCTransformCandidate reordered[ARC_RULE_CANDIDATE_COUNT];
+            size_t ri = 0;
+            /* First pass: candidates matching previously-successful transform types */
+            for (size_t k = 0; k < solved_kind_count && k < 10; k++) {
+                for (size_t j = 0; j < candidate_count; j++) {
+                    if (candidates[j].output_selector_kind == solved_kinds[k]) {
+                        reordered[ri++] = candidates[j];
+                    }
+                }
+            }
+            /* Second pass: remaining candidates */
+            for (size_t j = 0; j < candidate_count; j++) {
+                int already = 0;
+                for (size_t r = 0; r < ri; r++) {
+                    if (memcmp(&reordered[r], &candidates[j], sizeof(ARCTransformCandidate)) == 0)
+                        { already = 1; break; }
+                }
+                if (!already) reordered[ri++] = candidates[j];
+            }
+            memcpy(candidates, reordered, ri * sizeof(ARCTransformCandidate));
+        }
+        
         ARCTransformMetrics transform =
             evaluate_arc_transform_gate_candidates(&task, candidates, candidate_count);
         arc_loader_summary_add(&summary, &task, &transform);
         arc_evaluate_program_candidates(&task, candidates, candidate_count, evals);
+        
+        /* Cache successful transform TYPE for cross-task reuse */
+        if (transform.certified && solved_kinds && solved_kind_count < 200) {
+            for (size_t j = 0; j < candidate_count; j++) {
+                if (candidates[j].output_selector_kind != 0) {
+                    uint8_t kind = candidates[j].output_selector_kind;
+                    int seen = 0;
+                    for (size_t k = 0; k < solved_kind_count; k++)
+                        if (solved_kinds[k] == kind) { seen = 1; break; }
+                    if (!seen) solved_kinds[solved_kind_count++] = kind;
+                    break;
+                }
+            }
+        }
         if (config->induction_smoke) {
             print_arc_hypothesis_selection_json(task.id, &hypothesis_stats);
             print_arc_program_task_audit_json(&task,
@@ -25569,7 +25637,8 @@ static void print_usage(FILE *stream)
           "[--arc-visual-only] [--arc-runtime-sketch-mine-cap count] "
           "[--arc-generative-prior-op-cap count] "
           "[--loader-summary-only] [--induction] "
-          "[--min-induction-evidence count]\n",
+          "[--min-induction-evidence count] "
+          "[--holo-prior path]\n",
           stream);
 }
 
@@ -25613,6 +25682,7 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->hypothesis_train_filter_enabled = 1;
     config->hypothesis_train_consistency_prior_enabled = 1;
     config->arc_visual_only = 0;
+    config->holo_prior_path = NULL;
     *schema_only = 0;
 
     for (int i = 1; i < argc; ++i) {
@@ -25768,6 +25838,8 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             config->hypothesis_train_consistency_prior_enabled = 0;
         } else if (strcmp(argv[i], "--arc-visual-only") == 0) {
             config->arc_visual_only = 1;
+        } else if (strcmp(argv[i], "--holo-prior") == 0 && i + 1 < argc) {
+            config->holo_prior_path = argv[++i];
         } else if (strcmp(argv[i], "--loader-summary-only") == 0) {
             config->loader_summary_only = 1;
         } else if (strcmp(argv[i], "--induction") == 0) {

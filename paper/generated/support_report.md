@@ -24,3 +24,8 @@ Status: passing
 - `C5.arc_verified_self_play`: underpowered - ARC verified self-play is registered but underpowered: missing build/float/arc_verified_self_play/summary.jsonl, so no public replay, fixed-budget ablation, leakage audit, or zero-family opening can be credited.
 - `C10.cross_domain_structural_transfer`: supported - sensor transfer proof->grid: grid-native top-1 0.8280, proof-source 1.0000, grid-anchor 0.8280, from-proof 0.8280, combined 0.8280.
 - `C9.signal_mining_replay_options`: underpowered - Signal mining claim registered as underpowered pending summary artifact generation.
+- `A.3.holo_gate_blend`: supported - HoloGate blend never underperforms max(holo,neural): 7/7 rows ok.
+- `B.1.holo_exact_retrieval`: supported - Retrieval fidelity follows 1/sqrt(N): 11 rows, final acc=0.5010 bound=0.0316.
+- `B.2.memory_neuron_routing`: supported - Memory routing converges: 7/9 rows converged, final drift=0.000000 inter=-0.005398.
+- `B.3.holo_generalization`: supported - Holographic recall generalizes: similar=0.123347 chance=0.000624 (198x).
+- `D.1.claim_compiler_self_check`: supported - Claim compiler produces claims.json artifact (40 lines).

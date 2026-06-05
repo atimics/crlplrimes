@@ -2506,6 +2506,8 @@ static int emit_grid_trace(NeuralNet *net,
         record.verifier_cost_json = cost_json;
         record.seed = seed;
         record.extra_json = extra_json;
+        record.features = &candidate_inputs[target_index * GP_FEATURE_COUNT];
+        record.feature_count = GP_FEATURE_COUNT;
         ok = nn_trace_write_jsonl(fp, &record);
     }
 

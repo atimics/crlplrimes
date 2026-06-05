@@ -4768,6 +4768,16 @@ int nn_trace_write_jsonl(FILE *fp, const NNTraceRecord *record)
         }
     }
 
+    /* Output feature vector if available */
+    if (record->features != NULL && record->feature_count > 0) {
+        if (fputs(",\"features\":[", fp) == EOF) return 0;
+        for (size_t i = 0; i < record->feature_count; i++) {
+            if (i > 0 && fputc(',', fp) == EOF) return 0;
+            if (fprintf(fp, "%.9g", (double)record->features[i]) < 0) return 0;
+        }
+        if (fputc(']', fp) == EOF) return 0;
+    }
+
     return fputs("}\n", fp) != EOF;
 }
 
