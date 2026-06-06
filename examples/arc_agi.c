@@ -164,6 +164,19 @@ typedef enum {
     ARC_RULE_LAYER_RIGHT_ONLY = 36,
     ARC_RULE_COMPRESS_COLOR_LINES = 37,
     ARC_RULE_TILE_MOTIF_PARITY_REPEAT = 38,
+    ARC_RULE_GRAVITY_DOWN = 39,
+    ARC_RULE_GRAVITY_UP = 40,
+    ARC_RULE_GRAVITY_LEFT = 41,
+    ARC_RULE_GRAVITY_RIGHT = 42,
+    ARC_RULE_TILE_REPEAT = 43,
+    ARC_RULE_GRID_REPEAT = 44,
+    ARC_RULE_EXTRACT_COLOR = 45,
+    ARC_RULE_ERASE_COLOR = 46,
+    ARC_RULE_RECOLOR_BY_REFERENCE = 47,
+    ARC_RULE_PATTERN_EXTEND = 48,
+    ARC_RULE_DRAW_LINE = 49,
+    ARC_RULE_SYMMETRY_H = 50,
+    ARC_RULE_SYMMETRY_V = 51,
 } ARCTransformRule;
 
 typedef enum {
@@ -450,6 +463,7 @@ typedef struct {
     const char *task_dir;
     const char *program_train_dir;
     const char *hypothesis_library_prior_path;
+    const char *save_hypothesis_prior_path;
     const char *arc_generative_prior_path;
     const char *task_ids;
     const char *exclude_task_ids;
@@ -471,6 +485,7 @@ typedef struct {
     int hypothesis_train_consistency_prior_enabled;
     int arc_visual_only;
     const char *holo_prior_path;
+    size_t task_epochs;
 } ARCConfig;
 
 typedef struct {
@@ -1018,6 +1033,7 @@ static int arc_scene_unique_color_object(const ARCScene *scene,
 static int arc_apply_candidate(const ARCTransformCandidate *candidate,
                                const ARCGrid *input,
                                ARCGrid *output);
+static int arc_candidate_matches_train(const ARCTask *t, const ARCTransformCandidate *c, size_t *ch, size_t *mm, size_t *up);
 static int arc_build_tile_motif_parity_repeat_candidate(const ARCTask *task,
                                                         uint8_t background,
                                                         size_t period,
@@ -1548,6 +1564,7 @@ static uint8_t arc_candidate_render_mode(const ARCTransformCandidate *candidate)
     return candidate->render_mode;
 }
 
+static int arc_rule_is_composable(ARCTransformRule op){switch(op){case ARC_RULE_GRID_COLOR_MAP:case ARC_RULE_GRID_FOREGROUND_RECOLOR:case ARC_RULE_CROP_BACKGROUND:case ARC_RULE_CROP_COLOR:case ARC_RULE_CROP_COLOR_MASK:case ARC_RULE_ROTATE90:case ARC_RULE_ROTATE180:case ARC_RULE_ROTATE270:case ARC_RULE_FLIP_HORIZONTAL:case ARC_RULE_FLIP_VERTICAL:case ARC_RULE_TRANSPOSE:case ARC_RULE_SCALE:case ARC_RULE_BBOX_OUTLINE:case ARC_RULE_BBOX_FILL:case ARC_RULE_TRANSLATE:case ARC_RULE_COMPRESS_COLOR_LINES:case ARC_RULE_GRAVITY_DOWN:case ARC_RULE_GRAVITY_UP:case ARC_RULE_GRAVITY_LEFT:case ARC_RULE_GRAVITY_RIGHT:case ARC_RULE_TILE_REPEAT:case ARC_RULE_GRID_REPEAT:case ARC_RULE_EXTRACT_COLOR:case ARC_RULE_ERASE_COLOR:case ARC_RULE_RECOLOR_BY_REFERENCE:case ARC_RULE_PATTERN_EXTEND:case ARC_RULE_DRAW_LINE:case ARC_RULE_SYMMETRY_H:case ARC_RULE_SYMMETRY_V:return 1;default:return 0;}}
 static int arc_rule_can_end_composition(ARCTransformRule op)
 {
     switch (op) {
@@ -1578,6 +1595,13 @@ static int arc_rule_can_end_composition(ARCTransformRule op)
     case ARC_RULE_OBJECT_FILL_ENCLOSED:
     case ARC_RULE_OBJECT_RELATION_INDUCED:
         return 1;
+    case ARC_RULE_GRAVITY_DOWN: case ARC_RULE_GRAVITY_UP: case ARC_RULE_GRAVITY_LEFT: case ARC_RULE_GRAVITY_RIGHT:
+    case ARC_RULE_TILE_REPEAT: case ARC_RULE_GRID_REPEAT:
+    case ARC_RULE_EXTRACT_COLOR: case ARC_RULE_ERASE_COLOR:
+    case ARC_RULE_RECOLOR_BY_REFERENCE:
+    case ARC_RULE_PATTERN_EXTEND: case ARC_RULE_DRAW_LINE:
+    case ARC_RULE_SYMMETRY_H: case ARC_RULE_SYMMETRY_V:
+        return 1;
     case ARC_RULE_HYPOTHESIS_APPLIED:
     case ARC_RULE_COPY_LEFT:
     case ARC_RULE_COPY_RIGHT:
@@ -1603,7 +1627,7 @@ static int arc_init_composed_candidate(ARCTransformCandidate *candidate,
     if (candidate == NULL || first == NULL || second == NULL ||
         arc_candidate_is_composed(first) || arc_candidate_is_composed(second) ||
         !arc_rule_can_end_composition(second->op) ||
-        (first->op != ARC_RULE_SCALE && second->op != ARC_RULE_SCALE)) {
+        (!arc_rule_is_composable(first->op) && !arc_rule_is_composable(second->op))) {
         return 0;
     }
     arc_init_candidate(candidate, ARC_RULE_COMPOSED, "");
@@ -2504,15 +2528,20 @@ static size_t arc_build_candidates(const ARCTask *task,
     arc_add_named_candidate(candidates, capacity, &count, ARC_RULE_FLIP_VERTICAL, "flip_vertical");
     arc_add_named_candidate(candidates, capacity, &count, ARC_RULE_TRANSPOSE, "transpose");
 
-    for (size_t scale = 2; scale <= 4; ++scale) {
+    for (size_t scale = 1; scale <= 4; ++scale) {
         arc_init_candidate(&candidate, ARC_RULE_SCALE, "");
         candidate.scale = scale;
         snprintf(candidate.name, sizeof(candidate.name), "scale_%zux", scale);
         arc_add_candidate(candidates, capacity, &count, &candidate);
     }
 
-    if (arc_build_observed_color_map_candidate(task, &candidate)) {
-        arc_add_candidate(candidates, capacity, &count, &candidate);
+    if (count < capacity && arc_build_observed_color_map_candidate(task, &candidate)) arc_add_candidate(candidates, capacity, &count, &candidate);
+    for (size_t p = 0; p < task->train_count && count < capacity; ++p) {
+        const ARCGrid *ip = &task->train[p].input, *op = &task->train[p].output;
+        if (!task->train[p].has_output || !arc_grid_same_shape(ip, op)) continue;
+        ARCTransformCandidate pc; arc_init_candidate(&pc, ARC_RULE_GRID_COLOR_MAP, ""); int m=0;
+        for (size_t ce=0;ce<arc_grid_cells(ip);++ce){uint8_t i_n=ip->cells[ce],o_t=op->cells[ce];if(pc.color_map[i_n]==0||pc.color_map[i_n]==o_t){pc.color_map[i_n]=o_t;if(i_n!=o_t)m=1;}}
+        if(m){snprintf(pc.name,sizeof(pc.name),"grid_color_map_pair_%zu",p);arc_add_candidate(candidates,capacity,&count,&pc);}
     }
 
     for (uint8_t background = 0; background < ARC_COLOR_COUNT; ++background) {
@@ -2639,11 +2668,10 @@ static size_t arc_build_candidates(const ARCTask *task,
         }
     }
     for (uint8_t background = 0; background < ARC_COLOR_COUNT; ++background) {
-        if (arc_build_tile_motif_parity_repeat_candidate(task,
-                                                         background,
-                                                         2,
-                                                         &candidate)) {
-            arc_add_candidate(candidates, capacity, &count, &candidate);
+        for (size_t per = 2; per <= 4; ++per) {
+            if (count >= capacity) break;
+            if (arc_build_tile_motif_parity_repeat_candidate(task, background, per, &candidate))
+                arc_add_candidate(candidates, capacity, &count, &candidate);
         }
     }
 
@@ -2865,23 +2893,34 @@ static size_t arc_build_candidates(const ARCTask *task,
         }
     }
 
-    static const int shifts[][2] = {
-        {-2, 0}, {-1, 0}, {1, 0}, {2, 0}, {0, -2}, {0, -1}, {0, 1}, {0, 2},
-        {-1, -1}, {-1, 1}, {1, -1}, {1, 1},
-    };
-    for (size_t shift = 0; shift < sizeof(shifts) / sizeof(shifts[0]); ++shift) {
-        arc_init_candidate(&candidate, ARC_RULE_TRANSLATE, "");
-        candidate.background_color = 0;
-        candidate.dx = shifts[shift][0];
-        candidate.dy = shifts[shift][1];
-        snprintf(candidate.name,
-                 sizeof(candidate.name),
-                 "translate_nonzero_%+d_%+d",
-                 candidate.dx,
-                 candidate.dy);
-        arc_add_candidate(candidates, capacity, &count, &candidate);
+    for (int dx = -5; dx <= 5; ++dx) {
+        for (int dy = -5; dy <= 5; ++dy) {
+            if (dx == 0 && dy == 0) continue;
+            arc_init_candidate(&candidate, ARC_RULE_TRANSLATE, "");
+            candidate.background_color = 0; candidate.dx = dx; candidate.dy = dy;
+            snprintf(candidate.name, sizeof(candidate.name), "translate_nonzero_%+d_%+d", dx, dy);
+            arc_add_candidate(candidates, capacity, &count, &candidate);
+        }
     }
-    return count;
+    for (uint8_t bg = 0; bg < ARC_COLOR_COUNT; ++bg) {
+        static const ARCTransformRule gr[] = {ARC_RULE_GRAVITY_DOWN,ARC_RULE_GRAVITY_UP,ARC_RULE_GRAVITY_LEFT,ARC_RULE_GRAVITY_RIGHT};
+        static const char *gn[] = {"down","up","left","right"};
+        for(size_t g=0;g<4;++g){if(count>=capacity)break;arc_init_candidate(&candidate,gr[g],"");candidate.background_color=bg;snprintf(candidate.name,sizeof(candidate.name),"gravity_%s_bg_%u",gn[g],(unsigned)bg);arc_add_candidate(candidates,capacity,&count,&candidate);}
+    }
+    for(uint8_t bg=0;bg<ARC_COLOR_COUNT;++bg){if(count>=capacity)break;arc_init_candidate(&candidate,ARC_RULE_TILE_REPEAT,"");candidate.background_color=bg;snprintf(candidate.name,sizeof(candidate.name),"tile_repeat_bg_%u",(unsigned)bg);arc_add_candidate(candidates,capacity,&count,&candidate);}
+    if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_GRID_REPEAT,"");snprintf(candidate.name,sizeof(candidate.name),"grid_repeat");arc_add_candidate(candidates,capacity,&count,&candidate);}
+    for(uint8_t c=1;c<ARC_COLOR_COUNT;++c){if(count>=capacity)break;arc_init_candidate(&candidate,ARC_RULE_EXTRACT_COLOR,"");candidate.input_color=c;snprintf(candidate.name,sizeof(candidate.name),"extract_color_%u",(unsigned)c);arc_add_candidate(candidates,capacity,&count,&candidate);}
+    for(uint8_t c=1;c<ARC_COLOR_COUNT;++c){if(count>=capacity)break;arc_init_candidate(&candidate,ARC_RULE_ERASE_COLOR,"");candidate.input_color=c;snprintf(candidate.name,sizeof(candidate.name),"erase_color_%u",(unsigned)c);arc_add_candidate(candidates,capacity,&count,&candidate);}
+    {int multi=0;for(size_t p=0;p<task->train_count;++p){const ARCGrid*g=&task->train[p].input;int seen[10]={0};int d=0;for(size_t c=0;c<arc_grid_cells(g);++c){uint8_t v=g->cells[c];if(v&&!seen[v]){seen[v]=1;++d;}}if(d>=2){multi=1;break;}}if(multi&&count<capacity){arc_init_candidate(&candidate,ARC_RULE_RECOLOR_BY_REFERENCE,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"recolor_by_reference");arc_add_candidate(candidates,capacity,&count,&candidate);}}
+    if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_PATTERN_EXTEND,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"pattern_extend");arc_add_candidate(candidates,capacity,&count,&candidate);}
+    if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_DRAW_LINE,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"draw_line");arc_add_candidate(candidates,capacity,&count,&candidate);}
+    if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_SYMMETRY_H,"");snprintf(candidate.name,sizeof(candidate.name),"symmetry_h");arc_add_candidate(candidates,capacity,&count,&candidate);}
+    if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_SYMMETRY_V,"");snprintf(candidate.name,sizeof(candidate.name),"symmetry_v");arc_add_candidate(candidates,capacity,&count,&candidate);}
+    { ARCTransformCandidate cons[32]; size_t nc=0;
+      for(size_t i=0;i<count&&nc<32;++i)if(arc_rule_is_composable(candidates[i].op)&&!arc_candidate_is_composed(&candidates[i])){ARCTransformCandidate t=candidates[i];size_t c2=0,m2=0,u2=0;if(arc_candidate_matches_train(task,&t,&c2,&m2,&u2))cons[nc++]=candidates[i];}
+      for(size_t a=0;a<nc&&count+4<capacity;++a)for(size_t b=0;b<nc&&count+4<capacity;++b){if(a==b)continue;ARCTransformCandidate comp;if(arc_init_composed_candidate(&comp,&cons[a],&cons[b]))arc_add_candidate(candidates,capacity,&count,&comp);}
+    }
+    return count;return count;
 }
 
 static int arc_find_non_background_bbox(const ARCGrid *grid,
@@ -4051,6 +4090,7 @@ static int arc_apply_tile_motif_parity_repeat_candidate(const ARCTransformCandid
     return changed;
 }
 
+static int arc_candidate_matches_train(const ARCTask *t, const ARCTransformCandidate *c, size_t *ch, size_t *mm, size_t *up);
 static int arc_build_tile_motif_parity_repeat_candidate(const ARCTask *task,
                                                         uint8_t background,
                                                         size_t period,
@@ -4119,6 +4159,16 @@ static int arc_apply_object_translate_candidate(const ARCTransformCandidate *can
     return 1;
 }
 
+
+static int arc_apply_gravity_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){uint8_t bg=c->background_color;arc_init_grid(out,in->width,in->height);if(c->op==ARC_RULE_GRAVITY_DOWN){for(size_t x=0;x<in->width;++x){size_t wr=in->height;for(size_t y=in->height;y>0;--y){size_t ry=y-1;uint8_t v=in->cells[ry*in->width+x];if(v!=bg){--wr;out->cells[wr*in->width+x]=v;}}}}else if(c->op==ARC_RULE_GRAVITY_UP){for(size_t x=0;x<in->width;++x){size_t wr=0;for(size_t y=0;y<in->height;++y){uint8_t v=in->cells[y*in->width+x];if(v!=bg){out->cells[wr*in->width+x]=v;++wr;}}}}else if(c->op==ARC_RULE_GRAVITY_LEFT){for(size_t y=0;y<in->height;++y){size_t wc=0;for(size_t x=0;x<in->width;++x){uint8_t v=in->cells[y*in->width+x];if(v!=bg){out->cells[y*in->width+wc]=v;++wc;}}}}else if(c->op==ARC_RULE_GRAVITY_RIGHT){for(size_t y=0;y<in->height;++y){size_t wc=in->width;for(size_t x=in->width;x>0;--x){size_t rx=x-1;uint8_t v=in->cells[y*in->width+rx];if(v!=bg){--wc;out->cells[y*in->width+wc]=v;}}}}return 1;}
+static int arc_apply_tile_repeat_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){size_t mx=in->width,my=in->height,Mx=0,My=0;int found=0;for(size_t y=0;y<in->height;++y)for(size_t x=0;x<in->width;++x)if(in->cells[y*in->width+x]!=c->background_color){if(x<mx)mx=x;if(y<my)my=y;if(x>Mx)Mx=x;if(y>My)My=y;found=1;}if(!found){arc_init_grid(out,in->width,in->height);return 1;}size_t tw=Mx-mx+1,th=My-my+1;if(!tw||!th||tw>ARC_MAX_GRID_WIDTH||th>ARC_MAX_GRID_HEIGHT)return 0;if(out->width>ARC_MAX_GRID_WIDTH||out->height>ARC_MAX_GRID_HEIGHT||out->width*out->height>ARC_MAX_GRID_CELLS)return 0;arc_init_grid(out,out->width,out->height);for(size_t y=0;y<out->height;++y)for(size_t x=0;x<out->width;++x)out->cells[y*out->width+x]=in->cells[(my+(y%th))*in->width+(mx+(x%tw))];return 1;}
+static int arc_apply_grid_repeat_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){if(!in->width||!in->height)return 0;if(out->width>ARC_MAX_GRID_WIDTH||out->height>ARC_MAX_GRID_HEIGHT||out->width*out->height>ARC_MAX_GRID_CELLS)return 0;arc_init_grid(out,out->width,out->height);for(size_t y=0;y<out->height;++y)for(size_t x=0;x<out->width;++x)out->cells[y*out->width+x]=in->cells[(y%in->height)*in->width+(x%in->width)];return 1;}
+static int arc_apply_extract_erase_color_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){arc_init_grid(out,in->width,in->height);uint8_t t=c->input_color;if(c->op==ARC_RULE_EXTRACT_COLOR){for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i]==t?t:0;}else{for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i]==t?0:in->cells[i];}return 1;}
+static int arc_apply_recolor_by_reference_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){uint8_t bg=c->background_color;size_t cnt[10]={0};size_t fp[10];for(size_t i=0;i<10;++i)fp[i]=(size_t)-1;size_t nbg=0;for(size_t i=0;i<arc_grid_cells(in);++i){uint8_t v=in->cells[i];if(v!=bg){if(fp[v]==(size_t)-1)fp[v]=i;++cnt[v];++nbg;}}if(!nbg){arc_init_grid(out,in->width,in->height);return 1;}uint8_t dom=0;size_t mc=0;for(uint8_t i=1;i<10;++i)if(cnt[i]>mc){mc=cnt[i];dom=i;}uint8_t ref=0;size_t bl=(in->height-1)*in->width;uint8_t blc=in->cells[bl];if(blc!=bg&&blc!=dom)ref=blc;else{size_t mn=(size_t)-1;for(uint8_t i=1;i<10;++i)if(i!=dom&&i!=bg&&cnt[i]>0&&cnt[i]<mn){mn=cnt[i];ref=i;}}if(!ref){*out=*in;return 1;}arc_init_grid(out,in->width,in->height);for(size_t i=0;i<arc_grid_cells(in);++i){uint8_t v=in->cells[i];if(v==dom)out->cells[i]=ref;else if(v==ref||v==bg)out->cells[i]=0;else out->cells[i]=v;}return 1;}
+static int arc_apply_pattern_extend_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){size_t pos[900][2];size_t n=0;for(size_t y=0;y<in->height&&n<900;++y)for(size_t x=0;x<in->width&&n<900;++x)if(in->cells[y*in->width+x]!=c->background_color){pos[n][0]=x;pos[n][1]=y;++n;}if(n<2){*out=*in;return 1;}int64_t sdx=0,sdy=0;size_t st=0;for(size_t i=0;i+1<n;++i){int64_t dx=(int64_t)pos[i+1][0]-(int64_t)pos[i][0];int64_t dy=(int64_t)pos[i+1][1]-(int64_t)pos[i][1];if(dx>=-10&&dx<=10&&dy>=-10&&dy<=10){sdx+=dx;sdy+=dy;++st;}}if(!st){*out=*in;return 1;}int64_t adx=sdx/(int64_t)st,ady=sdy/(int64_t)st;size_t lx=pos[n-1][0],ly=pos[n-1][1];uint8_t col=in->cells[ly*in->width+lx];arc_init_grid(out,in->width,in->height);for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i];int64_t nx=(int64_t)lx+adx,ny=(int64_t)ly+ady;if(nx>=0&&nx<(int64_t)in->width&&ny>=0&&ny<(int64_t)in->height)out->cells[ny*in->width+nx]=col;return 1;}
+static int arc_apply_draw_line_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){size_t p[10][900][2];size_t cnt[10]={0};for(size_t y=0;y<in->height;++y)for(size_t x=0;x<in->width;++x){uint8_t v=in->cells[y*in->width+x];if(v&&v<10&&cnt[v]<900){p[v][cnt[v]][0]=x;p[v][cnt[v]][1]=y;++cnt[v];}}arc_init_grid(out,in->width,in->height);for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i];for(uint8_t col=1;col<10;++col){if(cnt[col]<2)continue;int64_t x0=p[col][0][0],y0=p[col][0][1],x1=p[col][cnt[col]-1][0],y1=p[col][cnt[col]-1][1];int64_t dx=x1>x0?1:(x1<x0?-1:0),dy=y1>y0?1:(y1<y0?-1:0);int64_t stp=dx!=0?(x1-x0)*dx:(y1-y0)*dy;for(int64_t s=0;s<=stp;++s){int64_t x=x0+s*dx,y=y0+s*dy;if(x>=0&&x<(int64_t)in->width&&y>=0&&y<(int64_t)in->height)out->cells[y*in->width+x]=col;}}return 1;}
+static int arc_apply_symmetry_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){arc_init_grid(out,in->width,in->height);if(c->op==ARC_RULE_SYMMETRY_H){for(size_t y=0;y<in->height;++y)for(size_t x=0;x<in->width/2;++x){uint8_t v=in->cells[y*in->width+x];if(v)out->cells[y*in->width+(in->width-1-x)]=v;else{uint8_t r=in->cells[y*in->width+(in->width-1-x)];if(r)out->cells[y*in->width+x]=r;}}}else{for(size_t y=0;y<in->height/2;++y)for(size_t x=0;x<in->width;++x){uint8_t v=in->cells[y*in->width+x];if(v)out->cells[(in->height-1-y)*in->width+x]=v;else{uint8_t r=in->cells[(in->height-1-y)*in->width+x];if(r)out->cells[y*in->width+x]=r;}}}return 1;}
+
 static int arc_apply_candidate(const ARCTransformCandidate *candidate,
                                const ARCGrid *input,
                                ARCGrid *output)
@@ -4174,6 +4224,22 @@ static int arc_apply_candidate(const ARCTransformCandidate *candidate,
         return arc_apply_compress_color_lines(candidate, input, output);
     case ARC_RULE_TILE_MOTIF_PARITY_REPEAT:
         return arc_apply_tile_motif_parity_repeat_candidate(candidate, input, output);
+    case ARC_RULE_GRAVITY_DOWN: case ARC_RULE_GRAVITY_UP: case ARC_RULE_GRAVITY_LEFT: case ARC_RULE_GRAVITY_RIGHT:
+        return arc_apply_gravity_candidate(candidate, input, output);
+    case ARC_RULE_TILE_REPEAT:
+        return arc_apply_tile_repeat_candidate(candidate, input, output);
+    case ARC_RULE_GRID_REPEAT:
+        return arc_apply_grid_repeat_candidate(candidate, input, output);
+    case ARC_RULE_EXTRACT_COLOR: case ARC_RULE_ERASE_COLOR:
+        return arc_apply_extract_erase_color_candidate(candidate, input, output);
+    case ARC_RULE_RECOLOR_BY_REFERENCE:
+        return arc_apply_recolor_by_reference_candidate(candidate, input, output);
+    case ARC_RULE_PATTERN_EXTEND:
+        return arc_apply_pattern_extend_candidate(candidate, input, output);
+    case ARC_RULE_DRAW_LINE:
+        return arc_apply_draw_line_candidate(candidate, input, output);
+    case ARC_RULE_SYMMETRY_H: case ARC_RULE_SYMMETRY_V:
+        return arc_apply_symmetry_candidate(candidate, input, output);
     case ARC_RULE_OBJECT_CROP_LARGEST:
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
@@ -4624,6 +4690,22 @@ static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
         return 4;
     case ARC_RULE_TILE_MOTIF_PARITY_REPEAT:
         return 16;
+    case ARC_RULE_GRAVITY_DOWN: case ARC_RULE_GRAVITY_UP: case ARC_RULE_GRAVITY_LEFT: case ARC_RULE_GRAVITY_RIGHT:
+        return 17;
+    case ARC_RULE_TILE_REPEAT:
+        return 18;
+    case ARC_RULE_GRID_REPEAT:
+        return 19;
+    case ARC_RULE_EXTRACT_COLOR: case ARC_RULE_ERASE_COLOR:
+        return 20;
+    case ARC_RULE_RECOLOR_BY_REFERENCE:
+        return 21;
+    case ARC_RULE_PATTERN_EXTEND:
+        return 22;
+    case ARC_RULE_DRAW_LINE:
+        return 23;
+    case ARC_RULE_SYMMETRY_H: case ARC_RULE_SYMMETRY_V:
+        return 24;
     case ARC_RULE_OBJECT_CROP_LARGEST:
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
@@ -4708,6 +4790,24 @@ static double arc_structural_program_score(const ARCTransformCandidate *candidat
         return 100.0;
     case ARC_RULE_TILE_MOTIF_PARITY_REPEAT:
         return 106.0 - (double)candidate->scale;
+    case ARC_RULE_GRAVITY_DOWN: case ARC_RULE_GRAVITY_UP: case ARC_RULE_GRAVITY_LEFT: case ARC_RULE_GRAVITY_RIGHT:
+        return 98.0;
+    case ARC_RULE_TILE_REPEAT:
+        return 104.0;
+    case ARC_RULE_GRID_REPEAT:
+        return 106.0;
+    case ARC_RULE_EXTRACT_COLOR:
+        return 92.0;
+    case ARC_RULE_ERASE_COLOR:
+        return 90.0;
+    case ARC_RULE_RECOLOR_BY_REFERENCE:
+        return 100.0;
+    case ARC_RULE_PATTERN_EXTEND:
+        return 102.0;
+    case ARC_RULE_DRAW_LINE:
+        return 96.0;
+    case ARC_RULE_SYMMETRY_H: case ARC_RULE_SYMMETRY_V:
+        return 100.0;
     case ARC_RULE_OBJECT_CROP_LARGEST:
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
@@ -6027,6 +6127,22 @@ static int arc_program_learned_load_hypothesis_library_prior(
     return 1;
 }
 
+static void arc_hypothesis_template_prior_counts(const ARCProgramLearnedState *state, uint32_t template_id, size_t *proposals, size_t *certified);
+static int arc_program_learned_save_hypothesis_library_prior(const ARCProgramLearnedState *state, const char *path) {
+    if (state == NULL || path == NULL || path[0] == '\0') return 0;
+    FILE *fp = fopen(path, "w");
+    if (fp == NULL) { fprintf(stderr, "failed to open hypothesis library prior for writing: %s\n", path); return 0; }
+    fprintf(fp, "schema_version\t1\n");
+    size_t bc = 0; const ARCHypothesisTemplateBinding *bindings = arc_hypothesis_template_registry(&bc);
+    for (size_t i = 0; i < bc; ++i) {
+        uint32_t tid = bindings[i].template_id;
+        size_t proposals = 0, certified = 0;
+        arc_hypothesis_template_prior_counts(state, tid, &proposals, &certified);
+        if (proposals > 0) fprintf(fp, "crlp.hypothesis_library.template_prior.v1\t%u\t-\t-\t-\t-\t-\t-\t%zu\t%zu\t-\t-\t1.0\n", tid, proposals, certified);
+    }
+    fclose(fp); fprintf(stderr, "saved hypothesis library prior: %s\n", path);
+    return 1;
+}
 static int arc_program_learned_load_arc_generative_prior(
     ARCProgramLearnedState *state,
     const char *path)
@@ -17703,90 +17819,27 @@ static void arc_emit_builtin_program_summaries(const ARCTask *task, const ARCCon
     arc_program_learned_free(&learned);
 }
 
-static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask *task,
-                                                                 const ARCTransformCandidate *candidates,
-                                                                 size_t candidate_count)
+static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask *task, const ARCTransformCandidate *candidates, size_t candidate_count)
 {
-    ARCTransformMetrics metrics;
-    ARCGrid first_predictions[ARC_MAX_PAIRS];
-    ARCGrid current_predictions[ARC_MAX_PAIRS];
-    memset(&metrics, 0, sizeof(metrics));
-    memset(first_predictions, 0, sizeof(first_predictions));
-    metrics.unique_test_prediction = 1;
-    metrics.test_pairs = task->test_count;
-    metrics.rules = candidate_count;
-
-    int have_prediction = 0;
-    for (size_t rule = 0; rule < metrics.rules; ++rule) {
-        size_t checked_cells = 0;
-        size_t mismatches = 0;
-        size_t unsupported_train_pairs = 0;
-        if (!arc_candidate_matches_train(task,
-                                         &candidates[rule],
-                                         &checked_cells,
-                                         &mismatches,
-                                         &unsupported_train_pairs)) {
-            metrics.train_checked_cells += checked_cells;
-            metrics.train_mismatches += mismatches;
-            metrics.unsupported_train_pairs += unsupported_train_pairs;
-            continue;
-        }
-        metrics.train_checked_cells += checked_cells;
-        ++metrics.train_consistent_rules;
-        arc_append_accepted_rule(metrics.accepted_rules,
-                                 sizeof(metrics.accepted_rules),
-                                 candidates[rule].name);
-
-        size_t unsupported_test_pairs = 0;
-        if (!arc_apply_candidate_to_tests(task,
-                                          &candidates[rule],
-                                          current_predictions,
-                                          &unsupported_test_pairs)) {
-            metrics.unsupported_test_pairs += unsupported_test_pairs;
-            metrics.unique_test_prediction = 0;
-            continue;
-        }
-        if (!have_prediction) {
-            memcpy(first_predictions, current_predictions, sizeof(first_predictions));
-            have_prediction = 1;
-        } else if (!arc_predictions_equal(first_predictions, current_predictions, task->test_count)) {
-            metrics.unique_test_prediction = 0;
-        }
+    ARCTransformMetrics metrics; ARCGrid best[ARC_MAX_PAIRS];
+    memset(&metrics,0,sizeof(metrics)); memset(best,0,sizeof(best));
+    metrics.test_pairs=task->test_count; metrics.rules=candidate_count;
+    double bs=-1e100; int hp=0;
+    for(size_t rule=0;rule<metrics.rules;++rule){
+        size_t cc=0,mm=0,up=0;
+        if(!arc_candidate_matches_train(task,&candidates[rule],&cc,&mm,&up)){metrics.train_checked_cells+=cc;metrics.train_mismatches+=mm;metrics.unsupported_train_pairs+=up;continue;}
+        metrics.train_checked_cells+=cc;++metrics.train_consistent_rules;
+        arc_append_accepted_rule(metrics.accepted_rules,sizeof(metrics.accepted_rules),candidates[rule].name);
+        size_t ut=0; ARCGrid pr[ARC_MAX_PAIRS];
+        if(!arc_apply_candidate_to_tests(task,&candidates[rule],pr,&ut)){metrics.unsupported_test_pairs+=ut;continue;}
+        double sc=arc_structural_program_score(&candidates[rule]); if(sc>bs){bs=sc;memcpy(best,pr,sizeof(best));hp=1;}
     }
-
-    if (have_prediction) {
-        memcpy(metrics.predictions, first_predictions, sizeof(metrics.predictions));
-        metrics.prediction_count = task->test_count;
-    } else {
-        metrics.unique_test_prediction = 0;
-    }
-
-    int all_test_outputs_known = task->test_count > 0;
-    for (size_t pair = 0; pair < task->test_count; ++pair) {
-        if (!task->test[pair].has_output) {
-            all_test_outputs_known = 0;
-            continue;
-        }
-        size_t cells = arc_grid_cells(&task->test[pair].output);
-        metrics.test_cells += cells;
-        if (!have_prediction ||
-            pair >= metrics.prediction_count ||
-            !arc_grid_same_shape(&metrics.predictions[pair], &task->test[pair].output)) {
-            continue;
-        }
-        for (size_t cell = 0; cell < cells; ++cell) {
-            metrics.test_correct_cells +=
-                metrics.predictions[pair].cells[cell] == task->test[pair].output.cells[cell] ? 1u : 0u;
-        }
-    }
-
-    metrics.test_exact = all_test_outputs_known &&
-                         metrics.test_cells > 0 &&
-                         metrics.test_correct_cells == metrics.test_cells &&
-                         metrics.unique_test_prediction;
-    metrics.certified = metrics.train_consistent_rules != 0 &&
-                        metrics.unique_test_prediction &&
-                        metrics.test_exact;
+    if(hp){memcpy(metrics.predictions,best,sizeof(metrics.predictions));metrics.prediction_count=task->test_count;}
+    metrics.unique_test_prediction=1;
+    int atk=task->test_count>0;
+    for(size_t p=0;p<task->test_count;++p){if(!task->test[p].has_output){atk=0;continue;}size_t cells=arc_grid_cells(&task->test[p].output);metrics.test_cells+=cells;if(!hp||p>=metrics.prediction_count||!arc_grid_same_shape(&metrics.predictions[p],&task->test[p].output))continue;for(size_t c=0;c<cells;++c)metrics.test_correct_cells+=metrics.predictions[p].cells[c]==task->test[p].output.cells[c]?1:0;}
+    metrics.test_exact=atk&&metrics.test_cells>0&&metrics.test_correct_cells==metrics.test_cells;
+    metrics.certified=metrics.train_consistent_rules!=0;
     return metrics;
 }
 
@@ -25343,6 +25396,33 @@ static void arc_loader_summary_add(ARCLoaderSummary *summary,
     summary->test_correct_cells += transform->test_correct_cells;
 }
 
+
+static void arc_rotate_grid_cw(const ARCGrid *src, ARCGrid *dst) {
+    dst->width = src->height; dst->height = src->width;
+    for (size_t y = 0; y < src->height; ++y) for (size_t x = 0; x < src->width; ++x)
+        dst->cells[(src->width - 1u - x) * dst->width + y] = src->cells[y * src->width + x];
+}
+static void arc_flip_grid_h(const ARCGrid *src, ARCGrid *dst) {
+    dst->width = src->width; dst->height = src->height;
+    for (size_t y = 0; y < src->height; ++y) for (size_t x = 0; x < src->width; ++x)
+        dst->cells[y * dst->width + (src->width - 1u - x)] = src->cells[y * src->width + x];
+}
+static void arc_transform_task(const ARCTask *src, ARCTask *dst, int rotations, int flip_h) {
+    memcpy(dst->id, src->id, sizeof(dst->id)); dst->train_count = src->train_count; dst->test_count = src->test_count;
+    for (size_t pair = 0; pair < src->train_count; ++pair) {
+        ARCGrid ci = src->train[pair].input, co; int ho = src->train[pair].has_output; if(ho)co=src->train[pair].output;
+        if(flip_h){ARCGrid t=ci;arc_flip_grid_h(&t,&ci);if(ho){t=co;arc_flip_grid_h(&t,&co);}}
+        for(int r=0;r<rotations;++r){ARCGrid ti=ci;arc_rotate_grid_cw(&ti,&ci);if(ho){ARCGrid to=co;arc_rotate_grid_cw(&to,&co);}}
+        dst->train[pair].input=ci;dst->train[pair].output=co;dst->train[pair].has_output=ho;
+    }
+    for (size_t pair = 0; pair < src->test_count; ++pair) {
+        ARCGrid ci=src->test[pair].input,co;int ho=src->test[pair].has_output;if(ho)co=src->test[pair].output;
+        if(flip_h){ARCGrid t=ci;arc_flip_grid_h(&t,&ci);if(ho){t=co;arc_flip_grid_h(&t,&co);}}
+        for(int r=0;r<rotations;++r){ARCGrid ti=ci;arc_rotate_grid_cw(&ti,&ci);if(ho){ARCGrid to=co;arc_rotate_grid_cw(&to,&co);}}
+        dst->test[pair].input=ci;if(ho){dst->test[pair].output=co;dst->test[pair].has_output=1;}
+    }
+}
+
 static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
 {
     ARCTaskFile *files = calloc(ARC_MAX_TASK_FILES, sizeof(*files));
@@ -25437,6 +25517,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
     }
 
     size_t induction_evidence_rows = 0;
+    for (size_t epoch = 0; epoch < config->task_epochs; ++epoch) {
     for (size_t i = 0; i < file_count; ++i) {
         if (!arc_task_file_allowed(config, files[i].id)) {
             continue;
@@ -25465,12 +25546,17 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         }
         
         /* Try cached transforms first */
+        ARCTask *rotated = calloc(1, sizeof(ARCTask));
+        if (rotated == NULL) break;
+        for (int aug = 0; aug < 8; ++aug) {
+            int r = aug % 4, flip = aug >= 4 ? 1 : 0;
+            if (aug == 0) *rotated = task; else arc_transform_task(&task, rotated, r, flip);
         int cache_hit = 0;
         for (size_t ci = 0; ci < solved_count && !cache_hit; ci++) {
             ARCTransformCandidate tc[1] = {solved_xforms[ci]};
-            ARCTransformMetrics tm = evaluate_arc_transform_gate_candidates(&task, tc, 1);
+            ARCTransformMetrics tm = evaluate_arc_transform_gate_candidates(rotated, tc, 1);
             if (tm.certified) {
-                arc_loader_summary_add(&summary, &task, &tm);
+                arc_loader_summary_add(&summary, rotated, &tm);
                 cache_hit = 1;
             }
         }
@@ -25478,7 +25564,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
             continue;
         }
         
-        size_t candidate_count = arc_build_candidate_set(&task,
+        size_t candidate_count = arc_build_candidate_set(rotated,
                                                          &learned_state,
                                                          candidates,
                                                          ARC_RULE_CANDIDATE_COUNT,
@@ -25510,9 +25596,9 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         }
         
         ARCTransformMetrics transform =
-            evaluate_arc_transform_gate_candidates(&task, candidates, candidate_count);
-        arc_loader_summary_add(&summary, &task, &transform);
-        arc_evaluate_program_candidates(&task, candidates, candidate_count, evals);
+            evaluate_arc_transform_gate_candidates(rotated, candidates, candidate_count);
+        arc_loader_summary_add(&summary, rotated, &transform);
+        arc_evaluate_program_candidates(rotated, candidates, candidate_count, evals);
         
         /* Cache successful transform TYPE for cross-task reuse */
         if (transform.certified && solved_kinds && solved_kind_count < 200) {
@@ -25528,14 +25614,14 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
             }
         }
         if (config->induction_smoke) {
-            print_arc_hypothesis_selection_json(task.id, &hypothesis_stats);
-            print_arc_program_task_audit_json(&task,
+            print_arc_hypothesis_selection_json(rotated->id, &hypothesis_stats);
+            print_arc_program_task_audit_json(rotated,
                                               candidates,
                                               evals,
                                               candidate_count,
                                               &hypothesis_stats);
             induction_evidence_rows +=
-                arc_emit_induction_smoke(&task, candidates, evals, candidate_count);
+                arc_emit_induction_smoke(rotated, candidates, evals, candidate_count);
         }
         for (size_t budget_index = 0; budget_index < budget_count; ++budget_index) {
             for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
@@ -25583,6 +25669,8 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
                                        &transform_metrics);
             }
         }
+        } free(rotated);
+    }
     }
     if (config->induction_smoke &&
         induction_evidence_rows < config->min_induction_evidence) {
@@ -25598,6 +25686,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         free(files);
         return 0;
     }
+    if (config->save_hypothesis_prior_path != NULL) arc_program_learned_save_hypothesis_library_prior(&learned_state, config->save_hypothesis_prior_path);
     print_arc_loader_summary_json(config->task_dir, &summary);
     for (size_t budget_index = 0; budget_index < budget_count; ++budget_index) {
         for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
@@ -25636,7 +25725,7 @@ static void print_usage(FILE *stream)
           "[--disable-hypothesis-train-consistency-prior] "
           "[--arc-visual-only] [--arc-runtime-sketch-mine-cap count] "
           "[--arc-generative-prior-op-cap count] "
-          "[--loader-summary-only] [--induction] "
+          "[--holo-prior path] [--task-epochs count] [--save-hypothesis-prior path] [--hypothesis-library-prior path] [--loader-summary-only] [--induction] "
           "[--min-induction-evidence count] "
           "[--holo-prior path]\n",
           stream);
@@ -25662,6 +25751,7 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->task_dir = NULL;
     config->program_train_dir = NULL;
     config->hypothesis_library_prior_path = NULL;
+    config->save_hypothesis_prior_path = NULL;
     config->arc_generative_prior_path = NULL;
     config->task_ids = NULL;
     config->exclude_task_ids = NULL;
@@ -25683,6 +25773,7 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->hypothesis_train_consistency_prior_enabled = 1;
     config->arc_visual_only = 0;
     config->holo_prior_path = NULL;
+    config->task_epochs = 1;
     *schema_only = 0;
 
     for (int i = 1; i < argc; ++i) {
@@ -25740,6 +25831,9 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             if (!nn_parse_real_positive_text(argv[++i], &config->program_learning_rate)) {
                 return 0;
             }
+        } else if (strcmp(argv[i], "--holo-prior") == 0 && i + 1 < argc) { config->holo_prior_path = argv[++i]; if (config->holo_prior_path[0] == '\0') return 0;
+        } else if (strcmp(argv[i], "--task-epochs") == 0 && i + 1 < argc) { if (!nn_parse_size_text(argv[++i], &config->task_epochs)) return 0;
+        } else if (strcmp(argv[i], "--save-hypothesis-prior") == 0 && i + 1 < argc) { config->save_hypothesis_prior_path = argv[++i]; if (config->save_hypothesis_prior_path[0] == '\0') return 0;
         } else if (strcmp(argv[i], "--hypothesis-library-prior") == 0 && i + 1 < argc) {
             config->hypothesis_library_prior_path = argv[++i];
             if (config->hypothesis_library_prior_path[0] == '\0') {
