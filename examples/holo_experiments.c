@@ -944,13 +944,12 @@ static int run_arc_discovery(const char *task_dir, const char *od) {
     /* Test: for each test task, query holo, find similar training tasks */
     size_t solved = 0, improved = 0;
     
+    double (*act_embs)[2048] = calloc(500, sizeof(double[2048]));
     for (size_t i = n_train; i < n_tasks; i++) {
         mini_task_features(&tasks[i], feats);
         embed_mini_feats(eng, feats, dim, state_emb);
         
         /* Query holo store for similar tasks using VSA retrieval */
-        /* Build action embedding table for all training tasks */
-        double (*act_embs)[2048] = calloc(500, sizeof(double[2048]));
         double ho_scores[500];
         holo_ranker_score(holo, state_emb, (double*)act_embs, n_train, ho_scores);
         
@@ -976,6 +975,7 @@ static int run_arc_discovery(const char *task_dir, const char *od) {
     printf("ARC Discovery: %zu/%zu test tasks matched by holo retrieval (%.1f%%)\n",
            solved, n_tasks - n_train, (double)solved / (n_tasks - n_train) * 100.0);
     
+    free(act_embs);
     holo_ranker_destroy(holo); leos_engine_destroy(eng);
     free(tasks); fclose(fp);
     return 0;
