@@ -1,0 +1,62 @@
+#!/bin/bash
+# pre-push — auto-bump PATCH, block MINOR/MAJOR without override.
+#
+# Rules:
+#   PATCH (paper-only)  → auto-bump VERSION, commit, allow push
+#   MINOR (pipeline)    → block unless --no-verify or CRLP_FORCE_MINOR=1
+#   MAJOR (claims)      → block unless --no-verify or CRLP_FORCE_MAJOR=1
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+# Only check pushes to main
+REMOTE="${1:-}"
+BRANCH="${2:-}"
+if [[ "$BRANCH" != "refs/heads/main" ]]; then
+    exit 0
+fi
+
+# Get the remote ref we're pushing to
+REMOTE_REF=$(git rev-parse "$BRANCH" 2>/dev/null || echo "")
+if [ -z "$REMOTE_REF" ]; then
+    # First push — compare against empty tree
+    REMOTE_REF=$(git hash-object -t tree /dev/null)
+fi
+
+# Detect change type
+BUMP_OUTPUT=$(./scripts/version_bump.sh --base "$REMOTE_REF" 2>/dev/null || echo "unknown")
+echo "pre-push: $BUMP_OUTPUT"
+
+# Parse bump type
+if echo "$BUMP_OUTPUT" | grep -q "MAJOR"; then
+    if [[ "${CRLP_FORCE_MAJOR:-0}" == "1" ]]; then
+        echo "pre-push: MAJOR override active — allowing push"
+        ./scripts/version_bump.sh --base "$REMOTE_REF" --write
+        git add VERSION
+        git commit --amend --no-edit 2>/dev/null || git commit -m "release: $(cat VERSION)"
+    else
+        echo ""
+        echo "BLOCKED: Claims changed — this is a MAJOR version bump."
+        echo "  Set CRLP_FORCE_MAJOR=1 to override, or use git push --no-verify."
+        exit 1
+    fi
+elif echo "$BUMP_OUTPUT" | grep -q "MINOR"; then
+    if [[ "${CRLP_FORCE_MINOR:-0}" == "1" ]]; then
+        echo "pre-push: MINOR override active — allowing push"
+        ./scripts/version_bump.sh --base "$REMOTE_REF" --write
+        git add VERSION
+        git commit --amend --no-edit 2>/dev/null || git commit -m "release: $(cat VERSION)"
+    else
+        echo ""
+        echo "BLOCKED: Pipeline code changed — this is a MINOR version bump."
+        echo "  Set CRLP_FORCE_MINOR=1 to override, or use git push --no-verify."
+        exit 1
+    fi
+elif echo "$BUMP_OUTPUT" | grep -q "PATCH"; then
+    echo "pre-push: PATCH — auto-bumping VERSION"
+    ./scripts/version_bump.sh --base "$REMOTE_REF" --write
+    git add VERSION
+    git commit --amend --no-edit 2>/dev/null || git commit -m "release: $(cat VERSION)"
+fi
+
+exit 0
