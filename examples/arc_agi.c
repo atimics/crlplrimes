@@ -478,6 +478,7 @@ typedef struct {
     const char *arc_sketch_probe_prior_path;
     const char *arc_sketch_probe_attempts_path;
     int loader_summary_only;
+    int shuffle_tasks;
     int program_budget_grid;
     int induction_smoke;
     size_t arc_sketch_probe_sketches_per_task;
@@ -25569,13 +25570,14 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         }
     }
 
+    if (config->shuffle_tasks) { for(size_t i=0;i<file_count;++i){size_t j=i+(size_t)(arc_hash_mix((uint64_t)i,(uint64_t)config->seed)%(file_count-i));if(j!=i){ARCTaskFile t=files[i];files[i]=files[j];files[j]=t;}} }
     size_t induction_evidence_rows = 0;
     for (size_t epoch = 0; epoch < config->task_epochs; ++epoch) {
     for (size_t i = 0; i < file_count; ++i) {
         if (!arc_task_file_allowed(config, files[i].id)) {
             continue;
         }
-        if (config->max_tasks != 0 && summary.loaded_tasks >= config->max_tasks) {
+        if (config->max_tasks != 0 && epoch == 0 && summary.loaded_tasks >= config->max_tasks) {
             break;
         }
         ARCTask task;
@@ -25778,7 +25780,7 @@ static void print_usage(FILE *stream)
           "[--disable-hypothesis-train-consistency-prior] "
           "[--arc-visual-only] [--arc-runtime-sketch-mine-cap count] "
           "[--arc-generative-prior-op-cap count] "
-          "[--holo-prior path] [--task-epochs count] [--save-hypothesis-prior path] [--hypothesis-library-prior path] [--loader-summary-only] [--induction] "
+          "[--holo-prior path] [--task-epochs count] [--shuffle] [--save-hypothesis-prior path] [--hypothesis-library-prior path] [--loader-summary-only] [--induction] "
           "[--min-induction-evidence count] "
           "[--holo-prior path]\n",
           stream);
@@ -25814,6 +25816,7 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->arc_sketch_probe_prior_path = NULL;
     config->arc_sketch_probe_attempts_path = NULL;
     config->loader_summary_only = 0;
+    config->shuffle_tasks = 0;
     config->program_budget_grid = 0;
     config->induction_smoke = 0;
     config->arc_sketch_probe_sketches_per_task = 8;
@@ -25987,6 +25990,7 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             config->arc_visual_only = 1;
         } else if (strcmp(argv[i], "--holo-prior") == 0 && i + 1 < argc) {
             config->holo_prior_path = argv[++i];
+        } else if (strcmp(argv[i], "--shuffle") == 0) { config->shuffle_tasks = 1;
         } else if (strcmp(argv[i], "--loader-summary-only") == 0) {
             config->loader_summary_only = 1;
         } else if (strcmp(argv[i], "--induction") == 0) {
