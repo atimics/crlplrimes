@@ -177,6 +177,8 @@ typedef enum {
     ARC_RULE_DRAW_LINE = 49,
     ARC_RULE_SYMMETRY_H = 50,
     ARC_RULE_SYMMETRY_V = 51,
+    ARC_RULE_MULTISCALE = 52,
+    ARC_RULE_OBJECT_LABEL = 53,
 } ARCTransformRule;
 
 typedef enum {
@@ -1030,6 +1032,8 @@ static void print_json_string(const char *text);
 static int arc_scene_unique_color_object(const ARCScene *scene,
                                          uint8_t color,
                                          ARCObject *object_out);
+static int arc_apply_multiscale_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
+static int arc_apply_object_label_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
 static int arc_apply_candidate(const ARCTransformCandidate *candidate,
                                const ARCGrid *input,
                                ARCGrid *output);
@@ -1564,7 +1568,7 @@ static uint8_t arc_candidate_render_mode(const ARCTransformCandidate *candidate)
     return candidate->render_mode;
 }
 
-static int arc_rule_is_composable(ARCTransformRule op){switch(op){case ARC_RULE_GRID_COLOR_MAP:case ARC_RULE_GRID_FOREGROUND_RECOLOR:case ARC_RULE_CROP_BACKGROUND:case ARC_RULE_CROP_COLOR:case ARC_RULE_CROP_COLOR_MASK:case ARC_RULE_ROTATE90:case ARC_RULE_ROTATE180:case ARC_RULE_ROTATE270:case ARC_RULE_FLIP_HORIZONTAL:case ARC_RULE_FLIP_VERTICAL:case ARC_RULE_TRANSPOSE:case ARC_RULE_SCALE:case ARC_RULE_BBOX_OUTLINE:case ARC_RULE_BBOX_FILL:case ARC_RULE_TRANSLATE:case ARC_RULE_COMPRESS_COLOR_LINES:case ARC_RULE_GRAVITY_DOWN:case ARC_RULE_GRAVITY_UP:case ARC_RULE_GRAVITY_LEFT:case ARC_RULE_GRAVITY_RIGHT:case ARC_RULE_TILE_REPEAT:case ARC_RULE_GRID_REPEAT:case ARC_RULE_EXTRACT_COLOR:case ARC_RULE_ERASE_COLOR:case ARC_RULE_RECOLOR_BY_REFERENCE:case ARC_RULE_PATTERN_EXTEND:case ARC_RULE_DRAW_LINE:case ARC_RULE_SYMMETRY_H:case ARC_RULE_SYMMETRY_V:return 1;default:return 0;}}
+static int arc_rule_is_composable(ARCTransformRule op){switch(op){case ARC_RULE_GRID_COLOR_MAP:case ARC_RULE_GRID_FOREGROUND_RECOLOR:case ARC_RULE_CROP_BACKGROUND:case ARC_RULE_CROP_COLOR:case ARC_RULE_CROP_COLOR_MASK:case ARC_RULE_ROTATE90:case ARC_RULE_ROTATE180:case ARC_RULE_ROTATE270:case ARC_RULE_FLIP_HORIZONTAL:case ARC_RULE_FLIP_VERTICAL:case ARC_RULE_TRANSPOSE:case ARC_RULE_SCALE:case ARC_RULE_BBOX_OUTLINE:case ARC_RULE_BBOX_FILL:case ARC_RULE_TRANSLATE:case ARC_RULE_COMPRESS_COLOR_LINES:case ARC_RULE_GRAVITY_DOWN:case ARC_RULE_GRAVITY_UP:case ARC_RULE_GRAVITY_LEFT:case ARC_RULE_GRAVITY_RIGHT:case ARC_RULE_TILE_REPEAT:case ARC_RULE_GRID_REPEAT:case ARC_RULE_EXTRACT_COLOR:case ARC_RULE_ERASE_COLOR:case ARC_RULE_RECOLOR_BY_REFERENCE:case ARC_RULE_PATTERN_EXTEND:case ARC_RULE_DRAW_LINE:case ARC_RULE_SYMMETRY_H:case ARC_RULE_SYMMETRY_V:case ARC_RULE_MULTISCALE:case ARC_RULE_OBJECT_LABEL:return 1;default:return 0;}}
 static int arc_rule_can_end_composition(ARCTransformRule op)
 {
     switch (op) {
@@ -1601,6 +1605,7 @@ static int arc_rule_can_end_composition(ARCTransformRule op)
     case ARC_RULE_RECOLOR_BY_REFERENCE:
     case ARC_RULE_PATTERN_EXTEND: case ARC_RULE_DRAW_LINE:
     case ARC_RULE_SYMMETRY_H: case ARC_RULE_SYMMETRY_V:
+    case ARC_RULE_MULTISCALE: case ARC_RULE_OBJECT_LABEL:
         return 1;
     case ARC_RULE_HYPOTHESIS_APPLIED:
     case ARC_RULE_COPY_LEFT:
@@ -2916,6 +2921,8 @@ static size_t arc_build_candidates(const ARCTask *task,
     if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_DRAW_LINE,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"draw_line");arc_add_candidate(candidates,capacity,&count,&candidate);}
     if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_SYMMETRY_H,"");snprintf(candidate.name,sizeof(candidate.name),"symmetry_h");arc_add_candidate(candidates,capacity,&count,&candidate);}
     if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_SYMMETRY_V,"");snprintf(candidate.name,sizeof(candidate.name),"symmetry_v");arc_add_candidate(candidates,capacity,&count,&candidate);}
+    if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_MULTISCALE,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"multiscale");arc_add_candidate(candidates,capacity,&count,&candidate);}
+    if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_OBJECT_LABEL,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"object_label");arc_add_candidate(candidates,capacity,&count,&candidate);}
     { ARCTransformCandidate cons[32]; size_t nc=0;
       for(size_t i=0;i<count&&nc<32;++i)if(arc_rule_is_composable(candidates[i].op)&&!arc_candidate_is_composed(&candidates[i])){ARCTransformCandidate t=candidates[i];size_t c2=0,m2=0,u2=0;if(arc_candidate_matches_train(task,&t,&c2,&m2,&u2))cons[nc++]=candidates[i];}
       for(size_t a=0;a<nc&&count+4<capacity;++a)for(size_t b=0;b<nc&&count+4<capacity;++b){if(a==b)continue;ARCTransformCandidate comp;if(arc_init_composed_candidate(&comp,&cons[a],&cons[b]))arc_add_candidate(candidates,capacity,&count,&comp);}
@@ -4169,6 +4176,8 @@ static int arc_apply_pattern_extend_candidate(const ARCTransformCandidate*c,cons
 static int arc_apply_draw_line_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){size_t p[10][900][2];size_t cnt[10]={0};for(size_t y=0;y<in->height;++y)for(size_t x=0;x<in->width;++x){uint8_t v=in->cells[y*in->width+x];if(v&&v<10&&cnt[v]<900){p[v][cnt[v]][0]=x;p[v][cnt[v]][1]=y;++cnt[v];}}arc_init_grid(out,in->width,in->height);for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i];for(uint8_t col=1;col<10;++col){if(cnt[col]<2)continue;int64_t x0=p[col][0][0],y0=p[col][0][1],x1=p[col][cnt[col]-1][0],y1=p[col][cnt[col]-1][1];int64_t dx=x1>x0?1:(x1<x0?-1:0),dy=y1>y0?1:(y1<y0?-1:0);int64_t stp=dx!=0?(x1-x0)*dx:(y1-y0)*dy;for(int64_t s=0;s<=stp;++s){int64_t x=x0+s*dx,y=y0+s*dy;if(x>=0&&x<(int64_t)in->width&&y>=0&&y<(int64_t)in->height)out->cells[y*in->width+x]=col;}}return 1;}
 static int arc_apply_symmetry_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){arc_init_grid(out,in->width,in->height);if(c->op==ARC_RULE_SYMMETRY_H){for(size_t y=0;y<in->height;++y)for(size_t x=0;x<in->width/2;++x){uint8_t v=in->cells[y*in->width+x];if(v)out->cells[y*in->width+(in->width-1-x)]=v;else{uint8_t r=in->cells[y*in->width+(in->width-1-x)];if(r)out->cells[y*in->width+x]=r;}}}else{for(size_t y=0;y<in->height/2;++y)for(size_t x=0;x<in->width;++x){uint8_t v=in->cells[y*in->width+x];if(v)out->cells[(in->height-1-y)*in->width+x]=v;else{uint8_t r=in->cells[(in->height-1-y)*in->width+x];if(r)out->cells[y*in->width+x]=r;}}}return 1;}
 
+static int arc_apply_multiscale_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
+static int arc_apply_object_label_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
 static int arc_apply_candidate(const ARCTransformCandidate *candidate,
                                const ARCGrid *input,
                                ARCGrid *output)
@@ -4240,6 +4249,10 @@ static int arc_apply_candidate(const ARCTransformCandidate *candidate,
         return arc_apply_draw_line_candidate(candidate, input, output);
     case ARC_RULE_SYMMETRY_H: case ARC_RULE_SYMMETRY_V:
         return arc_apply_symmetry_candidate(candidate, input, output);
+    case ARC_RULE_MULTISCALE:
+        return arc_apply_multiscale_candidate(candidate, input, output);
+    case ARC_RULE_OBJECT_LABEL:
+        return arc_apply_object_label_candidate(candidate, input, output);
     case ARC_RULE_OBJECT_CROP_LARGEST:
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
@@ -4706,6 +4719,10 @@ static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
         return 23;
     case ARC_RULE_SYMMETRY_H: case ARC_RULE_SYMMETRY_V:
         return 24;
+    case ARC_RULE_MULTISCALE:
+        return 25;
+    case ARC_RULE_OBJECT_LABEL:
+        return 26;
     case ARC_RULE_OBJECT_CROP_LARGEST:
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
@@ -4808,6 +4825,10 @@ static double arc_structural_program_score(const ARCTransformCandidate *candidat
         return 96.0;
     case ARC_RULE_SYMMETRY_H: case ARC_RULE_SYMMETRY_V:
         return 100.0;
+    case ARC_RULE_MULTISCALE:
+        return 110.0;
+    case ARC_RULE_OBJECT_LABEL:
+        return 94.0;
     case ARC_RULE_OBJECT_CROP_LARGEST:
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
@@ -25952,6 +25973,72 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     return 1;
 }
 
+/* Scale-space: downsample input and try to match output dimensions */
+static void arc_downsample_max(const ARCGrid *src, ARCGrid *dst, size_t factor) {
+    if (factor < 2) { *dst = *src; return; }
+    dst->width = src->width / factor; dst->height = src->height / factor;
+    for (size_t y = 0; y < dst->height; ++y)
+        for (size_t x = 0; x < dst->width; ++x) {
+            uint8_t best = 0;
+            for (size_t dy = 0; dy < factor; ++dy)
+                for (size_t dx = 0; dx < factor; ++dx) {
+                    uint8_t v = src->cells[(y * factor + dy) * src->width + (x * factor + dx)];
+                    if (v > best) best = v;
+                }
+            dst->cells[y * dst->width + x] = best;
+        }
+}
+
+static void arc_upsample_nn(const ARCGrid *src, ARCGrid *dst, size_t factor) {
+    if (factor < 2) { *dst = *src; return; }
+    dst->width = src->width * factor; dst->height = src->height * factor;
+    for (size_t y = 0; y < dst->height; ++y)
+        for (size_t x = 0; x < dst->width; ++x)
+            dst->cells[y * dst->width + x] = src->cells[(y / factor) * src->width + (x / factor)];
+}
+
+static int arc_apply_multiscale_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out) {
+    if (out->width > ARC_MAX_GRID_WIDTH || out->height > ARC_MAX_GRID_HEIGHT ||
+        out->width * out->height > ARC_MAX_GRID_CELLS) return 0;
+    size_t best_f = 1;
+    for (size_t f = 2; f <= 4; ++f)
+        if (in->width % f == 0 && in->height % f == 0) best_f = f;
+    ARCGrid small;
+    arc_downsample_max(in, &small, best_f);
+    if (small.width == out->width && small.height == out->height) { *out = small; return 1; }
+    if (out->width % small.width == 0 && out->height % small.height == 0) {
+        arc_upsample_nn(&small, out, out->width / small.width);
+        return 1;
+    }
+    arc_init_grid(out, out->width, out->height);
+    for (size_t y = 0; y < out->height && y < small.height; ++y)
+        for (size_t x = 0; x < out->width && x < small.width; ++x)
+            out->cells[y * out->width + x] = small.cells[y * small.width + x];
+    return 1;
+}
+
+/* Connected component labeling: recolor each component with distinct colors */
+static int arc_apply_object_label_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out) {
+    uint8_t visited[ARC_MAX_GRID_CELLS]; memset(visited,0,sizeof(visited));
+    arc_init_grid(out,in->width,in->height);
+    uint8_t next=1;
+    for(size_t y=0;y<in->height;++y)for(size_t x=0;x<in->width;++x){
+        size_t idx=y*in->width+x;
+        if(visited[idx]||in->cells[idx]==c->background_color)continue;
+        size_t q[ARC_MAX_GRID_CELLS]; size_t qh=0,qt=0;
+        q[qt++]=idx; visited[idx]=1;
+        while(qh<qt){
+            size_t ci=q[qh++]; out->cells[ci]=next;
+            size_t cx=ci%in->width,cy=ci/in->width;
+            if(cx>0){size_t n=cy*in->width+cx-1;if(!visited[n]&&in->cells[n]!=c->background_color){visited[n]=1;q[qt++]=n;}}
+            if(cx+1<in->width){size_t n=cy*in->width+cx+1;if(!visited[n]&&in->cells[n]!=c->background_color){visited[n]=1;q[qt++]=n;}}
+            if(cy>0){size_t n=(cy-1)*in->width+cx;if(!visited[n]&&in->cells[n]!=c->background_color){visited[n]=1;q[qt++]=n;}}
+            if(cy+1<in->height){size_t n=(cy+1)*in->width+cx;if(!visited[n]&&in->cells[n]!=c->background_color){visited[n]=1;q[qt++]=n;}}
+        }
+        if(next<9)++next;
+    }
+    return 1;
+}
 static int ARC_NOINLINE run_builtin_arc_experiment(const ARCConfig *config)
 {
     if (config == NULL) {
