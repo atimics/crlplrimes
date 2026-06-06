@@ -4183,6 +4183,7 @@ static int arc_apply_symmetry_candidate(const ARCTransformCandidate*c,const ARCG
 static int arc_apply_multiscale_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
 static int arc_apply_object_label_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
 static int arc_apply_holo_tile_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
+static int arc_grid_to_hologram(const ARCGrid *grid, double *scene_out);
 static int arc_apply_candidate(const ARCTransformCandidate *candidate,
                                const ARCGrid *input,
                                ARCGrid *output)
@@ -17855,6 +17856,13 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask 
     memset(&metrics,0,sizeof(metrics)); memset(best,0,sizeof(best));
     metrics.test_pairs=task->test_count; metrics.rules=candidate_count;
     double bs=-1e100; int hp=0;
+    static HolographicRanker *vsa_ranker = NULL;
+    static double grid_hologram[256];
+    static int holo_ready = 0;
+    static LeosEngine *vsa_eng = NULL;
+    if (!vsa_ranker) { vsa_ranker = holo_ranker_create(256); }
+    if (!vsa_eng) { vsa_eng = leos_engine_create(256); }
+    if (!holo_ready) { holo_ready = (arc_grid_to_hologram(&task->train[0].input, grid_hologram) == 0) ? 1 : -1; }
     for(size_t rule=0;rule<metrics.rules;++rule){
         size_t cc=0,mm=0,up=0;
         if(!arc_candidate_matches_train(task,&candidates[rule],&cc,&mm,&up)){metrics.train_checked_cells+=cc;metrics.train_mismatches+=mm;metrics.unsupported_train_pairs+=up;continue;}
@@ -17862,7 +17870,16 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask 
         arc_append_accepted_rule(metrics.accepted_rules,sizeof(metrics.accepted_rules),candidates[rule].name);
         size_t ut=0; ARCGrid pr[ARC_MAX_PAIRS];
         if(!arc_apply_candidate_to_tests(task,&candidates[rule],pr,&ut)){metrics.unsupported_test_pairs+=ut;continue;}
-        double sc=arc_structural_program_score(&candidates[rule]); if(sc>bs){bs=sc;memcpy(best,pr,sizeof(best));hp=1;}
+        /* Blend structural score with holographic similarity when available */
+        double sc = arc_structural_program_score(&candidates[rule]);
+        if (vsa_ranker && vsa_eng && holo_ready > 0) {
+            double op_vec[256];
+            leos_engine_keygen(vsa_eng, (uint64_t)(candidates[rule].op * 1000 + (size_t)arc_candidate_family(&candidates[rule])), op_vec);
+            double vsa_scores[1];
+            holo_ranker_score(vsa_ranker, grid_hologram, op_vec, 1, vsa_scores);
+            sc += vsa_scores[0] * 50.0;
+        }
+        if(sc>bs){bs=sc;memcpy(best,pr,sizeof(best));hp=1;}
     }
     if(hp){memcpy(metrics.predictions,best,sizeof(metrics.predictions));metrics.prediction_count=task->test_count;}
     metrics.unique_test_prediction=1;
@@ -17870,6 +17887,12 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask 
     for(size_t p=0;p<task->test_count;++p){if(!task->test[p].has_output){atk=0;continue;}size_t cells=arc_grid_cells(&task->test[p].output);metrics.test_cells+=cells;if(!hp||p>=metrics.prediction_count||!arc_grid_same_shape(&metrics.predictions[p],&task->test[p].output))continue;for(size_t c=0;c<cells;++c)metrics.test_correct_cells+=metrics.predictions[p].cells[c]==task->test[p].output.cells[c]?1:0;}
     metrics.test_exact=atk&&metrics.test_cells>0&&metrics.test_correct_cells==metrics.test_cells;
     metrics.certified=metrics.train_consistent_rules!=0;
+    /* Store winning (grid, operator) pair in VSA ranker for future tasks */
+    if (metrics.certified && vsa_ranker && vsa_eng && holo_ready > 0) {
+        double op_vec[256];
+        leos_engine_keygen(vsa_eng, (uint64_t)(candidates[0].op * 1000 + (size_t)arc_candidate_family(&candidates[0])), op_vec);
+        holo_ranker_store(vsa_ranker, grid_hologram, op_vec);
+    }
     return metrics;
 }
 
