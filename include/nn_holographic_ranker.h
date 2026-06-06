@@ -16,7 +16,7 @@
  * The model IS the memory trace. Training IS storing examples.
  *
  * Memory: O(dim) fixed regardless of how many examples are stored.
- * Fidelity: 1/sqrt(N) theoretical retrieval quality.
+ * Memory: O(dim) fixed regardless of how many examples are stored.
  */
 
 typedef struct HolographicRanker HolographicRanker;
@@ -49,7 +49,7 @@ void holo_ranker_score(HolographicRanker *r,
 /* Number of stored examples. */
 size_t holo_ranker_count(const HolographicRanker *r);
 
-/* Estimated retrieval fidelity. */
+/* Stored count (used for display only; empirical fidelity is the real metric). */
 double holo_ranker_fidelity(const HolographicRanker *r);
 
 /* Recall: return the context vector from unbind(M, state).
@@ -65,3 +65,32 @@ int holo_ranker_recall(HolographicRanker *r,
  * Format: raw double array (dim * sizeof(double) bytes) + uint64_t stored_count. */
 int holo_ranker_save(const HolographicRanker *r, const char *path);
 int holo_ranker_load(HolographicRanker *r, const char *path);
+
+/* ---- Ordinal ranking: select, don't score ---- */
+
+/* Select the single best candidate: returns the index (0..n-1) of the
+ * highest-scoring candidate. Ordinal — no floating-point scores returned.
+ * Returns -1 if no candidates. */
+int holo_ranker_select(HolographicRanker *r,
+                       const double *state,
+                       const double *action_vecs,
+                       size_t n);
+
+/* Select top-K candidates: fills out_indices[0..k-1] with the indices
+ * of the k highest-scoring candidates, in descending order.
+ * Returns the number of candidates selected (min(k, n)). */
+size_t holo_ranker_select_top_k(HolographicRanker *r,
+                                const double *state,
+                                const double *action_vecs,
+                                size_t n,
+                                size_t k,
+                                size_t *out_indices);
+
+/* Empirical fidelity: number of times select() returned the correct
+ * target. Reset via holo_ranker_reset_accuracy(). Count-based, not
+ * theoretical 1/sqrt(N). */
+size_t holo_ranker_correct_count(const HolographicRanker *r);
+void holo_ranker_record_result(HolographicRanker *r, int correct);
+void holo_ranker_reset_accuracy(HolographicRanker *r);
+double holo_ranker_empirical_fidelity(const HolographicRanker *r);
+

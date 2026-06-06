@@ -277,6 +277,41 @@ void leos_engine_unbind(LeosEngine *eng,
 }
 
 /* ---------------------------------------------------------------------------
+ * Public: prepare_key_fft — pre-compute FFT(k) into ck cache.
+ *   After calling this, unbind_cached uses the cached spectrum instead of
+ *   re-FFTing the key. Saves one FFT per call when the same key is reused.
+ * ---------------------------------------------------------------------------*/
+
+void leos_engine_prepare_key_fft(LeosEngine *eng, const double *k) {
+    /* FFT(k) -> ck */
+    r2c1(eng, k);  /* reuse c1 as temp: copy k -> c1 */
+    fwd_c1(eng);
+    /* Move c1 spectrum to ck */
+    memcpy(eng->ck, eng->c1, eng->dim * sizeof(double complex));
+}
+
+/* ---------------------------------------------------------------------------
+ * Public: unbind_cached — unbind(S) using cached key spectrum in ck.
+ *   Must be preceded by leos_engine_prepare_key_fft.
+ *   Skips the key r2c and FFT, saving ~1/3 of the unbind cost.
+ * ---------------------------------------------------------------------------*/
+
+void leos_engine_unbind_cached(LeosEngine *eng,
+                               const double *S,
+                               double *out) {
+    /* FFT(S) -> c0 */
+    r2c0(eng, S);
+    fwd_c0(eng);
+
+    /* c0 *= conj(ck) — ck was populated by prepare_key_fft */
+    for (size_t i = 0; i < eng->dim; i++)
+        eng->c0[i] *= conj(eng->ck[i]);
+
+    inv_c0_to_d0(eng);
+    norm_d0(eng);
+    memcpy(out, eng->d0, eng->dim * sizeof(double));
+}
+/* ---------------------------------------------------------------------------
  * Public: eml_bind — eml_bind(a, b) via complex exp/log in frequency domain
  *   c0 = FFT(a), c1 = FFT(b)
  *   c0 = exp(c0) - log(c1)   (elementwise, complex exp and complex log)

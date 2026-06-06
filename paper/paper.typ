@@ -735,7 +735,14 @@ memory substrate.
 
 The broader lesson is pragmatic. When correctness, safety, or auditability matter, the model
 should not own the whole decision and prose should not outrun the evidence. The checker or
+
+// --- Claim-Anchored Bibliography (holographically generated) ---
+#import "generated/claim_bibliography.typ": claim_bibliography_section
+#claim_bibliography_section
+
 replay system owns validity and consequence. The learned component owns ranking pressure.
 The repository trace owns what empirical reporting is allowed to say.
 
 #bibliography("references.bib")
+# test
+# test

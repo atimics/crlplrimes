@@ -1,0 +1,1151 @@
+                                         JOURNAL OF IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE, VOL. 00, NO. 0, MONTH 2020                                                                   1
+
+
+
+
+                                           Generalized Holographic Reduced Representations
+                                              Calvin Yeung, Zhuowen Zou, SungHeon Jeong, Wenjun Huang, Nathaniel D. Bastian, and Mohsen Imani
+
+
+
+                                            Abstract—Hyperdimensional Computing (HDC) is a compu-                             However, underpinning deep learning models with good
+                                         tationally and data-efficient paradigm that acts as a bridge                      representations are tremendous computational resources and
+                                         between connectionist and symbolic approaches to artificial                       internet-scale data in the order of terabytes and beyond.
+                                         intelligence (AI). However, HDC’s simplicity poses challenges
+                                         for encoding complex compositional structures, especially in its                  While research into scaling laws suggests that it is possible
+                                         binding operation. To address this, we propose Generalized                        to further improve the model and thus representation quality
+                                         Holographic Reduced Representations (GHRR), an extension                          by continuing to scale up model size, data quantity, and
+                                         of Fourier Holographic Reduced Representations (FHRR), a                          computational resources [7], this approach is extremely cost-
+arXiv:2405.09689v2 [cs.LG] 27 May 2026
+
+
+
+
+                                         specific HDC implementation. GHRR introduces a flexible, non-                     inefficient, time-consuming, and excludes all but the largest
+                                         commutative binding operation, enabling improved encoding of
+                                         complex data structures while preserving HDC’s desirable prop-                    and most resourceful organizations from the development of
+                                         erties of robustness and transparency. In this work, we introduce                 such models. Thus, it is necessary to explore directions that
+                                         the GHRR framework, prove its theoretical properties and its                      are compute- and data-efficient while having representational
+                                         adherence to HDC properties, explore its kernel and binding                       properties amenable to generalization.
+                                         characteristics, and perform empirical experiments showcasing                        In recent years, Hyperdimensional Computing (HDC), or
+                                         its flexible non-commutativity, enhanced decoding accuracy for
+                                         compositional structures. We also demonstrate that binding in                     Vector Symbolic Architectures (VSA), has emerged as a neu-
+                                         GHRR is more expressive than that in other HDC variants; in                       rosymbolic computational paradigm in artificial intelligence
+                                         particular, we show that binding in GHRR can implement a                          bridging the gap between connectionist and symbolic frame-
+                                         kind of attention mechanism. We verify this by replacing the                      works [8], [9], [10], [11]. In this way, HDC can act as an
+                                         attention mechanism in a transformer with its GHRR-equivalent                     interface that enables the explicit specification of structure as
+                                         and testing it on a language modeling task, showing improved
+                                         performance compared to a vanilla transformer.                                    in symbolic approaches while maintaining the flexibility and
+                                                                                                                           power of connectionist, especially deep learning, approaches.
+                                            Impact Statement—This work introduces Generalized Holo-
+                                                                                                                           HDC forms an algebra over higher-dimensional vectors, called
+                                         graphic Reduced Representations (GHRR), a novel extension
+                                         of hyperdimensional computing that bridges symbolic and con-                      hypervectors, with operations corresponding to symbolic op-
+                                         nectionist AI by providing flexible, non-commutative binding                      erations. For example, the bundling operation (+) corresponds
+                                         operations. GHRR preserves the robustness, interpretability, and                  to disjunction and binding (∗) corresponds to conjunction of
+                                         fixed-width nature of traditional Fourier Holographic Reduced                     symbols. Through the use of such operations, it is possible
+                                         Representations while enabling accurate encoding and decoding
+                                                                                                                           to build up complex representations and data structures [12],
+                                         of complex compositional structures. We show that GHRR
+                                         binding can implement attention mechanisms, and by replac-                        [13], [14], and consequently instill a factorized structure onto
+                                         ing the transformer’s standard attention with a GHRR-based                        the space of representations, which can subsequently be used
+                                         equivalent, achieve improved language modeling performance.                       in downstream tasks such as symbolic reasoning [15], [16].
+                                         These advances lower computational and data requirements for                         Recent research has highlighted the significant benefits of
+                                         structured representation learning, promote transparent neuro-
+                                                                                                                           HDC in improving the computational efficiency and symbolic
+                                         symbolic integration, and open new pathways for efficient,
+                                         interpretable AI systems.                                                         reasoning capabilities of neural networks [17], [15], [18].
+                                            Index Terms—Neurosymbolic Artificial Intelligence, Cognitive                      While HDC shows promise as a neuro-vector-symbolic
+                                         Systems, Explainable AI, Edge AI                                                  framework for factorized and compositional representa-
+                                                                                                                           tions [19], its simplicity poses a problem for its expressive
+                                                               I. I NTRODUCTION                                            power and its ability to encode more complex structures.
+                                                                                                                           In particular, crucial to the HDC framework is the binding
+                                            In the past decade of artificial intelligence research, deep
+                                                                                                                           operation, which enables the formation of representational
+                                         learning has seen monumental success, finding applications in
+                                                                                                                           complexes from simpler parts, often interpreted as an asso-
+                                         domains such as classification, image generation, and language
+                                                                                                                           ciation or conjunction of concepts. This, however, is limiting,
+                                         modeling [1], [2], [3], [4], [5]. Central to the success of deep
+                                                                                                                           as concepts may hold various kinds of relationships with each
+                                         learning is its ability to learn representations that preserve
+                                                                                                                           other and may be combined in multiple ways. In addition,
+                                         task-relevant structure in the data, a necessary component for
+                                                                                                                           implementations of binding in HDC are typically commuta-
+                                         models with generalization capabilities. Indeed, this reliance
+                                                                                                                           tive, so additional techniques such as applying permutations
+                                         on the quality of representations is reflected in the common
+                                                                                                                           or positional encodings are often needed to encode structure,
+                                         use of pre-trained models, and, more recently, in foundation
+                                                                                                                           which complicates the representation of data structures. Thus,
+                                         models [6].
+                                                                                                                           we need a more flexible and non-commutative binding opera-
+                                            C. Yeung, Z. Zou, S. Jeong, and M. Imani are with the University of Califor-   tion more suitable for encoding complex structures, while still
+                                         nia, Irvine, CA 92697 USA (e-mail: chyeung2@uci.edu; zhuowez1@uci.edu;            maintaining the other desirable properties of HDC, such as
+                                         sungheoj@uci.edu; m.imani@uci.edu).
+                                            N. D. Bastian is with the United States Military Academy, West Point, NY       transparency, robustness to noise, interpretability, and fixed-
+                                         10996 USA (e-mail: nathaniel.bastian@westpoint.edu).                              width composition.
+2                                                JOURNAL OF IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE, VOL. 00, NO. 0, MONTH 2020
+
+
+
+   The design of our proposed framework stems from recog-          high-dimensional vectors where each element contributes to
+nizing (1) the importance of high-dimensional, holographic,        the overall concept representation [8]. HDC representations
+fixed-width representations in maintaining desirable properties    are robust to noise and partial information loss by using
+of HDC; (2) the lack of expressivity of the binding operation      high-dimensional and holographic vectors: by distributing the
+in current HDC implementations; and (3) its close connection       information “evenly” (holographic) and redundantly (“high-
+to effective and efficient HDC learning [20], [21], namely in      dimensional”), the loss of some dimensions does not signifi-
+leveraging the Random Fourier Features (RFF) encoding [22]         cantly degrade the information content [29], [8]. Concretely,
+to map data to hypervectors. For the second point, elements        HDC achieves this property by using randomly generated hy-
+of HDC hypervectors are typically in a subgroup of (C, ∗),         pervectors that give rise to consistent behavior at the algorithm
+which limits algebraic complexity when applying the binding        level, using the property of the high-dimensional space.
+operation. For the third point, the effectiveness of HDC              HDC addresses symbolic reasoning by including operations
+in learning tasks results largely from encoding inspired by        on high-dimensional vectors that allow for manipulations
+RFF, enabling the efficient approximation of shift-invariant       similar to logic operations in symbolic AI [30]. In particular,
+kernels via taking the similarity between hypervectors. To be      HDC achieves disjunctive and conjunctive operations through
+precise, Fractional Power Encoding (FPE) [23], [24], [25] with     bundling and binding operations, respectively. A similarity
+binding-based composition gives rise to the RFF encoding.          function (e.g. cosine similarity) between hypervectors is used
+   With the three identified directions in consideration, we       to facilitate pattern recognition and memory recall.
+introduce Generalized Holographic Reduced Representations             The fundamental unit in HDC is a high dimensional vector,
+(GHRR), an extension of Fourier Holographic Reduced Rep-           also called a hypervector. A hypervector H lives in some
+resentations (FHRR) [26], [27], a particular implementation of     hyperspace H, e.g., RD for D large. The collection of hy-
+HDC. While elements in FHRR hypervectors are in the unitary        pervectors, along with some operators, forms an algebra over
+group U(1) ⊆ C, they are, in contrast, in U(m) in GHRR.            vectors. Generally, there are two types of hypervectors: (1)
+While maintaining the kernel properties of FHRR [22] and           base hypervectors, which are generated stochastically, e.g.,
+satisfying the basic constraints of HDC representations, GHRR      H ∼ N (0, ID ); and (2) composite hypervectors, which are
+provides a framework for flexible, non-commutative binding         created by combining hypervectors via the operators of the
+as well as adaptive kernels while enabling improved encoding       algebra. These hypervectors can be compared via a simi-
+of complex data structures via better decoding abilities and       larity function δ(H1 , H2 ). Generally, base hypervectors are
+memorization of bound hypervectors. Our work has several           generated such that they are quasi-orthogonal with respect to
+key contributions:                                                 the similarity function. The three main operations in HDC,
+   1) We introduce the GHRR framework and outline a par-           bundling, binding, and permutation, can be characterized by
+       ticular implementation of GHRR, including variations of     how they affect the similarity of hypervectors. We describe
+       increasing complexity (Section III).                        the three operations below:
+   2) We prove that our implementation of GHRR satisfies the          1) Bundling (+): Typically implemented as element-wise
+       basic properties of HDC, including quasi-orthogonality              addition. If H = H1 + H2 , then both H1 and H2 are
+       and the similarity preservation of the binding operation            similar to H. This corresponds to forming a disjunctive
+       (Section IV-A-IV-B).                                                representation of the corresponding concepts.
+   3) We explore the kernel and binding properties of GHRR            2) Binding (∗): Typically implemented as element-wise
+       and provide an interpretation of binding in GHRR as an              multiplication. If H = H1 ∗ H2 , then H is dissimilar to
+       interpolation between binding in FHRR and in Tensor                 both H1 and H2 . Binding also has the important prop-
+       Product Representations [28] (Section IV-C).                        erty of similarity preservation in the sense that for some
+   4) We demonstrate that binding in GHRR is more expres-                  hypervector H3 , δ(H3 ∗ H1 , H3 ∗ H2 ) ≃ δ(H1 , H2 ).
+       sive than that in other HDC variants (Section IV-D); in             This corresponds to forming a conjunctive representation
+       particular, we show that binding in GHRR can imple-                 of the corresponding concepts.
+       ment a kind of attention mechanism (Section IV-E).             3) Permutation (ρ): Typically implemented as a rotation of
+   5) We perform empirical experiments on GHRR, demon-                     vector elements. Generally, δ(ρ(H), H) ≃ 0. Permuta-
+       strating its flexible non-commutativity, increased decod-           tion is usually used to encode order in sequences.
+       ing accuracy for compositional structures, e.g. trees and      These operators can be used to build up complex composi-
+       improved memorization capacity for bound hypervectors       tional representations for structured data such as trees [31] and
+       compared to FHRR (Section V-A-V-D).                         graphs [14], which can subsequently be used for downstream
+   6) We replace the attention mechanism in a transformer          tasks [32]. For example, these representations can be operated
+       with a GHRR binding-based attention mechanism and           on in a symbolic manner (e.g. via “unbinding” to query the
+       test it on a language modeling task, showing improved       data structure), or can also be integrated into neural networks
+       performance over a vanilla transformer (Section V-E).       to form neuro-vector-symbolic architectures [15].
+                                                                      It is important to note that the description above of HDC is
+                    II. BACKGROUND
+                                                                   general; there are various specific realizations of HDC with
+A. Hyperdimensional Computing                                      the above properties. For our work, we focus on Fourier
+   Hyperdimensional Computing (HDC) is a computational             Holographic Reduced Representation, which we expand on
+framework for representing and handling data. HDC uses             in the next section.
+YEUNG et al.: GENERALIZED HOLOGRAPHIC REDUCED REPRESENTATIONS                                                                        3
+
+
+
+   1) HDC in neural networks: Recent research has integrated        B. Fourier Holographic Reduced Representations
+HDC with deep neural networks (DNNs) to address two                    Fourier Holographic Reduced Representations (FHRR) is
+primary limitations of traditional connectionist models: high       a specific implementation of HDC. While other implementa-
+computational costs during inference and the lack of structured     tions, such as Multiply Add Permute (MAP) [45] or Holo-
+symbolic reasoning.                                                 graphic Reduced Representations (HRR) [46], rely on bipolar
+      a) Efficiency and Superposition: To address computa-          or real-valued vectors respectively, FHRR operates in the
+tional inefficiency, approaches like MIMONets [17] utilize          complex domain using phasors. FHRR naturally maintains
+the HDC property of superposition to process multiple inputs        unit magnitude during binding operations, avoiding the noise
+concurrently. MIMONets generalize standard layers (fully            accumulation and normalization issues often prevalent in real-
+connected, convolutional, and transformer blocks) by binding        valued architectures. Crucially, FHRR provides a rigorous
+inputs with high-dimensional keys to project them into quasi-       theoretical connection to kernel methods via Random Fourier
+orthogonal subspaces. This allows a single pass of the neural       Features [47], allowing us to interpret hyperdimensional sim-
+network to process a bundled representation of multiple inputs.     ilarity as a kernel approximation.
+   Empirical evaluations on standard benchmarks, such as               An FHRR hypervector is of the form H = [eiθ1 , ..., eiθD ].
+CIFAR-10/100 and the Long Range Arena (LRA), demonstrate            Bundling (+) and binding (∗) are the usual element-wise addi-
+that this “computation in superposition” yields a 2×–4×             tion and multiplication, respectively. In addition, the similarity
+speedup with minimal accuracy loss. This approach is partic-        is defined as δ(H1 , H2 ) := Re[H†1 H2 ]/D. Here, † denotes the
+ularly valuable for edge computing and embedded platforms           conjugate transpose and Re(z) is the real component of z ∈ C.
+where memory bandwidth and latency are critical bottlenecks.           Fractional power encoding (FPE) has been used for en-
+      b) The Binding Problem: Standard neural networks strug-       coding data points to hypervectors. It is a locality-preserving
+gle to represent and decompose joint representations of distinct    encoding for points on a data manifold where the similarity,
+entities and their attributes. This limitation is widely recog-     or inner product, of the hypervectors reflects the relationship
+nized in literature as the variable binding problem [33], [34].     between the points [25], [23]. For the k-th feature of data of di-
+To address this problem, HDC offers a mathematically rigor-         mension n, attached is an FHRR base hypervector of the form
+ous binding operation to distinctively represent object-attribute   Hk = eiθ , where θ is a column vector such that θj ∼ pk for
+compositions. Recent neuro-vector-symbolic architectures [15]       some fixed distribution pk . The data point is then encoded as
+mitigate this issue by training encoder networks to map per-        the binding of the base hypervector exponentiated by the value
+ceptual inputs (images) into vector-symbolic representations.       of the corresponding feature: ϕ(x) = Hx1 1 ∗ Hx2 2 ∗ ... ∗ Hxnn .
+                                                                                                   x
+In these architectures, objects are formed by binding attributes,   Here, the exponentiation Hj j refers to exponentiating each
+and scenes are formed by bundling objects. This method has          element of Hj by xj . This allows the data to be smoothly
+shown significant improvements in visual abstract reasoning         expressed and manipulated, as representations generated this
+tasks, such as Raven’s Progressive Matrices (RAVEN) [35],           way are correlated according to some shift-invariant kernel on
+outperforming state-of-the-art pure DNNs and neuro-symbolic         the corresponding feature values, which we will explain below.
+baselines in both accuracy and data efficiency. Other works            There is a remarkable connection between FPE of FHRR
+have similarly extended Transformers with HD representations        hypervectors and kernel-based methods, making it a powerful
+to enhance their structural processing capabilities [36].           tool for learning in HDC. In particular, it coincides with the
+      c) Hardware and System Considerations: Beyond algo-           Random Fourier Features (RFF) [22] encoding, an efficient
+rithmic improvements, the integration of HDC into NNs is            approximation of kernel methods. The RFF encoding is a map
+often driven by hardware considerations. HDC operations are         ϕ : Rn → CD , with ϕ(x) = eiMx , where each row Mj,: ∼ p
+highly parallelizable and robust to noise, making them ideal        for some multivariate distribution p. The columns M:,k can
+candidates for emerging hardware accelerators such as FPGAs         then be viewed as the exponents of the base hypervector
+and Processing-in-Memory (PIM) architectures [37], [38],            Hk , and p = [p1 , ..., pn ]. As a result of Bochner’s theorem,
+[39]. In these hybrid systems, feature extraction is performed      ⟨ϕ(x), ϕ(y)⟩/D ≈ K(x − y), where K is a shift-invariant
+by the NN, while the symbolic manipulation and reasoning            kernel that is the Fourier transform of distribution p [22] (See
+are offloaded to efficient HDC operations, thereby reducing         Supplementary Materials A). Notably, when p is the standard
+the energy cost of symbolic processing and enabling lower-          Gaussian distribution, the radial basis function (RBF) kernel is
+precision computation without sacrificing robustness.               recovered. Many HDC learning models achieve good time and
+                                                                    accuracy performance by the efficient kernel approximation
+   2) HDC in cognitive modeling: HDC has been employed              coupled with some HDC algorithm.
+to model a variety of cognitive capabilities such as sequence
+memorization and problem-solving. These models are applied
+to cognitive tasks including the Wason selection task [40], n-                        III. OVERVIEW OF GHRR
+back task [41], and Raven’s Progressive Matrices [42]. For ex-         We introduce Generalized Holographic Reduced Represen-
+ample, [43] shows that using HDC as a sequence recall model         tations (GHRR), a framework extending Fourier Holographic
+can produce results that closely mimics human performance.          Reduced Representations (FHRR). While standard FHRR op-
+In addition, HDC has been used as a component of cognitive          erates on scalar components in the unitary group U (1), GHRR
+architectures such as Semantic Pointer Architecture Unified         generalizes base elements to unitary matrices in U (m) for
+Network (SPAUN) [44].                                               m ≥ 1.
+4                                                       JOURNAL OF IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE, VOL. 00, NO. 0, MONTH 2020
+
+
+
+             FHRR                                GHRR                                        IV. A N I MPLEMENTATION OF GHRR
+                                                                                    What we have described in Section III are general char-
+              • 1 × 1 unitary matrix             • m × m unitary matrix          acteristics of GHRR. Specifying an implementation entails
+              • Commutative                      • Non-commutative               specifying (1) the form of the unitary matrix components; and,
+              • In exible                        • Flexible                      relatedly, (2) how they are sampled.
+              • e iθ                             • QΛ
+              {
+
+
+
+
+                                                 {
+                                                 {
+            determines kernel
+                                                        controls kernel
+                                                        controls binding
+                                                                                 A. Desired Properties
+
+Fig. 1.   Comparison between FHRR and GHRR.                                         We want our GHRR base hypervectors to fulfill the basic
+                                                                                 properties of HD representations. Most notably, we need the
+                                                                                 binding operation for representing the association of features
+  This generalization addresses two fundamental limitations                      works as intended [48]. For independently sampled base
+where scalar-based HDC methods fail:                                             hypervectors H1 , H2 , H3 ,
+  • Non-Commutativity: Standard binding (element-wise                               1) δ(H1 , H2 ) → 0 as D → ∞; and
+    scalar multiplication) is commutative, failing to encode                        2) δ(H1 ∗ H2 , H1 ) → 0 as D → ∞.
+    asymmetric structures like sequences or trees without per-                      3) δ(H1 , H2 ) ≈ δ(H3 ∗ H1 , H3 ∗ H2 ) ≈ δ(H1 ∗ H3 , H2 ∗
+    mutations. GHRR binding is inherently non-commutative,                             H3 ).
+    enabling the natural representation of ordered structures.                   While property 3 follows naturally from the cyclic property
+  • Expressive Binding: Standard binding acts as a low-                          of the trace, the other two properties do not hold in arbitrary
+    capacity holographic projection. It fails to retain sufficient               implementations. In addition, since GHRR is an extension of
+    information for complex interactions such as attention.                      FHRR, we want the two to be equivalent when m = 1.
+    GHRR binding (block-wise matrix multiplication) offers                          Property 1 specifies that hypervectors should be quasi-
+    higher expressivity, interpolating between parsimonious                      orthogonal. This is motivated by the fact that base hypervectors
+    projection and full tensor products.                                         are typically used to represent discrete abstract symbols. As
+  GHRR hypervectors are tensors of the form                                      such symbols are purely formal and lack semantic content,
+                                                                                 their corresponding representations should be uncorrelated.
+                 H = [A(1) , ..., A(D) ]⊤ ∈ CD×m×m ,                       (1)   Property 2 ensures that the result of the binding operation
+                                                                                 is quasi-orthogonal to its operands. This is crucial for dis-
+where A(j) ∈ U(m) such that A(j) ∼ p for some distribution                       tinguishing a composite structure from its constituent parts; it
+p over U(m), for j = 1, ..., D.                                                  guarantees that the representation of an association (e.g., a key-
+  The standard operations in HDC extend naturally. Let                           value pair) is distinct from the representations of the individual
+H1 = [A(j) ]D                 (j) D
+            j=1 and H2 = [B ]j=1 ∈ C
+                                        D×m×m
+                                              . We define                        items, thereby preventing ambiguity and interference during
+bundling as element-wise addition, i.e.                                          the retrieval process. Finally, Property 3 ensures that the
+                                                                                 similarity between two concepts is invariant under binding,
+                      H1 + H2 = [A(j) + B(j) ]D
+                                              j=1 ,                        (2)
+                                                                                 guaranteeing that relational structures are maintained even
+and binding to be element-wise matrix multiplication, i.e.                       when concepts are embedded into more complex represen-
+                                                                                 tations.
+                         H1 ∗ H2 = [A(j) B(j) ]D
+                                               j=1 .                       (3)
+
+where A(j) B(j) is the matrix-product between A(j) and B(j) .                    B. Quasi-orthogonal Representations
+For notational consistency, ∗ will always refer to element-wise                    We derive sufficient conditions for these properties to hold,
+matrix multiplication unless specified otherwise. When binding                   and based on that, develop a constrained parameterization for
+multiple hypervectors, we use the notation H1 ∗ · · · ∗ Hn =                     GHRR representations.
+Q n
+  k=1 Hk .
+  We define the similarity between two hypervectors as                           Proposition 1. Let A = Q1 Λ1 and B = Q2 Λ2 ∈ Cm×m
+                                                                               be random matrices where Qj and Λj are sampled inde-
+                                     D                                           pendently of each other for j = 1, 2. Moreover, let Λ1 =
+                        1           X
+        δ(H1 , H2 ) =       Re tr      A(j) (B(j) )†  .   (4)                  diag(λ1 , ..., λm ) and Λ2 = diag(η1 , ..., ηm ) with λj , ηj ∈
+                       mD           j=1                                          U (1) for j = 1, ..., m. If E[ηj λ∗j ] = 0 for all j = 1, ..., m,
+It can be seen that for m = 1, this similarity is exactly that for               then E[tr(AB† )] = 0.
+FHRR. Note that after bundling, the matrix entries need not                           Proof: To establish quasi-orthogonality (Property 1), we
+be unitary. However, we still require that base hypervectors                     must show that the expected similarity between two inde-
+be unitary such that (1) they are similar to themselves under                    pendently generated hypervectors is zero. This similarity is
+the similarity defined in Eq. 4, and (2) the base hypervectors                   defined by the trace of their product AB† .
+and their fractional power are norm-preserving with respect to                     First, we substitute the definitions of A and B:
+binding [23]. Figure 1 provides an overview of and comparison
+between GHRR and FHRR.                                                                            tr(AB† ) = tr(Q1 Λ1 Λ†2 Q†2 )                (5)
+YEUNG et al.: GENERALIZED HOLOGRAPHIC REDUCED REPRESENTATIONS                                                                                     5
+
+
+
+   By utilizing the cyclic property of the trace (tr(XYZ) =                 δ(H1, H2)
+                                                                             Q fixed across
+tr(ZXY)), we can rearrange the terms to group the unitary                    dimensions
+matrices Q together:
+                tr(AB† ) = tr((Q†2 Q1 )Λ1 Λ†2 )               (6)
+   Let Q =     Q†2 Q1 . The matrix Q represents the relative                δ(H1, H2)
+rotation between the two hypervectors’ bases. Since Λ1 and                   Q randomly sampled
+                                                                             across dimensions
+Λ†2 are diagonal matrices, their product forms a diagonal
+matrix with entries λk ηk∗ . The trace of the product of a general
+matrix Q and a diagonal matrix involves only the diagonal
+elements of Q. Thus, the expression simplifies to a weighted                δ(H1, H1 * H2)
+sum:                               m
+                                 X
+                  tr(AB† ) =          Qkk λk ηk∗               (7)
+                                 k=1
+   Finally, we take the expectation of this sum. Because the
+phase factors λk and ηk are sampled independently from
+the rotation matrix Q and satisfy the zero-mean condition            Fig. 2. A histogram of the similarity between randomly sampled hypervectors
+                                                                     following the scheme described in Corollary 2, where D = 1000, m = 3,
+E[λk ηk∗ ] = 0, the expectation distributes over the sum and         and pj = Unif(0, 2π). Top: Histogram where Qj = Qk holds for all
+vanishes:                                                            j, k = 1, ..., D. Middle: histogram where Qj for j = 1, ..., D are randomly
+                 Xm                     Xm                           sampled. Bottom: histogram of similarity between H1 and H1 ∗ H2 .
+            †                     ∗
+ E[tr(AB )] =        E[Qkk ]E[λk ηk ] =     E[Qkk ] · 0 = 0 (8)
+                 k=1                       k=1
+                                                                     C. Encoding Data
+                                                                        As mentioned in the introduction, RFF enables the efficient
+Corollary 2. Suppose we sample random matrices A, B with
+                                                                     approximation of shift-invariant kernels via taking the simi-
+the form QΛ, where Q ∈ Cm×m is a randomly sampled
+                                                                     larity between FHRR hypervectors. To be precise, Fractional
+unitary matrix and, independently, Λ = diag(Λ1 , ..., Λm ),
+                                                                     Power Encoding (FPE) [23], [24], [25] with binding-based
+where Λj ∼ pj where pj is a symmetric distribution with
+                                                                     composition gives rise to the RFF encoding.
+zero mean for j = 1, ..., m. Then E tr(AB† ) = 0.                       FPE encodes the scalar value x ∈ R of a variable α
+Corollary 3. Suppose we sample random matrices A, B                  by exponentiating a base FHRR hypervector Hα ∈ CD
+according to Corollary 2. Then E tr(A(AB)† ) = 0.                    representing the variable x:
+                                                                                                h (j) iD
+     Proof: Observe that                                                        ϕα (x) = Hxα = eiθ x        , θ(j) ∼ pα ,      (11)
+                                                                                                                j=1
+        E tr(A(AB)† ) = E tr(AB† A† ) = E tr(IB† ).           (9)
+                                                                     where pα is some probability distribution. We can represent
+Since B = QΛ where Λ = diag(Λ1 , ..., Λm ), with Λj                  multidimensional data through binding-based composition.
+sampled from distributions with zero mean, E Λj = 0 for              Namely, for an n-dimensional vector x ∈ Rn , we encode
+all j = 1, ..., m. So Proposition 1 applies and we are done.         each component via FPE as above and bind all of the results
+   Quasi-orthogonality is also observed empirically. See Sec-        together:
+tion IV-C and Figure 3 for details.                                             n          n h        iD       h (j) ⊤ iD
+                                                                                                 (j)
+   Corollary 2 gives us a way to construct base hypervectors
+                                                                               Y          Y
+                                                                        ϕ(x) =    Hxk k =     eiθk xk       = ei(θ ) x       ,
+satisfying the desiderata mentioned above. By default, Corol-                        k=1          k=1
+                                                                                                                j=1                    j=1
+lary 2 gives us desired property 1, while Corollary 3 gives us                                                                             (12)
+desired property 2. Moreover, it is evident that when m = 1,                   (j)                        (j)         (j)
+this GHRR implementation is equivalent to FHRR. Thus, a              where
+                                                                     Q       θk ∼ pk and θ(j) = [θ1 , ..., θn ]. Here, the product
+GHRR base hypervector is of the form                                     denotes the binding operation for FHRR, i.e., element-wise
+                                                                     multiplication.
+                  [Q(1) Λ(1) , ..., Q(D) Λ(D) ]⊤ ,           (10)       In this section, we provide a viable extension of the encod-
+where Q  (j)
+              ∈ U(m) and Λ      (j)              iθ1   iθm
+                                 = diag(e , ..., e ), with           ing for GHRR. Let H be the space of GHRR representations.
+θk ∼ pk such that E[eiθk ] = 0. Figure 2 shows a histogram           Suppose we have data from some input space X . We are
+of the similarity between randomly sampled hypervectors              interested in a smooth map ϕ : X → H. As per the previous
+following the scheme described in Corollary 2, where D =             section, we factor ϕ into two components and write ϕ(x)j =
+1000, m = 3, and pj = Unif(0, 2π). We observe that the               Q(j) (x)Λ(j) (x) for j = 1, ..., D, where Q(j) : X → U(m)
+randomly sampled hypervectors are quasi-orthogonal; i.e. their       and Λ(j) : X → {diag(Λj1 , ..., Λjm ) | Λjk ∈ C, |Λjk | = 1}.
+similarities are concentrated about zero. The top histogram          In particular, for Λ(j) , we choose diagonal entries of the form
+                                                                                    ⊤
+holds Q(j) = Q(k) for all j, k = 1, ..., D, while the middle         Λj (x) = eiwjk x , where wjk ∼ pk with pk being symmetric
+histogram has randomly sampled Q(j) . The bottom histogram           distributions with zero mean. We can interpret this component
+shows that the similarity between H1 and H1 ∗ H2 respects            of ϕ as the part that controls the basic shape of the kernel as
+the result in Corollary 3.                                           in FHRR.
+6                                                   JOURNAL OF IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE, VOL. 00, NO. 0, MONTH 2020
+
+
+
+   For Q, there are two orthogonal choices to make: whether                   Fixed Q
+or not Q should depend on the input x; and whether or not
+there should be variance over j. These two options give us
+four classes of GHRR encodings. We consider the case where
+Q does not depend on x. Thus, we have the encoding
+
+                      ϕ(x)j = Q(j) Λ(j) (x).                  (13)
+
+   1) Kernel Properties of GHRR: Suppose we have two en-                     Varying Q
+                         (j)         (j)             (j)
+codings ϕ1 , ϕ2 , where ϕ1 (x) = Q1 Λ(j) (x) and ϕ2 (x)j =
+  (j) (j)              (j)             (j)
+Q2 Λ (x) where Q1 ∼ q1 and Q2 ∼ q2 for j = 1, ..., D.
+                           ⊤           ⊤
+Let Λ(j) (x) = diag(eiwj1 x , ..., eiwjm x ), where wjk ∼ pk .
+                             (j)      (j)
+Moreover, let Q(j) = (Q2 )† Q1 ∼ q where q is a
+distribution induced by q1 and q2 . Then we have
+                      1
+    δ(ϕ1 (x), ϕ2 (y)) ≈ E tr(Q(j) Λ(j) (x)Λ(j) (y)† )        (14)
+                      m                                      !
+                              m                                       Fig. 3. Distribution of δ(ϕ1 (0), ϕ2 (0)) over encodings ϕ1 , ϕ2 . Top: Q is
+                      1      X          (j)        ⊤
+                                                iwjk  (x−y)           fixed across dimensions for ϕ1 , ϕ2 . Bottom: Q is varied across dimensions
+                     = Re        Eq [Qkk ]Epk [e            ]
+                      m                                               for ϕ1 , ϕ2 .
+                             k=1
+                                                             (15)
+where wjk ∼ pk for k = 1, ..., m. The last step assumes that          where Q is fixed across dimensions and varied across dimen-
+   (j)
+Qkk and wjk are generated independently. This allows us to            sions, respectively. Specifically, let Q = [Qj ]D
+                                                                                                                      j=1 ∈ C
+                                                                                                                             D×m×m
+                                                                                                                                   .
+seperate the expression into a product of two parts: one that         If Q is fixed, Qj is a randomly sampled unitary matrix and
+depends on the data in a shift-invariant manner, and one that         we set Qi = Qj for all i, j. When Q is varying, each Qj is
+is independent of the data.                                           sampled i.i.d. for all j.
+   We would like to express this expression as a sum of kernels.         We observe that by varying Q, the distribution is sig-
+                 (j)
+We can write Qkk = rk eiθk , where (r1 , ..., rm , θ1 , ..., θm ) ∼   nificantly more centered about the mean. When the mean
+g, with g being some distribution induced by q. In addition,          is close to zero, this suggests that using randomly sampled
+let Θk be g marginalized over all variables except for θk and         encodings with varying Q can minimize cross-talk interference
+Rk := g(·|θk ) be a conditional distribution marginalized over        by default. On the other hand, in an encoding scheme where
+all variables except for rk and θk . Then                             Q is learnable, one can more easily optimize Q to exhibit
+                          m
+                                                                      desired behavior, as there are fewer parameters to optimize.
+                     1 X                              ⊤
+δ(ϕ1 (x), ϕ2 (y)) ≈        ERk [rk ]Re(Epk ,Θk [eiwjk (x−y)+iθk ])
+                     m
+                       k=1                                            D. Binding as holographic projections
+                                                               (16)
+                        m                                                While kernel properties between two encodings can be
+                     1 X                         ⊤
+                   =       ERk [rk ]Re(Ep̃k [eiw̃jk (x̃−ỹ) ])        described simply, the power of GHRR comes from its ability
+                     m                                                to perform binding while retaining more information regarding
+                       k=1
+                                                               (17)   its constituents. Binding two hypervectors in FHRR can be
+                        m                                             viewed as taking the tensor product of the two hypervectors
+                     1 X
+                   =       ER [rk ]K̃k (x̃ − ỹ)               (18)   and then taking the diagonal; i.e. a holographic projection.
+                     m
+                          k=1                                         In the case of GHRR, we can view binding in GHRR as an
+Here, w̃jk = [wjk , θk ] ∼ p̃k = [pk , Θk ], x̃ = [x, 1],             extension of binding in FHRR. In particular, let the effec-
+ỹ = [y, 0], and K̃k is the kernel corresponding to p̃k . Thus        tive dimension of a GHRR encoding be Dm and suppose
+the kernel corresponding to the similarity between encodings          it is fixed. By modulating m, we can interpolate between
+with different Q but the same Λ(x) is a weighted sum of               binding as a parsimonious holographic projection as in the
+the kernels, where each kernel is influenced by both the              case of FHRR and binding as an equivalent of taking the
+diagonal elements of Λ(x) as well as the distribution over            full tensor product. Figure 4 illustrates the intuition behind
+Q. The weights are solely determined the distribution over            binding in FHRR and GHRR as described above. The fully
+Q. As a special case, consider                                        colored square represents the full tensor product representation
+                        1
+                          Pm ϕ1 = ϕ2 . Then Qkk = 1,                  resulting from binding two hypervectors together; binding in
+resulting in the kernel m    k=1 Kk (x − y), where Kk is the
+kernel corresponding to pk . This realization gives us a way to       FHRR/GHRR “collapses” this representation by taking the
+interpret an encoding ϕ where Q depends on x as an adaptive           diagonal/block-diagonal respectively.
+kernel on the input.                                                     To illustrate this point, consider two hypervectors G1 =
+   Figure 3 demonstrates the difference between having a fixed        [Q(j) Λ(j) ]D                  (j) (j) D
+                                                                                  j=1 and G2 = [R H ]j=1 . Let us focus on the
+versus a varying Q across dimensions, where the top and               j-th matrix-element and let Λ(j) = diag(Λj1 , ..., Λjm ) and
+                                                                                                                         (j)
+bottom histogram visualizes the distribution of δ(ϕ1 (0), ϕ2 (0))     H(j) = diag(ηj1 , ..., ηjm ). Moreover, denote Qkl = qkl and
+YEUNG et al.: GENERALIZED HOLOGRAPHIC REDUCED REPRESENTATIONS                                                                                          7
+
+
+                                                               TABLE I
+                                       S UMMARY OF M AIN GHRR VARIANTS AND Q UALITATIVE E FFECTS
+
+   Variant                                Structure of Q                                     Key Properties
+   Fixed Q                                Fixed across dimensions; Independent of input      Simplest implementation retaining non-commutative
+                                                                                             binding; exhibits quasi-orthogonality with higher vari-
+                                                                                             ance.
+   Varying Q                              Varies across dimensions (sampled i.i.d.); Inde-   Exhibits quasi-orthogonality with lower variance.
+                                          pendent of input
+   Input-dependent Q                      Dependent on input (Q(x)); Fixed or Varying        Enables adaptive kernel shapes where feature impor-
+                                          across dimensions                                  tance is modulated by context; functions as a re-
+                                                                                             weighting of kernels, allowing for attention-like mech-
+                                                                                             anisms and higher expressivity.
+
+
+
+             FHRR                             GHRR                         represents sparse connections where only the corresponding
+  *                                  *                                     dimensions of the vectors are connected. A block-diagonal
+                                                                           projection takes the middle ground, representing connections
+                                                                           between nearby dimensions as demarcated by the blocks.
+
+
+                                                                           E. Binding implements attention
+                                                                                  As shown in Section IV-D, binding in GHRR is the block-
+                                                                               diagonal generalization of binding in FHRR. What does this
+Fig. 4. A visualization of binding in FHRR and GHRR. Left: FHRR binding        greater level of expressivity afford us? In other HDC frame-
+as a projection of the diagonal of the outer product matrix. Right: GHRR
+binding as a projection of the block-diagonal of the outer product matrix.     works, binding enables the conjunction of representations. As
+                                                                               binding in GHRR is more expressive due to matrix multiplica-
+                                                                               tion, it can represent more complex operations. In this section,
+   (j)
+Rkl = rkl . Then the corresponding element of G1 ∗ G2 is                       we show that binding in GHRR can implement attention.
+                                               "m                      #m         We focus on scaled dot-product attention
+                                                                                                                       [49], which    can be
+                                                                                                                        √1 QK⊤ V, where
+                                                 X
+             (j)
+[G1 ∗ G2 ] = Q Λ R H = (j) (j) (j) (j)
+                                                      qkn rnl Λjn ηjl          written   as attn(Q, K, V)  = softmax      dk
+                                                 n=1                     k,l=1 Q, K, V are the embeddings of the input features correspond-
+                                                                                                                                   √
+                                                                       (19) ing to query, key, and value respectively, and 1/ dk is the
+                                                                               scaling factor determined by the embedding dimension dk ,
+Thus, each entry of the resulting product of matrix-elements
+                                                                               which we omit for simplicity. Generally, in the standard Trans-
+is a linear combination of the entries of the tensor product
+                                                                               former architecture, Q, K, and V are defined in terms of input
+Λj ηj⊤ , where Λj = [Λj1 , ..., Λjm ] and ηj = [ηj1 , ..., ηjm ],
+                                                                               sequences of token embeddings Xq , Xk , Xv ∈ RN ×dmodel . The
+suggesting that it is some transformed “view” of the tensor
+                                                                               terms   Wq , Wk , Wv ∈ Rdmodel ×dk represent learnable linear
+product determined by Q(j) and R(j) . Specifically, let Ujl =
+               (j)               (j)                                           projection   matrices that map the input embeddings into the
+Q(j) diag(R:,l ), where R:,l is the l-th column of R(j) . Then
+                                                                               query, key, and value spaces, respectively. Then, we have:
+Eq. 19 defines a map
+                      φ : Λ η ⊤ 7→ [U v ] ,
+                                                  m
+                                                                       (20)        attn(Q, K, V) = softmax(Xq Wq Wk⊤ X⊤      k )Xv Wv      (21)
+                     j     j j         jl jl l=1
+
+where vjl = Λj ηjl . Clearly, provided R(j) has all non-zero                  We first show that it is possible to match the mathematical
+entries, φj is invertible.                                                 form of the attention mechanism given in Eq. 21 using GHRR.
+   Let Λ = [Λ1 , ..., ΛD ] and η = [η1 , ..., ηD ] be the con-             We then show that, by binding specific positional information
+catenations of Λ1 , ..., ΛD and η1 , ..., ηD , respectively. Now,          to GHRR token hypervectors, we can implement token-level
+taking the entire H1 ∗ H2 into account, we can interpret it                attention using GHRR.
+as a holographic projection of the tensor product Λη ⊤ , but                    a) Matching mathematical forms between GHRR and
+instead of just taking the diagonal, we take the block-diagonal            attention: To demonstrate the equivalence in GHRR, suppose
+where blocks are of size m and subsequently transformed by                 we have three GHRR hypervectors decomposed as Q =
+Q(j) and R(j) as defined by φj .                                           Wq Λq , K = Wk Λk , and V = Wv Λv . Here, the notation
+   For fixed effective dimension, when m is minimal, i.e. 1,               WΛ corresponds to the GHRR hypervector decomposition
+then the block-diagonal is just the diagonal as in FHRR, while,            described in Section III and Proposition 1. Specifically:
+when m is maximal, the block-diagonal is the whole tensor                     • W (analogous to the unitary matrix basis components
+product, i.e. as in Tensor Product Representations [28].                        in earlier sections) represents the block-diagonal unitary
+   From a neural perspective, we can interpret the tensor prod-                 matrix component. In our framework, this matrix can be
+uct between two vectors as representing all possible pairwise                   fixed (randomly generated) or trainable, serving a role
+connections between the dimensions; i.e. they are fully con-                    similar to the weight matrices in standard attention by
+nected. In contrast, the diagonal projection of a tensor product                orienting the hypervector in the hyperspace.
+8                                                            JOURNAL OF IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE, VOL. 00, NO. 0, MONTH 2020
+
+
+
+    •   Λ represents the diagonal matrix of phasors (e.g., eiθ )                    c) Matching parameters between GHRR and Trans-
+        which encodes the actual feature values or token infor-               former: Given the above discussion, we propose to treat each
+        mation via fractional power encoding.                                 component of a GHRR hypervector as an attention head. In
+Then we can write the attention mechanism in GHRR form                        other words, the hyperdimension D in GHRR corresponds
+as:                                                                           to the number of attention heads, and the complexity m
+                                                                              determines the maximum number of tokens the GHRR im-
+    [σ(Q ∗ K† ) ∗ V]j = σ(Wqj Λqj Λ†kj Wkj
+                                        †
+                                           )Wvj Λvj                    (22)   plementation of attention can deal with independently. Note
+                                                                              that it’s possible to encode more than m tokens at the cost of
+                                                                              them entangling within the representation. For simplicity in
+where σ(·) := softmax(Re[·]). The similarity between Eq. 21
+                                                                              analysis, we do not consider the entangled case for this work;
+and Eq. 22 suggests that GHRR is capable of implementing
+                                                                              as a result, the range of attention is limited by m.
+attention. The GHRR representation enforces unitarity on Wj
+                                                                                 Beyond just implementing attention, what this suggests is
+to generate base hypervectors that are norm-preserving; we
+                                                                              that binding is more expressive in GHRR compared to other
+can relax this constraint for greater flexibility, enabling ex-
+                                                                              VSAs as binding by itself implements attention in GHRR but
+pressivity comparable to that of a traditional Transformer. The
+                                                                              not in other VSAs. This creates the possibility of interpreting
+softmax is used to ensure attention weights are normalized;
+                                                                              binding beyond simple association.
+other HDC works have utilized the softmax operation in the
+context of training, so it can be included as part of the
+framework [50], [51].                                                         F. Time Complexity
+   While traditional attention is applied to a sequence of tokens                We compare the time complexity of binding FHRR and
+as encoded by a matrix X, here, this is not necessarily the case.             GHRR hypervectors. For an FHRR hypervector of dimension
+The analog of X, Λ, is a diagonal matrix that in general en-                  D′ , the time complexity of the binding operation is O(D′ ).
+codes only one token. Thus, the attention described in Eq. 22,                or an FHRR hypervector of dimension D × m × m, binding
+while similar in form to Eq. 21, does not implement attention                 involves multiplying D m × m matrices, which has time com-
+over tokens; instead, it applies attention over the representation            plexity O(Dm3 ). To compare the two, we set the dimension
+of a single token. We distinguish this form of representation-                of the FHRR hypervector to be equal to the total dimension
+level attention from traditional token-level attention which is               of the GHRR hypervector, i.e. D′ = Dm2 , resulting in time
+explicitly applied only to token representations.                             complexity O(Dm2 ) and O(Dm3 ) for FHRR and GHRR
+      b) Token-level attention and beyond via VSA positional                  hypervectors respectively. Thus, the time complexity of GHRR
+encoding: To add token-level information, one can express                     has an additional factor of m, which we trade-off for greater
+the hypervectors as a sum of token hypervectors bound with                    expressivity in the binding operation.
+hypervectors encoding positional information. To simplify no-
+tation, let us consider only one dimension of the hypervector,                                       V. E XPERIMENTS
+allowing us to omit and free up the subscript j on W and Λ                       In this section, we validate the theoretical formulation of
+for GHRR components. More precisely, let ϕ(x) = WΛ(x)                         GHRR proposed in Sections III and IV through a series of em-
+be the GHRR encoding and Ej be the positional information                     pirical experiments. Our goal is to demonstrate that the GHRR
+for the j-th token. In particular, we let Ej be an m×m matrix                 framework not only adheres to the fundamental properties of
+such that [Ej ]jj = 1 and zero everywhere else. Let x1 , . . . , xm           HDC but also offers superior expressivity and performance in
+be the tokens we wish to encode. Then our sequence encoding                   handling complex data structures. Specifically, we design our
+is                                                                            experiments to verify the following key properties discussed
+                                          m                                   in the theoretical formulation:
+                                          X
+                 ϕ(x1 , . . . , xm ) :=         Ej ϕ(xj ),             (23)      • Flexible Non-commutativity (Sections V-A - V-B):
+                                          j=1                                      We empirically validate that GHRR binding is non-
+                                                                                   commutative and that this property can be modulated by
+which results in a matrix where exactly the j-th row encodes                       the matrix component Q. This supports the claim in Sec-
+information about the j-th token. This construction gives an                       tion III that GHRR can naturally encode order-dependent
+explicit correspondence between GHRR and attention, with                           and context-sensitive structures without requiring external
+the difference being that GHRR token representations involve                       permutation operations.
+an extra random exponential map as determined by Λ.                              • Decoding Accuracy for Compositional Structures
+   In addition, we may let Ej be some arbitrary trainable                          (Section V-C): We test the model’s ability to decode
+matrix Pj , which essentially makes it a learnable position                        elements from complex nested structures (e.g., trees).
+encoding present in each transformer block. In contrast to the                   • Binding Capacity (Section V-D): We evaluate the stor-
+sinusoidal positional encoding commonly used in the vanilla                        age capacity of bound hypervectors to verify that the
+Transformer architecture, which is added to the token embed-                       increased expressivity of GHRR does not compromise
+dings prior to the application of any Transformer blocks, this                     memorization capabilities inherent to HDC.
+binding-based positional encoding is applied via the binding                     • Attention Mechanism (Section V-E): Finally, we
+operation, i.e. matrix multiplication in GHRR, and is included                     demonstrate the practical utility of the GHRR binding
+in every GHRR Transformer block.                                                   operation by replacing the attention mechanism in a
+YEUNG et al.: GENERALIZED HOLOGRAPHIC REDUCED REPRESENTATIONS                                                                            9
+
+
+
+     Transformer. This validates the theoretical insight in           accuracy is sustained for increasing tree depths. However, the
+     Section IV-E that GHRR binding is mathematically ex-             overall decoding accuracy also drops faster for larger m after
+     pressive enough to approximate attention mechanisms in           a given tree depth.
+     deep learning.                                                      In Figure 7B, we use the same procedure as in Figure
+                                                                      7A, but apply the permutation operation ρ to each subtree
+A. A demonstration of non-commutativity                               encoding. Given a hypervector of dimension D, the permuta-
+                                                                      tion operation is typically implemented by rotating its vector
+   To demonstrate the non-commutativity of GHRR, we use a             entries; e.g. the first element becomes the last, while the
+simple dictionary as an example. A dictionary associates key-         2nd to D-th elements are shifted upwards. An example of
+value pairs {(ki , vi )}ni=1 . The corresponding
+                                         Pn        hypervector that   a permutation-based representation of a tree would be H =
+encodes the entire dictionary is H = i=1 Ki ∗Vi , where we            K1 ∗ρ(K1 ∗ρV1 +K2 ∗ρV2 )+K2 ∗ρ(K1 ∗ρV3 +K2 ∗ρV4 ).
+bold the keys and values to indicate that they are hypervectors.         Interestingly, we observe that the decoding accuracy is
+We require that Ki , Kj for i ̸= j to bePquasi-orthogonal. To         sustained at 100% for longer as we increase the depth of the
+                                               n
+retrieve Vj , we compute K−1     j ∗H =
+                                                     −1
+                                               i=1 Kj Ki ∗ Vi =       tree, but decreases sharply after a certain threshold. This is
+Vj + noise.                                                           in contrast to Figure 7A, where the decoding accuracy drops
+   Figure 5 compares the decoded hypervectors in a nested             below 100% earlier, but decays much more gracefully for
+dictionary for commutative (FHRR) and non-commutative                 larger m. The results suggest that using GHRR to encode data
+(GHRR) encodings. The dictionary is encoded via H =                   structures can provide a simpler implementation (e.g. without
+K1 ∗ (K1 ∗ V1 + K2 ∗ V2 ) + K2 ∗ (K1 ∗ V3 + K2 ∗ V4 ), values         permutation) whose decoding accuracy degrades gracefully as
+are decoded by V1′ = K−1           −1        ′       −1
+                            1 ∗ K1 ∗ H, V2 = K2 ∗ K1 ∗ H,
+                                                           −1
+                                                                      the size of the data structure saturates the representation.
+etc. We observe that the commutative encoding is confused for            We hypothesize that this is due to the exclusivity of the
+values with equivalent keys up to permutation, while the non-         permutation operation; i.e. permutation maps a hypervector to
+commutative encoding does not have this issue. This confusion         a quasi-orthogonal hypervector, making the decoding quality
+is evidenced by the overlapping lines for the decoded V2′ and         better. However, this also leads to faster saturation of the tree
+V3′ in Figure 5B. Meanwhile, these two lines are distinct in          encoding, leading to a sharp drop in decoding accuracy. On
+Figure 5C.                                                            the other hand, the GHRR encoding by itself has a more
+                                                                      adjustable range of exclusivity, which, as we will see, is
+B. Effect of Q on commutativity                                       correlated to diagonality, leading to the hypervector having
+   To measure the effect of Q on the commutativity of                 greater memorization capacity [52] albeit for hypervectors that
+GHRR representations, we sample random GHRR hypervec-                 are quasi-orthogonal to a lesser degree.
+                                                                         In addition, we investigate the effect of diagonality on
+tors H1 , H2 and compute the similarity between H1 ∗ H2 and
+                                                                      decoding accuracy. Figure 8 plots the decoding accuracy for
+H2 ∗ H1 . We call the similarity δ(H1 ∗ H2 , H2 ∗ H1 ) the
+                                                                      different tree depths at different levels of diagonality and
+degree of commutativity of the representation.   We define the
+                                 P           P P                      different values of m. 8A, 8B, 8C, and 8D correspond to
+diagonality of a matrix Q to be j |Qjj |/ j k |Qjk |. Let
+                                                                      diagonalities of 0, 1/3, 2/3, and 1, respectively. We observe
+Q1 , Q2 correspond to H1 , H2 respectively.
+                                                                      that modulating diagonalities from 0 to 1 enables us to
+   Figure 6 plots the sum of the diagonality of Q1 and Q2
+                                                                      interpolate between decoding performance similar to that of
+against the degree of commutativity of H1 and H2 . Each
+                                                                      an FHRR encoding and an FHRR encoding with permuta-
+point in the figure corresponds to a pair of randomly sampled
+                                                                      tion. Indeed, with a diagonality of 1, our GHRR encoding
+hypervectors H1 , H2 with corresponding matrices Q1 , Q2 .
+                                                                      becomes commutative, making it functionally equivalent to
+Each Q(j) is randomly sampled by first sampling a matrix
+                                                                      an FHRR encoding. On the other hand, one can think of a
+X ∈ Cm×m , where each component is of the form a + bi
+                                                                      permutation matrix as having diagonality zero (i.e. maximally
+with a, b ∼ N (0, 1). We then define H(X) = (X + X† )/2
+                                                                      non-commutative); thus we may expect similar degrees of
+and Qj (X) = exp(iH(X)). We perform gradient descent on
+                                                                      commutativity for other matrices of diagonality zero. This
+X such that Qj (X) as diagonality close to the desired value.
+                                                                      result suggests that one way to interpret Q is as a flexible
+   We observe that the two quantities are strongly correlated.
+                                                                      version of the permutation operation that modulates the level
+Moreover, for larger m, there is a high probability of sam-
+                                                                      of commutativity of the representation.
+pling a matrix with low diagonality and thus low degree of
+                                                                         This observation also provides an explanation for the trends
+commutativity.
+                                                                      seen in Figure 7A where larger m leads to a decoding accuracy
+                                                                      more similar to that of the permutation encoding. For larger
+C. Decoding accuracy for nested structures                            m, as suggested by Figure 6, we are more likely to sample a
+   To investigate the effect of m, we use a similar setup to the      matrix with low diagonality, which in turn makes the encoding
+one Section V-A but vary the depth of the encoded dictionary.         more non-commutative just like permutation encoding.
+A value is decoded successfully if it has the highest similarity
+to the decoded hypervector compared to all other values. We           D. Capacity of GHRR representations
+plot the decoding accuracy over different depths and values             Capacity refers to the number of hypervectors one can
+of m in Figure 7A, using a total dimension Dm2 of 600. We             bundle while still being able to memorize it accurately; it mea-
+observe that the larger m is, the longer the high decoding            sures how efficiently HDC can store (bundle) information into
+10                                                        JOURNAL OF IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE, VOL. 00, NO. 0, MONTH 2020
+
+
+
+
+                 A
+
+
+
+                 B                                                            C
+
+
+
+
+ Fig. 5. We encode a hypervector H = K1 ∗(K1 ∗V1 +K2 ∗V2 )+K2 ∗(K1 ∗V3 +K2 ∗V4 ), and retrieve approximate hypervectors V1′ = K−1               −1
+                                                                                                                                         1 ∗K1 ∗H,
+   ′       −1     −1
+ V2 = K2 ∗ K1 ∗ H, etc. We then plot the similarities of the retrieved hypervectors against ϕ(x). A decoding is successful if there is a peak at the
+ given value and nowhere else. A. A visualization of the encoded structure. B. We use an FHRR encoding, i.e. a commutative encoding. C. We use a GHRR
+ encoding with m = 3, i.e. a non-commutative encoding.
+
+
+
+                                                                              negligible differences between the decoding accuracies of
+                                                                              different variants, suggesting that the capacity of GHRR is
+                                                                              comparable to that of FHRR (GHRR m = 1).
+                                                                                 While bundling capacity is a standard measure used in
+                                                                              evaluating HDC implementations, binding is also an insep-
+                                                                              arable part of the framework: many HDC models operate on
+                                                                              composite hypervectors that are the results of the bundling
+                                                                              of bound hypervectors [56], [14], [57]. Taking this factor
+                                                                              into account, we are interested in evaluating the effect of
+                                                                              binding on capacity for GHRR. We design the following
+                                                                              experiment to provide a standard comparison across GHRR
+                                                                              of different complexities and bound components (how many
+                                                                              hypervectors are bound together before bundling the product
+                                                                              with the others). We consider the case where the set S consists
+                                                                              of bound hypervectors whose component base hypervectors
+                                                                              are taken from a finite set U . Specifically, let n be the number
+ Fig. 6. Plot of the sum of the diagonality of Q1 and Q2 against the degree   of components in the bound hypervector        (e.g. H1 ∗ H2 ∗ H3
+ of commutativity of H1 and H2 .                                                                                     √
+                                                                              has 3 components). U consists of n 15000 randomly gener-
+                                                                              ated quasi-orthogonal base hypervectors. Elements in S are
+                                                                              sampled uniformly randomly without replacement from all
+ one representation [52], [53], [54], [55]. We first investigate
+                                                                              possible strings of length n with alphabet U . We measure
+ the bundling capacity of GHRR base hypervectors following
+                                                                              capacity by starting with a set S of hypervectors, partitioning
+ the standard experiment in [55]. We generate 1000 random
+                                                                              it intoPtwo sets X, X ′ , and
+                                                                                                          P forming bundled hypervectors
+ GHRR hypervectors and randomly select k of them to create
+                                                                              C1 = x∈X x and C2 = x∈X ′ x. We say X is memorized
+ a bundle X. We select the top-k hypervectors most similar to
+                                                                              if δ(H, C1 ) > δ(H, C2 ) for all H ∈ X. The capacity is
+ X and compute the decoding accuracy as the proportion of
+                                                                              the largest |X| =: N for which this property holds. This can
+ correctly decoded hypervectors within the bundle. We repeat
+                                                                              also be done indirectly by plotting the decoding accuracy for
+ the experiment 10 times and report the mean in Figure 10. In
+                                                                              various values of |X| = k. Figure 9 visualizes the intuition
+ the figure, we consider multiple variants of GHRR as a result
+                                                                              behind capacity.
+ of varying m = 1, ..., 4 and choosing varying or fixed Q. Here,
+ Λ = diag(eiθ1 , ..., eiθm ) where θj ∼ Unif(0, 2π). We observe                 Figure 11 consists of plots of how capacity changes as total
+YEUNG et al.: GENERALIZED HOLOGRAPHIC REDUCED REPRESENTATIONS                                                                                                 11
+
+
+
+                         A                                                     B
+
+
+
+
+                                                    No permutation                      With permutation
+
+
+
+
+Fig. 7. Plot of decoding accuracy for trees of different depths. A. We encode a dictionary as in Figure 5 but with varying depth and GHRR parameter m.
+We use a total dimension of 600 and plot the resulting decoding accuracy. B. Same encoding as in (A) but with permutation applied to each subtree encoding.
+
+
+                        A                                                     B
+
+
+
+
+                                            Diagonality = 0                                       Diagonality = 1/3
+
+
+                        C                                                     D
+
+
+
+
+                                           Diagonality = 2/3                                       Diagonality = 1
+
+
+
+
+Fig. 8. Plot of decoding accuracy for trees of different depths. We encode a dictionary as in Figure 5 but with varying depth and GHRR parameter m. We
+use a total dimension Dm2 of 600 and plot the resulting decoding accuracy. A. GHRR encoding with diagonality 0. B. GHRR encoding with diagonality
+1/3. C. GHRR encoding with diagonality 2/3. D. GHRR encoding with diagonality 1.
+
+
+
+dimension Dm2 increases for different parameters m and the                     not large. Meanwhile, in Figure 11B, there is a negligible
+number of bound components. In Figure 11A, permutations                        difference between the capacity for different parameters m;
+of bound hypervectors are considered distinct, while in Figure                 for all m, the capacity scales linearly with respect to the total
+11B, permutations are considered the same and are thus                         dimension. Taken together, this suggests that the reason FHRR
+removed.                                                                       (m = 1) performs significantly worse in 11A is due to its
+                                                                               inability to distinguish permutations of bound hypervectors.
+   In Figure 11A, for memorizing the usual base hypervectors                   Conversely, increasing m makes the GHRR representation
+(i.e. one bound component hypervectors), there is virtually no                 non-commutative and thus able to distinguish between the
+difference in capacity between different m. Capacity increases                 permutations. At the same time, there is a negligible loss
+approximately linearly with respect to the total dimension                     in capacity when we increase m while keeping the total
+Dm2 . For a larger number of bound components, there is                        dimension Dm2 fixed. These results suggest that GHRR
+a greater distinction between the capacity for different values                provides a flexible non-commutative representation with no
+of m. In particular, m = 1 (FHRR) is significantly worse.                      loss in capacity compared to FHRR.
+Interestingly, we find that for fixed m > 1, the difference
+in capacity for different numbers of bound components is                           Table II provides a quantitative measure of the capacity of
+12                                                             JOURNAL OF IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE, VOL. 00, NO. 0, MONTH 2020
+
+
+
+             N = 250                           Can distinguish C1, C2
+                                                 (Below capacity)
+
+
+
+
+                                                                                   A
+
+
+
+
+             N = 1500                        Cannot distinguish C1, C2
+                                                (Above capacity)
+
+
+
+
+ Fig. 9. Histogram of similarities between x and C1 and C2 for all x ∈ X.         B
+ Above: C1 and C2 are a bundles of 250 hypervectors. δ(x, C1 ) > δ(x, C2 )
+ for all x ∈ X, so the histograms do not overlap. Below: C1 and C2 are a
+ bundles of 1500 hypervectors. There exists x ∈ C1 such that δ(x, C1 ) ≤
+ δ(x, C2 ), so the histograms overlap.
+
+              m=1          m=2             m=3                  m=4
+ Fixed Q
+ Varying Q
+
+
+
+
+ Fig. 10. Heatmaps showing the decoding accuracies of different variants of
+ GHRR as we vary total dimension Dm2 and number of bundled vectors k.
+
+
+
+ bound hypervectors. Here, hypervectors have a total dimension
+ of Dm2 = 900 and the number of possible bound hypervector                      Fig. 11. The capacity of bound GHRR representations with varying total
+                                                                                dimension Dm2 and the number of bound components. A. Plots where
+ combinations is kept to be approximately 15000. Permutations                   permutations are considered distinct; e.g. A ∗ B ̸= B ∗ A B. Plots where
+ are not considered distinct. We report the mean and standard                   permutations are considered the same (e.g. A ∗ B = B ∗ A) and are thus
+ deviation of the capacities computed over 20 trials.                           removed.
+    In practice, the block size m controls a trade-off between
+ expressivity and model complexity. Larger m makes the
+ binding operation more expressive and more strongly non-
+ commutative, which helps decoding deeper or more structured
+ compositions, but also increases the number of parameters and
+ the per-layer computation. Smaller m yields cheaper, more
+ FHRR-like encodings with weaker order sensitivity. Within the                         Components      m=1        m=2         m=3         m=4
+ range of m we study, we did not observe clear evidence that                               1          272 ± 34   279 ± 52    278 ± 45    277 ± 39
+ increasing m alone causes overfitting or loss of robustness,                              2          234 ± 34   255 ± 64    289 ± 35    271 ± 31
+ so m can be treated as a tuning knob to balance decoding                                  3          151 ± 33   247 ± 37    265 ± 52    266 ± 47
+                                                                                           4           83 ± 20   234 ± 35    270 ± 50    299 ± 61
+ performance against model size and compute budget.
+                                                                                                                 TABLE II
+                                                                                                    C APACITY OF BOUND HYPERVECTORS
+ E. Next Token Prediction
+    We replace the attention mechanism of transformers with
+ the GHRR equivalent as described above and test the model
+ on a language modeling task.
+YEUNG et al.: GENERALIZED HOLOGRAPHIC REDUCED REPRESENTATIONS                                                                              13
+
+
+
+   Let x1 , . . . , xn be a sequence. For notational simplicity,         Model        Trainable PE   Wikitext2 [58]   Penn Treebank [59]
+assume D = 1, so all hypervectors are simply m × m                      Baseline          N/A        29.16 ± 0.13       94.78 ± 0.23
+matrices (though note that we use D > 1 in experiments).               All same           No         27.54 ± 0.08       93.93 ± 0.09
+Moreover, we assume m = n. Let ϕq , ϕk , ϕv be query, key,               QKV              No          27.6 ± 0.10       91.63 ± 0.04
+and value                                                                 Head            No         27.55 ± 0.06       91.68 ± 0.11
+        Pnencoders      respectively. WePdefine the hypervectors
+                                           n                          All different       No         27.56 ± 0.09       91.58 ± 0.08
+Q =        j=1    Pqj ∗ ϕq (xj ), K =            k
+                                           j=1 Pj ∗ ϕk (xj ), and
+      Pn          v                   q   k    v                       All same           Yes        27.54 ± 0.08       93.98 ± 0.12
+V = j=1 Pj ∗ ϕv (xj ), where Pj , Pj , Pj for j = 1, . . . , n           QKV              Yes        27.57 ± 0.12       91.51 ± 0.08
+are positional encoding (PE) matrices. With D = 1, binding                Head            Yes        27.56 ± 0.07       91.53 ± 0.09
+reduces to matrix multiplication.                                     All different       Yes        27.56 ± 0.05       91.52 ± 0.05
+   We evaluate our model on a next-token prediction language                                   TABLE III
+modeling task on the Wikitext2 [58] and the Penn Treebank               P ERPLEXITY OF TRAINED LANGUAGE MODELS WITH DIFFERENT
+                                                                              POSITIONAL ENCODING (PE) SHARING STRATEGIES .
+[59] datasets.
+   The PE can be the same or different across the Q, K, V
+hypervectors as well as across attention heads. Moreover, the
+PEs can either be trainable or fixed (i.e. randomly initialized).   A. Varying Q over dimensions
+This gives us eight different variants of the GHRR Transformer
+                                                                       Varying Q over the dimensions will not substantially affect
+model. For each GHRR encoder ϕq , ϕk , ϕv , we make W
+                                                                    the shape of the kernel. As we sample Q and Λ independently
+trainable and keep Λ fixed. Sample positional encodings are
+                                                                    of each other, expectations can be factored as in Eq. 8, which
+visualized in Supplementary Materials B.
+                                                                    suggests that it is enough to know the expected value of Q to
+   Both the baseline Transformer model [49] and our model           know the shape of the kernel. However, as noted previously, in
+have a comparable number of weight parameters, with a slight        an encoding scheme that is purely randomly sampled, having
+increase when trainable PE is included. Training details are        varying Q provides stable behavior as when D increases, the
+described in Supplementary Materials B. We report the mean          behavior converges to the mean. In addition, having varying
+perplexity (PPL) and standard deviation over five independent       Q over dimensions, as suggested by Eq. 19, places different
+runs in Table III. “All same” uses a single PE shared across        emphases on the conjunction of hypervectors when binding
+Q, K, and V and across all attention heads; “QKV” uses              them together. It is not clear how this affects the characteristics
+distinct PEs for Q, K, and V but shares them across heads;          of binding, but it would be an interesting line of investigation.
+“heads” shares PEs across heads Q, K, and V ; “All different”
+uses distinct PEs for Q, K, and V and for each head. For each
+configuration, we report the mean and standard deviation over       B. Input-dependent Q
+five runs.                                                             As highlighted in Eq. 18, Q can be thought of as a re-
+   We observe an average performance improvement of 5.47%           weighting of the kernels corresponding to the elements of the
+on WikiText-2 and 2.75% on the PTB dataset when compared            diagonal in Λ. Thus, by having Q depend on the input, we can
+to the baseline Transformer model. In the cases with the            modulate how important each of the kernels is depending on
+highest observed improvements, the performance increased            the context for different pairs of inputs. For example, suppose
+by 5.53% on WikiText-2 and 3.44% on PTB, respectively.              the kernels Kk in the sum correspond to Gaussian kernels
+Specifically, we found a 2.56% performance improvement in           with different length scales. Then, for inputs x, y ∈ X , it is
+PTB when PEs are varied across Q, K, V matrices, attention          possible to learn a map Q : X → H that places emphasis
+heads, or both, compared to when they were not.                     on different kernels depending on the diagonal of the matrix
+   This suggests that the inclusion of PEs help with model          Q(x)Q(y)† , which enables us to compare items at different
+performance, though there needs to be some kind of variation        scales depending on context.
+between PEs to have sufficient expressive power. Moreover,             Taken together, the above two parameters enable increased
+there is negligible difference between fixed and trainable          complexity and flexibility of GHRR, affecting both the charac-
+positional encodings, suggesting that level of expressive power     teristics of binding and the shape and adaptivity of the kernel.
+is not needed for this task.                                        It remains to be seen, however, what particular implementa-
+                                                                    tions of the map Q : X → H would work best for various
+                                                                    purposes.
+                       VI. D ISCUSSION
+                                                                    C. Extensions to multimodal and control tasks
+   In Section IV-C, we outlined several variations of GHRR             The kernel view of GHRR suggests several natural ex-
+with increasing complexity, controlled by whether (1) Q             tensions beyond the tasks considered in this work. First,
+varies over the dimensions of the GHRR hypervector; and             multimodal inputs can be encoded by assigning different Λ-
+(2) whether Q depends on the input x. We subsequently               distributions and Q-components to different modalities (e.g.,
+explored the simplest variation where Q is constant and briefly     vision, language) and bundling them into a joint GHRR
+discussed the kernel properties for an encoding with varying        hypervector. The resulting similarity function is then a mixture
+Q over the dimensions. In this section, we discuss the other        of modality-specific kernels, enabling flexible cross-modal
+variations and their possibilities for future development.          interactions while maintaining fixed-width representations.
+14                                                JOURNAL OF IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE, VOL. 00, NO. 0, MONTH 2020
+
+
+
+ Second, continuous control states and actions can be encoded                         IX. ACKNOWLEDGEMENTS
+ via fractional power encoding, with GHRR binding used                 This work was supported in part by DARPA Young Faculty
+ to represent state–action pairs and their compositions. This       Award, National Science Foundation #2127780, #2319198,
+ would allow policies or value functions to be expressed in a       #2321840 and #2312517, Semiconductor Research Corpo-
+ hyperdimensional space with holographic structure, potentially     ration (SRC), Office of Naval Research Young Investigator
+ benefiting from the robustness and compositionality of GHRR.       Program Award, grants #N00014-21-1-2225 and #N00014-
+ A detailed investigation of these multimodal and control           22-1-2067, the Air Force Office of Scientific Research under
+ applications is beyond the scope of the present paper and is       award #FA9550-22-1-0253, the U.S. Military Academy under
+ left for future work.                                              Cooperative Agreement No. W911NF-24-2-0200, generous
+                                                                    gifts from Xilinx and Cisco. The views and conclusions ex-
+ D. Alternative non-commutative HDC implementations                 pressed in this paper are those of the authors and do not reflect
+    There exist other models that have non-commutative bind-        the official policy or position of the U.S. Military Academy,
+ ing, including HRR with circular convolution [46], VTB [60],       U.S. Army, U.S. Department of War, or U.S. Government.
+ MBAT [61], and SMR [62], [9]. Many of them share similar                                         R EFERENCES
+ considerations, but their solution typically breaks more “rules”
+                                                                     [1] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “ImageNet Classification
+ compared to our methods. In particular, the binding operators           with Deep Convolutional Neural Networks,” in Advances in Neural
+ in HRR and VTB are not associative. Although there is an                Information Processing Systems, vol. 25, Curran Associates, Inc., 2012.
+ interesting argument to justify non-associativity in terms of       [2] I. Goodfellow, J. Pouget-Abadie, M. Mirza, B. Xu, D. Warde-Farley,
+                                                                         S. Ozair, A. Courville, and Y. Bengio, “Generative Adversarial Nets,”
+ modeling hierarchy [60], we did not consider this for our               in Advances in Neural Information Processing Systems, vol. 27, Curran
+ design as we do not think it is a useful feature in terms of            Associates, Inc., 2014.
+ integration into neural networks. MBAT has a slightly different     [3] J. Ho, A. Jain, and P. Abbeel, “Denoising Diffusion Probabilistic
+                                                                         Models,” in Advances in Neural Information Processing Systems, vol. 33,
+ view in binding: it uses matrices as keys and performs binding          pp. 6840–6851, Curran Associates, Inc., 2020.
+ with matrix-vector multiplication of key and value followed by      [4] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez,
+ bundling the key-value pairs. Their binding thus consists of            Ł. Kaiser, and I. Polosukhin, “Attention is All you Need,” in Advances
+                                                                         in Neural Information Processing Systems, vol. 30, Curran Associates,
+ two steps - matrix-vector multiplication and bundling - which           Inc., 2017.
+ is relatively uncommon. SMR uses one large square matrix            [5] T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal,
+ instead of a list of square matrices as in GHRR to represent            A. Neelakantan, P. Shyam, G. Sastry, A. Askell, S. Agarwal, A. Herbert-
+                                                                         Voss, G. Krueger, T. Henighan, R. Child, A. Ramesh, D. Ziegler, J. Wu,
+ data, which limits its scalability.                                     C. Winter, C. Hesse, M. Chen, E. Sigler, M. Litwin, S. Gray, B. Chess,
+                                                                         J. Clark, C. Berner, S. McCandlish, A. Radford, I. Sutskever, and
+                      VII. C ONCLUSION                                   D. Amodei, “Language Models are Few-Shot Learners,” in Advances in
+                                                                         Neural Information Processing Systems, vol. 33, pp. 1877–1901, Curran
+    In this work, we introduced the GHRR framework, an exten-            Associates, Inc., 2020.
+ sion of FHRR, and provided a particular implementation of the       [6] R. Bommasani, D. A. Hudson, E. Adeli, R. Altman, S. Arora, S. von
+                                                                         Arx, M. S. Bernstein, J. Bohg, A. Bosselut, E. Brunskill, E. Brynjolfsson,
+ framework. We proved that GHRR maintains the theoretical                S. Buch, D. Card, R. Castellon, N. S. Chatterji, A. S. Chen, K. A.
+ properties of traditional HDC representations and provide               Creel, J. Davis, D. Demszky, C. Donahue, M. Doumbouya, E. Durmus,
+ empirical demonstrations of quasi-orthogonality. We explored            S. Ermon, J. Etchemendy, K. Ethayarajh, L. Fei-Fei, C. Finn, T. Gale,
+                                                                         L. E. Gillespie, K. Goel, N. D. Goodman, S. Grossman, N. Guha,
+ the kernel and binding properties of GHRR and provided an               T. Hashimoto, P. Henderson, J. Hewitt, D. E. Ho, J. Hong, K. Hsu,
+ interpretation of binding in GHRR as an interpolation between           J. Huang, T. F. Icard, S. Jain, D. Jurafsky, P. Kalluri, S. Karamcheti,
+ binding in FHRR and in Tensor Product Representations. We               G. Keeling, F. Khani, O. Khattab, P. W. Koh, M. S. Krass, R. Krishna,
+                                                                         R. Kuditipudi, A. Kumar, F. Ladhak, M. Lee, T. Lee, J. Leskovec,
+ performed empirical experiments on GHRR, demonstrating its              I. Levent, X. L. Li, X. Li, T. Ma, A. Malik, C. D. Manning, S. P. Mir-
+ flexible non-commutativity, increased decoding accuracy for             chandani, E. Mitchell, Z. Munyikwa, S. Nair, A. Narayan, D. Narayanan,
+ compositional structures, and improved memorization capacity            B. Newman, A. Nie, J. C. Niebles, H. Nilforoshan, J. F. Nyarko, G. Ogut,
+                                                                         L. Orr, I. Papadimitriou, J. S. Park, C. Piech, E. Portelance, C. Potts,
+ for bound hypervectors compared to FHRR.                                A. Raghunathan, R. Reich, H. Ren, F. Rong, Y. H. Roohani, C. Ruiz,
+    We also demonstrate that binding in GHRR is more ex-                 J. Ryan, C. R’e, D. Sadigh, S. Sagawa, K. Santhanam, A. Shih, K. P.
+ pressive than that in other HDC variants; in particular, we             Srinivasan, A. Tamkin, R. Taori, A. W. Thomas, F. Tramèr, R. E. Wang,
+                                                                         W. Wang, B. Wu, J. Wu, Y. Wu, S. M. Xie, M. Yasunaga, J. You, M. A.
+ show that binding in GHRR can implement a kind of attention             Zaharia, M. Zhang, T. Zhang, X. Zhang, Y. Zhang, L. Zheng, K. Zhou,
+ mechanism. We verify this by replacing the attention mecha-             and P. Liang, “On the opportunities and risks of foundation models,”
+ nism in a transformer with its GHRR-equivalent and testing it           ArXiv, 2021.
+                                                                     [7] J. Kaplan, S. McCandlish, T. Henighan, T. B. Brown, B. Chess, R. Child,
+ on a language modeling task, showing improved performance               S. Gray, A. Radford, J. Wu, and D. Amodei, “Scaling Laws for Neural
+ compared to a vanilla transformer.                                      Language Models,” Jan. 2020.
+                                                                     [8] P. Kanerva, “Hyperdimensional Computing: An Introduction to Com-
+                                                                         puting in Distributed Representation with High-Dimensional Random
+              VIII. AUTHOR ’ S C ONTRIBUTIONS                            Vectors,” Cognitive Computation, vol. 1, pp. 139–159, June 2009.
+    Calvin Yeung and Zhuowen Zou conceptualized the project,         [9] D. Kleyko, D. A. Rachkovskij, E. Osipov, and A. Rahimi, “A Survey on
+                                                                         Hyperdimensional Computing aka Vector Symbolic Architectures, Part
+ developed the theory, and drafted the manuscript. Calvin                I: Models and Data Transformations,” ACM Computing Surveys, vol. 55,
+ Yeung, SungHeon Jeong, Wenjun Huang conducted the ex-                   pp. 1–40, July 2023.
+ periments, performed the analysis, and data visualization.         [10] J. Renkhoff, K. Feng, M. Meier-Doernberg, A. Velasquez, and H. H.
+                                                                         Song, “A survey on verification and validation, testing and evaluations
+ Nathaniel Bastian and Mohsen Imani provided guidance and                of neurosymbolic artificial intelligence,” IEEE Transactions on Artificial
+ feedback. All authors reviewed the manuscript.                          Intelligence, vol. 5, no. 8, pp. 3765–3779, 2024.
+YEUNG et al.: GENERALIZED HOLOGRAPHIC REDUCED REPRESENTATIONS                                                                                                     15
+
+
+
+[11] P. Vergés, M. Heddes, I. Nunes, D. Kleyko, T. Givargis, and A. Nicolau,     [35] John and J. Raven, “Raven Progressive Matrices,” in Handbook of
+     “Classification using hyperdimensional computing: A review with com-              Nonverbal Assessment (R. S. McCallum, ed.), pp. 223–237, Boston, MA:
+     parative analysis,” Artificial Intelligence Review, vol. 58, p. 173, Mar.         Springer US, 2003.
+     2025.                                                                        [36] M. Bettayeb, E. Hassan, M. U. Khan, Y. Halawani, H. Saleh, and
+[12] D. Kleyko, A. Rahimi, R. W. Gayler, and E. Osipov, “Autoscaling Bloom             B. Mohammad, “Adapting spatial transformer networks across diverse
+     filter: Controlling trade-off between true and false positives,” Neural           hardware platforms: A comprehensive implementation study,” in 2024
+     Computing and Applications, vol. 32, pp. 3675–3684, Apr. 2020.                    IEEE 6th International Conference on AI Circuits and Systems (AICAS),
+[13] D. Kleyko, M. Davies, E. P. Frady, P. Kanerva, S. J. Kent, B. A.                  pp. 547–551, IEEE, 2024.
+     Olshausen, E. Osipov, J. M. Rabaey, D. A. Rachkovskij, A. Rahimi,            [37] S. Salamat, M. Imani, B. Khaleghi, and T. Rosing, “F5-HD: Fast Flexible
+     and F. T. Sommer, “Vector Symbolic Architectures as a Computing                   FPGA-based Framework for Refreshing Hyperdimensional Computing,”
+     Framework for Emerging Hardware,” Proceedings of the IEEE, vol. 110,              in Proceedings of the 2019 ACM/SIGDA International Symposium on
+     pp. 1538–1571, Oct. 2022.                                                         Field-Programmable Gate Arrays, FPGA ’19, (New York, NY, USA),
+[14] P. Poduval, A. Zakeri, F. Imani, H. Alimohamadi, and M. Imani,                    pp. 53–62, Association for Computing Machinery, Feb. 2019.
+     “Graphd: Graph-based hyperdimensional memorization for brain-like            [38] G. Karunaratne, M. Le Gallo, G. Cherubini, L. Benini, A. Rahimi,
+     cognitive learning,” Frontiers in Neuroscience, p. 5, 2022.                       and A. Sebastian, “In-memory hyperdimensional computing,” Nature
+[15] M. Hersche, M. Zeqiri, L. Benini, A. Sebastian, and A. Rahimi,                    Electronics, vol. 3, pp. 327–337, June 2020.
+     “A neuro-vector-symbolic architecture for solving raven’s progressive        [39] L. Ge and K. K. Parhi, “Classification using Hyperdimensional Com-
+     matrices,” Nature Machine Intelligence, vol. 5, no. 4, pp. 363–375, 2023.         puting: A Review,” IEEE Circuits and Systems Magazine, vol. 20, no. 2,
+[16] M. Hersche, F. D. Stefano, T. Hofmann, A. Sebastian, and A. Rahimi,               pp. 30–47, 2020.
+     “Probabilistic Abduction for Visual Abstract Reasoning via Learning          [40] C. Eliasmith, “Cognition with neurons: A large-scale, biologically real-
+     Rules in Vector-symbolic Architectures,” in Annual Conference on                  istic model of the wason task,” in 27th Annual Meeting of the Cognitive
+     Neural Information Processing Systems, Dec. 2023.                                 Science Society, 2005.
+[17] N. Menet, M. Hersche, G. Karunaratne, L. Benini, A. Sebastian, and           [41] J. Gosmann and C. Eliasmith, “A Spiking Neural Model of the n-Back
+     A. Rahimi, “Mimonets: Multiple-input-multiple-output neural networks              Task,” Cognitive Science, 2015.
+     exploiting computation in superposition,” Advances in Neural Informa-        [42] D. Rasmussen and C. Eliasmith, “A neural model of rule generation in
+     tion Processing Systems, vol. 36, 2024.                                           inductive reasoning,” Topics in Cognitive Science, vol. 3, pp. 140–153,
+[18] F. Liu, H. Li, Z. Wang, D. Lyu, and L. Jiang, “HyperDyn: Dynamic                  Jan. 2011.
+     Dimensional Masking for Efficient Hyper-Dimensional Computing,” in           [43] B. B. Murdock, “A theory for the storage and retrieval of item and
+     2025 Design, Automation & Test in Europe Conference (DATE), pp. 1–7,              associative information,” Psychological Review, vol. 89, no. 6, pp. 609–
+     Mar. 2025.                                                                        626, 1982.
+[19] D. A. Rachkovskij, “Shift-Equivariant Similarity-Preserving Hypervec-        [44] C. Eliasmith, T. C. Stewart, X. Choo, T. Bekolay, T. DeWolf, Y. Tang,
+     tor Representations of Sequences,” Cognitive Computation, vol. 16,                and D. Rasmussen, “A Large-Scale Model of the Functioning Brain,”
+     pp. 909–923, May 2024.                                                            Science, vol. 338, pp. 1202–1205, Nov. 2012.
+[20] M. Imani, S. Pampana, S. Gupta, M. Zhou, Y. Kim, and T. Rosing,
+                                                                                  [45] R. W. Gayler, “Multiplicative binding, representation operators & anal-
+     “Dual: Acceleration of clustering algorithms using digital-based pro-
+                                                                                       ogy (workshop poster),” 1998.
+     cessing in-memory,” in 2020 53rd Annual IEEE/ACM International
+                                                                                  [46] T. A. Plate, “Holographic reduced representations,” IEEE Transactions
+     Symposium on Microarchitecture (MICRO), pp. 356–371, IEEE, 2020.
+                                                                                       on Neural networks, vol. 6, no. 3, pp. 623–641, 1995.
+[21] A. Hernández-Cano, N. Matsumoto, E. Ping, and M. Imani, “Onlinehd:
+                                                                                  [47] A. Rahimi and B. Recht, “Random features for large-scale kernel
+     Robust, efficient, and single-pass online learning using hyperdimensional
+                                                                                       machines,” Advances in neural information processing systems, vol. 20,
+     system,” in 2021 Design, Automation & Test in Europe Conference &
+                                                                                       2007.
+     Exhibition (DATE), pp. 56–61, IEEE, 2021.
+[22] A. Rahimi and B. Recht, “Random features for large-scale kernel              [48] R. W. Gayler, “Vector symbolic architectures answer jackendoff’s chal-
+     machines,” in Advances in Neural Information Processing Systems                   lenges for cognitive neuroscience,” arXiv preprint cs/0412059, 2004.
+     (J. Platt, D. Koller, Y. Singer, and S. Roweis, eds.), vol. 20, Curran       [49] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez,
+     Associates, Inc., 2007.                                                           Ł. Kaiser, and I. Polosukhin, “Attention is All you Need,” in Advances
+[23] E. P. Frady, D. Kleyko, C. J. Kymn, B. A. Olshausen, and F. T. Sommer,            in Neural Information Processing Systems, vol. 30, Curran Associates,
+     “Computing on Functions Using Randomized Vector Representations (in               Inc., 2017.
+     brief),” in Neuro-Inspired Computational Elements Conference, (Virtual       [50] W. Xu, V. Swaminathan, S. Pinge, S. Fuhrman, and T. Rosing, “Hyper-
+     Event USA), pp. 115–122, ACM, Mar. 2022.                                          metric: Robust hyperdimensional computing on error-prone memories
+[24] T. A. Plate, “Holographic recurrent networks,” Advances in neural                 using metric learning,” in 2023 IEEE 41st International Conference on
+     information processing systems, vol. 5, 1992.                                     Computer Design (ICCD), pp. 243–246, 2023.
+[25] T. A. Plate, Distributed representations and nested compositional struc-     [51] M. Hersche, G. Karunaratne, G. Cherubini, L. Benini, A. Sebastian, and
+     ture. Citeseer, 1994.                                                             A. Rahimi, “Constrained Few-shot Class-incremental Learning,” in 2022
+[26] T. Plate, “Holographic reduced representations,” IEEE Transactions on             IEEE/CVF Conference on Computer Vision and Pattern Recognition
+     Neural Networks, vol. 6, pp. 623–641, May 1995.                                   (CVPR), (New Orleans, LA, USA), pp. 9047–9057, IEEE, June 2022.
+[27] T. A. Plate, “Holographic reduced representations: Convolution algebra       [52] E. P. Frady, D. Kleyko, and F. T. Sommer, “A theory of sequence
+     for compositional distributed representations,” in International Joint            indexing and working memory in recurrent neural networks,” Neural
+     Conference on Artificial Intelligence, 1991.                                      Computation, vol. 30, pp. 1449–1513, June 2018.
+[28] P. Smolensky, “Tensor product variable binding and the representation        [53] A. Thomas, S. Dasgupta, and T. Rosing, “A Theoretical Perspective
+     of symbolic structures in connectionist systems,” Artificial Intelligence,        on Hyperdimensional Computing,” Journal of Artificial Intelligence
+     vol. 46, pp. 159–216, Nov. 1990.                                                  Research, vol. 72, pp. 215–249, Jan. 2022.
+[29] P. Kanerva, “Binary spatter-coding of ordered k-tuples,” in International    [54] A. Rahimi, S. Datta, D. Kleyko, E. P. Frady, B. Olshausen, P. Kanerva,
+     conference on artificial neural networks, pp. 869–873, Springer, 1996.            and J. M. Rabaey, “High-dimensional computing as a nanoscalable
+[30] T. A. Plate, Holographic Reduced Representation: Distributed repre-               paradigm,” IEEE Transactions on Circuits and Systems I: Regular
+     sentation for cognitive structures, vol. 150. CSLI Publications Stanford,         Papers, vol. 64, no. 9, pp. 2508–2521, 2017.
+     2003.                                                                        [55] K. Schlegel, P. Neubert, and P. Protzel, “A comparison of Vector Sym-
+[31] E. P. Frady, S. J. Kent, B. A. Olshausen, and F. T. Sommer, “Resonator            bolic Architectures,” Artificial Intelligence Review, vol. 55, pp. 4523–
+     Networks, 1: An Efficient Solution for Factoring High-Dimensional,                4555, Aug. 2022.
+     Distributed Representations of Data Structures,” Neural Computation,         [56] E. Osipov, S. Kahawala, D. Haputhanthri, T. Kempitiya, D. De Silva,
+     vol. 32, pp. 2311–2331, Dec. 2020.                                                D. Alahakoon, and D. Kleyko, “Hyperseed: Unsupervised learning with
+[32] A. Zakeri, H. Chen, N. Srinivasa, H. Latapie, and M. Imani, “Enabling             vector symbolic architectures,” IEEE Transactions on Neural Networks
+     efficient and interpretable cybersecurity reasoning through hyperdimen-           and Learning Systems, 2022.
+     sional computing,” IEEE Transactions on Artificial Intelligence, 2025.       [57] Z. Zou, H. Chen, P. Poduval, Y. Kim, M. Imani, E. Sadredini, R. Cam-
+[33] K. Greff, S. van Steenkiste, and J. Schmidhuber, “On the Binding                  marota, and M. Imani, “Biohd: an efficient genome sequence search
+     Problem in Artificial Neural Networks,” Dec. 2020.                                platform using hyperdimensional memorization,” in Proceedings of
+[34] J. Feldman, “The neural binding problem(s),” Cognitive Neurodynamics,             the 49th Annual International Symposium on Computer Architecture,
+     vol. 7, pp. 1–11, 2013.                                                           pp. 656–669, 2022.
+16                                                          JOURNAL OF IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE, VOL. 00, NO. 0, MONTH 2020
+
+
+
+ [58] S. Merity, C. Xiong, J. Bradbury, and R. Socher, “Pointer sentinel
+      mixture models,” arXiv preprint arXiv:1609.07843, 2016.
+ [59] M. Marcus, B. Santorini, and M. A. Marcinkiewicz, “Building a large
+      annotated corpus of english: The penn treebank,” Computational lin-
+      guistics, vol. 19, no. 2, pp. 313–330, 1993.
+ [60] J. Gosmann and C. Eliasmith, “Vector-derived transformation binding:
+      An improved binding operation for deep symbol-like processing in
+      neural networks,” Neural computation, vol. 31, no. 5, pp. 849–869, 2019.
+ [61] S. I. Gallant and T. W. Okaywe, “Representing objects, relations, and
+      sequences,” Neural computation, vol. 25, no. 8, pp. 2038–2078, 2013.
+ [62] M. A. Kelly, D. Blostein, and D. J. Mewhort, “Encoding structure in
+      holographic reduced representations.,” Canadian Journal of Experimen-
+      tal Psychology/Revue canadienne de psychologie expérimentale, vol. 67,
+      no. 2, p. 79, 2013.
+
+                         Nathaniel D. Bastian (Senior Member, IEEE) re-
+                         ceived the Ph.D. degree in Industrial Engineering
+                         and Operations Research from Pennsylvania State
+                         University, University Park, PA, in 2016. He is cur-
+                         rently an Assistant Professor within the Department
+                         of Electrical Engineering & Computer Science at
+                         the United States Military Academy at West Point,
+                         and he serves as Deputy Director of the Robotics
+                         Research Center and Principal Investigator of the
+                         Laboratory for Artificial Intelligence Research &
+                         Engineering (LAIRE). His primary research interests
+ combine mathematical optimization, decision theory, machine learning, and
+ statistical computing to design and develop secure, robust, and resilient
+ neurosymbolic AI-enabled systems. He has received $8M+ in research funding
+ support from DARPA, NSA, OUSW, DEVCOM, AFRL, ONR, and more.
+

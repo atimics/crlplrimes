@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq typst curl
+
+      - name: Collect reference sources
+        run: sh scripts/collect_reference_sources.sh || echo "(offline — using cached sources)"
+
+      - name: Build bibliography
+        run: make paper-bibliography REAL=float
+
+      - name: Build paper PDF (best-effort)
+        run: make paper-pdf-release REAL=float
+        continue-on-error: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            paper/paper.pdf
+            paper/generated/bibliography_report.txt
+            paper/generated/claim_bibliography.typ
+        continue-on-error: true

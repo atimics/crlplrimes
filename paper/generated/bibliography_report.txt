@@ -1,0 +1,69 @@
+=== Holographic Bibliography: Ordinal Ranking ===
+dim=2048  topics=8
+
+Loaded 31 papers, 9300 sentences
+  Papers with rankers: 31 / 31
+  Per-paper fidelity:  160.71 (1.0 = one item per ranker)
+
+--- Ordinal claim to citation ---
+
+  "verified gate filter improves top one ranking over raw baseline"
+    #1 ellis2021dreamcoder
+    #2 bayardo1997csp
+    #3 alur2013sygus
+    #4 clarke2000cegar
+    #5 gebru2021datasheets
+
+  "shared scorer beats single task scorer on out of domain ranking"
+    #1 clarke2000cegar
+    #2 stiennon2020learning
+    #3 schulman2015trust
+    #4 yeung2024generalized
+    #5 bayardo1997csp
+
+  "holographic memory achieves exact retrieval on isolated pairs"
+    #1 yeung2024generalized
+    #2 thomas2021theoretical
+    #3 alur2013sygus
+    #4 schulman2015trust
+    #5 mitchell2019modelcards
+
+  "rejected candidate feedback loop improves proposal quality"
+    #1 schulman2015trust
+    #2 bayardo1997csp
+    #3 yeung2024generalized
+    #4 gebru2021datasheets
+    #5 ellis2021dreamcoder
+
+  "claim compiler mechanically checks every paper assertion"
+    #1 alur2013sygus
+    #2 bayardo1997csp
+    #3 mitchell2019modelcards
+    #4 gebru2021datasheets
+    #5 ellis2021dreamcoder
+
+  "modular residue filter proves zero false rejections"
+    #1 gebru2021datasheets
+    #2 mitchell2019modelcards
+    #3 schulman2017proximal
+    #4 stiennon2020learning
+    #5 yeung2024generalized
+
+  "cross domain transfer benefits from shared hypothesis library"
+    #1 clarke2000cegar
+    #2 schulman2015trust
+    #3 stiennon2020learning
+    #4 pineau2021reproducibility
+    #5 gebru2021datasheets
+
+  "trace determinism audit catches replay sensitive claim drift"
+    #1 schulman2015trust
+    #2 clarke2000cegar
+    #3 bayardo1997csp
+    #4 gebru2021datasheets
+    #5 mitchell2019modelcards
+
+--- Typst output written to paper/generated/claim_bibliography.typ ---
+
+--- CI summary ---
+BIBLIOGRAPHY_OK papers=31 sentences=9300 stored=31

@@ -46,6 +46,18 @@ void leos_engine_unbind(LeosEngine *eng,
                         const double *S, const double *k,
                         double *out);
 
+/* Prepare key FFT: pre-compute FFT(k) into the key-spectrum cache (ck).
+ * Subsequent unbind_cached calls reuse this, saving one FFT per unbind
+ * when the same key queries many S matrices. */
+void leos_engine_prepare_key_fft(LeosEngine *eng, const double *k);
+
+/* unbind_cached(S) = normalize(ifft(fft(S) * conj(cached_key_fft))).
+ * Requires prior prepare_key_fft. Skips the key FFT step. */
+void leos_engine_unbind_cached(LeosEngine *eng,
+                               const double *S,
+                               double *out);
+
+
 /* Batch bind: bind n (k_i, v_i) pairs into separate output vectors.
  * k_batch = [k_0 | k_1 | ... | k_{n-1}], dim doubles each, contiguous.
  * v_batch = same layout.

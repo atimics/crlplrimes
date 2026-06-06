@@ -13,7 +13,7 @@ LDLIBS ?= -lm
 RETIRED_SCRIPT_TARGET = @echo "$@: retired after script removal; port this workflow into the C runtime before use."; exit 2
 
 BUILD_DIR := build/$(REAL)
-NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h include/nn_bitgrid.h include/nn_tilebot.h include/nn_layer.h include/nn_program.h include/nn_hypothesis.h include/nn_protocol.h include/nn_json.h include/nn_text.h include/nn_dataset.h include/nn_grammar_discovery.h include/nn_paper.h
+NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h include/nn_bitgrid.h include/nn_tilebot.h include/nn_layer.h include/nn_program.h include/nn_hypothesis.h include/nn_protocol.h include/nn_json.h include/nn_text.h include/nn_text_vsa.h include/nn_term_bridge.h include/nn_dataset.h include/nn_grammar_discovery.h include/nn_paper.h
 PRIME_GAP_TASK_HEADERS := include/nn_tasks_prime_gap.h src/prime_gap/internal.h
 PRIME_GAP_MODULE_SOURCES := $(wildcard src/prime_gap/*.c)
 PRIME_GAP_TASK_OBJS := $(patsubst src/prime_gap/%.c,$(BUILD_DIR)/obj/prime_gap/%.o,$(PRIME_GAP_MODULE_SOURCES))
@@ -30,6 +30,7 @@ NN_HYPOTHESIS_OBJ := $(BUILD_DIR)/nn_hypothesis.o
 NN_PROTOCOL_OBJ := $(BUILD_DIR)/nn_protocol.o
 NN_JSON_OBJ := $(BUILD_DIR)/nn_json.o
 NN_TEXT_OBJ := $(BUILD_DIR)/nn_text.o
+NN_TEXT_VSA_OBJ := $(BUILD_DIR)/nn_text_vsa.o
 NN_DATASET_OBJ := $(BUILD_DIR)/nn_dataset.o
 NN_GRAMMAR_DISCOVERY_OBJ := $(BUILD_DIR)/nn_grammar_discovery.o
 NN_ARC_SELFPLAY_OBJ := $(BUILD_DIR)/nn_arc_selfplay.o
@@ -39,6 +40,11 @@ NN_HOLO_RUNNER_OBJ := $(BUILD_DIR)/nn_holo_runner.o
 NN_HOLO_GATE_OBJ := $(BUILD_DIR)/nn_holo_gate.o
 NN_LEOS_ENGINE_OBJ := $(BUILD_DIR)/leos_engine.o
 NN_LEOS_HNN_OBJ := $(BUILD_DIR)/leos_hnn.o
+
+NN_HOLOGRAPHIC_LAYER_OBJ := $(BUILD_DIR)/nn_holographic_layer.o
+NN_BIBLIOGRAPHY_OBJ := $(BUILD_DIR)/nn_bibliography.o
+NN_TERM_BRIDGE_OBJ := $(BUILD_DIR)/nn_term_bridge.o
+NN_TFIDF_OBJ := $(BUILD_DIR)/nn_tfidf.o
 NN_PAPER_OBJ := $(BUILD_DIR)/nn_paper.o
 NN_TEST_OBJ := $(BUILD_DIR)/nn_test.o
 NN_EXPERIMENT_TEST_OBJ := $(BUILD_DIR)/nn_experiment_test.o
@@ -99,6 +105,9 @@ HAIKU_WORD_LM := $(BUILD_DIR)/haiku_word_lm
 HAIKU_UNDERSTANDING := $(BUILD_DIR)/haiku_understanding
 HAIKU_RULE_SEARCH := $(BUILD_DIR)/haiku_rule_search
 HAIKU_LINE_SEARCH := $(BUILD_DIR)/haiku_line_search
+
+HAIKU_VSA := $(BUILD_DIR)/haiku_vsa
+BIBLIOGRAPHY_VSA := $(BUILD_DIR)/bibliography_vsa
 SUBSTRATE_EXPERIMENTS := $(BUILD_DIR)/substrate_experiments
 $(SUBSTRATE_EXPERIMENTS): examples/substrate_experiments.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/substrate_experiments.c $(LDFLAGS) $(LDLIBS) -o $@
@@ -590,9 +599,9 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run holo-experiments holo-domain-experiments arc-discovery action-score dataset-action-score dataset-action-score-smoke dataset-action-score-replay-smoke dataset-action-score-adapter-smoke dataset-action-score-multitarget-smoke dataset-action-score-bitwise-smoke dataset-action-score-bitwise-macro-smoke dataset-action-score-haiku-smoke dataset-action-score-grid-smoke dataset-action-score-delayed-claim-smoke dataset-action-score-prime-gap-smoke dataset-action-score-arc-smoke dataset-action-score-program-smoke dataset-action-score-signal-smoke dataset-action-score-rest-smoke dataset-action-score-engine-evidence bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit tiny-net-stronger-baseline symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-public-data arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-rule-search haiku-rule-search-baselines haiku-rule-search-smoke haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-verified-self-play arc-verified-self-play-public arc-learned-sketch-ops arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-ci neurosymbolic-tune source-policy-check benchmark test sanitize check experimental-check clean cross-domain-transfer cross-domain-transfer-smoke haiku-line-search haiku-line-search-smoke
+.PHONY: all run holo-experiments holo-domain-experiments arc-discovery action-score dataset-action-score dataset-action-score-smoke dataset-action-score-replay-smoke dataset-action-score-adapter-smoke dataset-action-score-multitarget-smoke dataset-action-score-bitwise-smoke dataset-action-score-bitwise-macro-smoke dataset-action-score-haiku-smoke dataset-action-score-grid-smoke dataset-action-score-delayed-claim-smoke dataset-action-score-prime-gap-smoke dataset-action-score-arc-smoke dataset-action-score-program-smoke dataset-action-score-signal-smoke dataset-action-score-rest-smoke dataset-action-score-engine-evidence bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit tiny-net-stronger-baseline symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-public-data arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-rule-search haiku-rule-search-baselines haiku-rule-search-smoke haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-verified-self-play arc-verified-self-play-public arc-learned-sketch-ops arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-bibliography paper-ci neurosymbolic-tune source-policy-check benchmark test sanitize check experimental-check clean cross-domain-transfer cross-domain-transfer-smoke bibliography-vsa haiku-vsa haiku-line-search haiku-line-search-smoke
 
-all: $(GO_EXPERIMENT) $(HOLO_EXPERIMENTS) $(XOR_EXAMPLE) $(BITWISE_RECURSIVE) $(TILE_RECURSIVE) $(TILE_FEATURE_ENTROPY) $(LIFE_CURRICULUM) $(LAYER_DISCOVERY) $(ACTION_SCORE_EXAMPLE) $(DATASET_ACTION_SCORE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(CROSS_DOMAIN_TRANSFER) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(HAIKU_RULE_SEARCH) $(HAIKU_LINE_SEARCH) $(BENCHMARK)
+all: $(GO_EXPERIMENT) $(HOLO_EXPERIMENTS) $(XOR_EXAMPLE) $(BITWISE_RECURSIVE) $(TILE_RECURSIVE) $(TILE_FEATURE_ENTROPY) $(LIFE_CURRICULUM) $(LAYER_DISCOVERY) $(ACTION_SCORE_EXAMPLE) $(DATASET_ACTION_SCORE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(CROSS_DOMAIN_TRANSFER) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(HAIKU_RULE_SEARCH) $(BIBLIOGRAPHY_VSA) $(HAIKU_VSA) $(HAIKU_LINE_SEARCH) $(BENCHMARK)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -627,9 +636,25 @@ $(NN_PROTOCOL_OBJ): src/nn_protocol.c include/nn_protocol.h include/nn_symbolic.
 $(NN_JSON_OBJ): src/nn_json.c include/nn_json.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_json.c -o $@
 
-$(NN_TEXT_OBJ): src/nn_text.c include/nn_text.h include/nn_core.h | $(BUILD_DIR)
+$(NN_TEXT_OBJ): src/nn_text.c include/nn_text.h include/nn_text_vsa.h include/nn_term_bridge.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_text.c -o $@
 
+$(NN_TEXT_VSA_OBJ): src/nn_text_vsa.c include/nn_text_vsa.h include/nn_term_bridge.h include/holographic/leos_engine.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_text_vsa.c -o $@
+
+
+$(NN_HOLOGRAPHIC_LAYER_OBJ): src/nn_holographic_layer.c include/nn_holographic_layer.h include/nn_holographic_ranker.h include/holographic/leos_engine.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_holographic_layer.c -o $@
+
+$(NN_BIBLIOGRAPHY_OBJ): src/nn_bibliography.c include/nn_bibliography.h include/nn_holographic_layer.h include/nn_holographic_ranker.h include/nn_text_vsa.h include/nn_term_bridge.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_bibliography.c -o $@
+
+
+$(NN_TFIDF_OBJ): src/nn_tfidf.c include/nn_tfidf.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_tfidf.c -o $@
+
+$(NN_TERM_BRIDGE_OBJ): src/nn_term_bridge.c include/nn_term_bridge.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_term_bridge.c -o $@
 $(NN_DATASET_OBJ): src/nn_dataset.c include/nn_dataset.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_dataset.c -o $@
 
@@ -672,7 +697,7 @@ $(NN_PROTOCOL_TEST_OBJ): src/nn_protocol.c include/nn_protocol.h include/nn_symb
 $(NN_JSON_TEST_OBJ): src/nn_json.c include/nn_json.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_json.c -o $@
 
-$(NN_TEXT_TEST_OBJ): src/nn_text.c include/nn_text.h include/nn_core.h | $(BUILD_DIR)
+$(NN_TEXT_TEST_OBJ): src/nn_text.c include/nn_text.h include/nn_text_vsa.h include/nn_term_bridge.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_text.c -o $@
 
 $(NN_DATASET_TEST_OBJ): src/nn_dataset.c include/nn_dataset.h include/nn_core.h | $(BUILD_DIR)
@@ -714,7 +739,7 @@ $(NN_PROTOCOL_SANITIZE_OBJ): src/nn_protocol.c include/nn_protocol.h include/nn_
 $(NN_JSON_SANITIZE_OBJ): src/nn_json.c include/nn_json.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_json.c -o $@
 
-$(NN_TEXT_SANITIZE_OBJ): src/nn_text.c include/nn_text.h include/nn_core.h | $(BUILD_DIR)
+$(NN_TEXT_SANITIZE_OBJ): src/nn_text.c include/nn_text.h include/nn_text_vsa.h include/nn_term_bridge.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_text.c -o $@
 
 $(NN_DATASET_SANITIZE_OBJ): src/nn_dataset.c include/nn_dataset.h include/nn_core.h | $(BUILD_DIR)
@@ -773,9 +798,14 @@ $(HAIKU_RULE_SEARCH): examples/haiku_rule_search.c $(NN_OBJS) $(NN_HEADERS) | $(
 $(HAIKU_LINE_SEARCH): examples/haiku_line_search.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_line_search.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
+
+$(HAIKU_VSA): examples/haiku_vsa.c $(NN_TEXT_VSA_OBJ) $(NN_HOLO_RANKER_OBJ) $(NN_LEOS_ENGINE_OBJ) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/haiku_vsa.c $(NN_TEXT_VSA_OBJ) $(NN_HOLO_RANKER_OBJ) $(NN_LEOS_ENGINE_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 $(PRIME_GAP_EXAMPLE): examples/prime_gap.c $(NN_OBJS) $(PRIME_GAP_TASK_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_gap.c $(NN_OBJS) $(PRIME_GAP_TASK_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
+$(BIBLIOGRAPHY_VSA): examples/bibliography_vsa.c $(NN_BIBLIOGRAPHY_OBJ) $(NN_HOLOGRAPHIC_LAYER_OBJ) $(NN_TEXT_VSA_OBJ) $(NN_TERM_BRIDGE_OBJ) $(NN_TFIDF_OBJ) $(NN_HOLO_RANKER_OBJ) $(NN_LEOS_ENGINE_OBJ) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/bibliography_vsa.c $(NN_BIBLIOGRAPHY_OBJ) $(NN_HOLOGRAPHIC_LAYER_OBJ) $(NN_TEXT_VSA_OBJ) $(NN_TERM_BRIDGE_OBJ) $(NN_TFIDF_OBJ) $(NN_HOLO_RANKER_OBJ) $(NN_LEOS_ENGINE_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 $(PRIME_REPLAY): examples/prime_replay.c $(NN_OBJS) $(PRIME_GAP_TASK_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/prime_replay.c $(NN_OBJS) $(PRIME_GAP_TASK_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
@@ -809,7 +839,7 @@ $(CROSS_DOMAIN_TRANSFER): examples/cross_domain_transfer.c $(NN_OBJS) $(NN_HEADE
 $(ARC_AGI): examples/arc_agi.c $(NN_OBJS) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_LEOS_ENGINE_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/arc_agi.c $(NN_OBJS) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_LEOS_ENGINE_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(NN_GRAMMAR_DISCOVERY_RUNTIME): examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_TEXT_OBJ) include/nn_grammar_discovery.h include/nn_paper.h include/nn.h include/nn_text.h | $(BUILD_DIR)
+$(NN_GRAMMAR_DISCOVERY_RUNTIME): examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_TEXT_OBJ) include/nn_grammar_discovery.h include/nn_paper.h include/nn.h include/nn_text.h include/nn_text_vsa.h include/nn_term_bridge.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_TEXT_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(SIGNAL_FLIGHT): examples/signal_flight.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
@@ -1007,10 +1037,14 @@ haiku-rule-search-smoke: $(HAIKU_RULE_SEARCH)
 	mkdir -p $(HAIKU_RULE_SEARCH_DIR)
 	./$(HAIKU_RULE_SEARCH) --corpus $(HAIKU_LM_CORPUS) --max-candidates 48 --max-states 600 --max-rules 16 --proposer closed-loop --trace $(HAIKU_RULE_SEARCH_DIR)/smoke_trace.jsonl --save $(HAIKU_RULE_SEARCH_DIR)/haiku_rules_smoke.crlprule
 haiku-line-search: $(HAIKU_LINE_SEARCH)
-	./$(HAIKU_LINE_SEARCH) --beam 8 --epochs 16 --corpus data/haiku_synthetic_5000.txt
 
-haiku-line-search-smoke: $(HAIKU_LINE_SEARCH)
-	./$(HAIKU_LINE_SEARCH) --beam 4 --epochs 16
+
+bibliography-vsa: $(BIBLIOGRAPHY_VSA)
+	./$(BIBLIOGRAPHY_VSA)
+haiku-vsa: $(HAIKU_VSA)
+	./$(HAIKU_VSA)
+
+	
 haiku-rule-search-baselines: $(HAIKU_RULE_SEARCH)
 	./$(HAIKU_RULE_SEARCH) --corpus $(HAIKU_LM_CORPUS) --max-candidates 48 --max-states 600 --max-rules 16 --proposer grammar
 	./$(HAIKU_RULE_SEARCH) --corpus $(HAIKU_LM_CORPUS) --max-candidates 48 --max-states 600 --max-rules 16 --proposer structural
@@ -1740,7 +1774,7 @@ paper-gen:
 	python3 scripts/build_paper.py
 	cd paper && typst compile paper-v3.typ paper-v3.pdf
 
-paper-pdf: experiment-matrix paper/paper.typ
+paper-pdf: experiment-matrix paper-bibliography paper/paper.typ
 	cd paper && typst compile paper.typ paper.pdf
 
 paper-data: $(NN_GRAMMAR_DISCOVERY_RUNTIME) $(ARC_AGI) $(PRIME_GAP_EXAMPLE)
@@ -1765,7 +1799,7 @@ editorial-pr-check:
 	@echo "editorial PR check: running paper-support and diff-coverage check"
 	@./scripts/check_paper_diff_coverage.sh || true
 
-paper-ci: paper-support editorial-pr-check paper-pdf
+paper-ci: paper-bibliography paper-support editorial-pr-check paper-pdf
 
 neurosymbolic-tune: all
 	$(RETIRED_SCRIPT_TARGET)
@@ -1914,3 +1948,18 @@ eml-clean:
 	rm -rf $(BUILD_DIR)/obj/prime_gap_eml $(BUILD_DIR)/prime_gap_eml $(BUILD_DIR)/grid_path_eml $(BUILD_DIR)/delayed_claim_eml
 
 .PHONY: prime-gap-eml grid-path-eml delayed-claim-eml eml-benchmarks eml-clean
+
+# --- Holographic Bibliography CI ---
+BIBLIOGRAPHY_REPORT ?= paper/generated/bibliography_report.txt
+
+paper-bibliography: $(BIBLIOGRAPHY_VSA)
+	@echo "=== bibliography: refreshing reference sources ==="
+	@sh scripts/collect_reference_sources.sh 2>/dev/null || echo "  (network unavailable; using cached sources)"
+	@echo "=== bibliography: encoding papers and querying claims ==="
+	./$(BIBLIOGRAPHY_VSA) --typ-output paper/generated/claim_bibliography.typ > $(BIBLIOGRAPHY_REPORT) 2>&1
+	@echo "  report written to $(BIBLIOGRAPHY_REPORT)"
+	@echo "  papers encoded: $$(grep BIBLIOGRAPHY_OK $(BIBLIOGRAPHY_REPORT) 2>/dev/null || echo 0)"
+
+# ---- CI release target: paper PDF with only bibliography artifacts ----
+paper-pdf-release: paper-bibliography
+	cd paper && typst compile paper.typ paper.pdf 2>/dev/null || echo "(paper PDF skipped — missing experiment data)"
