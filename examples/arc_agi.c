@@ -17853,7 +17853,7 @@ static void arc_emit_builtin_program_summaries(const ARCTask *task, const ARCCon
 
 static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask *task, const ARCTransformCandidate *candidates, size_t candidate_count)
 {
-    ARCTransformMetrics metrics; ARCGrid best[ARC_MAX_PAIRS];
+    ARCTransformMetrics metrics; static ARCGrid best[ARC_MAX_PAIRS];
     memset(&metrics,0,sizeof(metrics)); memset(best,0,sizeof(best));
     metrics.test_pairs=task->test_count; metrics.rules=candidate_count;
     double bs=-1e100; int hp=0;
