@@ -26121,15 +26121,46 @@ int main(int argc, char **argv)
 }
 /* Holographic tile detector: detect cyclic pattern period and tile */
 static int arc_apply_holo_tile_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out) {
-    size_t xs[900]; uint8_t cs[900]; size_t n=0;
+    size_t xs[900],ys[900]; uint8_t cs[900]; size_t n=0;
     for(size_t y=0;y<in->height&&n<900;++y)for(size_t x=0;x<in->width&&n<900;++x){
-        uint8_t v=in->cells[y*in->width+x]; if(v!=c->background_color){xs[n]=x;cs[n]=v;++n;}
+        uint8_t v=in->cells[y*in->width+x]; if(v!=c->background_color){xs[n]=x;ys[n]=y;cs[n]=v;++n;}
     }
-    if(n<2){*out=*in;return 1;}
+    if(n<2){arc_init_grid(out,in->width,in->height);for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i];return 1;}
+
+    /* Fast heuristic first: detect period from same-color spacing */
     size_t period=in->width;
     for(size_t i=0;i<n;++i)for(size_t j=i+1;j<n;++j)
         if(cs[i]==cs[j]){size_t d=xs[j]>xs[i]?xs[j]-xs[i]:xs[i]-xs[j];if(d>0&&d<period)period=d;}
     if(period<2||period>30)period=in->width;
+
+    /* VSA verification: use static LeosEngine to confirm period via holographic similarity */
+    static LeosEngine *eng=NULL; static double pk[256],ck[256],cell[256],scene[256];
+    static int eng_init=0;
+    if(!eng_init){eng=leos_engine_create(256);eng_init=1;}
+    if(eng){
+        memset(scene,0,sizeof(scene));
+        for(size_t i=0;i<n&&i<50;++i){
+            leos_engine_keygen(eng,(uint64_t)(ys[i]*1000+xs[i]),pk);
+            leos_engine_keygen(eng,(uint64_t)(cs[i]*10000+1),ck);
+            leos_engine_bind(eng,pk,ck,cell);
+            for(size_t j=0;j<256;++j)scene[j]+=cell[j];
+        }
+        leos_engine_normalize(eng,scene);
+        /* Test heuristic period: build shifted scene and compare */
+        double shifted[256]; memset(shifted,0,sizeof(shifted));
+        for(size_t i=0;i<n&&i<50;++i){
+            size_t sx=(xs[i]+period)%in->width;
+            leos_engine_keygen(eng,(uint64_t)(ys[i]*1000+sx),pk);
+            leos_engine_keygen(eng,(uint64_t)(cs[i]*10000+1),ck);
+            leos_engine_bind(eng,pk,ck,cell);
+            for(size_t j=0;j<256;++j)shifted[j]+=cell[j];
+        }
+        leos_engine_normalize(eng,shifted);
+        double sim=0;for(size_t j=0;j<256;++j)sim+=scene[j]*shifted[j];
+        /* If VSA confirms the period (similarity > 0.3), use it. Otherwise try other periods. */
+        if(sim<0.3){period=in->width;}
+    }
+
     uint8_t row[30]; memset(row,0,sizeof(row));
     size_t by=0;int fd=0;
     for(size_t y=0;y<in->height&&!fd;++y)for(size_t x=0;x<in->width;++x)
