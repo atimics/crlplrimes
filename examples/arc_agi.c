@@ -1,5 +1,7 @@
 #include "nn.h"
 #include "nn_json.h"
+#include "nn_holographic_ranker.h"
+#include "holographic/leos_engine.h"
 
 #include <ctype.h>
 #include <dirent.h>
@@ -179,6 +181,7 @@ typedef enum {
     ARC_RULE_SYMMETRY_V = 51,
     ARC_RULE_MULTISCALE = 52,
     ARC_RULE_OBJECT_LABEL = 53,
+    ARC_RULE_HOLO_TILE = 54,
 } ARCTransformRule;
 
 typedef enum {
@@ -1033,7 +1036,7 @@ static int arc_scene_unique_color_object(const ARCScene *scene,
                                          uint8_t color,
                                          ARCObject *object_out);
 static int arc_apply_multiscale_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
-static int arc_apply_object_label_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
+
 static int arc_apply_candidate(const ARCTransformCandidate *candidate,
                                const ARCGrid *input,
                                ARCGrid *output);
@@ -1568,7 +1571,7 @@ static uint8_t arc_candidate_render_mode(const ARCTransformCandidate *candidate)
     return candidate->render_mode;
 }
 
-static int arc_rule_is_composable(ARCTransformRule op){switch(op){case ARC_RULE_GRID_COLOR_MAP:case ARC_RULE_GRID_FOREGROUND_RECOLOR:case ARC_RULE_CROP_BACKGROUND:case ARC_RULE_CROP_COLOR:case ARC_RULE_CROP_COLOR_MASK:case ARC_RULE_ROTATE90:case ARC_RULE_ROTATE180:case ARC_RULE_ROTATE270:case ARC_RULE_FLIP_HORIZONTAL:case ARC_RULE_FLIP_VERTICAL:case ARC_RULE_TRANSPOSE:case ARC_RULE_SCALE:case ARC_RULE_BBOX_OUTLINE:case ARC_RULE_BBOX_FILL:case ARC_RULE_TRANSLATE:case ARC_RULE_COMPRESS_COLOR_LINES:case ARC_RULE_GRAVITY_DOWN:case ARC_RULE_GRAVITY_UP:case ARC_RULE_GRAVITY_LEFT:case ARC_RULE_GRAVITY_RIGHT:case ARC_RULE_TILE_REPEAT:case ARC_RULE_GRID_REPEAT:case ARC_RULE_EXTRACT_COLOR:case ARC_RULE_ERASE_COLOR:case ARC_RULE_RECOLOR_BY_REFERENCE:case ARC_RULE_PATTERN_EXTEND:case ARC_RULE_DRAW_LINE:case ARC_RULE_SYMMETRY_H:case ARC_RULE_SYMMETRY_V:case ARC_RULE_MULTISCALE:case ARC_RULE_OBJECT_LABEL:return 1;default:return 0;}}
+static int arc_rule_is_composable(ARCTransformRule op){switch(op){case ARC_RULE_GRID_COLOR_MAP:case ARC_RULE_GRID_FOREGROUND_RECOLOR:case ARC_RULE_CROP_BACKGROUND:case ARC_RULE_CROP_COLOR:case ARC_RULE_CROP_COLOR_MASK:case ARC_RULE_ROTATE90:case ARC_RULE_ROTATE180:case ARC_RULE_ROTATE270:case ARC_RULE_FLIP_HORIZONTAL:case ARC_RULE_FLIP_VERTICAL:case ARC_RULE_TRANSPOSE:case ARC_RULE_SCALE:case ARC_RULE_BBOX_OUTLINE:case ARC_RULE_BBOX_FILL:case ARC_RULE_TRANSLATE:case ARC_RULE_COMPRESS_COLOR_LINES:case ARC_RULE_GRAVITY_DOWN:case ARC_RULE_GRAVITY_UP:case ARC_RULE_GRAVITY_LEFT:case ARC_RULE_GRAVITY_RIGHT:case ARC_RULE_TILE_REPEAT:case ARC_RULE_GRID_REPEAT:case ARC_RULE_EXTRACT_COLOR:case ARC_RULE_ERASE_COLOR:case ARC_RULE_RECOLOR_BY_REFERENCE:case ARC_RULE_PATTERN_EXTEND:case ARC_RULE_DRAW_LINE:case ARC_RULE_SYMMETRY_H:case ARC_RULE_SYMMETRY_V:case ARC_RULE_MULTISCALE:case ARC_RULE_OBJECT_LABEL:case ARC_RULE_HOLO_TILE:return 1;default:return 0;}}
 static int arc_rule_can_end_composition(ARCTransformRule op)
 {
     switch (op) {
@@ -2923,6 +2926,7 @@ static size_t arc_build_candidates(const ARCTask *task,
     if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_SYMMETRY_V,"");snprintf(candidate.name,sizeof(candidate.name),"symmetry_v");arc_add_candidate(candidates,capacity,&count,&candidate);}
     if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_MULTISCALE,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"multiscale");arc_add_candidate(candidates,capacity,&count,&candidate);}
     if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_OBJECT_LABEL,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"object_label");arc_add_candidate(candidates,capacity,&count,&candidate);}
+    if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_HOLO_TILE,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"holo_tile");arc_add_candidate(candidates,capacity,&count,&candidate);}
     { ARCTransformCandidate cons[32]; size_t nc=0;
       for(size_t i=0;i<count&&nc<32;++i)if(arc_rule_is_composable(candidates[i].op)&&!arc_candidate_is_composed(&candidates[i])){ARCTransformCandidate t=candidates[i];size_t c2=0,m2=0,u2=0;if(arc_candidate_matches_train(task,&t,&c2,&m2,&u2))cons[nc++]=candidates[i];}
       for(size_t a=0;a<nc&&count+4<capacity;++a)for(size_t b=0;b<nc&&count+4<capacity;++b){if(a==b)continue;ARCTransformCandidate comp;if(arc_init_composed_candidate(&comp,&cons[a],&cons[b]))arc_add_candidate(candidates,capacity,&count,&comp);}
@@ -4178,6 +4182,7 @@ static int arc_apply_symmetry_candidate(const ARCTransformCandidate*c,const ARCG
 
 static int arc_apply_multiscale_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
 static int arc_apply_object_label_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
+static int arc_apply_holo_tile_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
 static int arc_apply_candidate(const ARCTransformCandidate *candidate,
                                const ARCGrid *input,
                                ARCGrid *output)
@@ -4253,6 +4258,8 @@ static int arc_apply_candidate(const ARCTransformCandidate *candidate,
         return arc_apply_multiscale_candidate(candidate, input, output);
     case ARC_RULE_OBJECT_LABEL:
         return arc_apply_object_label_candidate(candidate, input, output);
+    case ARC_RULE_HOLO_TILE:
+        return arc_apply_holo_tile_candidate(candidate, input, output);
     case ARC_RULE_OBJECT_CROP_LARGEST:
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
@@ -4829,6 +4836,8 @@ static double arc_structural_program_score(const ARCTransformCandidate *candidat
         return 110.0;
     case ARC_RULE_OBJECT_LABEL:
         return 94.0;
+    case ARC_RULE_HOLO_TILE:
+        return 108.0;
     case ARC_RULE_OBJECT_CROP_LARGEST:
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
@@ -26110,3 +26119,27 @@ int main(int argc, char **argv)
     }
     return run_builtin_arc_experiment(&config);
 }
+/* Holographic tile detector: detect cyclic pattern period and tile */
+static int arc_apply_holo_tile_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out) {
+    size_t xs[900]; uint8_t cs[900]; size_t n=0;
+    for(size_t y=0;y<in->height&&n<900;++y)for(size_t x=0;x<in->width&&n<900;++x){
+        uint8_t v=in->cells[y*in->width+x]; if(v!=c->background_color){xs[n]=x;cs[n]=v;++n;}
+    }
+    if(n<2){*out=*in;return 1;}
+    size_t period=in->width;
+    for(size_t i=0;i<n;++i)for(size_t j=i+1;j<n;++j)
+        if(cs[i]==cs[j]){size_t d=xs[j]>xs[i]?xs[j]-xs[i]:xs[i]-xs[j];if(d>0&&d<period)period=d;}
+    if(period<2||period>30)period=in->width;
+    uint8_t row[30]; memset(row,0,sizeof(row));
+    size_t by=0;int fd=0;
+    for(size_t y=0;y<in->height&&!fd;++y)for(size_t x=0;x<in->width;++x)
+        if(in->cells[y*in->width+x]!=c->background_color){by=y;fd=1;break;}
+    for(size_t x=0;x<in->width;++x){uint8_t v=in->cells[by*in->width+x];if(v!=c->background_color)row[x%period]=v;}
+    for(size_t y=0;y<in->height;++y)for(size_t x=0;x<in->width;++x){
+        uint8_t v=in->cells[y*in->width+x];if(v!=c->background_color){size_t px=x%period;if(!row[px])row[px]=v;}
+    }
+    arc_init_grid(out,out->width,out->height);
+    for(size_t y=0;y<out->height;++y){size_t sh=y%period;for(size_t x=0;x<out->width;++x)out->cells[y*out->width+x]=row[(x+sh)%period];}
+    return 1;
+}
+
