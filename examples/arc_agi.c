@@ -26173,4 +26173,38 @@ static int arc_apply_holo_tile_candidate(const ARCTransformCandidate *c, const A
     for(size_t y=0;y<out->height;++y){size_t sh=y%period;for(size_t x=0;x<out->width;++x)out->cells[y*out->width+x]=row[(x+sh)%period];}
     return 1;
 }
+/* Reusable holographic grid encoder: grid → 256-dim scene vector.
+ * Precomputes position keys (900 cells) and color keys (10 colors) once.
+ * Caller provides pre-allocated double[256]. Returns 0 on success. */
+static int arc_grid_to_hologram(const ARCGrid *grid, double *scene_out) {
+    static LeosEngine *eng = NULL;
+    static double pos_keys[900][256];
+    static double col_keys[10][256];
+    static int init = 0;
+    if (!init) {
+        eng = leos_engine_create(256);
+        if (!eng) return -1;
+        for (size_t y = 0; y < 30; ++y)
+            for (size_t x = 0; x < 30; ++x)
+                leos_engine_keygen(eng, (uint64_t)(y * 1000 + x), pos_keys[y * 30 + x]);
+        for (uint8_t c = 0; c < 10; ++c)
+            leos_engine_keygen(eng, (uint64_t)(c * 10000 + 1), col_keys[c]);
+        init = 1;
+    }
+    if (!eng) return -1;
+    memset(scene_out, 0, 256 * sizeof(double));
+    double cell[256]; size_t count = 0;
+    for (size_t y = 0; y < grid->height; ++y)
+        for (size_t x = 0; x < grid->width; ++x) {
+            uint8_t v = grid->cells[y * grid->width + x];
+            if (v == 0 || v >= 10) continue;
+            if (++count > 200) break;
+            leos_engine_bind(eng, pos_keys[y * 30 + x], col_keys[v], cell);
+            for (size_t j = 0; j < 256; ++j) scene_out[j] += cell[j];
+        }
+    leos_engine_normalize(eng, scene_out);
+    return 0;
+}
+
+
 
