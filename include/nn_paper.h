@@ -20,6 +20,9 @@ int nn_paper_write_claims(const char *claims_path,
                           int fail_required,
                           int fail_unlinked_roadmap);
 
+int nn_paper_write_evidence_origin_audit(const char *output_dir,
+                                         int fail_synthetic_required);
+
 int nn_paper_write_trace_determinism(const char *const *trace_paths,
                                      size_t trace_path_count,
                                      const char *output_path,

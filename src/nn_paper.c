@@ -1407,6 +1407,8 @@ typedef struct {
     const char *chart_y_label;
     const char *freshness_prerequisite;
     const char *refresh_command;
+    const char *evidence_origin;
+    int allow_synthetic_support;
 } PaperClaimSpec;
 
 typedef struct {
@@ -1446,6 +1448,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "results/latest/commands.txt",
         "make results",
+        "measured_run",
+        0,
     },
     {
         "C1.prime_gate_delta_ci",
@@ -1460,6 +1464,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "results/latest/comparison.canonical.jsonl",
         "make prime-gate-seed-audit",
+        "measured_run",
+        0,
     },
     {
         "C2.prime_proposer_fixed_budget",
@@ -1474,6 +1480,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "results/latest/commands.txt",
         "make results",
+        "measured_run",
+        0,
     },
     {
         "C4.arc_ood_shared_vs_single",
@@ -1488,6 +1496,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "shared minus single top-1",
         "",
         "",
+        "measured_run",
+        0,
     },
     {
         "C1.arc_gate_scorer_invariance",
@@ -1502,6 +1512,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "certified correct cells",
         "",
         "",
+        "measured_run",
+        0,
     },
     {
         "C1.arc_public_evidence_surface",
@@ -1516,6 +1528,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "evaluation correct cells",
         "",
         "",
+        "measured_run",
+        0,
     },
     {
         "C3.arc_ood_calibration_tradeoff",
@@ -1530,6 +1544,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "shared ECE improvement vs single",
         "",
         "",
+        "measured_run",
+        0,
     },
     {
         "C4.delayed_claim_sibling_transfer",
@@ -1544,6 +1560,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "top-1 delta vs claim-only",
         "",
         "",
+        "measured_run",
+        0,
     },
     {
         "C4.multitask_capacity_tradeoff",
@@ -1558,6 +1576,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "shared minus single top-1",
         "",
         "",
+        "measured_run",
+        0,
     },
     {
         "C4.adapter_heads_shared_trunk",
@@ -1572,6 +1592,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "task-head top-1 delta",
         "",
         "",
+        "measured_run",
+        0,
     },
     {
         "C5.rejected_candidate_reason_learning",
@@ -1586,6 +1608,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "budget-8 validation utility",
         "",
         "",
+        "measured_run",
+        0,
     },
     {
         "C5.hypothesis_library_promotion",
@@ -1600,6 +1624,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "certified tasks",
         "",
         "",
+        "measured_run",
+        0,
     },
     {
         "C7.tiny_net_plateau_stop_rule",
@@ -1614,6 +1640,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "",
         "",
+        "measured_run",
+        0,
     },
     {
         "C8.trace_determinism_audit",
@@ -1628,6 +1656,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "build/double/traces/prime_gap.jsonl",
         "make trace-determinism-compare",
+        "measured_run",
+        0,
     },
     {
         "C8.dataset_engine_evidence_surface",
@@ -1642,6 +1672,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "engine evidence rows",
         "build/float/dataset_action_score",
         "make dataset-action-score-engine-evidence",
+        "measured_run",
+        0,
     },
     {
         "C9.signal_flight_replay_control",
@@ -1656,6 +1688,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "selected utility",
         "",
         "",
+        "measured_run",
+        0,
     },
     {
         "C9.signal_live_neural_active",
@@ -1670,6 +1704,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "live rows",
         "",
         "",
+        "measured_run",
+        0,
     },
     {
         "C5.arc_verified_self_play",
@@ -1684,6 +1720,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "public eval certified tasks",
         "",
         "",
+        "measured_run",
+        0,
     },
     {
         "C10.cross_domain_structural_transfer",
@@ -1698,6 +1736,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "",
         "",
+        "measured_run",
+        0,
     },
     {
         "C9.signal_mining_replay_options",
@@ -1712,6 +1752,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "",
         "",
+        "measured_run",
+        0,
     },
     {
         "A.3.holo_gate_blend",
@@ -1726,6 +1768,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "",
         "make holo-experiments",
+        "measured_run",
+        0,
     },
     {
         "B.1.holo_exact_retrieval",
@@ -1740,6 +1784,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "",
         "make holo-experiments",
+        "measured_run",
+        0,
     },
     {
         "B.2.memory_neuron_routing",
@@ -1754,6 +1800,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "",
         "make holo-experiments",
+        "measured_run",
+        0,
     },
     {
         "B.3.holo_generalization",
@@ -1768,6 +1816,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "",
         "make holo-experiments",
+        "measured_run",
+        0,
     },
     {
         "D.1.claim_compiler_self_check",
@@ -1782,6 +1832,8 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "",
         "make paper-support",
+        "measured_run",
+        0,
     },
 };
 
@@ -4905,6 +4957,8 @@ static int paper_write_claims_typ(const char *path,
         paper_write_typ_string(fp, claims[i].spec->chart_kind);
         fputs(", chart_rows: ", fp);
         fputs(claims[i].chart_rows[0] == '\0' ? "()" : claims[i].chart_rows, fp);
+        fputs(", evidence_origin: ", fp);
+        paper_write_typ_string(fp, claims[i].spec->evidence_origin);
         fputs("), ", fp);
     }
     fputs(")\n\n", fp);
@@ -4959,7 +5013,14 @@ static int paper_write_claims_typ(const char *path,
     return 0;
 }
 
-static int paper_write_claim_reports(const char *output_dir,
+static const char *paper_claim_origin_column(const PaperClaimSpec *spec) {
+    if (spec == NULL || spec->evidence_origin == NULL || spec->evidence_origin[0] == '\0') {
+        return "measured_run";
+    }
+    return spec->evidence_origin;
+}
+
+int paper_write_claim_reports(const char *output_dir,
                                      const PaperClaimResult claims[PAPER_CLAIM_COUNT]) {
     char path[4096];
     char text[8192];
@@ -4973,10 +5034,11 @@ static int paper_write_claim_reports(const char *output_dir,
     for (i = 0U; i < PAPER_CLAIM_COUNT; ++i) {
         paper_appendf(text,
                       sizeof(text),
-                      "- `%s`: %s - %s\n",
+                      "- `%s`: %s - %s (origin: %s)\n",
                       claims[i].spec->id,
                       claims[i].status,
-                      claims[i].summary);
+                      claims[i].summary,
+                      paper_claim_origin_column(claims[i].spec));
     }
     snprintf(path, sizeof(path), "%s/support_report.md", output_dir);
     if (paper_write_text_file(path, text) != 0) {
@@ -5797,6 +5859,54 @@ static int paper_write_experiment_matrix(
     return 0;
 }
 
+
+int nn_paper_write_evidence_origin_audit(const char *output_dir,
+                                          int fail_synthetic_required) {
+    if (output_dir == NULL || output_dir[0] == '\0') {
+        output_dir = "paper/generated";
+    }
+    
+    char path[4096];
+    snprintf(path, sizeof(path), "%s/evidence_origin_audit.md", output_dir);
+    
+    FILE *fp = fopen(path, "w");
+    if (fp == NULL) {
+        fprintf(stderr, "Failed to open %s for writing\n", path);
+        return 1;
+    }
+    
+    fprintf(fp, "# Evidence Origin Audit\n\n");
+    fprintf(fp, "This report shows which claims are supported by measured_run vs synthetic data.\n\n");
+    fprintf(fp, "## Summary\n\n");
+    
+    int measured_count = 0, synthetic_count = 0;
+    size_t i;
+    
+    for (i = 0; i < PAPER_CLAIM_COUNT; i++) {
+        const char *origin = PAPER_CLAIM_SPECS[i].evidence_origin;
+        if (origin == NULL || strcmp(origin, "measured_run") == 0) {
+            measured_count++;
+        } else if (strcmp(origin, "synthetic") == 0 || strcmp(origin, "synthetic_diagnostic") == 0) {
+            synthetic_count++;
+        }
+    }
+    
+    fprintf(fp, "- **Total claims**: %u\n", (unsigned)PAPER_CLAIM_COUNT);
+    fprintf(fp, "- **Measured run data**: %d\n", measured_count);
+    fprintf(fp, "- **Synthetic/diagnostic data**: %d\n\n", synthetic_count);
+    
+    if (synthetic_count > 0 && fail_synthetic_required) {
+        fprintf(fp, "FAIL: %d claim(s) backed only by synthetic data without explicit allowance.\n", synthetic_count);
+        fclose(fp);
+        printf("Evidence origin audit written to %s\n", path);
+        return 1;
+    }
+    
+    fprintf(fp, "PASS: all required claims have measured origin or explicit synthetic allowance.\n");
+    fclose(fp);
+    printf("Evidence origin audit written to %s\n", path);
+    return 0;
+}
 int nn_paper_write_claims(const char *claims_path,
                           const char *output_dir,
                           const char *paper_path,

@@ -23,21 +23,21 @@ jobs:
       - name: Pin toolchain
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y gcc-13 make
+          sudo apt-get install -y gcc-13 make libopenblas-dev
           ${CC} --version
 
       - name: Capture environment manifest
         run: |
           printf '{"schema":"crlp.environment_manifest.v1","cc":"%s","real":"%s"}\n' "$CC" "$REAL" > environment.json
 
-      - name: Build all binaries
-        run: make -j$(nproc) all
+      - name: Build promoted binaries
+        run: make -j$(nproc) promoted NN_BLAS=openblas
 
       - name: Run unit + sanitizer + trace determinism + numeric certificate gates
-        run: make check
+        run: make check NN_BLAS=openblas
 
       - name: Smoke-run experimental sandboxes
-        run: make experimental-check
+        run: make experimental-check NN_BLAS=openblas
 
       - name: Upload environment manifest
         if: always()

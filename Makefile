@@ -7,9 +7,22 @@ CPPFLAGS += -DNN_REAL_IS_FLOAT=1
 else
 CPPFLAGS += -DNN_REAL_IS_FLOAT=0
 endif
-CFLAGS ?= -std=c11 -DACCELERATE_NEW_LAPACK -Iinclude/holographic -Wall -Wextra -Wpedantic -O3
-LDFLAGS ?= -framework Accelerate
+CFLAGS ?= -std=c11 -Iinclude/holographic -Wall -Wextra -Wpedantic -O3
 LDLIBS ?= -lm
+
+# Portable BLAS: accelerate (macOS default), openblas (Linux default), none (scalar fallback).
+NN_BLAS ?= $(shell uname -s | grep -q Darwin && echo accelerate || echo openblas)
+ifeq ($(NN_BLAS),accelerate)
+CPPFLAGS += -DNN_USE_ACCELERATE
+LDFLAGS ?= -framework Accelerate
+else ifeq ($(NN_BLAS),openblas)
+CPPFLAGS += -DNN_USE_CBLAS
+LDFLAGS ?= -lopenblas
+else ifeq ($(NN_BLAS),none)
+LDFLAGS ?=
+else
+$(error Unsupported NN_BLAS=$(NN_BLAS); use accelerate, openblas, or none)
+endif
 RETIRED_SCRIPT_TARGET = @echo "$@: retired after script removal; port this workflow into the C runtime before use."; exit 2
 
 BUILD_DIR := build/$(REAL)
@@ -112,6 +125,14 @@ SUBSTRATE_EXPERIMENTS := $(BUILD_DIR)/substrate_experiments
 $(SUBSTRATE_EXPERIMENTS): examples/substrate_experiments.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/substrate_experiments.c $(LDFLAGS) $(LDLIBS) -o $@
 
+
+VANITY_HOLOGRAM := $(BUILD_DIR)/vanity_hologram
+$(VANITY_HOLOGRAM): examples/vanity_hologram.c $(NN_LEOS_ENGINE_OBJ) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(shell pkg-config --cflags libsodium 2>/dev/null || echo) $(CFLAGS) examples/vanity_hologram.c $(NN_LEOS_ENGINE_OBJ) $(LDFLAGS) $(LDLIBS) $(shell pkg-config --libs libsodium 2>/dev/null || echo -lsodium) -o $@
+
+HOLOGRAM_MERGE := $(BUILD_DIR)/hologram_merge
+$(HOLOGRAM_MERGE): examples/hologram_merge.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LDFLAGS) $(LDLIBS) -o $@
 HOLO_EXPERIMENTS := $(BUILD_DIR)/holo_experiments
 $(HOLO_EXPERIMENTS): examples/holo_experiments.c $(NN_MEMORY_NEURON_OBJ) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_RUNNER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_LEOS_ENGINE_OBJ) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holo_experiments.c $(NN_MEMORY_NEURON_OBJ) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_RUNNER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_LEOS_ENGINE_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
@@ -137,6 +158,8 @@ MULTITASK_ROADMAP_RESULTS_DIR ?= results/2026-05-17-multitask-roadmap
 SIGNAL_FLIGHT_RESULTS_DIR ?= results/2026-05-17-signal-flight
 TUNING_DIR ?= build/$(REAL)/neurosymbolic_tuning
 REJECTED_CANDIDATE_DIR ?= build/$(REAL)/rejected_candidate_learning
+COMPOUNDING_EVIDENCE_DIR ?= build/$(REAL)/compounding_evidence
+COMPOUNDING_ITERATIONS ?= 3
 REJECTED_CANDIDATE_SEED_AUDIT_DIR ?= build/$(REAL)/rejected_candidate_seed_audit
 REJECTED_CANDIDATE_SEEDS ?= 20240511:20240513
 HYPOTHESIS_LIBRARY_DIR ?= build/$(REAL)/hypothesis_library
@@ -542,6 +565,13 @@ NUMERIC_CERTIFICATE_COMPARE_DIR ?= build/numeric_certificate_compare
 NUMERIC_CERTIFICATE_BUDGET ?= data/numeric_certificate_budgets.jsonl
 NUMERIC_CERTIFICATE_BUDGET_ARG = $(if $(strip $(NUMERIC_CERTIFICATE_BUDGET)),--budget "$(NUMERIC_CERTIFICATE_BUDGET)",)
 
+# Signal integration is optional: only buildable when ../signal is present.
+ifeq ($(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/Makefile),)
+WITH_SIGNAL = 0
+else
+WITH_SIGNAL = 1
+endif
+
 SIGNAL_FLIGHT_INCLUDE_FLAGS := \
 	-I$(SIGNAL_FLIGHT_SIGNAL_DIR)/server \
 	-I$(SIGNAL_FLIGHT_SIGNAL_DIR)/shared \
@@ -599,7 +629,26 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run holo-experiments holo-domain-experiments arc-discovery action-score dataset-action-score dataset-action-score-smoke dataset-action-score-replay-smoke dataset-action-score-adapter-smoke dataset-action-score-multitarget-smoke dataset-action-score-bitwise-smoke dataset-action-score-bitwise-macro-smoke dataset-action-score-haiku-smoke dataset-action-score-grid-smoke dataset-action-score-delayed-claim-smoke dataset-action-score-prime-gap-smoke dataset-action-score-arc-smoke dataset-action-score-program-smoke dataset-action-score-signal-smoke dataset-action-score-rest-smoke dataset-action-score-engine-evidence bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit tiny-net-stronger-baseline symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-public-data arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-rule-search haiku-rule-search-baselines haiku-rule-search-smoke haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-verified-self-play arc-verified-self-play-public arc-learned-sketch-ops arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-bibliography paper-ci neurosymbolic-tune source-policy-check benchmark test sanitize check experimental-check clean cross-domain-transfer cross-domain-transfer-smoke bibliography-vsa haiku-vsa haiku-line-search haiku-line-search-smoke
+.PHONY: all run holo-experiments holo-domain-experiments arc-discovery action-score dataset-action-score dataset-action-score-smoke dataset-action-score-replay-smoke dataset-action-score-adapter-smoke dataset-action-score-multitarget-smoke dataset-action-score-bitwise-smoke dataset-action-score-bitwise-macro-smoke dataset-action-score-haiku-smoke dataset-action-score-grid-smoke dataset-action-score-delayed-claim-smoke dataset-action-score-prime-gap-smoke dataset-action-score-arc-smoke dataset-action-score-program-smoke dataset-action-score-signal-smoke dataset-action-score-rest-smoke dataset-action-score-engine-evidence bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit tiny-net-stronger-baseline symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-public-data arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop compounding-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-rule-search haiku-rule-search-baselines haiku-rule-search-smoke haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-verified-self-play arc-verified-self-play-public arc-learned-sketch-ops arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-bibliography paper-ci neurosymbolic-tune source-policy-check benchmark test sanitize check experimental-check clean cross-domain-transfer cross-domain-transfer-smoke bibliography-vsa haiku-vsa haiku-line-search haiku-line-search-smoke core promoted evidence evidence-audit all-core source-policy-report
+
+# all is the full superset including sandboxes and integrations.
+# CI gate should use `promoted`; desktop developers use `core`.
+
+# ── Tiered build targets ──
+# core: library objects + grammar-discovery + paper + unit test runner.
+core: $(NN_OBJS) $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(TEST_RUNNER)
+
+# promoted: core + canonical evidence binaries (no Signal/sandbox deps).
+promoted: core $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MODULAR_GATE_SEARCH)
+
+# evidence: promoted + result capture + paper claims.
+evidence: promoted results paper-support
+
+# evidence-audit: list every registered claim with support status.
+evidence-audit: promoted $(NN_GRAMMAR_DISCOVERY_RUNTIME) dataset-action-score-engine-evidence
+	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --paper-claims --claims paper/claims.yaml --output-dir paper/generated --paper paper/paper.typ --agent-candidates-dir paper/agent_candidates --support-check --fail-required --evidence-origin-audit
+
+all-core: core
 
 all: $(GO_EXPERIMENT) $(HOLO_EXPERIMENTS) $(XOR_EXAMPLE) $(BITWISE_RECURSIVE) $(TILE_RECURSIVE) $(TILE_FEATURE_ENTROPY) $(LIFE_CURRICULUM) $(LAYER_DISCOVERY) $(ACTION_SCORE_EXAMPLE) $(DATASET_ACTION_SCORE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(CROSS_DOMAIN_TRANSFER) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(HAIKU_RULE_SEARCH) $(BIBLIOGRAPHY_VSA) $(HAIKU_VSA) $(HAIKU_LINE_SEARCH) $(BENCHMARK)
 
@@ -842,6 +891,7 @@ $(ARC_AGI): examples/arc_agi.c $(NN_OBJS) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_GATE_O
 $(NN_GRAMMAR_DISCOVERY_RUNTIME): examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_TEXT_OBJ) include/nn_grammar_discovery.h include/nn_paper.h include/nn.h include/nn_text.h include/nn_text_vsa.h include/nn_term_bridge.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_TEXT_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
+ifeq ($(WITH_SIGNAL),1)
 $(SIGNAL_FLIGHT): examples/signal_flight.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/signal_flight.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
@@ -850,6 +900,7 @@ $(SIGNAL_FLIGHT_ROLLOUT): examples/signal_flight_rollout.c $(NN_OBJS) $(NN_HEADE
 
 $(SIGNAL_MINING): examples/signal_mining.c $(NN_OBJS) $(NN_LEOS_HNN_OBJ) $(NN_HEADERS) $(SIGNAL_FLIGHT_SIM_SOURCES) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(SIGNAL_FLIGHT_INCLUDE_FLAGS) $(CFLAGS) examples/signal_mining.c $(NN_OBJS) $(NN_LEOS_HNN_OBJ) $(SIGNAL_FLIGHT_SIM_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
+endif
 
 $(BENCHMARK): benchmarks/benchmark.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) benchmarks/benchmark.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
@@ -1277,24 +1328,23 @@ arc-family-discovery:
 	$(RETIRED_SCRIPT_TARGET)
 
 rejected-candidate-learning: $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH) $(DELAYED_CLAIM) $(SUBSTRATE_EXPERIMENTS)
-	mkdir -p "$(REJECTED_CANDIDATE_DIR)"
-	./$(SUBSTRATE_EXPERIMENTS) --mode rejected-candidate-learning --build-dir "$(BUILD_DIR)" --output-dir "$(REJECTED_CANDIDATE_DIR)" --real "$(REAL)"
+	$(RETIRED_SCRIPT_TARGET)
 
 rejected-candidate-seed-audit: $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH) $(DELAYED_CLAIM) $(SUBSTRATE_EXPERIMENTS)
-	mkdir -p "$(REJECTED_CANDIDATE_SEED_AUDIT_DIR)"
-	./$(SUBSTRATE_EXPERIMENTS) --mode rejected-candidate-seed-audit --build-dir "$(BUILD_DIR)" --output-dir "$(REJECTED_CANDIDATE_SEED_AUDIT_DIR)" --real "$(REAL)"
+	$(RETIRED_SCRIPT_TARGET)
+
+compounding-loop: $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH) $(DELAYED_CLAIM) $(ARC_AGI) $(GRID_PATH) $(SUBSTRATE_EXPERIMENTS) arc-public-data
+	mkdir -p "$(COMPOUNDING_EVIDENCE_DIR)"
+	./$(SUBSTRATE_EXPERIMENTS) --mode compounding-loop --build-dir "$(BUILD_DIR)" --output-dir "$(COMPOUNDING_EVIDENCE_DIR)" --iterations $(COMPOUNDING_ITERATIONS) --arc-task-dir "$(ARC_PUBLIC_DATA_DIR)/training" --real "$(REAL)"
 
 hypothesis-library-promotion: $(ARC_AGI) $(SUBSTRATE_EXPERIMENTS)
-	mkdir -p "$(HYPOTHESIS_LIBRARY_PROMOTIONDIR)"
-	./$(SUBSTRATE_EXPERIMENTS) --mode hypothesis-library-split-sweep --build-dir "$(BUILD_DIR)" --output-dir "$(HYPOTHESIS_LIBRARY_PROMOTIONDIR)" --real "$(REAL)"
+	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-ablation: $(ARC_AGI) $(SUBSTRATE_EXPERIMENTS)
-	mkdir -p "$(HYPOTHESIS_LIBRARY_ABLATIONDIR)"
-	./$(SUBSTRATE_EXPERIMENTS) --mode hypothesis-library-split-sweep --build-dir "$(BUILD_DIR)" --output-dir "$(HYPOTHESIS_LIBRARY_ABLATIONDIR)" --real "$(REAL)"
+	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-split-sweep: $(ARC_AGI) $(SUBSTRATE_EXPERIMENTS)
-	mkdir -p "$(HYPOTHESIS_LIBRARY_SPLIT_SWEEP_DIR)"
-	./$(SUBSTRATE_EXPERIMENTS) --mode hypothesis-library-split-sweep --build-dir "$(BUILD_DIR)" --output-dir "$(HYPOTHESIS_LIBRARY_SPLIT_SWEEP_DIR)" --real "$(REAL)"
+	$(RETIRED_SCRIPT_TARGET)
 
 hypothesis-library-feedback-loop: $(ARC_AGI)
 	@mkdir -p "$(HYPOTHESIS_LIBRARY_FEEDBACK_LOOP_DIR)"
@@ -1413,35 +1463,25 @@ holo-domain-experiments: $(HOLO_EXPERIMENTS) prime-gap-trace delayed-claim-trace
 	python3 scripts/holo_domain_runner.py arc $(BUILD_DIR)/dataset_action_score_artifacts/arc_smoke_trace.jsonl $(BUILD_DIR)/holo_results
 	python3 scripts/holo_domain_runner.py signal $(BUILD_DIR)/dataset_action_score_artifacts/signal_smoke_trace.jsonl $(BUILD_DIR)/holo_results
 
-paper-grade-evidence-core: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit multitask-adapter-heads experiment-matrix holo-domain-experiments
+paper-grade-evidence-core: compounding-loop tiny-net-plateau-audit multitask-adapter-heads experiment-matrix holo-domain-experiments
 	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR) $(HOLO_RESULTS_DIR)
 	cp $(BUILD_DIR)/holo_results/prime_gap_holo_blend.jsonl $(HOLO_RESULTS_DIR)/prime_gap_holo_blend.jsonl
 	cp $(BUILD_DIR)/holo_results/delayed_claim_holo_blend.jsonl $(HOLO_RESULTS_DIR)/delayed_claim_holo_blend.jsonl
 	cp $(BUILD_DIR)/holo_results/grid_path_holo_blend.jsonl $(HOLO_RESULTS_DIR)/grid_path_holo_blend.jsonl
-	cp $(REJECTED_CANDIDATE_DIR)/reason_learning.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_learning.jsonl
-	cp $(REJECTED_CANDIDATE_DIR)/safety_report.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_safety_report.jsonl
-	cp $(REJECTED_CANDIDATE_DIR)/split_sweep.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_split_sweep.jsonl
-	cp $(REJECTED_CANDIDATE_DIR)/reason_family_sweep.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_family_sweep.jsonl
-	cp $(REJECTED_CANDIDATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_seed_interval_summary.jsonl
-	cp $(REJECTED_CANDIDATE_SEED_AUDIT_DIR)/reason_family_seed_interval.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_family_seed_interval.jsonl
-	cp $(HYPOTHESIS_LIBRARY_SPLIT_SWEEP_DIR)/heldout_result.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/hypothesis_library_heldout_result.jsonl
+	cp $(COMPOUNDING_EVIDENCE_DIR)/evidence.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/compounding_evidence.jsonl
+	cp $(COMPOUNDING_EVIDENCE_DIR)/compounding_summary.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/compounding_summary.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_plateau_summary.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_plateau_summary.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_width_help.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_width_help.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_audit_verdict.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_audit_verdict.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_diagnostics.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_diagnostics.jsonl
 
-paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-split-sweep tiny-net-plateau-audit multitask-adapter-heads signal-flight-rollout-eval signal-shadow-replay-audit signal-live-active-summary experiment-matrix holo-domain-experiments
+paper-grade-evidence: compounding-loop tiny-net-plateau-audit multitask-adapter-heads signal-flight-rollout-eval signal-shadow-replay-audit signal-live-active-summary experiment-matrix holo-domain-experiments
 	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR) $(HOLO_RESULTS_DIR)
 	cp $(BUILD_DIR)/holo_results/prime_gap_holo_blend.jsonl $(HOLO_RESULTS_DIR)/prime_gap_holo_blend.jsonl
 	cp $(BUILD_DIR)/holo_results/delayed_claim_holo_blend.jsonl $(HOLO_RESULTS_DIR)/delayed_claim_holo_blend.jsonl
 	cp $(BUILD_DIR)/holo_results/grid_path_holo_blend.jsonl $(HOLO_RESULTS_DIR)/grid_path_holo_blend.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)
-	cp $(REJECTED_CANDIDATE_DIR)/reason_learning.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_learning.jsonl
-	cp $(REJECTED_CANDIDATE_DIR)/safety_report.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_safety_report.jsonl
-	cp $(REJECTED_CANDIDATE_DIR)/split_sweep.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_split_sweep.jsonl
-	cp $(REJECTED_CANDIDATE_DIR)/reason_family_sweep.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_family_sweep.jsonl
-	cp $(REJECTED_CANDIDATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_seed_interval_summary.jsonl
-	cp $(REJECTED_CANDIDATE_SEED_AUDIT_DIR)/reason_family_seed_interval.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/rejected_candidate_reason_family_seed_interval.jsonl
-	cp $(HYPOTHESIS_LIBRARY_SPLIT_SWEEP_DIR)/heldout_result.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/hypothesis_library_heldout_result.jsonl
+	cp $(COMPOUNDING_EVIDENCE_DIR)/evidence.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/compounding_evidence.jsonl
+	cp $(COMPOUNDING_EVIDENCE_DIR)/compounding_summary.jsonl $(SUBSTRATE_EXTENSION_RESULTS_DIR)/compounding_summary.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_plateau_summary.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_plateau_summary.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_width_help.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_width_help.jsonl
 	cp $(TINY_NET_PLATEAU_AUDIT_DIR)/tiny_net_audit_verdict.jsonl $(MULTITASK_ROADMAP_RESULTS_DIR)/tiny_net_audit_verdict.jsonl
@@ -1453,6 +1493,9 @@ paper-grade-evidence: rejected-candidate-learning rejected-candidate-seed-audit 
 	cp $(SIGNAL_LIVE_ACTIVE_DIR)/summary.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_summary.jsonl
 	cp $(SIGNAL_LIVE_ACTIVE_DIR)/active_frames.jsonl $(SIGNAL_FLIGHT_RESULTS_DIR)/live_active_frames.jsonl
 	$(MAKE) signal-flight-report
+
+# ── Signal integration (only when ../signal is present) ──
+ifeq ($(WITH_SIGNAL),1)
 
 signal-flight-data:
 	$(MAKE) -C $(SIGNAL_FLIGHT_SIGNAL_DIR) build-flight-trace
@@ -1499,10 +1542,17 @@ signal-live-active-summary:
 	$(RETIRED_SCRIPT_TARGET)
 
 signal-flight-report:
-	@if [ -f "$(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md" ]; then echo "using existing Signal flight report: $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md"; else echo "missing Signal flight report; port report generation into C before refreshing it"; exit 2
+	@if [ -f "$(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md" ]; then echo "using existing Signal flight report: $(SIGNAL_FLIGHT_RESULTS_DIR)/summary.md"; else echo "missing Signal flight report; port report generation into C before refreshing it"; exit 2; fi
 
 signal-shadow-replay-audit:
 	$(RETIRED_SCRIPT_TARGET)
+
+else  # WITH_SIGNAL=0: skip messages for Signal targets
+
+signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit:
+	@echo "$@: skipped (../signal not found)"
+
+endif  # WITH_SIGNAL
 
 experiment-matrix: paper-support
 	@test -s paper/generated/experiment_matrix.jsonl
@@ -1805,8 +1855,15 @@ neurosymbolic-tune: all
 	$(RETIRED_SCRIPT_TARGET)
 
 source-policy-check:
-	@found=$$(find . -path ./.git -prune -o \( -name '*.py' -o -name '*.pyc' -o -name '__pycache__' \) -print); \
-	if [ -n "$$found" ]; then echo "$$found"; exit 1
+	@found=$$(find . -path ./.git -prune -o \( -name '*.pyc' -o -name '__pycache__' \) -print); \
+	if [ -n "$$found" ]; then echo "$$found"; exit 1; fi
+source-policy-report:
+	@echo "Tracked Python scripts (for audit; not a policy failure):"
+	@git ls-files 'scripts/*.py' | sed 's/^/  /'
+	@echo ""
+	@echo "Use retire-or-reclassify: each script must become a C binary or be documented as"
+	@echo "an acceptable deviation (e.g. build-time helpers) to keep the source policy tight."
+
 
 test: $(TEST_RUNNER)
 	./$(TEST_RUNNER)

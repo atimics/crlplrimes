@@ -12,3 +12,6 @@ paper/agent_candidates/next_prompt.md
 *.dylib
 *.dSYM/
 .DS_Store
+
+__pycache__/
+*.pyc

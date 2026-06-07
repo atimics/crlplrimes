@@ -16049,6 +16049,16 @@ static int nn_gd_lgc_parse_spec(const char *raw,
     return 0;
 }
 
+static const char *nn_gd_evidence_origin_from_scope(const char *scope) {
+    if (scope == NULL) return "measured_run";
+    if (strcmp(scope, "fixture_regression") == 0 ||
+        strcmp(scope, "fixture_baseline") == 0)
+        return "fixture_regression";
+    if (strcmp(scope, "smoke_trace") == 0)
+        return "synthetic_diagnostic";
+    return "measured_run";
+}
+
 static void nn_gd_lgc_write_gate(FILE *fp,
                                  const char *name,
                                  int passed,
@@ -16083,6 +16093,8 @@ static void nn_gd_lgc_write_arc_row(FILE *fp,
           "\"authority\":\"arc_train_pair_verifier\",\"scope\":",
           fp);
     nn_gd_json_write_string(fp, scope);
+    fputs(",\"evidence_origin\":", fp);
+    nn_gd_json_write_string(fp, nn_gd_evidence_origin_from_scope(scope));
     fputs(",\"source_paths\":[", fp);
     nn_gd_json_write_string(fp, path);
     fputs("],\"paper_claim_support\":\"scoped\",\"gates\":{", fp);
@@ -16337,6 +16349,8 @@ static void nn_gd_lgc_write_haiku_word_row(FILE *fp,
           "\"authority\":\"corpus_adjacency_proxy\",\"scope\":",
           fp);
     nn_gd_json_write_string(fp, scope);
+    fputs(",\"evidence_origin\":", fp);
+    nn_gd_json_write_string(fp, nn_gd_evidence_origin_from_scope(scope));
     fputs(",\"source_paths\":[", fp);
     nn_gd_json_write_string(fp, path);
     fprintf(fp,
@@ -16381,6 +16395,8 @@ static void nn_gd_lgc_write_haiku_understanding_row(FILE *fp,
           "\"authority\":\"paired_benchmark_trace\",\"scope\":",
           fp);
     nn_gd_json_write_string(fp, scope);
+    fputs(",\"evidence_origin\":", fp);
+    nn_gd_json_write_string(fp, nn_gd_evidence_origin_from_scope(scope));
     fputs(",\"source_paths\":[", fp);
     nn_gd_json_write_string(fp, path);
     fprintf(fp,
@@ -16428,6 +16444,8 @@ static void nn_gd_lgc_write_haiku_coherence_row(FILE *fp,
           "\"authority\":\"hard_negative_report\",\"scope\":",
           fp);
     nn_gd_json_write_string(fp, scope);
+    fputs(",\"evidence_origin\":", fp);
+    nn_gd_json_write_string(fp, nn_gd_evidence_origin_from_scope(scope));
     fputs(",\"source_paths\":[", fp);
     nn_gd_json_write_string(fp, path);
     fprintf(fp,

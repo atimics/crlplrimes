@@ -136,7 +136,7 @@ static void usage(const char *argv0) {
             "--delayed-claim-trace PATH --arc-agi PATH --prime-gap PATH] "
             "[--paper-claims --claims PATH --output-dir DIR --paper PATH "
             "--agent-candidates-dir DIR --support-check --fail-required "
-            "--fail-unlinked-roadmap] "
+            "--fail-unlinked-roadmap --evidence-origin-audit --fail-synthetic-required] "
             "[--trace-determinism-audit --trace-input PATH --output PATH "
             "--canonical-output PATH] "
             "[--trace-determinism-compare --trace-input PATH ... --output PATH "
@@ -853,6 +853,18 @@ int main(int argc, char **argv) {
                                   has_arg(argc, argv, "--fail-unlinked-roadmap")) != 0) {
             fprintf(stderr, "failed to write paper claim artifacts\n");
             return 1;
+        }
+        if (has_arg(argc, argv, "--evidence-origin-audit")) {
+            int fail_synthetic = has_arg(argc, argv, "--fail-synthetic-required");
+            if (nn_paper_write_evidence_origin_audit(
+                    paper_claims_output_dir == NULL ? "paper/generated"
+                                                    : paper_claims_output_dir,
+                    fail_synthetic) != 0) {
+                fprintf(stderr, "evidence origin audit: synthetic-only required claims detected\n");
+                if (fail_synthetic) {
+                    return 1;
+                }
+            }
         }
         return 0;
     }
