@@ -17900,6 +17900,35 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask 
     return metrics;
 }
 
+/* Learned variant: uses family success statistics instead of structural score */
+static ARCTransformMetrics evaluate_arc_transform_gate_candidates_learned(
+    const ARCTask *task, const ARCTransformCandidate *candidates,
+    size_t candidate_count, ARCProgramLearnedState *learned)
+{
+    ARCTransformMetrics metrics; static ARCGrid best[ARC_MAX_PAIRS];
+    memset(&metrics,0,sizeof(metrics)); memset(best,0,sizeof(best));
+    metrics.test_pairs=task->test_count; metrics.rules=candidate_count;
+    double bs=-1e100; int hp=0;
+    for(size_t rule=0;rule<metrics.rules;++rule){
+        size_t cc=0,mm=0,up=0;
+        if(!arc_candidate_matches_train(task,&candidates[rule],&cc,&mm,&up)){metrics.train_checked_cells+=cc;metrics.train_mismatches+=mm;metrics.unsupported_train_pairs+=up;continue;}
+        metrics.train_checked_cells+=cc;++metrics.train_consistent_rules;
+        arc_append_accepted_rule(metrics.accepted_rules,sizeof(metrics.accepted_rules),candidates[rule].name);
+        size_t ut=0; ARCGrid pr[ARC_MAX_PAIRS];
+        if(!arc_apply_candidate_to_tests(task,&candidates[rule],pr,&ut)){metrics.unsupported_test_pairs+=ut;continue;}
+        double sc = arc_structural_program_score(&candidates[rule]);
+        if (learned) sc += arc_learned_family_score(learned, &candidates[rule]) * 10.0;
+        if(sc>bs){bs=sc;memcpy(best,pr,sizeof(best));hp=1;}
+    }
+    if(hp){memcpy(metrics.predictions,best,sizeof(metrics.predictions));metrics.prediction_count=task->test_count;}
+    metrics.unique_test_prediction=1;
+    int atk=task->test_count>0;
+    for(size_t p=0;p<task->test_count;++p){if(!task->test[p].has_output){atk=0;continue;}size_t cells=arc_grid_cells(&task->test[p].output);metrics.test_cells+=cells;if(!hp||p>=metrics.prediction_count||!arc_grid_same_shape(&metrics.predictions[p],&task->test[p].output))continue;for(size_t c=0;c<cells;++c)metrics.test_correct_cells+=metrics.predictions[p].cells[c]==task->test[p].output.cells[c]?1:0;}
+    metrics.test_exact=atk&&metrics.test_cells>0&&metrics.test_correct_cells==metrics.test_cells;
+    metrics.certified=metrics.train_consistent_rules!=0;
+    return metrics;
+}
+
 static ARCTransformMetrics evaluate_arc_transform_gate_task(const ARCTask *task)
 {
     ARCTransformCandidate candidates[ARC_RULE_CANDIDATE_COUNT];
@@ -25613,7 +25642,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         int cache_hit = 0;
         for (size_t ci = 0; ci < solved_count && !cache_hit; ci++) {
             ARCTransformCandidate tc[1] = {solved_xforms[ci]};
-            ARCTransformMetrics tm = evaluate_arc_transform_gate_candidates(rotated, tc, 1);
+            ARCTransformMetrics tm = evaluate_arc_transform_gate_candidates_learned(rotated, tc, 1, &learned_state);
             if (tm.certified) {
                 arc_loader_summary_add(&summary, rotated, &tm);
                 cache_hit = 1;
@@ -25655,7 +25684,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         }
         
         ARCTransformMetrics transform =
-            evaluate_arc_transform_gate_candidates(rotated, candidates, candidate_count);
+            evaluate_arc_transform_gate_candidates_learned(rotated, candidates, candidate_count, &learned_state);
         arc_loader_summary_add(&summary, rotated, &transform);
         arc_evaluate_program_candidates(rotated, candidates, candidate_count, evals);
         
