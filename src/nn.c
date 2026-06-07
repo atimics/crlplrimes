@@ -407,6 +407,31 @@ static void dense_forward_layer_batch(const nn_real *restrict previous_activatio
                                       size_t current,
                                       NNActivation activation)
 {
+    if (activation == NN_ACTIVATION_EML_PAIRWISE) {
+        /* EML pairwise: 2*current weight rows produce current outputs.
+         * For each sample: z1=dot(w[2i],x)+b[2i], z2=dot(w[2i+1],x)+b[2i+1],
+         *   out[i] = eml(z1, z2). */
+        for (size_t sample = 0; sample < batch_size; ++sample) {
+            const nn_real *in = &previous_activations[sample * previous];
+            nn_real *out = &activations[sample * current];
+            for (size_t i = 0; i < current; ++i) {
+                const nn_real *w1 = &weights[(2 * i) * previous];
+                const nn_real *w2 = &weights[(2 * i + 1) * previous];
+                nn_real z1 = biases[2 * i] + dot_product(w1, in, previous);
+                nn_real z2 = biases[2 * i + 1] + dot_product(w2, in, previous);
+                if (z1 > (nn_real)5) z1 = (nn_real)5;
+                if (z1 < (nn_real)-5) z1 = (nn_real)-5;
+                if (z2 > (nn_real)5) z2 = (nn_real)5;
+                if (z2 < (nn_real)-5) z2 = (nn_real)-5;
+                nn_real val = nn_eml(z1, z2);
+                if (val > (nn_real)5) val = (nn_real)5;
+                if (val < (nn_real)-5) val = (nn_real)-5;
+                out[i] = val;
+            }
+        }
+        return;
+    }
+
     /* C = X * W^T  (batch matrix-matrix multiply via BLAS sgemm/dgemm)
      * X is batch_size x previous, W is current x previous (row-major).
      * Result C is batch_size x current. */
