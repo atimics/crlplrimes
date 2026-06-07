@@ -7,8 +7,8 @@ CPPFLAGS += -DNN_REAL_IS_FLOAT=1
 else
 CPPFLAGS += -DNN_REAL_IS_FLOAT=0
 endif
-CFLAGS ?= -std=c11 -Iinclude/holographic -Wall -Wextra -Wpedantic -O3
-LDFLAGS ?=
+CFLAGS ?= -std=c11 -DACCELERATE_NEW_LAPACK -Iinclude/holographic -Wall -Wextra -Wpedantic -O3
+LDFLAGS ?= -framework Accelerate
 LDLIBS ?= -lm
 RETIRED_SCRIPT_TARGET = @echo "$@: retired after script removal; port this workflow into the C runtime before use."; exit 2
 

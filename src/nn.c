@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <Accelerate/Accelerate.h>
+
 #ifndef NN_REAL_IS_FLOAT
 #define NN_REAL_IS_FLOAT 1
 #endif
@@ -374,9 +376,23 @@ static void dense_forward_layer(const nn_real *restrict previous_activations,
         return;
     }
 
+    /* standard activation: y = weights * x (matrix-vector via BLAS sgemv/dgemv) */
+#if NN_REAL_IS_FLOAT
+    cblas_sgemv(CblasRowMajor, CblasNoTrans,
+                (int)current, (int)previous,
+                1.0f, weights, (int)previous,
+                previous_activations, 1,
+                0.0f, activations, 1);
+#else
+    cblas_dgemv(CblasRowMajor, CblasNoTrans,
+                (int)current, (int)previous,
+                1.0, weights, (int)previous,
+                previous_activations, 1,
+                0.0, activations, 1);
+#endif
+
     for (size_t neuron = 0; neuron < current; ++neuron) {
-        const nn_real *neuron_weights = &weights[neuron * previous];
-        nn_real sum = biases[neuron] + dot_product(neuron_weights, previous_activations, previous);
+        nn_real sum = activations[neuron] + biases[neuron];
         if (pre_activations != NULL) pre_activations[neuron] = sum;
         activations[neuron] = activate(sum, activation);
     }
@@ -391,112 +407,29 @@ static void dense_forward_layer_batch(const nn_real *restrict previous_activatio
                                       size_t current,
                                       NNActivation activation)
 {
-    size_t sample = 0;
-    for (; sample + 3 < batch_size; sample += 4) {
-        const nn_real *previous0 = &previous_activations[(sample + 0) * previous];
-        const nn_real *previous1 = &previous_activations[(sample + 1) * previous];
-        const nn_real *previous2 = &previous_activations[(sample + 2) * previous];
-        const nn_real *previous3 = &previous_activations[(sample + 3) * previous];
-        nn_real *activations0 = &activations[(sample + 0) * current];
-        nn_real *activations1 = &activations[(sample + 1) * current];
-        nn_real *activations2 = &activations[(sample + 2) * current];
-        nn_real *activations3 = &activations[(sample + 3) * current];
-        size_t neuron = 0;
+    /* C = X * W^T  (batch matrix-matrix multiply via BLAS sgemm/dgemm)
+     * X is batch_size x previous, W is current x previous (row-major).
+     * Result C is batch_size x current. */
+#if NN_REAL_IS_FLOAT
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                (int)batch_size, (int)current, (int)previous,
+                1.0f, previous_activations, (int)previous,
+                weights, (int)previous,
+                0.0f, activations, (int)current);
+#else
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                (int)batch_size, (int)current, (int)previous,
+                1.0, previous_activations, (int)previous,
+                weights, (int)previous,
+                0.0, activations, (int)current);
+#endif
 
-        for (; neuron + 3 < current; neuron += 4) {
-            const nn_real *weights0 = &weights[(neuron + 0) * previous];
-            const nn_real *weights1 = &weights[(neuron + 1) * previous];
-            const nn_real *weights2 = &weights[(neuron + 2) * previous];
-            const nn_real *weights3 = &weights[(neuron + 3) * previous];
-            nn_real sum00 = biases[neuron + 0];
-            nn_real sum01 = biases[neuron + 1];
-            nn_real sum02 = biases[neuron + 2];
-            nn_real sum03 = biases[neuron + 3];
-            nn_real sum10 = biases[neuron + 0];
-            nn_real sum11 = biases[neuron + 1];
-            nn_real sum12 = biases[neuron + 2];
-            nn_real sum13 = biases[neuron + 3];
-            nn_real sum20 = biases[neuron + 0];
-            nn_real sum21 = biases[neuron + 1];
-            nn_real sum22 = biases[neuron + 2];
-            nn_real sum23 = biases[neuron + 3];
-            nn_real sum30 = biases[neuron + 0];
-            nn_real sum31 = biases[neuron + 1];
-            nn_real sum32 = biases[neuron + 2];
-            nn_real sum33 = biases[neuron + 3];
-
-            for (size_t input_index = 0; input_index < previous; ++input_index) {
-                nn_real x0 = previous0[input_index];
-                nn_real x1 = previous1[input_index];
-                nn_real x2 = previous2[input_index];
-                nn_real x3 = previous3[input_index];
-                nn_real w0 = weights0[input_index];
-                nn_real w1 = weights1[input_index];
-                nn_real w2 = weights2[input_index];
-                nn_real w3 = weights3[input_index];
-
-                sum00 += x0 * w0;
-                sum01 += x0 * w1;
-                sum02 += x0 * w2;
-                sum03 += x0 * w3;
-                sum10 += x1 * w0;
-                sum11 += x1 * w1;
-                sum12 += x1 * w2;
-                sum13 += x1 * w3;
-                sum20 += x2 * w0;
-                sum21 += x2 * w1;
-                sum22 += x2 * w2;
-                sum23 += x2 * w3;
-                sum30 += x3 * w0;
-                sum31 += x3 * w1;
-                sum32 += x3 * w2;
-                sum33 += x3 * w3;
-            }
-
-            activations0[neuron + 0] = activate(sum00, activation);
-            activations0[neuron + 1] = activate(sum01, activation);
-            activations0[neuron + 2] = activate(sum02, activation);
-            activations0[neuron + 3] = activate(sum03, activation);
-            activations1[neuron + 0] = activate(sum10, activation);
-            activations1[neuron + 1] = activate(sum11, activation);
-            activations1[neuron + 2] = activate(sum12, activation);
-            activations1[neuron + 3] = activate(sum13, activation);
-            activations2[neuron + 0] = activate(sum20, activation);
-            activations2[neuron + 1] = activate(sum21, activation);
-            activations2[neuron + 2] = activate(sum22, activation);
-            activations2[neuron + 3] = activate(sum23, activation);
-            activations3[neuron + 0] = activate(sum30, activation);
-            activations3[neuron + 1] = activate(sum31, activation);
-            activations3[neuron + 2] = activate(sum32, activation);
-            activations3[neuron + 3] = activate(sum33, activation);
+    /* apply bias and activation */
+    for (size_t sample = 0; sample < batch_size; ++sample) {
+        nn_real *act = &activations[sample * current];
+        for (size_t neuron = 0; neuron < current; ++neuron) {
+            act[neuron] = activate(act[neuron] + biases[neuron], activation);
         }
-
-        for (; neuron < current; ++neuron) {
-            const nn_real *neuron_weights = &weights[neuron * previous];
-            activations0[neuron] =
-                activate(biases[neuron] + dot_product(neuron_weights, previous0, previous),
-                         activation);
-            activations1[neuron] =
-                activate(biases[neuron] + dot_product(neuron_weights, previous1, previous),
-                         activation);
-            activations2[neuron] =
-                activate(biases[neuron] + dot_product(neuron_weights, previous2, previous),
-                         activation);
-            activations3[neuron] =
-                activate(biases[neuron] + dot_product(neuron_weights, previous3, previous),
-                         activation);
-        }
-    }
-
-    for (; sample < batch_size; ++sample) {
-        dense_forward_layer(&previous_activations[sample * previous],
-                            weights,
-                            biases,
-                            &activations[sample * current],
-                            NULL, /* batch path: pre_acts not tracked */
-                            previous,
-                            current,
-                            activation);
     }
 }
 
