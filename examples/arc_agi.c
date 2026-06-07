@@ -1573,61 +1573,46 @@ static uint8_t arc_candidate_render_mode(const ARCTransformCandidate *candidate)
     return candidate->render_mode;
 }
 
-static int arc_rule_is_composable(ARCTransformRule op){switch(op){case ARC_RULE_GRID_COLOR_MAP:case ARC_RULE_GRID_FOREGROUND_RECOLOR:case ARC_RULE_CROP_BACKGROUND:case ARC_RULE_CROP_COLOR:case ARC_RULE_CROP_COLOR_MASK:case ARC_RULE_ROTATE90:case ARC_RULE_ROTATE180:case ARC_RULE_ROTATE270:case ARC_RULE_FLIP_HORIZONTAL:case ARC_RULE_FLIP_VERTICAL:case ARC_RULE_TRANSPOSE:case ARC_RULE_SCALE:case ARC_RULE_BBOX_OUTLINE:case ARC_RULE_BBOX_FILL:case ARC_RULE_TRANSLATE:case ARC_RULE_COMPRESS_COLOR_LINES:case ARC_RULE_GRAVITY_DOWN:case ARC_RULE_GRAVITY_UP:case ARC_RULE_GRAVITY_LEFT:case ARC_RULE_GRAVITY_RIGHT:case ARC_RULE_TILE_REPEAT:case ARC_RULE_GRID_REPEAT:case ARC_RULE_EXTRACT_COLOR:case ARC_RULE_ERASE_COLOR:case ARC_RULE_RECOLOR_BY_REFERENCE:case ARC_RULE_PATTERN_EXTEND:case ARC_RULE_DRAW_LINE:case ARC_RULE_SYMMETRY_H:case ARC_RULE_SYMMETRY_V:case ARC_RULE_MULTISCALE:case ARC_RULE_OBJECT_LABEL:case ARC_RULE_HOLO_TILE:return 1;default:return 0;}}
-static int arc_rule_can_end_composition(ARCTransformRule op)
-{
-    switch (op) {
-    case ARC_RULE_GRID_IDENTITY:
-    case ARC_RULE_GRID_COLOR_MAP:
-    case ARC_RULE_GRID_FOREGROUND_RECOLOR:
-    case ARC_RULE_CROP_BACKGROUND:
-    case ARC_RULE_CROP_BACKGROUND_RECOLOR:
-    case ARC_RULE_CROP_COLOR:
-    case ARC_RULE_CROP_COLOR_MASK:
-    case ARC_RULE_COMPRESS_COLOR_LINES:
-    case ARC_RULE_TILE_MOTIF_PARITY_REPEAT:
-    case ARC_RULE_ROTATE90:
-    case ARC_RULE_ROTATE180:
-    case ARC_RULE_ROTATE270:
-    case ARC_RULE_FLIP_HORIZONTAL:
-    case ARC_RULE_FLIP_VERTICAL:
-    case ARC_RULE_TRANSPOSE:
-    case ARC_RULE_SCALE:
-    case ARC_RULE_BBOX_OUTLINE:
-    case ARC_RULE_BBOX_FILL:
-    case ARC_RULE_TRANSLATE:
-    case ARC_RULE_OBJECT_CROP_LARGEST:
-    case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
-    case ARC_RULE_OBJECT_MASK_LARGEST:
-    case ARC_RULE_OBJECT_TRANSLATE:
-    case ARC_RULE_OBJECT_CONNECT_ALIGNED:
-    case ARC_RULE_OBJECT_FILL_ENCLOSED:
-    case ARC_RULE_OBJECT_RELATION_INDUCED:
-        return 1;
-    case ARC_RULE_GRAVITY_DOWN: case ARC_RULE_GRAVITY_UP: case ARC_RULE_GRAVITY_LEFT: case ARC_RULE_GRAVITY_RIGHT:
-    case ARC_RULE_TILE_REPEAT: case ARC_RULE_GRID_REPEAT:
-    case ARC_RULE_EXTRACT_COLOR: case ARC_RULE_ERASE_COLOR:
-    case ARC_RULE_RECOLOR_BY_REFERENCE:
-    case ARC_RULE_PATTERN_EXTEND: case ARC_RULE_DRAW_LINE:
-    case ARC_RULE_SYMMETRY_H: case ARC_RULE_SYMMETRY_V:
-    case ARC_RULE_MULTISCALE: case ARC_RULE_OBJECT_LABEL:
-        return 1;
-    case ARC_RULE_HYPOTHESIS_APPLIED:
-    case ARC_RULE_COPY_LEFT:
-    case ARC_RULE_COPY_RIGHT:
-    case ARC_RULE_INTERSECTION:
-    case ARC_RULE_UNION:
-    case ARC_RULE_OBJECT_SELECT:
-    case ARC_RULE_LAYER_OVERLAP:
-    case ARC_RULE_LAYER_UNION:
-    case ARC_RULE_LAYER_XOR:
-    case ARC_RULE_LAYER_LEFT_ONLY:
-    case ARC_RULE_LAYER_RIGHT_ONLY:
-    case ARC_RULE_COLOR_MAP_LEFT:
-    case ARC_RULE_COMPOSED:
-        return 0;
-    }
-    return 0;
+static int arc_candidate_is_hypothesis_induced(const ARCTransformCandidate *candidate);
+static int arc_rule_is_composable(ARCTransformRule op) {
+    static const int table[55] = {
+        [ARC_RULE_GRID_COLOR_MAP]=1,[ARC_RULE_GRID_FOREGROUND_RECOLOR]=1,
+        [ARC_RULE_CROP_BACKGROUND]=1,[ARC_RULE_CROP_COLOR]=1,[ARC_RULE_CROP_COLOR_MASK]=1,
+        [ARC_RULE_ROTATE90]=1,[ARC_RULE_ROTATE180]=1,[ARC_RULE_ROTATE270]=1,
+        [ARC_RULE_FLIP_HORIZONTAL]=1,[ARC_RULE_FLIP_VERTICAL]=1,[ARC_RULE_TRANSPOSE]=1,
+        [ARC_RULE_SCALE]=1,[ARC_RULE_BBOX_OUTLINE]=1,[ARC_RULE_BBOX_FILL]=1,
+        [ARC_RULE_TRANSLATE]=1,[ARC_RULE_COMPRESS_COLOR_LINES]=1,
+        [ARC_RULE_GRAVITY_DOWN]=1,[ARC_RULE_GRAVITY_UP]=1,[ARC_RULE_GRAVITY_LEFT]=1,[ARC_RULE_GRAVITY_RIGHT]=1,
+        [ARC_RULE_TILE_REPEAT]=1,[ARC_RULE_GRID_REPEAT]=1,
+        [ARC_RULE_EXTRACT_COLOR]=1,[ARC_RULE_ERASE_COLOR]=1,
+        [ARC_RULE_RECOLOR_BY_REFERENCE]=1,[ARC_RULE_PATTERN_EXTEND]=1,[ARC_RULE_DRAW_LINE]=1,
+        [ARC_RULE_SYMMETRY_H]=1,[ARC_RULE_SYMMETRY_V]=1,
+        [ARC_RULE_MULTISCALE]=1,[ARC_RULE_OBJECT_LABEL]=1,[ARC_RULE_HOLO_TILE]=1,
+    };
+    return op < 55 ? table[op] : 0;
+}
+static int arc_rule_can_end_composition(ARCTransformRule op) {
+    static const int table[55] = {
+        [ARC_RULE_GRID_IDENTITY]=1,[ARC_RULE_GRID_COLOR_MAP]=1,
+        [ARC_RULE_GRID_FOREGROUND_RECOLOR]=1,
+        [ARC_RULE_CROP_BACKGROUND]=1,[ARC_RULE_CROP_BACKGROUND_RECOLOR]=1,
+        [ARC_RULE_CROP_COLOR]=1,[ARC_RULE_CROP_COLOR_MASK]=1,
+        [ARC_RULE_COMPRESS_COLOR_LINES]=1,[ARC_RULE_TILE_MOTIF_PARITY_REPEAT]=1,
+        [ARC_RULE_ROTATE90]=1,[ARC_RULE_ROTATE180]=1,[ARC_RULE_ROTATE270]=1,
+        [ARC_RULE_FLIP_HORIZONTAL]=1,[ARC_RULE_FLIP_VERTICAL]=1,[ARC_RULE_TRANSPOSE]=1,
+        [ARC_RULE_SCALE]=1,[ARC_RULE_BBOX_OUTLINE]=1,[ARC_RULE_BBOX_FILL]=1,
+        [ARC_RULE_TRANSLATE]=1,
+        [ARC_RULE_OBJECT_CROP_LARGEST]=1,[ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR]=1,
+        [ARC_RULE_OBJECT_MASK_LARGEST]=1,
+        [ARC_RULE_OBJECT_TRANSLATE]=1,[ARC_RULE_OBJECT_CONNECT_ALIGNED]=1,
+        [ARC_RULE_OBJECT_FILL_ENCLOSED]=1,[ARC_RULE_OBJECT_RELATION_INDUCED]=1,
+        [ARC_RULE_GRAVITY_DOWN]=1,[ARC_RULE_GRAVITY_UP]=1,[ARC_RULE_GRAVITY_LEFT]=1,[ARC_RULE_GRAVITY_RIGHT]=1,
+        [ARC_RULE_TILE_REPEAT]=1,[ARC_RULE_GRID_REPEAT]=1,
+        [ARC_RULE_EXTRACT_COLOR]=1,[ARC_RULE_ERASE_COLOR]=1,
+        [ARC_RULE_RECOLOR_BY_REFERENCE]=1,[ARC_RULE_PATTERN_EXTEND]=1,[ARC_RULE_DRAW_LINE]=1,
+        [ARC_RULE_SYMMETRY_H]=1,[ARC_RULE_SYMMETRY_V]=1,
+    };
+    return op < 55 ? table[op] : 0;
 }
 
 static int arc_init_composed_candidate(ARCTransformCandidate *candidate,
@@ -4692,85 +4677,40 @@ static int arc_candidate_is_selected_object_program(const ARCTransformCandidate 
 
 static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
 {
-    switch (candidate->op) {
-    case ARC_RULE_GRID_COLOR_MAP:
-    case ARC_RULE_COLOR_MAP_LEFT:
-        return 1;
-    case ARC_RULE_ROTATE90:
-    case ARC_RULE_ROTATE180:
-    case ARC_RULE_ROTATE270:
-    case ARC_RULE_FLIP_HORIZONTAL:
-    case ARC_RULE_FLIP_VERTICAL:
-    case ARC_RULE_TRANSPOSE:
-        return 2;
-    case ARC_RULE_SCALE:
-        return 3;
-    case ARC_RULE_CROP_BACKGROUND:
-    case ARC_RULE_CROP_BACKGROUND_RECOLOR:
-    case ARC_RULE_CROP_COLOR:
-    case ARC_RULE_CROP_COLOR_MASK:
-    case ARC_RULE_COMPRESS_COLOR_LINES:
-        return 4;
-    case ARC_RULE_TILE_MOTIF_PARITY_REPEAT:
-        return 16;
-    case ARC_RULE_GRAVITY_DOWN: case ARC_RULE_GRAVITY_UP: case ARC_RULE_GRAVITY_LEFT: case ARC_RULE_GRAVITY_RIGHT:
-        return 17;
-    case ARC_RULE_TILE_REPEAT:
-        return 18;
-    case ARC_RULE_GRID_REPEAT:
-        return 19;
-    case ARC_RULE_EXTRACT_COLOR: case ARC_RULE_ERASE_COLOR:
-        return 20;
-    case ARC_RULE_RECOLOR_BY_REFERENCE:
-        return 21;
-    case ARC_RULE_PATTERN_EXTEND:
-        return 22;
-    case ARC_RULE_DRAW_LINE:
-        return 23;
-    case ARC_RULE_SYMMETRY_H: case ARC_RULE_SYMMETRY_V:
-        return 24;
-    case ARC_RULE_MULTISCALE:
-        return 25;
-    case ARC_RULE_OBJECT_LABEL:
-        return 26;
-    case ARC_RULE_OBJECT_CROP_LARGEST:
-    case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
-    case ARC_RULE_OBJECT_MASK_LARGEST:
-        return 5;
-    case ARC_RULE_OBJECT_TRANSLATE:
-        return 12;
-    case ARC_RULE_OBJECT_CONNECT_ALIGNED:
-        return 13;
-    case ARC_RULE_OBJECT_FILL_ENCLOSED:
-        return 14;
-    case ARC_RULE_HYPOTHESIS_APPLIED:
-        return 15;
-    case ARC_RULE_OBJECT_RELATION_INDUCED:
-        return 12;
-    case ARC_RULE_COPY_LEFT:
-    case ARC_RULE_COPY_RIGHT:
-    case ARC_RULE_INTERSECTION:
-    case ARC_RULE_UNION:
-    case ARC_RULE_OBJECT_SELECT:
-    case ARC_RULE_LAYER_OVERLAP:
-    case ARC_RULE_LAYER_UNION:
-    case ARC_RULE_LAYER_XOR:
-    case ARC_RULE_LAYER_LEFT_ONLY:
-    case ARC_RULE_LAYER_RIGHT_ONLY:
-        return 6;
-    case ARC_RULE_BBOX_OUTLINE:
-    case ARC_RULE_BBOX_FILL:
-        return 7;
-    case ARC_RULE_TRANSLATE:
-        return 8;
-    case ARC_RULE_GRID_IDENTITY:
-        return 9;
-    case ARC_RULE_GRID_FOREGROUND_RECOLOR:
-        return 10;
-    case ARC_RULE_COMPOSED:
-        return 11;
-    }
-    return 0;
+    if (candidate == NULL) return 0;
+    if (arc_candidate_is_hypothesis_induced(candidate)) return 15;
+    static const size_t table[55] = {
+        [ARC_RULE_COPY_LEFT]=6,[ARC_RULE_COPY_RIGHT]=6,[ARC_RULE_INTERSECTION]=6,
+        [ARC_RULE_UNION]=6,[ARC_RULE_OBJECT_SELECT]=6,[ARC_RULE_COLOR_MAP_LEFT]=6,
+        [ARC_RULE_LAYER_OVERLAP]=6,[ARC_RULE_LAYER_UNION]=6,
+        [ARC_RULE_LAYER_XOR]=6,[ARC_RULE_LAYER_LEFT_ONLY]=6,[ARC_RULE_LAYER_RIGHT_ONLY]=6,
+        [ARC_RULE_GRID_IDENTITY]=9,[ARC_RULE_GRID_COLOR_MAP]=1,
+        [ARC_RULE_GRID_FOREGROUND_RECOLOR]=10,
+        [ARC_RULE_CROP_BACKGROUND]=4,[ARC_RULE_CROP_BACKGROUND_RECOLOR]=4,
+        [ARC_RULE_CROP_COLOR]=4,[ARC_RULE_CROP_COLOR_MASK]=4,[ARC_RULE_COMPRESS_COLOR_LINES]=4,
+        [ARC_RULE_TILE_MOTIF_PARITY_REPEAT]=16,
+        [ARC_RULE_ROTATE90]=2,[ARC_RULE_ROTATE180]=2,[ARC_RULE_ROTATE270]=2,
+        [ARC_RULE_FLIP_HORIZONTAL]=2,[ARC_RULE_FLIP_VERTICAL]=2,[ARC_RULE_TRANSPOSE]=2,
+        [ARC_RULE_SCALE]=3,
+        [ARC_RULE_BBOX_OUTLINE]=7,[ARC_RULE_BBOX_FILL]=7,
+        [ARC_RULE_TRANSLATE]=8,
+        [ARC_RULE_OBJECT_CROP_LARGEST]=5,[ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR]=5,
+        [ARC_RULE_OBJECT_MASK_LARGEST]=5,
+        [ARC_RULE_COMPOSED]=11,
+        [ARC_RULE_OBJECT_TRANSLATE]=12,[ARC_RULE_OBJECT_RELATION_INDUCED]=12,
+        [ARC_RULE_OBJECT_CONNECT_ALIGNED]=13,[ARC_RULE_OBJECT_FILL_ENCLOSED]=14,
+        [ARC_RULE_HYPOTHESIS_APPLIED]=15,
+        [ARC_RULE_GRAVITY_DOWN]=17,[ARC_RULE_GRAVITY_UP]=17,
+        [ARC_RULE_GRAVITY_LEFT]=17,[ARC_RULE_GRAVITY_RIGHT]=17,
+        [ARC_RULE_TILE_REPEAT]=18,[ARC_RULE_GRID_REPEAT]=19,
+        [ARC_RULE_EXTRACT_COLOR]=20,[ARC_RULE_ERASE_COLOR]=20,
+        [ARC_RULE_RECOLOR_BY_REFERENCE]=21,
+        [ARC_RULE_PATTERN_EXTEND]=22,[ARC_RULE_DRAW_LINE]=23,
+        [ARC_RULE_SYMMETRY_H]=24,[ARC_RULE_SYMMETRY_V]=24,
+        [ARC_RULE_MULTISCALE]=25,[ARC_RULE_OBJECT_LABEL]=26,
+        [ARC_RULE_HOLO_TILE]=22,
+    };
+    return candidate->op < 55 ? table[candidate->op] : 0;
 }
 
 static int arc_candidate_is_hypothesis_induced(const ARCTransformCandidate *candidate)
@@ -4782,105 +4722,48 @@ static int arc_candidate_is_hypothesis_induced(const ARCTransformCandidate *cand
 
 static double arc_structural_program_score(const ARCTransformCandidate *candidate)
 {
-    if (arc_candidate_is_hypothesis_induced(candidate)) {
-        return (double)ARC_HYPOTHESIS_STRUCTURAL_SCORE -
-               (double)(abs(candidate->dx) + abs(candidate->dy));
-    }
-    switch (candidate->op) {
-    case ARC_RULE_GRID_COLOR_MAP:
-        return 120.0;
-    case ARC_RULE_ROTATE90:
-    case ARC_RULE_ROTATE180:
-    case ARC_RULE_ROTATE270:
-    case ARC_RULE_FLIP_HORIZONTAL:
-    case ARC_RULE_FLIP_VERTICAL:
-    case ARC_RULE_TRANSPOSE:
-        return 110.0;
-    case ARC_RULE_SCALE:
-        return 105.0 - (double)candidate->scale;
-    case ARC_RULE_INTERSECTION:
-    case ARC_RULE_UNION:
-    case ARC_RULE_OBJECT_SELECT:
-    case ARC_RULE_LAYER_OVERLAP:
-    case ARC_RULE_LAYER_UNION:
-    case ARC_RULE_LAYER_XOR:
-    case ARC_RULE_LAYER_LEFT_ONLY:
-    case ARC_RULE_LAYER_RIGHT_ONLY:
-        return 104.0;
-    case ARC_RULE_COPY_LEFT:
-    case ARC_RULE_COPY_RIGHT:
-    case ARC_RULE_COLOR_MAP_LEFT:
-        return 102.0;
-    case ARC_RULE_CROP_BACKGROUND:
-    case ARC_RULE_CROP_COLOR:
-    case ARC_RULE_COMPRESS_COLOR_LINES:
-        return 100.0;
-    case ARC_RULE_TILE_MOTIF_PARITY_REPEAT:
-        return 106.0 - (double)candidate->scale;
-    case ARC_RULE_GRAVITY_DOWN: case ARC_RULE_GRAVITY_UP: case ARC_RULE_GRAVITY_LEFT: case ARC_RULE_GRAVITY_RIGHT:
-        return 98.0;
-    case ARC_RULE_TILE_REPEAT:
-        return 104.0;
-    case ARC_RULE_GRID_REPEAT:
-        return 106.0;
-    case ARC_RULE_EXTRACT_COLOR:
-        return 92.0;
-    case ARC_RULE_ERASE_COLOR:
-        return 90.0;
-    case ARC_RULE_RECOLOR_BY_REFERENCE:
-        return 100.0;
-    case ARC_RULE_PATTERN_EXTEND:
-        return 102.0;
-    case ARC_RULE_DRAW_LINE:
-        return 96.0;
-    case ARC_RULE_SYMMETRY_H: case ARC_RULE_SYMMETRY_V:
-        return 100.0;
-    case ARC_RULE_MULTISCALE:
-        return 110.0;
-    case ARC_RULE_OBJECT_LABEL:
-        return 94.0;
-    case ARC_RULE_HOLO_TILE:
-        return 108.0;
-    case ARC_RULE_OBJECT_CROP_LARGEST:
-    case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
-    case ARC_RULE_OBJECT_MASK_LARGEST:
-        return 96.0;
-    case ARC_RULE_OBJECT_TRANSLATE:
-        return 98.0 - (double)(abs(candidate->dx) + abs(candidate->dy));
-    case ARC_RULE_OBJECT_CONNECT_ALIGNED:
-        return 99.0 - (double)candidate->dx;
-    case ARC_RULE_OBJECT_FILL_ENCLOSED:
-        return 97.0;
-    case ARC_RULE_OBJECT_RELATION_INDUCED:
-        switch (arc_object_relation_kind(candidate)) {
-        case ARC_OBJECT_RELATION_TRANSLATE:
-            return 98.0 - (double)(abs(candidate->dx) + abs(candidate->dy));
-        case ARC_OBJECT_RELATION_CONNECT_ALIGNED:
-            return 99.0 - (double)candidate->dx;
-        case ARC_OBJECT_RELATION_FILL_ENCLOSED:
-            return 97.0;
-        default:
-            return 90.0;
-        }
-    case ARC_RULE_HYPOTHESIS_APPLIED:
-        return (double)ARC_HYPOTHESIS_STRUCTURAL_SCORE -
-               (double)(abs(candidate->dx) + abs(candidate->dy));
-    case ARC_RULE_CROP_BACKGROUND_RECOLOR:
-    case ARC_RULE_CROP_COLOR_MASK:
-        return 84.0;
-    case ARC_RULE_BBOX_OUTLINE:
-    case ARC_RULE_BBOX_FILL:
-        return 78.0;
-    case ARC_RULE_TRANSLATE:
-        return 72.0 - (double)(abs(candidate->dx) + abs(candidate->dy));
-    case ARC_RULE_GRID_IDENTITY:
-        return 68.0;
-    case ARC_RULE_GRID_FOREGROUND_RECOLOR:
-        return 62.0;
-    case ARC_RULE_COMPOSED:
-        return -40.0;
-    }
-    return 0.0;
+    if (candidate == NULL) return 0.0;
+    if (arc_candidate_is_hypothesis_induced(candidate))
+        return 130.0 - (double)(abs(candidate->dx) + abs(candidate->dy));
+    static const double table[55] = {
+        [ARC_RULE_COPY_LEFT]=102.0,[ARC_RULE_COPY_RIGHT]=102.0,[ARC_RULE_COLOR_MAP_LEFT]=102.0,
+        [ARC_RULE_INTERSECTION]=104.0,[ARC_RULE_UNION]=104.0,[ARC_RULE_OBJECT_SELECT]=104.0,
+        [ARC_RULE_LAYER_OVERLAP]=104.0,[ARC_RULE_LAYER_UNION]=104.0,
+        [ARC_RULE_LAYER_XOR]=104.0,[ARC_RULE_LAYER_LEFT_ONLY]=104.0,[ARC_RULE_LAYER_RIGHT_ONLY]=104.0,
+        [ARC_RULE_GRID_IDENTITY]=68.0,[ARC_RULE_GRID_COLOR_MAP]=120.0,
+        [ARC_RULE_GRID_FOREGROUND_RECOLOR]=62.0,
+        [ARC_RULE_CROP_BACKGROUND]=100.0,[ARC_RULE_CROP_BACKGROUND_RECOLOR]=84.0,
+        [ARC_RULE_CROP_COLOR]=100.0,[ARC_RULE_CROP_COLOR_MASK]=84.0,
+        [ARC_RULE_COMPRESS_COLOR_LINES]=100.0,
+        [ARC_RULE_TILE_MOTIF_PARITY_REPEAT]=106.0,
+        [ARC_RULE_ROTATE90]=110.0,[ARC_RULE_ROTATE180]=110.0,[ARC_RULE_ROTATE270]=110.0,
+        [ARC_RULE_FLIP_HORIZONTAL]=110.0,[ARC_RULE_FLIP_VERTICAL]=110.0,
+        [ARC_RULE_TRANSPOSE]=110.0,[ARC_RULE_SCALE]=105.0,
+        [ARC_RULE_BBOX_OUTLINE]=78.0,[ARC_RULE_BBOX_FILL]=78.0,
+        [ARC_RULE_TRANSLATE]=72.0,
+        [ARC_RULE_OBJECT_CROP_LARGEST]=96.0,[ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR]=96.0,
+        [ARC_RULE_OBJECT_MASK_LARGEST]=96.0,
+        [ARC_RULE_COMPOSED]=-40.0,
+        [ARC_RULE_OBJECT_TRANSLATE]=98.0,[ARC_RULE_OBJECT_RELATION_INDUCED]=90.0,
+        [ARC_RULE_OBJECT_CONNECT_ALIGNED]=99.0,[ARC_RULE_OBJECT_FILL_ENCLOSED]=97.0,
+        [ARC_RULE_HYPOTHESIS_APPLIED]=130.0,
+        [ARC_RULE_GRAVITY_DOWN]=98.0,[ARC_RULE_GRAVITY_UP]=98.0,
+        [ARC_RULE_GRAVITY_LEFT]=98.0,[ARC_RULE_GRAVITY_RIGHT]=98.0,
+        [ARC_RULE_TILE_REPEAT]=104.0,[ARC_RULE_GRID_REPEAT]=106.0,
+        [ARC_RULE_EXTRACT_COLOR]=92.0,[ARC_RULE_ERASE_COLOR]=90.0,
+        [ARC_RULE_RECOLOR_BY_REFERENCE]=100.0,
+        [ARC_RULE_PATTERN_EXTEND]=102.0,[ARC_RULE_DRAW_LINE]=96.0,
+        [ARC_RULE_SYMMETRY_H]=100.0,[ARC_RULE_SYMMETRY_V]=100.0,
+        [ARC_RULE_MULTISCALE]=110.0,[ARC_RULE_OBJECT_LABEL]=94.0,
+        [ARC_RULE_HOLO_TILE]=108.0,
+    };
+    double base = candidate->op < 55 ? table[candidate->op] : 0.0;
+    if (base == 0.0) return 0.0;
+    if (candidate->op == ARC_RULE_TRANSLATE || candidate->op == ARC_RULE_OBJECT_TRANSLATE)
+        base -= (double)(abs(candidate->dx) + abs(candidate->dy));
+    else if (candidate->op == ARC_RULE_SCALE || candidate->op == ARC_RULE_TILE_MOTIF_PARITY_REPEAT)
+        base -= (double)candidate->scale;
+    return base;
 }
 
 static int arc_task_has_split_panel_shape(const ARCTask *task)
