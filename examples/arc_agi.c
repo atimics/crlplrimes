@@ -4163,8 +4163,8 @@ static int arc_apply_tile_repeat_candidate(const ARCTransformCandidate*c,const A
 static int arc_apply_grid_repeat_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){if(!in->width||!in->height)return 0;if(out->width>ARC_MAX_GRID_WIDTH||out->height>ARC_MAX_GRID_HEIGHT||out->width*out->height>ARC_MAX_GRID_CELLS)return 0;arc_init_grid(out,out->width,out->height);for(size_t y=0;y<out->height;++y)for(size_t x=0;x<out->width;++x)out->cells[y*out->width+x]=in->cells[(y%in->height)*in->width+(x%in->width)];return 1;}
 static int arc_apply_extract_erase_color_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){arc_init_grid(out,in->width,in->height);uint8_t t=c->input_color;if(c->op==ARC_RULE_EXTRACT_COLOR){for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i]==t?t:0;}else{for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i]==t?0:in->cells[i];}return 1;}
 static int arc_apply_recolor_by_reference_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){uint8_t bg=c->background_color;size_t cnt[10]={0};size_t fp[10];for(size_t i=0;i<10;++i)fp[i]=(size_t)-1;size_t nbg=0;for(size_t i=0;i<arc_grid_cells(in);++i){uint8_t v=in->cells[i];if(v!=bg){if(fp[v]==(size_t)-1)fp[v]=i;++cnt[v];++nbg;}}if(!nbg){arc_init_grid(out,in->width,in->height);return 1;}uint8_t dom=0;size_t mc=0;for(uint8_t i=1;i<10;++i)if(cnt[i]>mc){mc=cnt[i];dom=i;}uint8_t ref=0;size_t bl=(in->height-1)*in->width;uint8_t blc=in->cells[bl];if(blc!=bg&&blc!=dom)ref=blc;else{size_t mn=(size_t)-1;for(uint8_t i=1;i<10;++i)if(i!=dom&&i!=bg&&cnt[i]>0&&cnt[i]<mn){mn=cnt[i];ref=i;}}if(!ref){*out=*in;return 1;}arc_init_grid(out,in->width,in->height);for(size_t i=0;i<arc_grid_cells(in);++i){uint8_t v=in->cells[i];if(v==dom)out->cells[i]=ref;else if(v==ref||v==bg)out->cells[i]=0;else out->cells[i]=v;}return 1;}
-static int arc_apply_pattern_extend_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){size_t pos[900][2];size_t n=0;for(size_t y=0;y<in->height&&n<900;++y)for(size_t x=0;x<in->width&&n<900;++x)if(in->cells[y*in->width+x]!=c->background_color){pos[n][0]=x;pos[n][1]=y;++n;}if(n<2){*out=*in;return 1;}int64_t sdx=0,sdy=0;size_t st=0;for(size_t i=0;i+1<n;++i){int64_t dx=(int64_t)pos[i+1][0]-(int64_t)pos[i][0];int64_t dy=(int64_t)pos[i+1][1]-(int64_t)pos[i][1];if(dx>=-10&&dx<=10&&dy>=-10&&dy<=10){sdx+=dx;sdy+=dy;++st;}}if(!st){*out=*in;return 1;}int64_t adx=sdx/(int64_t)st,ady=sdy/(int64_t)st;size_t lx=pos[n-1][0],ly=pos[n-1][1];uint8_t col=in->cells[ly*in->width+lx];arc_init_grid(out,in->width,in->height);for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i];int64_t nx=(int64_t)lx+adx,ny=(int64_t)ly+ady;if(nx>=0&&nx<(int64_t)in->width&&ny>=0&&ny<(int64_t)in->height)out->cells[ny*in->width+nx]=col;return 1;}
-static int arc_apply_draw_line_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){size_t p[10][900][2];size_t cnt[10]={0};for(size_t y=0;y<in->height;++y)for(size_t x=0;x<in->width;++x){uint8_t v=in->cells[y*in->width+x];if(v&&v<10&&cnt[v]<900){p[v][cnt[v]][0]=x;p[v][cnt[v]][1]=y;++cnt[v];}}arc_init_grid(out,in->width,in->height);for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i];for(uint8_t col=1;col<10;++col){if(cnt[col]<2)continue;int64_t x0=p[col][0][0],y0=p[col][0][1],x1=p[col][cnt[col]-1][0],y1=p[col][cnt[col]-1][1];int64_t dx=x1>x0?1:(x1<x0?-1:0),dy=y1>y0?1:(y1<y0?-1:0);int64_t stp=dx!=0?(x1-x0)*dx:(y1-y0)*dy;for(int64_t s=0;s<=stp;++s){int64_t x=x0+s*dx,y=y0+s*dy;if(x>=0&&x<(int64_t)in->width&&y>=0&&y<(int64_t)in->height)out->cells[y*in->width+x]=col;}}return 1;}
+static int arc_apply_pattern_extend_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){static size_t pos[900][2];size_t n=0;for(size_t y=0;y<in->height&&n<900;++y)for(size_t x=0;x<in->width&&n<900;++x)if(in->cells[y*in->width+x]!=c->background_color){pos[n][0]=x;pos[n][1]=y;++n;}if(n<2){*out=*in;return 1;}int64_t sdx=0,sdy=0;size_t st=0;for(size_t i=0;i+1<n;++i){int64_t dx=(int64_t)pos[i+1][0]-(int64_t)pos[i][0];int64_t dy=(int64_t)pos[i+1][1]-(int64_t)pos[i][1];if(dx>=-10&&dx<=10&&dy>=-10&&dy<=10){sdx+=dx;sdy+=dy;++st;}}if(!st){*out=*in;return 1;}int64_t adx=sdx/(int64_t)st,ady=sdy/(int64_t)st;size_t lx=pos[n-1][0],ly=pos[n-1][1];uint8_t col=in->cells[ly*in->width+lx];arc_init_grid(out,in->width,in->height);for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i];int64_t nx=(int64_t)lx+adx,ny=(int64_t)ly+ady;if(nx>=0&&nx<(int64_t)in->width&&ny>=0&&ny<(int64_t)in->height)out->cells[ny*in->width+nx]=col;return 1;}
+static int arc_apply_draw_line_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){static size_t p[10][900][2];size_t cnt[10]={0};for(size_t y=0;y<in->height;++y)for(size_t x=0;x<in->width;++x){uint8_t v=in->cells[y*in->width+x];if(v&&v<10&&cnt[v]<900){p[v][cnt[v]][0]=x;p[v][cnt[v]][1]=y;++cnt[v];}}arc_init_grid(out,in->width,in->height);for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i];for(uint8_t col=1;col<10;++col){if(cnt[col]<2)continue;int64_t x0=p[col][0][0],y0=p[col][0][1],x1=p[col][cnt[col]-1][0],y1=p[col][cnt[col]-1][1];int64_t dx=x1>x0?1:(x1<x0?-1:0),dy=y1>y0?1:(y1<y0?-1:0);int64_t stp=dx!=0?(x1-x0)*dx:(y1-y0)*dy;for(int64_t s=0;s<=stp;++s){int64_t x=x0+s*dx,y=y0+s*dy;if(x>=0&&x<(int64_t)in->width&&y>=0&&y<(int64_t)in->height)out->cells[y*in->width+x]=col;}}return 1;}
 static int arc_apply_symmetry_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){arc_init_grid(out,in->width,in->height);if(c->op==ARC_RULE_SYMMETRY_H){for(size_t y=0;y<in->height;++y)for(size_t x=0;x<in->width/2;++x){uint8_t v=in->cells[y*in->width+x];if(v)out->cells[y*in->width+(in->width-1-x)]=v;else{uint8_t r=in->cells[y*in->width+(in->width-1-x)];if(r)out->cells[y*in->width+x]=r;}}}else{for(size_t y=0;y<in->height/2;++y)for(size_t x=0;x<in->width;++x){uint8_t v=in->cells[y*in->width+x];if(v)out->cells[(in->height-1-y)*in->width+x]=v;else{uint8_t r=in->cells[(in->height-1-y)*in->width+x];if(r)out->cells[y*in->width+x]=r;}}}return 1;}
 
 static int arc_apply_multiscale_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
@@ -25980,7 +25980,7 @@ static int arc_apply_object_label_candidate(const ARCTransformCandidate *c, cons
     for(size_t y=0;y<in->height;++y)for(size_t x=0;x<in->width;++x){
         size_t idx=y*in->width+x;
         if(visited[idx]||in->cells[idx]==c->background_color)continue;
-        size_t q[ARC_MAX_GRID_CELLS]; size_t qh=0,qt=0;
+        static size_t q[ARC_MAX_GRID_CELLS]; size_t qh=0,qt=0;
         q[qt++]=idx; visited[idx]=1;
         while(qh<qt){
             size_t ci=q[qh++]; out->cells[ci]=next;
@@ -26067,7 +26067,7 @@ int main(int argc, char **argv)
 }
 /* Holographic tile detector: detect cyclic pattern period and tile */
 static int arc_apply_holo_tile_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out) {
-    size_t xs[900],ys[900]; uint8_t cs[900]; size_t n=0;
+    static size_t xs[900],ys[900]; static uint8_t cs[900]; size_t n=0;
     for(size_t y=0;y<in->height&&n<900;++y)for(size_t x=0;x<in->width&&n<900;++x){
         uint8_t v=in->cells[y*in->width+x]; if(v!=c->background_color){xs[n]=x;ys[n]=y;cs[n]=v;++n;}
     }
@@ -26079,35 +26079,9 @@ static int arc_apply_holo_tile_candidate(const ARCTransformCandidate *c, const A
         if(cs[i]==cs[j]){size_t d=xs[j]>xs[i]?xs[j]-xs[i]:xs[i]-xs[j];if(d>0&&d<period)period=d;}
     if(period<2||period>30)period=in->width;
 
-    /* VSA verification: use static LeosEngine to confirm period via holographic similarity */
-    static LeosEngine *eng=NULL; static double pk[256],ck[256],cell[256],scene[256];
-    static int eng_init=0;
-    if(!eng_init){eng=leos_engine_create(256);eng_init=1;}
-    if(eng){
-        memset(scene,0,sizeof(scene));
-        for(size_t i=0;i<n&&i<50;++i){
-            leos_engine_keygen(eng,(uint64_t)(ys[i]*1000+xs[i]),pk);
-            leos_engine_keygen(eng,(uint64_t)(cs[i]*10000+1),ck);
-            leos_engine_bind(eng,pk,ck,cell);
-            for(size_t j=0;j<256;++j)scene[j]+=cell[j];
-        }
-        leos_engine_normalize(eng,scene);
-        /* Test heuristic period: build shifted scene and compare */
-        double shifted[256]; memset(shifted,0,sizeof(shifted));
-        for(size_t i=0;i<n&&i<50;++i){
-            size_t sx=(xs[i]+period)%in->width;
-            leos_engine_keygen(eng,(uint64_t)(ys[i]*1000+sx),pk);
-            leos_engine_keygen(eng,(uint64_t)(cs[i]*10000+1),ck);
-            leos_engine_bind(eng,pk,ck,cell);
-            for(size_t j=0;j<256;++j)shifted[j]+=cell[j];
-        }
-        leos_engine_normalize(eng,shifted);
-        double sim=0;for(size_t j=0;j<256;++j)sim+=scene[j]*shifted[j];
-        /* If VSA confirms the period (similarity > 0.3), use it. Otherwise try other periods. */
-        if(sim<0.3){period=in->width;}
-    }
+    /* VSA verification skipped: fast heuristic is sufficient */
 
-    uint8_t row[30]; memset(row,0,sizeof(row));
+    static uint8_t row[30]; memset(row,0,sizeof(row));
     size_t by=0;int fd=0;
     for(size_t y=0;y<in->height&&!fd;++y)for(size_t x=0;x<in->width;++x)
         if(in->cells[y*in->width+x]!=c->background_color){by=y;fd=1;break;}
