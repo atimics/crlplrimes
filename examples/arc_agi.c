@@ -469,6 +469,7 @@ typedef struct {
     const char *program_train_dir;
     const char *hypothesis_library_prior_path;
     const char *save_hypothesis_prior_path;
+    const char *vsa_ranker_path;
     const char *arc_generative_prior_path;
     const char *task_ids;
     const char *exclude_task_ids;
@@ -2191,7 +2192,7 @@ static int arc_build_object_connect_candidate(const ARCTask *task,
 
     int changed_any = 0;
     for (size_t pair = 0; pair < task->train_count; ++pair) {
-        ARCGrid produced;
+        static ARCGrid produced;
         if (!task->train[pair].has_output ||
             !arc_grid_same_shape(&task->train[pair].input, &task->train[pair].output) ||
             !arc_apply_object_connect_candidate(candidate,
@@ -2296,7 +2297,7 @@ static int arc_build_object_fill_enclosed_candidate(const ARCTask *task,
 
     int changed_any = 0;
     for (size_t pair = 0; pair < task->train_count; ++pair) {
-        ARCGrid produced;
+        static ARCGrid produced;
         if (!task->train[pair].has_output ||
             !arc_grid_same_shape(&task->train[pair].input, &task->train[pair].output) ||
             !arc_apply_object_fill_enclosed_candidate(candidate,
@@ -2336,7 +2337,7 @@ static int arc_build_selected_object_candidate(const ARCTask *task,
     int changed_any = 0;
     for (size_t pair = 0; pair < task->train_count; ++pair) {
         ARCScene scene;
-        ARCGrid produced;
+        static ARCGrid produced;
         if (!task->train[pair].has_output ||
             !arc_extract_scene(&task->train[pair].input, background, &scene) ||
             !arc_apply_candidate(candidate, &task->train[pair].input, &produced) ||
@@ -4119,7 +4120,7 @@ static int arc_build_tile_motif_parity_repeat_candidate(const ARCTask *task,
 
     int changed_any = 0;
     for (size_t pair = 0; pair < task->train_count; ++pair) {
-        ARCGrid produced;
+        static ARCGrid produced;
         if (!task->train[pair].has_output ||
             !arc_grid_same_shape(&task->train[pair].input, &task->train[pair].output) ||
             !arc_apply_tile_motif_parity_repeat_candidate(candidate,
@@ -8409,7 +8410,7 @@ static size_t arc_induce_sequence_hypotheses(const ARCHypothesisTemplateBinding 
                                 !binding->to_candidate(&hypothesis, &candidate)) {
                                 continue;
                             }
-                            ARCGrid produced;
+                            static ARCGrid produced;
                             if (!arc_apply_candidate(&candidate, input, &produced) ||
                                 !arc_grid_equal(&produced, output)) {
                                 continue;
@@ -8490,7 +8491,7 @@ static size_t arc_induce_tile_motif_hypotheses(const ARCHypothesisTemplateBindin
             for (size_t train_pair = 0;
                  train_pair < task->train_count;
                  ++train_pair) {
-                ARCGrid produced;
+                static ARCGrid produced;
                 if (!task->train[train_pair].has_output ||
                     !arc_grid_same_shape(&task->train[train_pair].input,
                                          &task->train[train_pair].output) ||
@@ -8574,7 +8575,7 @@ static size_t arc_induce_masked_motif_hypotheses(const ARCHypothesisTemplateBind
         int has_pair_evidence = 0;
         for (size_t train_pair = 0; train_pair < task->train_count; ++train_pair) {
             const ARCGridPair *pair = &task->train[train_pair];
-            ARCGrid produced;
+            static ARCGrid produced;
             if (!pair->has_output ||
                 pair->input.width * pair->input.width != pair->output.width ||
                 pair->input.height * pair->input.height != pair->output.height ||
@@ -17851,17 +17852,19 @@ static void arc_emit_builtin_program_summaries(const ARCTask *task, const ARCCon
     arc_program_learned_free(&learned);
 }
 
+static HolographicRanker *g_vsa_ranker = NULL;
+
 static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask *task, const ARCTransformCandidate *candidates, size_t candidate_count)
 {
     ARCTransformMetrics metrics; static ARCGrid best[ARC_MAX_PAIRS];
     memset(&metrics,0,sizeof(metrics)); memset(best,0,sizeof(best));
     metrics.test_pairs=task->test_count; metrics.rules=candidate_count;
     double bs=-1e100; int hp=0;
-    static HolographicRanker *vsa_ranker = NULL;
+    /* g_vsa_ranker is file-scope */
     static double grid_hologram[256];
     static int holo_ready = 0;
     static LeosEngine *vsa_eng = NULL;
-    if (!vsa_ranker) { vsa_ranker = holo_ranker_create(256); }
+    if (!g_vsa_ranker) { g_vsa_ranker = holo_ranker_create(256); }
     if (!vsa_eng) { vsa_eng = leos_engine_create(256); }
     if (!holo_ready) { holo_ready = (arc_grid_to_hologram(&task->train[0].input, grid_hologram) == 0) ? 1 : -1; }
     for(size_t rule=0;rule<metrics.rules;++rule){
@@ -17873,11 +17876,11 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask 
         if(!arc_apply_candidate_to_tests(task,&candidates[rule],pr,&ut)){metrics.unsupported_test_pairs+=ut;continue;}
         /* Blend structural score with holographic similarity when available */
         double sc = arc_structural_program_score(&candidates[rule]);
-        if (vsa_ranker && vsa_eng && holo_ready > 0) {
+        if (g_vsa_ranker && vsa_eng && holo_ready > 0) {
             double op_vec[256];
             leos_engine_keygen(vsa_eng, (uint64_t)(candidates[rule].op * 1000 + (size_t)arc_candidate_family(&candidates[rule])), op_vec);
             double vsa_scores[1];
-            holo_ranker_score(vsa_ranker, grid_hologram, op_vec, 1, vsa_scores);
+            holo_ranker_score(g_vsa_ranker, grid_hologram, op_vec, 1, vsa_scores);
             sc += vsa_scores[0] * 50.0;
         }
         if(sc>bs){bs=sc;memcpy(best,pr,sizeof(best));hp=1;}
@@ -17889,10 +17892,10 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask 
     metrics.test_exact=atk&&metrics.test_cells>0&&metrics.test_correct_cells==metrics.test_cells;
     metrics.certified=metrics.train_consistent_rules!=0;
     /* Store winning (grid, operator) pair in VSA ranker for future tasks */
-    if (metrics.certified && vsa_ranker && vsa_eng && holo_ready > 0) {
+    if (metrics.certified && g_vsa_ranker && vsa_eng && holo_ready > 0) {
         double op_vec[256];
         leos_engine_keygen(vsa_eng, (uint64_t)(candidates[0].op * 1000 + (size_t)arc_candidate_family(&candidates[0])), op_vec);
-        holo_ranker_store(vsa_ranker, grid_hologram, op_vec);
+        holo_ranker_store(g_vsa_ranker, grid_hologram, op_vec);
     }
     return metrics;
 }
@@ -25499,6 +25502,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
                                                   ARC_PROGRAM_BUDGET_GRID_COUNT);
     ARCProgramProposerAggregate
         program_aggregates[ARC_PROGRAM_BUDGET_GRID_COUNT][ARC_PROGRAM_STRATEGY_COUNT];
+    if (config->vsa_ranker_path != NULL) { g_vsa_ranker = holo_ranker_create(256); if (g_vsa_ranker) { FILE *tf = fopen(config->vsa_ranker_path, "rb"); if (tf) { fclose(tf); holo_ranker_load(g_vsa_ranker, config->vsa_ranker_path); } } }
     ARCProgramLearnedState learned_state;
     if (!arc_program_learned_init(&learned_state,
                                   config,
@@ -25742,6 +25746,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         return 0;
     }
     if (config->save_hypothesis_prior_path != NULL) arc_program_learned_save_hypothesis_library_prior(&learned_state, config->save_hypothesis_prior_path);
+    if (config->vsa_ranker_path != NULL && g_vsa_ranker != NULL) holo_ranker_save(g_vsa_ranker, config->vsa_ranker_path);
     print_arc_loader_summary_json(config->task_dir, &summary);
     for (size_t budget_index = 0; budget_index < budget_count; ++budget_index) {
         for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
@@ -25780,7 +25785,7 @@ static void print_usage(FILE *stream)
           "[--disable-hypothesis-train-consistency-prior] "
           "[--arc-visual-only] [--arc-runtime-sketch-mine-cap count] "
           "[--arc-generative-prior-op-cap count] "
-          "[--holo-prior path] [--task-epochs count] [--shuffle] [--save-hypothesis-prior path] [--hypothesis-library-prior path] [--loader-summary-only] [--induction] "
+          "[--holo-prior path] [--task-epochs count] [--shuffle] [--vsa-ranker path] [--save-hypothesis-prior path] [--hypothesis-library-prior path] [--loader-summary-only] [--induction] "
           "[--min-induction-evidence count] "
           "[--holo-prior path]\n",
           stream);
@@ -25807,6 +25812,7 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->program_train_dir = NULL;
     config->hypothesis_library_prior_path = NULL;
     config->save_hypothesis_prior_path = NULL;
+    config->vsa_ranker_path = NULL;
     config->arc_generative_prior_path = NULL;
     config->task_ids = NULL;
     config->exclude_task_ids = NULL;
@@ -25990,6 +25996,7 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             config->arc_visual_only = 1;
         } else if (strcmp(argv[i], "--holo-prior") == 0 && i + 1 < argc) {
             config->holo_prior_path = argv[++i];
+        } else if (strcmp(argv[i], "--vsa-ranker") == 0 && i + 1 < argc) { config->vsa_ranker_path = argv[++i]; if (config->vsa_ranker_path[0] == '\0') return 0;
         } else if (strcmp(argv[i], "--shuffle") == 0) { config->shuffle_tasks = 1;
         } else if (strcmp(argv[i], "--loader-summary-only") == 0) {
             config->loader_summary_only = 1;
