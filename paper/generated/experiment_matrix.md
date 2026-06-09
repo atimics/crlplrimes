@@ -1,6 +1,6 @@
 # Frozen Experiment Matrix
 
-Date: 2026-06-05
+Date: 2026-06-08
 
 The evidence families are frozen to these rows. New domains belong in roadmap notes until this matrix is deliberately revised.
 

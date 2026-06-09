@@ -33,6 +33,7 @@ PRIME_GAP_TASK_OBJS := $(patsubst src/prime_gap/%.c,$(BUILD_DIR)/obj/prime_gap/%
 PRIME_GAP_TEST_OBJS := $(patsubst src/prime_gap/%.c,$(BUILD_DIR)/obj/prime_gap_test/%.o,$(PRIME_GAP_MODULE_SOURCES))
 PRIME_GAP_SANITIZE_OBJS := $(patsubst src/prime_gap/%.c,$(BUILD_DIR)/obj/prime_gap_sanitize/%.o,$(PRIME_GAP_MODULE_SOURCES))
 NN_OBJ := $(BUILD_DIR)/nn.o
+NN_BLAS_OBJ := $(BUILD_DIR)/nn_blas.o
 NN_EXPERIMENT_OBJ := $(BUILD_DIR)/nn_experiment.o
 NN_SYMBOLIC_OBJ := $(BUILD_DIR)/nn_symbolic.o
 NN_BITGRID_OBJ := $(BUILD_DIR)/nn_bitgrid.o
@@ -74,6 +75,7 @@ NN_DATASET_TEST_OBJ := $(BUILD_DIR)/nn_dataset_test.o
 NN_DATASET_TEST_STUBS_OBJ := $(BUILD_DIR)/nn_dataset_test_stubs.o
 NN_PAPER_TEST_OBJ := $(BUILD_DIR)/nn_paper_test.o
 NN_SANITIZE_OBJ := $(BUILD_DIR)/nn_sanitize.o
+NN_BLAS_SANITIZE_OBJ := $(BUILD_DIR)/nn_blas_sanitize.o
 NN_EXPERIMENT_SANITIZE_OBJ := $(BUILD_DIR)/nn_experiment_sanitize.o
 NN_SYMBOLIC_SANITIZE_OBJ := $(BUILD_DIR)/nn_symbolic_sanitize.o
 NN_BITGRID_SANITIZE_OBJ := $(BUILD_DIR)/nn_bitgrid_sanitize.o
@@ -87,9 +89,9 @@ NN_TEXT_SANITIZE_OBJ := $(BUILD_DIR)/nn_text_sanitize.o
 NN_DATASET_SANITIZE_OBJ := $(BUILD_DIR)/nn_dataset_sanitize.o
 NN_PAPER_SANITIZE_OBJ := $(BUILD_DIR)/nn_paper_sanitize.o
 NN_GO_EXPERIMENT_OBJ := $(BUILD_DIR)/go_experiment.o
-NN_OBJS := $(NN_OBJ) $(NN_EXPERIMENT_OBJ) $(NN_SYMBOLIC_OBJ) $(NN_GO_EXPERIMENT_OBJ) $(NN_BITGRID_OBJ) $(NN_TILEBOT_OBJ) $(NN_LAYER_OBJ) $(NN_PROGRAM_OBJ) $(NN_HYPOTHESIS_OBJ) $(NN_PROTOCOL_OBJ) $(NN_JSON_OBJ) $(NN_TEXT_OBJ) $(NN_DATASET_OBJ)
+NN_OBJS := $(NN_OBJ) $(NN_EXPERIMENT_OBJ) $(NN_SYMBOLIC_OBJ) $(NN_GO_EXPERIMENT_OBJ) $(NN_BITGRID_OBJ) $(NN_TILEBOT_OBJ) $(NN_LAYER_OBJ) $(NN_PROGRAM_OBJ) $(NN_HYPOTHESIS_OBJ) $(NN_PROTOCOL_OBJ) $(NN_JSON_OBJ) $(NN_TEXT_OBJ) $(NN_DATASET_OBJ) $(NN_BLAS_OBJ)
 NN_TEST_OBJS := $(NN_TEST_OBJ) $(NN_EXPERIMENT_TEST_OBJ) $(NN_SYMBOLIC_TEST_OBJ) $(NN_BITGRID_TEST_OBJ) $(NN_TILEBOT_TEST_OBJ) $(NN_LAYER_TEST_OBJ) $(NN_PROGRAM_TEST_OBJ) $(NN_HYPOTHESIS_TEST_OBJ) $(NN_PROTOCOL_TEST_OBJ) $(NN_JSON_TEST_OBJ) $(NN_TEXT_TEST_OBJ) $(NN_DATASET_TEST_OBJ) $(NN_PAPER_TEST_OBJ)
-NN_SANITIZE_OBJS := $(NN_SANITIZE_OBJ) $(NN_EXPERIMENT_SANITIZE_OBJ) $(NN_SYMBOLIC_SANITIZE_OBJ) $(NN_BITGRID_SANITIZE_OBJ) $(NN_TILEBOT_SANITIZE_OBJ) $(NN_LAYER_SANITIZE_OBJ) $(NN_PROGRAM_SANITIZE_OBJ) $(NN_HYPOTHESIS_SANITIZE_OBJ) $(NN_PROTOCOL_SANITIZE_OBJ) $(NN_JSON_SANITIZE_OBJ) $(NN_TEXT_SANITIZE_OBJ) $(NN_DATASET_SANITIZE_OBJ) $(NN_PAPER_SANITIZE_OBJ)
+NN_SANITIZE_OBJS := $(NN_SANITIZE_OBJ) $(NN_BLAS_SANITIZE_OBJ) $(NN_EXPERIMENT_SANITIZE_OBJ) $(NN_SYMBOLIC_SANITIZE_OBJ) $(NN_BITGRID_SANITIZE_OBJ) $(NN_TILEBOT_SANITIZE_OBJ) $(NN_LAYER_SANITIZE_OBJ) $(NN_PROGRAM_SANITIZE_OBJ) $(NN_HYPOTHESIS_SANITIZE_OBJ) $(NN_PROTOCOL_SANITIZE_OBJ) $(NN_JSON_SANITIZE_OBJ) $(NN_TEXT_SANITIZE_OBJ) $(NN_DATASET_SANITIZE_OBJ) $(NN_PAPER_SANITIZE_OBJ)
 XOR_EXAMPLE := $(BUILD_DIR)/xor
 BITWISE_RECURSIVE := $(BUILD_DIR)/bitwise_recursive
 TILE_RECURSIVE := $(BUILD_DIR)/tile_recursive
@@ -658,6 +660,9 @@ $(BUILD_DIR):
 $(NN_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn.c -o $@
 
+$(NN_BLAS_OBJ): src/nn_blas.c include/nn_blas.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_blas.c -o $@
+
 $(NN_EXPERIMENT_OBJ): src/nn_experiment.c include/nn_experiment.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_experiment.c -o $@
 
@@ -760,6 +765,9 @@ $(NN_PAPER_TEST_OBJ): src/nn_paper.c include/nn_paper.h include/nn.h include/nn_
 
 $(NN_SANITIZE_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn.c -o $@
+
+$(NN_BLAS_SANITIZE_OBJ): src/nn_blas.c include/nn_blas.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_blas.c -o $@
 
 $(NN_EXPERIMENT_SANITIZE_OBJ): src/nn_experiment.c include/nn_experiment.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_experiment.c -o $@
@@ -888,8 +896,8 @@ $(CROSS_DOMAIN_TRANSFER): examples/cross_domain_transfer.c $(NN_OBJS) $(NN_HEADE
 $(ARC_AGI): examples/arc_agi.c $(NN_OBJS) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_LEOS_ENGINE_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/arc_agi.c $(NN_OBJS) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_LEOS_ENGINE_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(NN_GRAMMAR_DISCOVERY_RUNTIME): examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_TEXT_OBJ) include/nn_grammar_discovery.h include/nn_paper.h include/nn.h include/nn_text.h include/nn_text_vsa.h include/nn_term_bridge.h | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_TEXT_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+$(NN_GRAMMAR_DISCOVERY_RUNTIME): examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_BLAS_OBJ) $(NN_TEXT_OBJ) include/nn_grammar_discovery.h include/nn_paper.h include/nn.h include/nn_text.h include/nn_text_vsa.h include/nn_term_bridge.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_BLAS_OBJ) $(NN_TEXT_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
 ifeq ($(WITH_SIGNAL),1)
 $(SIGNAL_FLIGHT): examples/signal_flight.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
@@ -905,8 +913,8 @@ endif
 $(BENCHMARK): benchmarks/benchmark.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) benchmarks/benchmark.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(TEST_RUNNER): tests/test_nn.c $(PRIME_GAP_TEST_OBJS) $(NN_DATASET_TEST_STUBS_OBJ) $(NN_TEST_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) tests/test_nn.c $(NN_TEST_OBJS) $(PRIME_GAP_TEST_OBJS) $(NN_DATASET_TEST_STUBS_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+$(TEST_RUNNER): tests/test_nn.c $(PRIME_GAP_TEST_OBJS) $(NN_DATASET_TEST_STUBS_OBJ) $(NN_TEST_OBJS) $(NN_BLAS_OBJ) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) tests/test_nn.c $(NN_TEST_OBJS) $(NN_BLAS_OBJ) $(PRIME_GAP_TEST_OBJS) $(NN_DATASET_TEST_STUBS_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(SANITIZE_TEST_RUNNER): tests/test_nn.c $(PRIME_GAP_SANITIZE_OBJS) $(NN_DATASET_TEST_STUBS_OBJ) $(NN_SANITIZE_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) tests/test_nn.c $(NN_SANITIZE_OBJS) $(PRIME_GAP_SANITIZE_OBJS) $(NN_DATASET_TEST_STUBS_OBJ) $(LDFLAGS) $(LDLIBS) -fsanitize=address,undefined -o $@
@@ -1758,7 +1766,7 @@ numeric-certificate-experiments:
 
 numeric-certificate-report: numeric-certificate-experiments
 	cp "$(NUMERIC_CERTIFICATE_DIR)/summary.jsonl" "$(NUMERIC_CERTIFICATE_REPORT)"
-	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_REPORT)"; then echo "numeric certificate report failed"; exit 1
+	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_REPORT)"; then echo "numeric certificate report failed"; exit 1; fi
 
 numeric-certificate-strict:
 	CRLP_NUMERIC_REQUIRE_FINITE=1 \
@@ -1769,7 +1777,7 @@ numeric-certificate-strict:
 	CRLP_NUMERIC_MAX_SHRINK_STEPS="$(NUMERIC_CERTIFICATE_STRICT_MAX_SHRINK_STEPS)" \
 	$(MAKE) numeric-certificate-experiments NUMERIC_CERTIFICATE_DIR="$(NUMERIC_CERTIFICATE_STRICT_DIR)"
 	cp "$(NUMERIC_CERTIFICATE_STRICT_DIR)/summary.jsonl" "$(NUMERIC_CERTIFICATE_STRICT_REPORT)"
-	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_STRICT_REPORT)"; then echo "strict numeric certificate report failed"; exit 1
+	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_STRICT_REPORT)"; then echo "strict numeric certificate report failed"; exit 1; fi
 
 numeric-certificate-compare:
 ifeq ($(NUMERIC_CERTIFICATE_COMPARE_REUSE_FLOAT),1)
@@ -1784,7 +1792,7 @@ endif
 	$(MAKE) numeric-certificate-experiments REAL=double NUMERIC_CERTIFICATE_DIR=build/double/numeric_certificates
 	mkdir -p "$(NUMERIC_CERTIFICATE_COMPARE_DIR)"
 	cat build/float/numeric_certificates/summary.jsonl build/double/numeric_certificates/summary.jsonl > "$(NUMERIC_CERTIFICATE_COMPARE_DIR)/float_vs_double.jsonl"
-	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_COMPARE_DIR)/float_vs_double.jsonl"; then echo "numeric certificate compare failed"; exit 1
+	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_COMPARE_DIR)/float_vs_double.jsonl"; then echo "numeric certificate compare failed"; exit 1; fi
 
 numeric-certificate-budget-refresh:
 	$(RETIRED_SCRIPT_TARGET)
@@ -1896,15 +1904,15 @@ TRAIN_CROSS_DOMAIN := $(BUILD_DIR)/train_cross_domain
 
 train-cross-domain: $(TRAIN_CROSS_DOMAIN)
 
-$(TRAIN_CROSS_DOMAIN): examples/train_cross_domain.c $(BUILD_DIR)/nn.o $(BUILD_DIR)/nn_experiment.o $(BUILD_DIR)/nn_symbolic.o $(BUILD_DIR)/nn_bitgrid.o $(BUILD_DIR)/nn_tilebot.o $(BUILD_DIR)/nn_layer.o $(BUILD_DIR)/nn_program.o $(BUILD_DIR)/nn_hypothesis.o $(BUILD_DIR)/nn_protocol.o $(BUILD_DIR)/nn_dataset.o $(BUILD_DIR)/nn_json.o $(BUILD_DIR)/nn_text.o $(BUILD_DIR)/go_experiment.o | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DGO_EXPERIMENT_ENABLED examples/train_cross_domain.c $(BUILD_DIR)/nn.o $(BUILD_DIR)/nn_experiment.o $(BUILD_DIR)/nn_symbolic.o $(BUILD_DIR)/nn_bitgrid.o $(BUILD_DIR)/nn_tilebot.o $(BUILD_DIR)/nn_layer.o $(BUILD_DIR)/nn_program.o $(BUILD_DIR)/nn_hypothesis.o $(BUILD_DIR)/nn_protocol.o $(BUILD_DIR)/nn_dataset.o $(BUILD_DIR)/nn_json.o $(BUILD_DIR)/nn_text.o $(BUILD_DIR)/go_experiment.o $(LDFLAGS) $(LDLIBS) -o $@
+$(TRAIN_CROSS_DOMAIN): examples/train_cross_domain.c $(BUILD_DIR)/nn.o $(BUILD_DIR)/nn_blas.o $(BUILD_DIR)/nn_experiment.o $(BUILD_DIR)/nn_symbolic.o $(BUILD_DIR)/nn_bitgrid.o $(BUILD_DIR)/nn_tilebot.o $(BUILD_DIR)/nn_layer.o $(BUILD_DIR)/nn_program.o $(BUILD_DIR)/nn_hypothesis.o $(BUILD_DIR)/nn_protocol.o $(BUILD_DIR)/nn_dataset.o $(BUILD_DIR)/nn_json.o $(BUILD_DIR)/nn_text.o $(BUILD_DIR)/go_experiment.o | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DGO_EXPERIMENT_ENABLED examples/train_cross_domain.c $(BUILD_DIR)/nn.o $(BUILD_DIR)/nn_blas.o $(BUILD_DIR)/nn_experiment.o $(BUILD_DIR)/nn_symbolic.o $(BUILD_DIR)/nn_bitgrid.o $(BUILD_DIR)/nn_tilebot.o $(BUILD_DIR)/nn_layer.o $(BUILD_DIR)/nn_program.o $(BUILD_DIR)/nn_hypothesis.o $(BUILD_DIR)/nn_protocol.o $(BUILD_DIR)/nn_dataset.o $(BUILD_DIR)/nn_json.o $(BUILD_DIR)/nn_text.o $(BUILD_DIR)/go_experiment.o $(LDFLAGS) $(LDLIBS) -o $@
 
 # ── Go experiment schema ────────────────────────────────────────────────
 go-experiment: $(GO_EXPERIMENT)
 
 GO_EXP_FLAGS = -DGO_EXPERIMENT_ENABLED
 
-$(GO_EXPERIMENT): $(BUILD_DIR)/nn.o $(BUILD_DIR)/nn_experiment.o $(BUILD_DIR)/nn_symbolic.o $(BUILD_DIR)/nn_bitgrid.o $(BUILD_DIR)/nn_tilebot.o $(BUILD_DIR)/nn_layer.o $(BUILD_DIR)/nn_program.o $(BUILD_DIR)/nn_hypothesis.o $(BUILD_DIR)/nn_protocol.o $(BUILD_DIR)/nn_dataset.o $(BUILD_DIR)/nn_json.o $(BUILD_DIR)/nn_text.o | $(BUILD_DIR)
+$(GO_EXPERIMENT): $(BUILD_DIR)/nn.o $(BUILD_DIR)/nn_blas.o $(BUILD_DIR)/nn_experiment.o $(BUILD_DIR)/nn_symbolic.o $(BUILD_DIR)/nn_bitgrid.o $(BUILD_DIR)/nn_tilebot.o $(BUILD_DIR)/nn_layer.o $(BUILD_DIR)/nn_program.o $(BUILD_DIR)/nn_hypothesis.o $(BUILD_DIR)/nn_protocol.o $(BUILD_DIR)/nn_dataset.o $(BUILD_DIR)/nn_json.o $(BUILD_DIR)/nn_text.o | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GO_EXP_FLAGS) examples/go_experiment.c $^ $(LDFLAGS) $(LDLIBS) -o $@
 
 $(BUILD_DIR)/go_experiment.o: examples/go_experiment.c include/nn.h include/nn_experiment.h include/nn_dataset.h | $(BUILD_DIR)
@@ -1914,7 +1922,7 @@ $(BUILD_DIR)/go_experiment.o: examples/go_experiment.c include/nn.h include/nn_e
 watch:
 	./scripts/watch_tournament.sh
 
-tournament: build/float/nn.o build/float/nn_experiment.o build/float/nn_symbolic.o build/float/nn_bitgrid.o build/float/nn_tilebot.o build/float/nn_layer.o build/float/nn_program.o build/float/nn_hypothesis.o build/float/nn_protocol.o build/float/nn_json.o build/float/nn_text.o build/float/nn_dataset.o
+tournament: build/float/nn.o build/float/nn_blas.o build/float/nn_experiment.o build/float/nn_symbolic.o build/float/nn_bitgrid.o build/float/nn_tilebot.o build/float/nn_layer.o build/float/nn_program.o build/float/nn_hypothesis.o build/float/nn_protocol.o build/float/nn_json.o build/float/nn_text.o build/float/nn_dataset.o
 	$(CC) -std=c11 -O3 -Iinclude -DNN_REAL=float -DNN_REAL_IS_FLOAT=1 examples/go_tournament.c $^ -lm -o build/float/go_tournament
 	while true; do ./build/float/go_tournament --agents 16 --games 1 --threads 8 --display 4; echo "[make] crashed, restarting in 1s..."; sleep 1; done
 

@@ -182,6 +182,8 @@ typedef enum {
     ARC_RULE_MULTISCALE = 52,
     ARC_RULE_OBJECT_LABEL = 53,
     ARC_RULE_HOLO_TILE = 54,
+    ARC_RULE_DILATE = 55,
+    ARC_RULE_COUNT = 56,
 } ARCTransformRule;
 
 typedef enum {
@@ -492,6 +494,8 @@ typedef struct {
     int hypothesis_train_consistency_prior_enabled;
     int arc_visual_only;
     const char *holo_prior_path;
+    const char *save_learned_state_path;
+    const char *load_learned_state_path;
     size_t task_epochs;
 } ARCConfig;
 
@@ -1574,45 +1578,78 @@ static uint8_t arc_candidate_render_mode(const ARCTransformCandidate *candidate)
 }
 
 static int arc_candidate_is_hypothesis_induced(const ARCTransformCandidate *candidate);
+/* Unified operator registry: single struct replaces 4 separate tables.
+   Adding a new operator: enum + 1 line here + dispatch case + apply fn. */
+static const struct {
+    int composable;   /* can appear as first in a composition */
+    int can_end;      /* can appear as last in a composition */
+    size_t family;    /* operator family for learned scoring */
+    double score;     /* structural program score */
+} arc_op_info[ARC_RULE_COUNT] = {
+    [ARC_RULE_COPY_LEFT]                = {0,0,6,102.0},
+    [ARC_RULE_COPY_RIGHT]               = {0,0,6,102.0},
+    [ARC_RULE_INTERSECTION]             = {0,0,6,104.0},
+    [ARC_RULE_UNION]                    = {0,0,6,104.0},
+    [ARC_RULE_OBJECT_SELECT]            = {0,0,6,104.0},
+    [ARC_RULE_COLOR_MAP_LEFT]           = {0,0,6,102.0},
+    [ARC_RULE_GRID_IDENTITY]            = {0,1,9,68.0},
+    [ARC_RULE_GRID_COLOR_MAP]           = {1,1,1,120.0},
+    [ARC_RULE_GRID_FOREGROUND_RECOLOR]  = {1,1,10,62.0},
+    [ARC_RULE_CROP_BACKGROUND]          = {1,1,4,100.0},
+    [ARC_RULE_CROP_BACKGROUND_RECOLOR]  = {0,1,4,84.0},
+    [ARC_RULE_CROP_COLOR]               = {1,1,4,100.0},
+    [ARC_RULE_CROP_COLOR_MASK]          = {1,1,4,84.0},
+    [ARC_RULE_ROTATE90]                 = {1,1,2,110.0},
+    [ARC_RULE_ROTATE180]                = {1,1,2,110.0},
+    [ARC_RULE_ROTATE270]                = {1,1,2,110.0},
+    [ARC_RULE_FLIP_HORIZONTAL]          = {1,1,2,110.0},
+    [ARC_RULE_FLIP_VERTICAL]            = {1,1,2,110.0},
+    [ARC_RULE_TRANSPOSE]                = {1,1,2,110.0},
+    [ARC_RULE_SCALE]                    = {1,1,3,105.0},
+    [ARC_RULE_BBOX_OUTLINE]             = {1,1,7,78.0},
+    [ARC_RULE_BBOX_FILL]                = {1,1,7,78.0},
+    [ARC_RULE_TRANSLATE]                = {1,1,8,72.0},
+    [ARC_RULE_OBJECT_CROP_LARGEST]      = {0,1,5,96.0},
+    [ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR]={0,1,5,96.0},
+    [ARC_RULE_OBJECT_MASK_LARGEST]      = {0,1,5,96.0},
+    [ARC_RULE_COMPOSED]                 = {0,0,11,-40.0},
+    [ARC_RULE_OBJECT_TRANSLATE]         = {0,1,12,98.0},
+    [ARC_RULE_OBJECT_CONNECT_ALIGNED]   = {0,1,13,99.0},
+    [ARC_RULE_OBJECT_FILL_ENCLOSED]     = {0,1,14,97.0},
+    [ARC_RULE_OBJECT_RELATION_INDUCED]  = {0,1,12,90.0},
+    [ARC_RULE_HYPOTHESIS_APPLIED]       = {0,0,15,130.0},
+    [ARC_RULE_LAYER_OVERLAP]            = {0,0,6,104.0},
+    [ARC_RULE_LAYER_UNION]              = {0,0,6,104.0},
+    [ARC_RULE_LAYER_XOR]                = {0,0,6,104.0},
+    [ARC_RULE_LAYER_LEFT_ONLY]          = {0,0,6,104.0},
+    [ARC_RULE_LAYER_RIGHT_ONLY]         = {0,0,6,104.0},
+    [ARC_RULE_COMPRESS_COLOR_LINES]     = {1,1,4,100.0},
+    [ARC_RULE_TILE_MOTIF_PARITY_REPEAT] = {0,1,16,106.0},
+    [ARC_RULE_GRAVITY_DOWN]             = {1,1,17,98.0},
+    [ARC_RULE_GRAVITY_UP]               = {1,1,17,98.0},
+    [ARC_RULE_GRAVITY_LEFT]             = {1,1,17,98.0},
+    [ARC_RULE_GRAVITY_RIGHT]            = {1,1,17,98.0},
+    [ARC_RULE_TILE_REPEAT]              = {1,1,18,104.0},
+    [ARC_RULE_GRID_REPEAT]              = {1,1,19,106.0},
+    [ARC_RULE_EXTRACT_COLOR]            = {1,1,20,92.0},
+    [ARC_RULE_ERASE_COLOR]              = {1,1,20,90.0},
+    [ARC_RULE_RECOLOR_BY_REFERENCE]     = {1,1,21,100.0},
+    [ARC_RULE_PATTERN_EXTEND]           = {1,1,22,102.0},
+    [ARC_RULE_DRAW_LINE]                = {1,1,23,96.0},
+    [ARC_RULE_SYMMETRY_H]               = {1,1,24,100.0},
+    [ARC_RULE_SYMMETRY_V]               = {1,1,24,100.0},
+    [ARC_RULE_MULTISCALE]               = {1,0,25,110.0},
+    [ARC_RULE_OBJECT_LABEL]             = {1,0,26,94.0},
+    [ARC_RULE_HOLO_TILE]                = {1,0,22,108.0},
+    [ARC_RULE_DILATE]                   = {1,1,27,95.0},
+};
+
 static int arc_rule_is_composable(ARCTransformRule op) {
-    static const int table[55] = {
-        [ARC_RULE_GRID_COLOR_MAP]=1,[ARC_RULE_GRID_FOREGROUND_RECOLOR]=1,
-        [ARC_RULE_CROP_BACKGROUND]=1,[ARC_RULE_CROP_COLOR]=1,[ARC_RULE_CROP_COLOR_MASK]=1,
-        [ARC_RULE_ROTATE90]=1,[ARC_RULE_ROTATE180]=1,[ARC_RULE_ROTATE270]=1,
-        [ARC_RULE_FLIP_HORIZONTAL]=1,[ARC_RULE_FLIP_VERTICAL]=1,[ARC_RULE_TRANSPOSE]=1,
-        [ARC_RULE_SCALE]=1,[ARC_RULE_BBOX_OUTLINE]=1,[ARC_RULE_BBOX_FILL]=1,
-        [ARC_RULE_TRANSLATE]=1,[ARC_RULE_COMPRESS_COLOR_LINES]=1,
-        [ARC_RULE_GRAVITY_DOWN]=1,[ARC_RULE_GRAVITY_UP]=1,[ARC_RULE_GRAVITY_LEFT]=1,[ARC_RULE_GRAVITY_RIGHT]=1,
-        [ARC_RULE_TILE_REPEAT]=1,[ARC_RULE_GRID_REPEAT]=1,
-        [ARC_RULE_EXTRACT_COLOR]=1,[ARC_RULE_ERASE_COLOR]=1,
-        [ARC_RULE_RECOLOR_BY_REFERENCE]=1,[ARC_RULE_PATTERN_EXTEND]=1,[ARC_RULE_DRAW_LINE]=1,
-        [ARC_RULE_SYMMETRY_H]=1,[ARC_RULE_SYMMETRY_V]=1,
-        [ARC_RULE_MULTISCALE]=1,[ARC_RULE_OBJECT_LABEL]=1,[ARC_RULE_HOLO_TILE]=1,
-    };
-    return op < 55 ? table[op] : 0;
+    return op < ARC_RULE_COUNT ? arc_op_info[op].composable : 0;
 }
+
 static int arc_rule_can_end_composition(ARCTransformRule op) {
-    static const int table[55] = {
-        [ARC_RULE_GRID_IDENTITY]=1,[ARC_RULE_GRID_COLOR_MAP]=1,
-        [ARC_RULE_GRID_FOREGROUND_RECOLOR]=1,
-        [ARC_RULE_CROP_BACKGROUND]=1,[ARC_RULE_CROP_BACKGROUND_RECOLOR]=1,
-        [ARC_RULE_CROP_COLOR]=1,[ARC_RULE_CROP_COLOR_MASK]=1,
-        [ARC_RULE_COMPRESS_COLOR_LINES]=1,[ARC_RULE_TILE_MOTIF_PARITY_REPEAT]=1,
-        [ARC_RULE_ROTATE90]=1,[ARC_RULE_ROTATE180]=1,[ARC_RULE_ROTATE270]=1,
-        [ARC_RULE_FLIP_HORIZONTAL]=1,[ARC_RULE_FLIP_VERTICAL]=1,[ARC_RULE_TRANSPOSE]=1,
-        [ARC_RULE_SCALE]=1,[ARC_RULE_BBOX_OUTLINE]=1,[ARC_RULE_BBOX_FILL]=1,
-        [ARC_RULE_TRANSLATE]=1,
-        [ARC_RULE_OBJECT_CROP_LARGEST]=1,[ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR]=1,
-        [ARC_RULE_OBJECT_MASK_LARGEST]=1,
-        [ARC_RULE_OBJECT_TRANSLATE]=1,[ARC_RULE_OBJECT_CONNECT_ALIGNED]=1,
-        [ARC_RULE_OBJECT_FILL_ENCLOSED]=1,[ARC_RULE_OBJECT_RELATION_INDUCED]=1,
-        [ARC_RULE_GRAVITY_DOWN]=1,[ARC_RULE_GRAVITY_UP]=1,[ARC_RULE_GRAVITY_LEFT]=1,[ARC_RULE_GRAVITY_RIGHT]=1,
-        [ARC_RULE_TILE_REPEAT]=1,[ARC_RULE_GRID_REPEAT]=1,
-        [ARC_RULE_EXTRACT_COLOR]=1,[ARC_RULE_ERASE_COLOR]=1,
-        [ARC_RULE_RECOLOR_BY_REFERENCE]=1,[ARC_RULE_PATTERN_EXTEND]=1,[ARC_RULE_DRAW_LINE]=1,
-        [ARC_RULE_SYMMETRY_H]=1,[ARC_RULE_SYMMETRY_V]=1,
-    };
-    return op < 55 ? table[op] : 0;
+    return op < ARC_RULE_COUNT ? arc_op_info[op].can_end : 0;
 }
 
 static int arc_init_composed_candidate(ARCTransformCandidate *candidate,
@@ -2913,6 +2950,7 @@ static size_t arc_build_candidates(const ARCTask *task,
     if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_SYMMETRY_V,"");snprintf(candidate.name,sizeof(candidate.name),"symmetry_v");arc_add_candidate(candidates,capacity,&count,&candidate);}
     if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_MULTISCALE,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"multiscale");arc_add_candidate(candidates,capacity,&count,&candidate);}
     if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_OBJECT_LABEL,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"object_label");arc_add_candidate(candidates,capacity,&count,&candidate);}
+    for(uint8_t dc=1;dc<ARC_COLOR_COUNT;++dc){if(count>=capacity)break;arc_init_candidate(&candidate,ARC_RULE_DILATE,"");candidate.input_color=dc;snprintf(candidate.name,sizeof(candidate.name),"dilate_color_%u",(unsigned)dc);arc_add_candidate(candidates,capacity,&count,&candidate);}
     if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_HOLO_TILE,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"holo_tile");arc_add_candidate(candidates,capacity,&count,&candidate);}
     { ARCTransformCandidate cons[32]; size_t nc=0;
       for(size_t i=0;i<count&&nc<32;++i)if(arc_rule_is_composable(candidates[i].op)&&!arc_candidate_is_composed(&candidates[i])){ARCTransformCandidate t=candidates[i];size_t c2=0,m2=0,u2=0;if(arc_candidate_matches_train(task,&t,&c2,&m2,&u2))cons[nc++]=candidates[i];}
@@ -4158,6 +4196,20 @@ static int arc_apply_object_translate_candidate(const ARCTransformCandidate *can
 }
 
 
+static int arc_apply_dilate_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){
+    /* Expand input_color cells to 4-neighbors. Keeps existing non-background. */
+    arc_init_grid(out,in->width,in->height);
+    for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i];
+    uint8_t col=c->input_color;if(!col)col=1;
+    for(size_t y=0;y<in->height;++y)for(size_t x=0;x<in->width;++x){
+        if(in->cells[y*in->width+x]!=col)continue;
+        if(x>0)out->cells[y*in->width+(x-1)]=col;
+        if(x+1<in->width)out->cells[y*in->width+(x+1)]=col;
+        if(y>0)out->cells[(y-1)*in->width+x]=col;
+        if(y+1<in->height)out->cells[(y+1)*in->width+x]=col;
+    }
+    return 1;
+}
 static int arc_apply_gravity_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){uint8_t bg=c->background_color;arc_init_grid(out,in->width,in->height);if(c->op==ARC_RULE_GRAVITY_DOWN){for(size_t x=0;x<in->width;++x){size_t wr=in->height;for(size_t y=in->height;y>0;--y){size_t ry=y-1;uint8_t v=in->cells[ry*in->width+x];if(v!=bg){--wr;out->cells[wr*in->width+x]=v;}}}}else if(c->op==ARC_RULE_GRAVITY_UP){for(size_t x=0;x<in->width;++x){size_t wr=0;for(size_t y=0;y<in->height;++y){uint8_t v=in->cells[y*in->width+x];if(v!=bg){out->cells[wr*in->width+x]=v;++wr;}}}}else if(c->op==ARC_RULE_GRAVITY_LEFT){for(size_t y=0;y<in->height;++y){size_t wc=0;for(size_t x=0;x<in->width;++x){uint8_t v=in->cells[y*in->width+x];if(v!=bg){out->cells[y*in->width+wc]=v;++wc;}}}}else if(c->op==ARC_RULE_GRAVITY_RIGHT){for(size_t y=0;y<in->height;++y){size_t wc=in->width;for(size_t x=in->width;x>0;--x){size_t rx=x-1;uint8_t v=in->cells[y*in->width+rx];if(v!=bg){--wc;out->cells[y*in->width+wc]=v;}}}}return 1;}
 static int arc_apply_tile_repeat_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){size_t mx=in->width,my=in->height,Mx=0,My=0;int found=0;for(size_t y=0;y<in->height;++y)for(size_t x=0;x<in->width;++x)if(in->cells[y*in->width+x]!=c->background_color){if(x<mx)mx=x;if(y<my)my=y;if(x>Mx)Mx=x;if(y>My)My=y;found=1;}if(!found){arc_init_grid(out,in->width,in->height);return 1;}size_t tw=Mx-mx+1,th=My-my+1;if(!tw||!th||tw>ARC_MAX_GRID_WIDTH||th>ARC_MAX_GRID_HEIGHT)return 0;if(out->width>ARC_MAX_GRID_WIDTH||out->height>ARC_MAX_GRID_HEIGHT||out->width*out->height>ARC_MAX_GRID_CELLS)return 0;arc_init_grid(out,out->width,out->height);for(size_t y=0;y<out->height;++y)for(size_t x=0;x<out->width;++x)out->cells[y*out->width+x]=in->cells[(my+(y%th))*in->width+(mx+(x%tw))];return 1;}
 static int arc_apply_grid_repeat_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){if(!in->width||!in->height)return 0;if(out->width>ARC_MAX_GRID_WIDTH||out->height>ARC_MAX_GRID_HEIGHT||out->width*out->height>ARC_MAX_GRID_CELLS)return 0;arc_init_grid(out,out->width,out->height);for(size_t y=0;y<out->height;++y)for(size_t x=0;x<out->width;++x)out->cells[y*out->width+x]=in->cells[(y%in->height)*in->width+(x%in->width)];return 1;}
@@ -4226,6 +4278,8 @@ static int arc_apply_candidate(const ARCTransformCandidate *candidate,
         return arc_apply_compress_color_lines(candidate, input, output);
     case ARC_RULE_TILE_MOTIF_PARITY_REPEAT:
         return arc_apply_tile_motif_parity_repeat_candidate(candidate, input, output);
+    case ARC_RULE_DILATE:
+        return arc_apply_dilate_candidate(candidate, input, output);
     case ARC_RULE_GRAVITY_DOWN: case ARC_RULE_GRAVITY_UP: case ARC_RULE_GRAVITY_LEFT: case ARC_RULE_GRAVITY_RIGHT:
         return arc_apply_gravity_candidate(candidate, input, output);
     case ARC_RULE_TILE_REPEAT:
@@ -4679,38 +4733,7 @@ static size_t arc_candidate_family(const ARCTransformCandidate *candidate)
 {
     if (candidate == NULL) return 0;
     if (arc_candidate_is_hypothesis_induced(candidate)) return 15;
-    static const size_t table[55] = {
-        [ARC_RULE_COPY_LEFT]=6,[ARC_RULE_COPY_RIGHT]=6,[ARC_RULE_INTERSECTION]=6,
-        [ARC_RULE_UNION]=6,[ARC_RULE_OBJECT_SELECT]=6,[ARC_RULE_COLOR_MAP_LEFT]=6,
-        [ARC_RULE_LAYER_OVERLAP]=6,[ARC_RULE_LAYER_UNION]=6,
-        [ARC_RULE_LAYER_XOR]=6,[ARC_RULE_LAYER_LEFT_ONLY]=6,[ARC_RULE_LAYER_RIGHT_ONLY]=6,
-        [ARC_RULE_GRID_IDENTITY]=9,[ARC_RULE_GRID_COLOR_MAP]=1,
-        [ARC_RULE_GRID_FOREGROUND_RECOLOR]=10,
-        [ARC_RULE_CROP_BACKGROUND]=4,[ARC_RULE_CROP_BACKGROUND_RECOLOR]=4,
-        [ARC_RULE_CROP_COLOR]=4,[ARC_RULE_CROP_COLOR_MASK]=4,[ARC_RULE_COMPRESS_COLOR_LINES]=4,
-        [ARC_RULE_TILE_MOTIF_PARITY_REPEAT]=16,
-        [ARC_RULE_ROTATE90]=2,[ARC_RULE_ROTATE180]=2,[ARC_RULE_ROTATE270]=2,
-        [ARC_RULE_FLIP_HORIZONTAL]=2,[ARC_RULE_FLIP_VERTICAL]=2,[ARC_RULE_TRANSPOSE]=2,
-        [ARC_RULE_SCALE]=3,
-        [ARC_RULE_BBOX_OUTLINE]=7,[ARC_RULE_BBOX_FILL]=7,
-        [ARC_RULE_TRANSLATE]=8,
-        [ARC_RULE_OBJECT_CROP_LARGEST]=5,[ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR]=5,
-        [ARC_RULE_OBJECT_MASK_LARGEST]=5,
-        [ARC_RULE_COMPOSED]=11,
-        [ARC_RULE_OBJECT_TRANSLATE]=12,[ARC_RULE_OBJECT_RELATION_INDUCED]=12,
-        [ARC_RULE_OBJECT_CONNECT_ALIGNED]=13,[ARC_RULE_OBJECT_FILL_ENCLOSED]=14,
-        [ARC_RULE_HYPOTHESIS_APPLIED]=15,
-        [ARC_RULE_GRAVITY_DOWN]=17,[ARC_RULE_GRAVITY_UP]=17,
-        [ARC_RULE_GRAVITY_LEFT]=17,[ARC_RULE_GRAVITY_RIGHT]=17,
-        [ARC_RULE_TILE_REPEAT]=18,[ARC_RULE_GRID_REPEAT]=19,
-        [ARC_RULE_EXTRACT_COLOR]=20,[ARC_RULE_ERASE_COLOR]=20,
-        [ARC_RULE_RECOLOR_BY_REFERENCE]=21,
-        [ARC_RULE_PATTERN_EXTEND]=22,[ARC_RULE_DRAW_LINE]=23,
-        [ARC_RULE_SYMMETRY_H]=24,[ARC_RULE_SYMMETRY_V]=24,
-        [ARC_RULE_MULTISCALE]=25,[ARC_RULE_OBJECT_LABEL]=26,
-        [ARC_RULE_HOLO_TILE]=22,
-    };
-    return candidate->op < 55 ? table[candidate->op] : 0;
+    return candidate->op < ARC_RULE_COUNT ? arc_op_info[candidate->op].family : 0;
 }
 
 static int arc_candidate_is_hypothesis_induced(const ARCTransformCandidate *candidate)
@@ -4725,39 +4748,7 @@ static double arc_structural_program_score(const ARCTransformCandidate *candidat
     if (candidate == NULL) return 0.0;
     if (arc_candidate_is_hypothesis_induced(candidate))
         return 130.0 - (double)(abs(candidate->dx) + abs(candidate->dy));
-    static const double table[55] = {
-        [ARC_RULE_COPY_LEFT]=102.0,[ARC_RULE_COPY_RIGHT]=102.0,[ARC_RULE_COLOR_MAP_LEFT]=102.0,
-        [ARC_RULE_INTERSECTION]=104.0,[ARC_RULE_UNION]=104.0,[ARC_RULE_OBJECT_SELECT]=104.0,
-        [ARC_RULE_LAYER_OVERLAP]=104.0,[ARC_RULE_LAYER_UNION]=104.0,
-        [ARC_RULE_LAYER_XOR]=104.0,[ARC_RULE_LAYER_LEFT_ONLY]=104.0,[ARC_RULE_LAYER_RIGHT_ONLY]=104.0,
-        [ARC_RULE_GRID_IDENTITY]=68.0,[ARC_RULE_GRID_COLOR_MAP]=120.0,
-        [ARC_RULE_GRID_FOREGROUND_RECOLOR]=62.0,
-        [ARC_RULE_CROP_BACKGROUND]=100.0,[ARC_RULE_CROP_BACKGROUND_RECOLOR]=84.0,
-        [ARC_RULE_CROP_COLOR]=100.0,[ARC_RULE_CROP_COLOR_MASK]=84.0,
-        [ARC_RULE_COMPRESS_COLOR_LINES]=100.0,
-        [ARC_RULE_TILE_MOTIF_PARITY_REPEAT]=106.0,
-        [ARC_RULE_ROTATE90]=110.0,[ARC_RULE_ROTATE180]=110.0,[ARC_RULE_ROTATE270]=110.0,
-        [ARC_RULE_FLIP_HORIZONTAL]=110.0,[ARC_RULE_FLIP_VERTICAL]=110.0,
-        [ARC_RULE_TRANSPOSE]=110.0,[ARC_RULE_SCALE]=105.0,
-        [ARC_RULE_BBOX_OUTLINE]=78.0,[ARC_RULE_BBOX_FILL]=78.0,
-        [ARC_RULE_TRANSLATE]=72.0,
-        [ARC_RULE_OBJECT_CROP_LARGEST]=96.0,[ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR]=96.0,
-        [ARC_RULE_OBJECT_MASK_LARGEST]=96.0,
-        [ARC_RULE_COMPOSED]=-40.0,
-        [ARC_RULE_OBJECT_TRANSLATE]=98.0,[ARC_RULE_OBJECT_RELATION_INDUCED]=90.0,
-        [ARC_RULE_OBJECT_CONNECT_ALIGNED]=99.0,[ARC_RULE_OBJECT_FILL_ENCLOSED]=97.0,
-        [ARC_RULE_HYPOTHESIS_APPLIED]=130.0,
-        [ARC_RULE_GRAVITY_DOWN]=98.0,[ARC_RULE_GRAVITY_UP]=98.0,
-        [ARC_RULE_GRAVITY_LEFT]=98.0,[ARC_RULE_GRAVITY_RIGHT]=98.0,
-        [ARC_RULE_TILE_REPEAT]=104.0,[ARC_RULE_GRID_REPEAT]=106.0,
-        [ARC_RULE_EXTRACT_COLOR]=92.0,[ARC_RULE_ERASE_COLOR]=90.0,
-        [ARC_RULE_RECOLOR_BY_REFERENCE]=100.0,
-        [ARC_RULE_PATTERN_EXTEND]=102.0,[ARC_RULE_DRAW_LINE]=96.0,
-        [ARC_RULE_SYMMETRY_H]=100.0,[ARC_RULE_SYMMETRY_V]=100.0,
-        [ARC_RULE_MULTISCALE]=110.0,[ARC_RULE_OBJECT_LABEL]=94.0,
-        [ARC_RULE_HOLO_TILE]=108.0,
-    };
-    double base = candidate->op < 55 ? table[candidate->op] : 0.0;
+    double base = candidate->op < ARC_RULE_COUNT ? arc_op_info[candidate->op].score : 0.0;
     if (base == 0.0) return 0.0;
     if (candidate->op == ARC_RULE_TRANSLATE || candidate->op == ARC_RULE_OBJECT_TRANSLATE)
         base -= (double)(abs(candidate->dx) + abs(candidate->dy));
@@ -5479,6 +5470,48 @@ static NeuralNet *create_arc_hypothesis_prior_model(unsigned int seed, size_t hi
     config.output_activation = NN_ACTIVATION_LINEAR;
     config.loss = NN_LOSS_MSE;
     return nn_create_config(&config);
+}
+
+static int arc_program_learned_save_state(const ARCProgramLearnedState *state, const char *path) {
+    /* Save fixed-size learned state for multipass training.
+       Skips dynamic generative_priors (rebuilt per run). */
+    FILE *f = fopen(path, "wb"); fprintf(stderr, "save_state: path=%s f=%p\n", path, (void*)f);
+    if (!f) return 0;
+    uint32_t magic = 0x43524C50; /* "CRLP" */
+    uint32_t version = 1;
+    if (fwrite(&magic, sizeof(magic), 1, f) != 1 ||
+        fwrite(&version, sizeof(version), 1, f) != 1) { fclose(f); return 0; }
+    /* Write fixed-size prefix (everything before generative_priors pointer) */
+    size_t prefix_size = offsetof(ARCProgramLearnedState, generative_priors);
+    if (fwrite(state, prefix_size, 1, f) != 1) { fclose(f); return 0; }
+    /* Write generative_prior_count (data is not saved, rebuilt on load) */
+    size_t zero = 0;
+    if (fwrite(&zero, sizeof(zero), 1, f) != 1) { fclose(f); return 0; }
+    fclose(f);
+    return 1;
+}
+
+static int arc_program_learned_load_state(ARCProgramLearnedState *state, const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    uint32_t magic = 0, version = 0;
+    if (fread(&magic, 4, 1, f) != 1 || fread(&version, 4, 1, f) != 1 ||
+        magic != 0x43524C50 || version != 1) { fclose(f); return 0; }
+    if (fread(state->family_score, sizeof(state->family_score), 1, f) != 1) { fclose(f); return 0; }
+    if (fread(state->relation_score, sizeof(state->relation_score), 1, f) != 1) { fclose(f); return 0; }
+    if (fread(state->relation_color_score, sizeof(state->relation_color_score), 1, f) != 1) { fclose(f); return 0; }
+    if (fread(state->relation_background_score, sizeof(state->relation_background_score), 1, f) != 1) { fclose(f); return 0; }
+    if (fread(state->relation_selector_score, sizeof(state->relation_selector_score), 1, f) != 1) { fclose(f); return 0; }
+    if (fread(state->relation_output_selector_score, sizeof(state->relation_output_selector_score), 1, f) != 1) { fclose(f); return 0; }
+    if (fread(state->relation_render_score, sizeof(state->relation_render_score), 1, f) != 1) { fclose(f); return 0; }
+    if (fread(state->object_selector_score, sizeof(state->object_selector_score), 1, f) != 1) { fclose(f); return 0; }
+    if (fread(state->object_color_score, sizeof(state->object_color_score), 1, f) != 1) { fclose(f); return 0; }
+    if (fread(state->object_render_score, sizeof(state->object_render_score), 1, f) != 1) { fclose(f); return 0; }
+    state->generative_priors = NULL;
+    state->generative_prior_capacity = 0;
+    state->generative_prior_count = 0;
+    fclose(f);
+    return 1;
 }
 
 static int arc_program_learned_init(ARCProgramLearnedState *state,
@@ -25465,6 +25498,11 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         free(files);
         return 0;
     }
+    if (config->load_learned_state_path != NULL) {
+        if (!arc_program_learned_load_state(&learned_state, config->load_learned_state_path)) {
+            fprintf(stderr, "Failed to load learned state from %s\n", config->load_learned_state_path);
+        }
+    }
     if (config->arc_generative_prior_path != NULL &&
         !arc_program_learned_load_arc_generative_prior(
             &learned_state,
@@ -25669,6 +25707,9 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
     free(evals);
     free(learn_candidates);
     free(learn_evals);
+    if (config->save_learned_state_path != NULL) {
+        arc_program_learned_save_state(&learned_state, config->save_learned_state_path);
+    }
     arc_program_learned_free(&learned_state);
     free(files);
     return summary.loaded_tasks > 0;
@@ -25697,7 +25738,7 @@ static void print_usage(FILE *stream)
           "[--disable-hypothesis-train-consistency-prior] "
           "[--arc-visual-only] [--arc-runtime-sketch-mine-cap count] "
           "[--arc-generative-prior-op-cap count] "
-          "[--holo-prior path] [--task-epochs count] [--shuffle] [--vsa-ranker path] [--save-hypothesis-prior path] [--hypothesis-library-prior path] [--loader-summary-only] [--induction] "
+          "[--save-learned-state path] [--load-learned-state path] [--holo-prior path] [--task-epochs count] [--shuffle] [--vsa-ranker path] [--save-hypothesis-prior path] [--hypothesis-library-prior path] [--loader-summary-only] [--induction] "
           "[--min-induction-evidence count] "
           "[--holo-prior path]\n",
           stream);
@@ -25747,6 +25788,8 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->hypothesis_train_consistency_prior_enabled = 1;
     config->arc_visual_only = 0;
     config->holo_prior_path = NULL;
+    config->save_learned_state_path = NULL;
+    config->load_learned_state_path = NULL;
     config->task_epochs = 1;
     *schema_only = 0;
 
@@ -25906,6 +25949,10 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             config->hypothesis_train_consistency_prior_enabled = 0;
         } else if (strcmp(argv[i], "--arc-visual-only") == 0) {
             config->arc_visual_only = 1;
+        } else if (strcmp(argv[i], "--save-learned-state") == 0 && i + 1 < argc) {
+            config->save_learned_state_path = argv[++i];
+        } else if (strcmp(argv[i], "--load-learned-state") == 0 && i + 1 < argc) {
+            config->load_learned_state_path = argv[++i];
         } else if (strcmp(argv[i], "--holo-prior") == 0 && i + 1 < argc) {
             config->holo_prior_path = argv[++i];
         } else if (strcmp(argv[i], "--vsa-ranker") == 0 && i + 1 < argc) { config->vsa_ranker_path = argv[++i]; if (config->vsa_ranker_path[0] == '\0') return 0;
@@ -26067,6 +26114,7 @@ int main(int argc, char **argv)
 }
 /* Holographic tile detector: detect cyclic pattern period and tile */
 static int arc_apply_holo_tile_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out) {
+    if (out->width > ARC_MAX_GRID_WIDTH || out->height > ARC_MAX_GRID_HEIGHT || out->width * out->height > ARC_MAX_GRID_CELLS) return 0;
     static size_t xs[900],ys[900]; static uint8_t cs[900]; size_t n=0;
     for(size_t y=0;y<in->height&&n<900;++y)for(size_t x=0;x<in->width&&n<900;++x){
         uint8_t v=in->cells[y*in->width+x]; if(v!=c->background_color){xs[n]=x;ys[n]=y;cs[n]=v;++n;}
