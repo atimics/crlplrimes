@@ -1,6 +1,36 @@
 # Research Augmentation Plan — Holographic Certification, Compositional Synthesis, and Geometric Representation Learning
 
-Date: 2026-06-06 | Status: draft
+Date: 2026-06-06 | Updated: 2026-06-10 | Status: draft
+
+## 0. Reference Intake: `holostuff`
+
+The public repository `AnOversizedMooseWithSocks/holostuff` was reviewed as a
+reference corpus for numpy-only holographic/VSA experiments. It should influence
+the backlog, but not enter this codebase as copied source: the reviewed snapshot
+did not include a visible license file. All implementations here must be
+independent C code, evaluated through this repo's schema, trace, and verifier
+contracts.
+
+Applicable ideas:
+
+- `HoloTree` / `HoloForest`: deterministic random-projection partitioning keeps
+  each holographic leaf memory within capacity, then queries with a beam or
+  multi-tree union.
+- Self-organizing memory: rebuild a shadow prototype store, judge candidates on
+  held-out examples, then swap the winner. This matches the repo's preference
+  for verifier-measured promotion over hand-tuned thresholds.
+- Compositional scene encoding: segment objects, bind attributes into object
+  vectors, bundle them into a scene, and recover factors. For ARC, this maps to
+  connected components, panel/layer identity, bounding boxes, colours, masks,
+  and relative positions.
+
+Non-applicable or parked ideas:
+
+- Text generation and unified multimodal "mind" demos are sandbox material only.
+- Image archive/compression work is peripheral unless reframed as robust
+  evidence/certificate storage.
+- Post-hoc score blending remains deprecated; memory should feed features into
+  the existing scorer or ranker protocol.
 
 ## 1. Proven Claims
 
@@ -22,6 +52,10 @@ self-contained FFT-based VSA operations with zero heap allocation in the hot pat
 
 **Evidence:** `src/nn_holographic_ranker.c`, `src/holographic/leos_engine.c`.
 Linked into `arc_agi` binary. ~7k bind/s at dim=8192.
+
+**Boundary:** This claim is about the flat trace API and its fixed memory
+footprint, not unlimited capacity. Flat holographic stores still have an
+interference limit; capacity partitioning is now a separate backlog item below.
 
 ### C3: Rejected Candidates Are Useful Data
 
@@ -65,13 +99,31 @@ require brute-force translation sweeps.
 
 The candidate builder enumerates fixed operator families. The 13 hypothesis
 templates cannot generalize from 62 examples.
-**Required:** A representation layer that learns from solved tasks.
+**Required:** A representation layer that learns from solved tasks. The first
+implemented bridge is `--arc-proposal-trace`, which emits verifier-labeled
+`crlp.arc_proposal_trace.v1` rows for ordinary transform candidates. Those rows
+make family/slot proposal learning measurable without trusting the learner for
+correctness.
 
 ### G4: The Holonet Is Not in the Hot Path
 
 Certification uses `arc_structural_program_score` (hardcoded heuristic), not
 the holographic ranker.
 **Required:** Wire HolographicRanker into certification scoring.
+
+### G5: Flat Holographic Capacity Is Not Managed
+
+A single trace degrades as stored associations accumulate. Memory neurons spread
+load across cells, but hot cells can still become overloaded.
+**Required:** Capacity-partitioned memory: deterministic tree/forest routing
+where each leaf owns a small `HolographicRanker` kept inside measured capacity.
+
+### G6: Self-Organization Is Not Yet Verifier-Measured
+
+Centroid learning and hypothesis priors can drift or fragment without a clear
+adoption rule.
+**Required:** Shadow-and-swap reorganization judged by held-out verifier utility,
+false-rejection preservation, and matched baselines.
 
 ---
 
@@ -111,6 +163,12 @@ DeVries & Taylor 2017 (Cutout), Shorten & Khoshgoftaar 2019 (augmentation survey
 - Per-component features: bbox, area, centroid, color, shape hash
 - Encode each object as VSA vector: `S_obj = bind(shape_key, bind(pos_key, color_key))`
 - Operators query the scene via similarity search
+- Keep the prior explicit: object-scene vectors are a declared representation
+  condition (`arc_object_scene_v1`), not a hidden feature channel for exact
+  claims.
+- Use compositional binding for attributes such as `component_id`, `panel_role`,
+  `layer_role`, `bbox`, `centroid`, `area`, `aspect`, `color_set`, and
+  `relative_position`.
 
 **Papers:** Locatello 2020 (Slot Attention), Burgess 2019 (MONet),
 Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
@@ -123,6 +181,18 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
 - Multi-pass training: run 8× augmentation through hypothesis system, save priors
 - Cross-task similarity: use holographic scene vectors to propagate successful
   templates from solved to similar unsolved tasks
+- Trace-first proposal learning: run the public loader with
+  `--arc-proposal-trace`, then train tiny family and slot heads from task
+  features plus candidate slots to verifier labels. The learner proposes order;
+  the transform verifier still decides train consistency and exactness.
+- Baseline result: online `trace_prior` counts over family/op/slot positives
+  beat structural ordering at ARC budget 8 and 64. `trace_task_prior` adds
+  task-feature success prototypes and improves the budget-64 row over global
+  trace counts. A flat online `trace_linear` logistic head helps only at budget
+  2 and regresses at budget 64; a listwise `trace_mlp` also trails the
+  prototype prior. This matches the holo pattern: memory/prototype indexing is a
+  reliable substrate, and neural routing should be confidence-gated or trained
+  as a residual correction.
 
 **Papers:** Lake 2017 (Compositional Generalization), Bunel 2018 (Neural Program
 Synthesis), Nye 2021 (Scratchpads)
@@ -138,16 +208,100 @@ Synthesis), Nye 2021 (Scratchpads)
 
 **Papers:** Gu 2022 (S4), Cooley & Tukey 1965 (FFT)
 
+### Thread 6: Capacity-Partitioned Holographic Memory
+
+**Goal:** Keep holographic recall usable after a flat trace would overload.
+
+**Approach:**
+- Build a deterministic random-projection tree over state/query vectors.
+- Store each leaf's associations in a small `HolographicRanker`.
+- Query by descending to the best leaf, then optionally widening with beam
+  backtracking or multiple independently seeded trees.
+- Report recall@1, comparisons/query, build time, query time, and leaf load
+  distribution against exact scan and flat trace baselines.
+
+**Evidence target:** sandbox JSONL rows first. Promote only if the forest
+improves a real downstream ranker/proposer budget without increasing unsafe
+decisions.
+
+### Thread 7: Verifier-Measured Self-Organization
+
+**Goal:** Let memory/prototype stores reorganize only when measured utility
+improves under the repo's verifier protocol.
+
+**Approach:**
+- Build shadow candidates: keep, merge duplicates, split multimodal classes,
+  rebuild from recent valid experience.
+- Judge candidates on held-out verifier rows or replay rows.
+- Adopt the winner only after checking false-rejection / safety constraints.
+- Emit rows recording candidate strategy, held-out utility, adopted strategy,
+  memory size, and residual risk.
+
+**Evidence target:** hypothesis-library or rejected-candidate memory first, not
+promoted ARC coverage.
+
 ---
 
 ## 4. Phase Plan
 
-### Phase 1: Holographic Grid Encoding (2-3 weeks)
+### Phase 1: Holographic Grid Encoding and VSA Scoring (2-3 weeks)
 
 1. Implement `grid_to_hologram`: 30×30 grid → 256-dim scene vector via LeosEngine
 2. Holographic cyclic tile detector replacing broken `arc_apply_pattern_tile_candidate`
 3. Wire HolographicRanker into certification scoring
-4. **Target:** 62 → 68+ certified tasks
+4. **Observed:** full-scale raw-grid VSA persistence works (`stored_count=114`
+   after shuffled train + ordered load), but ordered metrics remain 70/400.
+5. **Observed:** `arc_object_scene_v1` also persists and scores cleanly
+   (`stored_count=114`), but ordered metrics still remain 70/400.
+6. **Next target:** pause ARC VSA scoring and move to scale-space /
+   visual-program proposal coverage.
+
+### Phase 1B: Object-Scene VSA Representation (done; no uplift)
+
+1. Extract connected components and panel/layer facts already available in ARC
+2. Bind component attributes into object vectors and bundle a scene vector
+3. Compare structural, `arc_grid_hologram_v1`, and `arc_object_scene_v1` ranker
+   conditions at matched task order and budgets
+4. **Observed:** no improvement over baseline under matched ordered public rows.
+
+### Phase 1C: Scale-Space / Visual-Program Coverage (1-2 weeks)
+
+1. Audit scale-up/down and output-size mismatch misses
+2. Extend multi-scale candidate evaluation only where shape evidence justifies it
+3. Inspect learned visual-program zero-candidate / coverage-gap tasks
+4. **Observed:** `reflect_tile_{2,3,4}x` is verifier-backed and improves the
+   focused shape-scale audit from 32 to 55 certified rows, but the capped
+   400-row loader gate remains 70/400.
+5. **Observed:** `--unique-task-gate` now provides a cheap all-400-file
+   canonical gate. With induction, reflected tiling improves that gate from
+   31 exact / 34 certified / 0.02710333 cell accuracy to 34 exact / 37 certified
+   / 0.02922078 cell accuracy; exact reflected-tile tasks are `3af2c5a8`,
+   `62c24649`, and `67e8384a`.
+6. **Observed:** `marker_motif_tile` adds a second verifier-backed fixed-scale
+   primitive: stamp the input motif into output blocks selected by a fixed,
+   dominant, or rarest marker color. It improves the same gate to 36 exact /
+   39 certified / 0.03207933 cell accuracy; exact additions are `c3e719e8` and
+   `cce03e0d`. Use `--disable-marker-motif-tile` for ablation.
+7. **Observed:** `axis_tile` adds one-axis repeat, reflect, and reverse-first
+   reflect expansion. It improves the same gate to 42 exact / 45 certified /
+   0.03447911 cell accuracy; exact additions are `4c4377d9`, `6d0aefbc`,
+   `6fa7a44f`, `8be77c9e`, `a416b8f3`, and `c9e6f938`. Use
+   `--disable-axis-tile` for ablation.
+8. **Observed:** `period_extend` continues inferred row/column periods across a
+   doubled axis. It improves the same gate to 43 exact / 46 certified /
+   0.03606719 cell accuracy; exact addition is `963e52fc`. Use
+   `--disable-period-extend` for ablation.
+9. **Target:** improve proposal coverage without hand-coding task-specific
+   operators, using `--unique-task-gate` as the routine coverage signal and
+   reserving full augmented all-files runs for less frequent confirmation.
+
+### Phase 1D: Capacity Partitioning Ablation (1 week)
+
+1. Implement flat/tree/forest recall benchmark over synthetic vectors
+2. Repeat on ARC/hypothesis candidate embeddings
+3. Emit `crlp.holo_forest_benchmark.v1` sandbox rows
+4. **Target:** forest preserves recall where flat trace degrades, at fewer
+   comparisons than exact scan
 
 ### Phase 2: Scale-Space Grid Operations (2 weeks)
 
@@ -160,13 +314,17 @@ Synthesis), Nye 2021 (Scratchpads)
 1. Extract all connected components per grid
 2. Encode each component with (position, color, area, aspect ratio, perimeter)
 3. Component-aware operators (per-object translate, per-object recolor)
-4. **Target:** 3+ per-object tasks solved
+4. **Target:** object-scene ranker rows improve budgeted proposal ordering;
+   exact solves remain verifier-owned
 
-### Phase 4: Template Pre-Training Loop (1 week)
+### Phase 4: Template Pre-Training and Self-Organization Loop (1 week)
 
 1. Multi-pass training: build priors from augmented data
 2. Cross-task holographic similarity for template propagation
-3. **Target:** 70+ certified tasks
+3. Shadow split/merge/rebuild of hypothesis memories, judged on held-out
+   verifier rows
+4. **Target:** memory compaction or proposal-order improvement without unsafe
+   false-rejection regression
 
 ---
 
@@ -207,13 +365,17 @@ Synthesis), Nye 2021 (Scratchpads)
 
 | Phase | Metric | Baseline | Target |
 |-------|--------|----------|--------|
-| Holo encoding | Certified tasks | 62 | 68+ |
+| Holo encoding/scoring | Certified tasks | 70 | 75+ |
+| Capacity partitioning | Recall after flat overload | flat trace | forest advantage |
 | Multi-scale | Scale-up tasks solved | ~15/29 | 29/29 |
-| Object-centric | Per-object translate | 0 | 3+ |
-| Template training | Certified tasks | 62 | 70+ |
+| Object-centric | Budgeted proposer ordering | flat/structural | sandbox improvement |
+| Self-organization | Held-out utility at fixed safety | keep-only memory | no unsafe regression |
+| Template training | Certified tasks | 70 | 80+ only after verifier promotion |
 
 Runs use `--induction` with 8× augmentation. DreamCoder save/restore carries priors
 forward between phases. Each phase is additive on the existing operator set.
+Capacity, object-scene, and self-organization rows are sandbox rows until a
+paper-support gate explicitly promotes them.
 
 ---
 

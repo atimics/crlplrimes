@@ -78,7 +78,8 @@ enum {
     ARC_PROGRAM_TASK_FEATURE_COUNT = 32,
     ARC_PROGRAM_FEATURE_COUNT = NN_PROGRAM_FEATURE_COUNT + ARC_PROGRAM_TASK_FEATURE_COUNT,
     ARC_PROGRAM_TRAIN_EPOCHS = 5,
-    ARC_PROGRAM_STRATEGY_COUNT = 5,
+    ARC_PROGRAM_STRATEGY_COUNT = 9,
+    ARC_PROPOSAL_TRACE_NEGATIVE_CAP = 64,
     ARC_OBJECT_CONNECT_HORIZONTAL = 0,
     ARC_OBJECT_CONNECT_VERTICAL = 1,
     ARC_OBJECT_CONNECT_BOTH = 2,
@@ -183,7 +184,11 @@ typedef enum {
     ARC_RULE_OBJECT_LABEL = 53,
     ARC_RULE_HOLO_TILE = 54,
     ARC_RULE_DILATE = 55,
-    ARC_RULE_COUNT = 56,
+    ARC_RULE_REFLECT_TILE = 56,
+    ARC_RULE_MARKER_MOTIF_TILE = 57,
+    ARC_RULE_AXIS_TILE = 58,
+    ARC_RULE_PERIOD_EXTEND = 59,
+    ARC_RULE_COUNT = 60,
 } ARCTransformRule;
 
 typedef enum {
@@ -451,6 +456,11 @@ static const NNExperimentSpec ARC_AGI_EXPERIMENT_SPEC = {
     .feature_count = sizeof(ARC_AGI_FEATURES) / sizeof(ARC_AGI_FEATURES[0]),
 };
 
+typedef enum {
+    ARC_VSA_REPRESENTATION_GRID = 0,
+    ARC_VSA_REPRESENTATION_OBJECT_SCENE = 1
+} ARCVSARepresentation;
+
 typedef struct {
     size_t epochs;
     size_t steps_per_epoch;
@@ -472,6 +482,7 @@ typedef struct {
     const char *hypothesis_library_prior_path;
     const char *save_hypothesis_prior_path;
     const char *vsa_ranker_path;
+    ARCVSARepresentation vsa_representation;
     const char *arc_generative_prior_path;
     const char *task_ids;
     const char *exclude_task_ids;
@@ -480,8 +491,10 @@ typedef struct {
     const char *arc_sketch_probe_sources_path;
     const char *arc_sketch_probe_prior_path;
     const char *arc_sketch_probe_attempts_path;
+    const char *arc_proposal_trace_path;
     int loader_summary_only;
     int shuffle_tasks;
+    int unique_task_gate;
     int program_budget_grid;
     int induction_smoke;
     size_t arc_sketch_probe_sketches_per_task;
@@ -493,11 +506,17 @@ typedef struct {
     int hypothesis_train_filter_enabled;
     int hypothesis_train_consistency_prior_enabled;
     int arc_visual_only;
+    int disable_reflect_tile;
+    int disable_marker_motif_tile;
+    int disable_axis_tile;
+    int disable_period_extend;
     const char *holo_prior_path;
     const char *save_learned_state_path;
     const char *load_learned_state_path;
     size_t task_epochs;
 } ARCConfig;
+
+static const ARCConfig *g_arc_active_config = NULL;
 
 typedef struct {
     size_t width;
@@ -800,7 +819,11 @@ typedef enum {
     ARC_PROGRAM_STRATEGY_STRUCTURAL = 1,
     ARC_PROGRAM_STRATEGY_RANDOM = 2,
     ARC_PROGRAM_STRATEGY_LEARNED = 3,
-    ARC_PROGRAM_STRATEGY_ORACLE = 4,
+    ARC_PROGRAM_STRATEGY_TRACE_PRIOR = 4,
+    ARC_PROGRAM_STRATEGY_TRACE_TASK_PRIOR = 5,
+    ARC_PROGRAM_STRATEGY_TRACE_LINEAR = 6,
+    ARC_PROGRAM_STRATEGY_TRACE_MLP = 7,
+    ARC_PROGRAM_STRATEGY_ORACLE = 8,
 } ARCProgramStrategy;
 
 typedef struct {
@@ -817,6 +840,37 @@ typedef struct {
     size_t unique_prediction_tasks;
     size_t exact_tasks;
 } ARCProgramProposerAggregate;
+
+typedef struct {
+    size_t family_seen[32];
+    size_t family_success[32];
+    size_t op_seen[ARC_RULE_COUNT];
+    size_t op_success[ARC_RULE_COUNT];
+    double family_task_feature_sum[32][ARC_PROGRAM_TASK_FEATURE_COUNT];
+    double op_task_feature_sum[ARC_RULE_COUNT][ARC_PROGRAM_TASK_FEATURE_COUNT];
+    double linear_weights[ARC_PROGRAM_FEATURE_COUNT];
+    double linear_bias;
+    size_t linear_updates;
+    NeuralNet *mlp;
+    size_t mlp_updates;
+    size_t input_color_seen[ARC_COLOR_COUNT];
+    size_t input_color_success[ARC_COLOR_COUNT];
+    size_t output_color_seen[ARC_COLOR_COUNT];
+    size_t output_color_success[ARC_COLOR_COUNT];
+    size_t background_color_seen[ARC_COLOR_COUNT];
+    size_t background_color_success[ARC_COLOR_COUNT];
+    size_t selector_seen[ARC_OBJECT_SELECTOR_KIND_COUNT];
+    size_t selector_success[ARC_OBJECT_SELECTOR_KIND_COUNT];
+    size_t output_selector_seen[ARC_OBJECT_SELECTOR_KIND_COUNT];
+    size_t output_selector_success[ARC_OBJECT_SELECTOR_KIND_COUNT];
+    size_t render_seen[ARC_OBJECT_RENDER_KIND_COUNT];
+    size_t render_success[ARC_OBJECT_RENDER_KIND_COUNT];
+    size_t scale_seen[8];
+    size_t scale_success[8];
+    size_t observed_tasks;
+    size_t observed_rows;
+    size_t positive_rows;
+} ARCProposalTracePrior;
 
 typedef struct {
     uint32_t template_id;
@@ -1042,6 +1096,11 @@ static int arc_scene_unique_color_object(const ARCScene *scene,
                                          uint8_t color,
                                          ARCObject *object_out);
 static int arc_apply_multiscale_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
+static int arc_grid_to_hologram(const ARCGrid *grid, double *scene_out);
+static int arc_object_scene_to_hologram(const ARCGrid *grid, double *scene_out);
+static int arc_proposal_trace_should_emit(const ARCProgramEval *eval,
+                                          size_t rejected_emitted,
+                                          size_t rejected_cap);
 
 static int arc_apply_candidate(const ARCTransformCandidate *candidate,
                                const ARCGrid *input,
@@ -1642,6 +1701,10 @@ static const struct {
     [ARC_RULE_OBJECT_LABEL]             = {1,0,26,94.0},
     [ARC_RULE_HOLO_TILE]                = {1,0,22,108.0},
     [ARC_RULE_DILATE]                   = {1,1,27,95.0},
+    [ARC_RULE_REFLECT_TILE]             = {1,1,28,112.0},
+    [ARC_RULE_MARKER_MOTIF_TILE]        = {1,1,29,111.0},
+    [ARC_RULE_AXIS_TILE]                = {1,1,30,109.0},
+    [ARC_RULE_PERIOD_EXTEND]            = {1,1,31,108.0},
 };
 
 static int arc_rule_is_composable(ARCTransformRule op) {
@@ -2564,6 +2627,91 @@ static size_t arc_build_candidates(const ARCTask *task,
         arc_init_candidate(&candidate, ARC_RULE_SCALE, "");
         candidate.scale = scale;
         snprintf(candidate.name, sizeof(candidate.name), "scale_%zux", scale);
+        arc_add_candidate(candidates, capacity, &count, &candidate);
+    }
+    if (!g_arc_active_config || !g_arc_active_config->disable_reflect_tile) {
+        for (size_t scale = 2; scale <= 4; ++scale) {
+            arc_init_candidate(&candidate, ARC_RULE_REFLECT_TILE, "");
+            candidate.scale = scale;
+            snprintf(candidate.name, sizeof(candidate.name), "reflect_tile_%zux", scale);
+            arc_add_candidate(candidates, capacity, &count, &candidate);
+        }
+    }
+    if (!g_arc_active_config || !g_arc_active_config->disable_marker_motif_tile) {
+    for (uint8_t background = 0; background < ARC_COLOR_COUNT; ++background) {
+        for (uint8_t marker = 1; marker < ARC_COLOR_COUNT; ++marker) {
+            if (marker == background) {
+                continue;
+            }
+            arc_init_candidate(&candidate, ARC_RULE_MARKER_MOTIF_TILE, "");
+            candidate.background_color = background;
+            candidate.input_color = marker;
+            candidate.selector_kind = 0;
+            snprintf(candidate.name,
+                     sizeof(candidate.name),
+                     "marker_motif_tile_bg_%u_color_%u",
+                     (unsigned)background,
+                     (unsigned)marker);
+            arc_add_candidate(candidates, capacity, &count, &candidate);
+        }
+        arc_init_candidate(&candidate, ARC_RULE_MARKER_MOTIF_TILE, "");
+        candidate.background_color = background;
+        candidate.selector_kind = 1;
+        snprintf(candidate.name,
+                 sizeof(candidate.name),
+                 "marker_motif_tile_bg_%u_dominant",
+                 (unsigned)background);
+        arc_add_candidate(candidates, capacity, &count, &candidate);
+
+        arc_init_candidate(&candidate, ARC_RULE_MARKER_MOTIF_TILE, "");
+        candidate.background_color = background;
+        candidate.selector_kind = 2;
+        snprintf(candidate.name,
+                 sizeof(candidate.name),
+                 "marker_motif_tile_bg_%u_rarest",
+                 (unsigned)background);
+        arc_add_candidate(candidates, capacity, &count, &candidate);
+    }
+    }
+    if (!g_arc_active_config || !g_arc_active_config->disable_axis_tile) {
+    static const struct {
+        int dx;
+        int dy;
+        uint8_t mode;
+        const char *name;
+    } axis_tile_modes[] = {
+        {2, 1, 0, "axis_tile_x2_repeat"},
+        {2, 1, 1, "axis_tile_x2_reflect"},
+        {2, 1, 2, "axis_tile_x2_reflect_first"},
+        {1, 2, 0, "axis_tile_y2_repeat"},
+        {1, 2, 1, "axis_tile_y2_reflect"},
+        {1, 2, 2, "axis_tile_y2_reflect_first"},
+    };
+    for (size_t axis_index = 0;
+         axis_index < sizeof(axis_tile_modes) / sizeof(axis_tile_modes[0]);
+         ++axis_index) {
+        arc_init_candidate(&candidate, ARC_RULE_AXIS_TILE, "");
+        candidate.dx = axis_tile_modes[axis_index].dx;
+        candidate.dy = axis_tile_modes[axis_index].dy;
+        candidate.render_mode = axis_tile_modes[axis_index].mode;
+        snprintf(candidate.name,
+                 sizeof(candidate.name),
+                 "%s",
+                 axis_tile_modes[axis_index].name);
+        arc_add_candidate(candidates, capacity, &count, &candidate);
+    }
+    }
+    if (!g_arc_active_config || !g_arc_active_config->disable_period_extend) {
+        arc_init_candidate(&candidate, ARC_RULE_PERIOD_EXTEND, "");
+        candidate.dx = 2;
+        candidate.dy = 1;
+        snprintf(candidate.name, sizeof(candidate.name), "period_extend_x2");
+        arc_add_candidate(candidates, capacity, &count, &candidate);
+
+        arc_init_candidate(&candidate, ARC_RULE_PERIOD_EXTEND, "");
+        candidate.dx = 1;
+        candidate.dy = 2;
+        snprintf(candidate.name, sizeof(candidate.name), "period_extend_y2");
         arc_add_candidate(candidates, capacity, &count, &candidate);
     }
 
@@ -4213,6 +4361,13 @@ static int arc_apply_dilate_candidate(const ARCTransformCandidate*c,const ARCGri
 static int arc_apply_gravity_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){uint8_t bg=c->background_color;arc_init_grid(out,in->width,in->height);if(c->op==ARC_RULE_GRAVITY_DOWN){for(size_t x=0;x<in->width;++x){size_t wr=in->height;for(size_t y=in->height;y>0;--y){size_t ry=y-1;uint8_t v=in->cells[ry*in->width+x];if(v!=bg){--wr;out->cells[wr*in->width+x]=v;}}}}else if(c->op==ARC_RULE_GRAVITY_UP){for(size_t x=0;x<in->width;++x){size_t wr=0;for(size_t y=0;y<in->height;++y){uint8_t v=in->cells[y*in->width+x];if(v!=bg){out->cells[wr*in->width+x]=v;++wr;}}}}else if(c->op==ARC_RULE_GRAVITY_LEFT){for(size_t y=0;y<in->height;++y){size_t wc=0;for(size_t x=0;x<in->width;++x){uint8_t v=in->cells[y*in->width+x];if(v!=bg){out->cells[y*in->width+wc]=v;++wc;}}}}else if(c->op==ARC_RULE_GRAVITY_RIGHT){for(size_t y=0;y<in->height;++y){size_t wc=in->width;for(size_t x=in->width;x>0;--x){size_t rx=x-1;uint8_t v=in->cells[y*in->width+rx];if(v!=bg){--wc;out->cells[y*in->width+wc]=v;}}}}return 1;}
 static int arc_apply_tile_repeat_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){size_t mx=in->width,my=in->height,Mx=0,My=0;int found=0;for(size_t y=0;y<in->height;++y)for(size_t x=0;x<in->width;++x)if(in->cells[y*in->width+x]!=c->background_color){if(x<mx)mx=x;if(y<my)my=y;if(x>Mx)Mx=x;if(y>My)My=y;found=1;}if(!found){arc_init_grid(out,in->width,in->height);return 1;}size_t tw=Mx-mx+1,th=My-my+1;if(!tw||!th||tw>ARC_MAX_GRID_WIDTH||th>ARC_MAX_GRID_HEIGHT)return 0;if(out->width>ARC_MAX_GRID_WIDTH||out->height>ARC_MAX_GRID_HEIGHT||out->width*out->height>ARC_MAX_GRID_CELLS)return 0;arc_init_grid(out,out->width,out->height);for(size_t y=0;y<out->height;++y)for(size_t x=0;x<out->width;++x)out->cells[y*out->width+x]=in->cells[(my+(y%th))*in->width+(mx+(x%tw))];return 1;}
 static int arc_apply_grid_repeat_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){if(!in->width||!in->height)return 0;if(out->width>ARC_MAX_GRID_WIDTH||out->height>ARC_MAX_GRID_HEIGHT||out->width*out->height>ARC_MAX_GRID_CELLS)return 0;arc_init_grid(out,out->width,out->height);for(size_t y=0;y<out->height;++y)for(size_t x=0;x<out->width;++x)out->cells[y*out->width+x]=in->cells[(y%in->height)*in->width+(x%in->width)];return 1;}
+static int arc_marker_motif_select_color(const ARCTransformCandidate*c,const ARCGrid*in,uint8_t*marker_out){if(!c||!in||!marker_out)return 0;if(c->selector_kind==0){*marker_out=c->input_color;return c->input_color<ARC_COLOR_COUNT&&c->input_color!=c->background_color;}size_t count[ARC_COLOR_COUNT]={0};for(size_t i=0;i<arc_grid_cells(in);++i){uint8_t v=in->cells[i];if(v<ARC_COLOR_COUNT&&v!=c->background_color)++count[v];}uint8_t best=ARC_COLOR_COUNT;if(c->selector_kind==1){size_t best_count=0;for(uint8_t v=0;v<ARC_COLOR_COUNT;++v)if(v!=c->background_color&&count[v]>best_count){best_count=count[v];best=v;}}else{size_t best_count=(size_t)-1;for(uint8_t v=0;v<ARC_COLOR_COUNT;++v)if(v!=c->background_color&&count[v]>0&&count[v]<best_count){best_count=count[v];best=v;}}if(best>=ARC_COLOR_COUNT)return 0;*marker_out=best;return 1;}
+static int arc_apply_marker_motif_tile_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){if(!c||!in||!out||!in->width||!in->height||in->width*in->width>ARC_MAX_GRID_WIDTH||in->height*in->height>ARC_MAX_GRID_HEIGHT)return 0;uint8_t marker=0;if(!arc_marker_motif_select_color(c,in,&marker))return 0;arc_init_grid(out,in->width*in->width,in->height*in->height);for(size_t i=0;i<arc_grid_cells(out);++i)out->cells[i]=c->background_color;int used=0;for(size_t by=0;by<in->height;++by){for(size_t bx=0;bx<in->width;++bx){if(in->cells[by*in->width+bx]!=marker)continue;used=1;for(size_t y=0;y<in->height;++y){for(size_t x=0;x<in->width;++x){size_t out_x=bx*in->width+x;size_t out_y=by*in->height+y;out->cells[out_y*out->width+out_x]=in->cells[y*in->width+x];}}}}return used;}
+static int arc_axis_tile_source(size_t coord,size_t span,size_t tiles,uint8_t mode){if(span==0||tiles==0)return -1;size_t tile=coord/span;size_t local=coord%span;if(mode==0||tiles==1)return (int)local;int reverse=(tile&1u)!=0;if(mode==2)reverse=!reverse;return reverse?(int)(span-1u-local):(int)local;}
+static int arc_apply_axis_tile_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){if(!c||!in||!out||!in->width||!in->height)return 0;size_t sx=c->dx>0?(size_t)c->dx:1u;size_t sy=c->dy>0?(size_t)c->dy:1u;if(sx<1||sy<1||sx>4||sy>4||in->width*sx>ARC_MAX_GRID_WIDTH||in->height*sy>ARC_MAX_GRID_HEIGHT)return 0;arc_init_grid(out,in->width*sx,in->height*sy);for(size_t y=0;y<out->height;++y){int src_y=arc_axis_tile_source(y,in->height,sy,c->render_mode);if(src_y<0)return 0;for(size_t x=0;x<out->width;++x){int src_x=arc_axis_tile_source(x,in->width,sx,c->render_mode);if(src_x<0)return 0;out->cells[y*out->width+x]=in->cells[(size_t)src_y*in->width+(size_t)src_x];}}return 1;}
+static size_t arc_row_period(const ARCGrid*in,size_t y){for(size_t p=1;p<=in->width;++p){int ok=1;for(size_t x=0;x<in->width;++x)if(in->cells[y*in->width+x]!=in->cells[y*in->width+(x%p)]){ok=0;break;}if(ok)return p;}return in->width;}
+static size_t arc_col_period(const ARCGrid*in,size_t x){for(size_t p=1;p<=in->height;++p){int ok=1;for(size_t y=0;y<in->height;++y)if(in->cells[y*in->width+x]!=in->cells[(y%p)*in->width+x]){ok=0;break;}if(ok)return p;}return in->height;}
+static int arc_apply_period_extend_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){if(!c||!in||!out||!in->width||!in->height)return 0;size_t sx=c->dx>0?(size_t)c->dx:1u;size_t sy=c->dy>0?(size_t)c->dy:1u;if(!((sx==2&&sy==1)||(sx==1&&sy==2))||in->width*sx>ARC_MAX_GRID_WIDTH||in->height*sy>ARC_MAX_GRID_HEIGHT)return 0;arc_init_grid(out,in->width*sx,in->height*sy);if(sx==2){for(size_t y=0;y<in->height;++y){size_t p=arc_row_period(in,y);for(size_t x=0;x<out->width;++x)out->cells[y*out->width+x]=in->cells[y*in->width+(x%p)];}}else{for(size_t x=0;x<in->width;++x){size_t p=arc_col_period(in,x);for(size_t y=0;y<out->height;++y)out->cells[y*out->width+x]=in->cells[(y%p)*in->width+x];}}return 1;}
 static int arc_apply_extract_erase_color_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){arc_init_grid(out,in->width,in->height);uint8_t t=c->input_color;if(c->op==ARC_RULE_EXTRACT_COLOR){for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i]==t?t:0;}else{for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i]==t?0:in->cells[i];}return 1;}
 static int arc_apply_recolor_by_reference_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){uint8_t bg=c->background_color;size_t cnt[10]={0};size_t fp[10];for(size_t i=0;i<10;++i)fp[i]=(size_t)-1;size_t nbg=0;for(size_t i=0;i<arc_grid_cells(in);++i){uint8_t v=in->cells[i];if(v!=bg){if(fp[v]==(size_t)-1)fp[v]=i;++cnt[v];++nbg;}}if(!nbg){arc_init_grid(out,in->width,in->height);return 1;}uint8_t dom=0;size_t mc=0;for(uint8_t i=1;i<10;++i)if(cnt[i]>mc){mc=cnt[i];dom=i;}uint8_t ref=0;size_t bl=(in->height-1)*in->width;uint8_t blc=in->cells[bl];if(blc!=bg&&blc!=dom)ref=blc;else{size_t mn=(size_t)-1;for(uint8_t i=1;i<10;++i)if(i!=dom&&i!=bg&&cnt[i]>0&&cnt[i]<mn){mn=cnt[i];ref=i;}}if(!ref){*out=*in;return 1;}arc_init_grid(out,in->width,in->height);for(size_t i=0;i<arc_grid_cells(in);++i){uint8_t v=in->cells[i];if(v==dom)out->cells[i]=ref;else if(v==ref||v==bg)out->cells[i]=0;else out->cells[i]=v;}return 1;}
 static int arc_apply_pattern_extend_candidate(const ARCTransformCandidate*c,const ARCGrid*in,ARCGrid*out){static size_t pos[900][2];size_t n=0;for(size_t y=0;y<in->height&&n<900;++y)for(size_t x=0;x<in->width&&n<900;++x)if(in->cells[y*in->width+x]!=c->background_color){pos[n][0]=x;pos[n][1]=y;++n;}if(n<2){*out=*in;return 1;}int64_t sdx=0,sdy=0;size_t st=0;for(size_t i=0;i+1<n;++i){int64_t dx=(int64_t)pos[i+1][0]-(int64_t)pos[i][0];int64_t dy=(int64_t)pos[i+1][1]-(int64_t)pos[i][1];if(dx>=-10&&dx<=10&&dy>=-10&&dy<=10){sdx+=dx;sdy+=dy;++st;}}if(!st){*out=*in;return 1;}int64_t adx=sdx/(int64_t)st,ady=sdy/(int64_t)st;size_t lx=pos[n-1][0],ly=pos[n-1][1];uint8_t col=in->cells[ly*in->width+lx];arc_init_grid(out,in->width,in->height);for(size_t i=0;i<arc_grid_cells(in);++i)out->cells[i]=in->cells[i];int64_t nx=(int64_t)lx+adx,ny=(int64_t)ly+ady;if(nx>=0&&nx<(int64_t)in->width&&ny>=0&&ny<(int64_t)in->height)out->cells[ny*in->width+nx]=col;return 1;}
@@ -4286,6 +4441,12 @@ static int arc_apply_candidate(const ARCTransformCandidate *candidate,
         return arc_apply_tile_repeat_candidate(candidate, input, output);
     case ARC_RULE_GRID_REPEAT:
         return arc_apply_grid_repeat_candidate(candidate, input, output);
+    case ARC_RULE_MARKER_MOTIF_TILE:
+        return arc_apply_marker_motif_tile_candidate(candidate, input, output);
+    case ARC_RULE_AXIS_TILE:
+        return arc_apply_axis_tile_candidate(candidate, input, output);
+    case ARC_RULE_PERIOD_EXTEND:
+        return arc_apply_period_extend_candidate(candidate, input, output);
     case ARC_RULE_EXTRACT_COLOR: case ARC_RULE_ERASE_COLOR:
         return arc_apply_extract_erase_color_candidate(candidate, input, output);
     case ARC_RULE_RECOLOR_BY_REFERENCE:
@@ -4410,6 +4571,28 @@ static int arc_apply_candidate(const ARCTransformCandidate *candidate,
             }
         }
         return 1;
+    case ARC_RULE_REFLECT_TILE: {
+        size_t scale = candidate->scale == 0 ? 2u : candidate->scale;
+        if (scale < 2 ||
+            input->width * scale > ARC_MAX_GRID_WIDTH ||
+            input->height * scale > ARC_MAX_GRID_HEIGHT) {
+            return 0;
+        }
+        arc_init_grid(output, input->width * scale, input->height * scale);
+        for (size_t y = 0; y < output->height; ++y) {
+            size_t tile_y = y / input->height;
+            size_t src_y = y % input->height;
+            if (tile_y & 1u) src_y = input->height - 1u - src_y;
+            for (size_t x = 0; x < output->width; ++x) {
+                size_t tile_x = x / input->width;
+                size_t src_x = x % input->width;
+                if (tile_x & 1u) src_x = input->width - 1u - src_x;
+                output->cells[y * output->width + x] =
+                    input->cells[src_y * input->width + src_x];
+            }
+        }
+        return 1;
+    }
     case ARC_RULE_BBOX_OUTLINE:
     case ARC_RULE_BBOX_FILL: {
         size_t min_x = 0;
@@ -4754,6 +4937,12 @@ static double arc_structural_program_score(const ARCTransformCandidate *candidat
         base -= (double)(abs(candidate->dx) + abs(candidate->dy));
     else if (candidate->op == ARC_RULE_SCALE || candidate->op == ARC_RULE_TILE_MOTIF_PARITY_REPEAT)
         base -= (double)candidate->scale;
+    else if (candidate->op == ARC_RULE_MARKER_MOTIF_TILE)
+        base -= (double)candidate->selector_kind;
+    else if (candidate->op == ARC_RULE_AXIS_TILE)
+        base -= (double)(abs(candidate->dx - 1) + abs(candidate->dy - 1) + candidate->render_mode);
+    else if (candidate->op == ARC_RULE_PERIOD_EXTEND)
+        base -= (double)(abs(candidate->dx - 1) + abs(candidate->dy - 1));
     return base;
 }
 
@@ -5428,6 +5617,14 @@ static NNProgramProposerStrategy arc_program_strategy_to_nn(ARCProgramStrategy s
         return NN_PROGRAM_PROPOSER_RANDOM;
     case ARC_PROGRAM_STRATEGY_LEARNED:
         return NN_PROGRAM_PROPOSER_LEARNED;
+    case ARC_PROGRAM_STRATEGY_TRACE_PRIOR:
+        return NN_PROGRAM_PROPOSER_TRACE_PRIOR;
+    case ARC_PROGRAM_STRATEGY_TRACE_TASK_PRIOR:
+        return NN_PROGRAM_PROPOSER_TRACE_TASK_PRIOR;
+    case ARC_PROGRAM_STRATEGY_TRACE_LINEAR:
+        return NN_PROGRAM_PROPOSER_TRACE_LINEAR;
+    case ARC_PROGRAM_STRATEGY_TRACE_MLP:
+        return NN_PROGRAM_PROPOSER_TRACE_MLP;
     case ARC_PROGRAM_STRATEGY_ORACLE:
         return NN_PROGRAM_PROPOSER_ORACLE;
     }
@@ -5450,6 +5647,19 @@ static NeuralNet *create_arc_program_model(unsigned int seed)
     config.layer_sizes = layers;
     config.layer_count = sizeof(layers) / sizeof(layers[0]);
     config.seed = seed;
+    config.hidden_activation = NN_ACTIVATION_RELU;
+    config.output_activation = NN_ACTIVATION_LINEAR;
+    config.loss = NN_LOSS_MSE;
+    return nn_create_config(&config);
+}
+
+static NeuralNet *create_arc_trace_mlp_model(unsigned int seed)
+{
+    static const size_t layers[] = {ARC_PROGRAM_FEATURE_COUNT, 32, 16, 1};
+    NNConfig config;
+    config.layer_sizes = layers;
+    config.layer_count = sizeof(layers) / sizeof(layers[0]);
+    config.seed = seed ^ 0x517cc1abu;
     config.hidden_activation = NN_ACTIVATION_RELU;
     config.output_activation = NN_ACTIVATION_LINEAR;
     config.loss = NN_LOSS_MSE;
@@ -6541,6 +6751,421 @@ static int arc_program_eval_is_exact_success(const ARCProgramEval *eval)
            eval->test_correct_cells == eval->test_cells;
 }
 
+static double arc_trace_prior_log_odds(size_t seen, size_t success)
+{
+    if (seen == 0) {
+        return 0.0;
+    }
+    if (success > seen) {
+        success = seen;
+    }
+    return log1p((double)success) - 0.05 * log1p((double)(seen - success));
+}
+
+static double arc_trace_prior_slot_score(size_t seen, size_t success, double weight)
+{
+    return weight * arc_trace_prior_log_odds(seen, success);
+}
+
+static double arc_program_task_feature_similarity(const double *sum,
+                                                  size_t count,
+                                                  const ARCProgramTaskFeatures *features)
+{
+    if (sum == NULL || features == NULL || count == 0) {
+        return 0.0;
+    }
+    nn_real task_values[ARC_PROGRAM_TASK_FEATURE_COUNT];
+    arc_program_task_features_write(features, task_values);
+    double dot = 0.0;
+    double lhs_norm = 0.0;
+    double rhs_norm = 0.0;
+    double denom = (double)count;
+    for (size_t i = 0; i < ARC_PROGRAM_TASK_FEATURE_COUNT; ++i) {
+        double lhs = sum[i] / denom;
+        double rhs = (double)task_values[i];
+        dot += lhs * rhs;
+        lhs_norm += lhs * lhs;
+        rhs_norm += rhs * rhs;
+    }
+    if (lhs_norm <= 0.0 || rhs_norm <= 0.0) {
+        return 0.0;
+    }
+    return dot / sqrt(lhs_norm * rhs_norm);
+}
+
+static double arc_proposal_trace_prior_score(const ARCProposalTracePrior *prior,
+                                             const ARCTransformCandidate *candidate)
+{
+    if (prior == NULL || candidate == NULL || prior->observed_rows == 0) {
+        return 0.0;
+    }
+
+    double score = 0.0;
+    size_t family = arc_candidate_family(candidate);
+    if (family < sizeof(prior->family_seen) / sizeof(prior->family_seen[0])) {
+        score += 16.0 * arc_trace_prior_log_odds(prior->family_seen[family],
+                                                 prior->family_success[family]);
+    }
+    if (candidate->op < ARC_RULE_COUNT) {
+        score += 8.0 * arc_trace_prior_log_odds(prior->op_seen[candidate->op],
+                                                prior->op_success[candidate->op]);
+    }
+    if (candidate->input_color < ARC_COLOR_COUNT) {
+        score += arc_trace_prior_slot_score(
+            prior->input_color_seen[candidate->input_color],
+            prior->input_color_success[candidate->input_color],
+            1.0);
+    }
+    if (candidate->output_color < ARC_COLOR_COUNT) {
+        score += arc_trace_prior_slot_score(
+            prior->output_color_seen[candidate->output_color],
+            prior->output_color_success[candidate->output_color],
+            2.0);
+    }
+    if (candidate->background_color < ARC_COLOR_COUNT) {
+        score += arc_trace_prior_slot_score(
+            prior->background_color_seen[candidate->background_color],
+            prior->background_color_success[candidate->background_color],
+            0.5);
+    }
+    if (candidate->selector_kind < ARC_OBJECT_SELECTOR_KIND_COUNT) {
+        score += arc_trace_prior_slot_score(
+            prior->selector_seen[candidate->selector_kind],
+            prior->selector_success[candidate->selector_kind],
+            1.0);
+    }
+    if (candidate->output_selector_kind < ARC_OBJECT_SELECTOR_KIND_COUNT) {
+        score += arc_trace_prior_slot_score(
+            prior->output_selector_seen[candidate->output_selector_kind],
+            prior->output_selector_success[candidate->output_selector_kind],
+            1.0);
+    }
+    if (candidate->render_mode < ARC_OBJECT_RENDER_KIND_COUNT) {
+        score += arc_trace_prior_slot_score(
+            prior->render_seen[candidate->render_mode],
+            prior->render_success[candidate->render_mode],
+            0.75);
+    }
+    size_t scale = candidate->scale < sizeof(prior->scale_seen) / sizeof(prior->scale_seen[0])
+                       ? candidate->scale
+                       : 0;
+    score += arc_trace_prior_slot_score(prior->scale_seen[scale],
+                                        prior->scale_success[scale],
+                                        0.75);
+    return score;
+}
+
+static double arc_proposal_trace_task_prior_score(
+    const ARCProposalTracePrior *prior,
+    const ARCTransformCandidate *candidate,
+    const ARCProgramTaskFeatures *task_features)
+{
+    if (prior == NULL || candidate == NULL || task_features == NULL ||
+        prior->observed_rows == 0) {
+        return 0.0;
+    }
+    double score = arc_proposal_trace_prior_score(prior, candidate);
+    size_t family = arc_candidate_family(candidate);
+    if (family < sizeof(prior->family_seen) / sizeof(prior->family_seen[0])) {
+        double similarity = arc_program_task_feature_similarity(
+            prior->family_task_feature_sum[family],
+            prior->family_success[family],
+            task_features);
+        score += 3.0 * log1p((double)prior->family_success[family]) *
+                 (similarity - 0.92);
+    }
+    if (candidate->op < ARC_RULE_COUNT) {
+        double similarity = arc_program_task_feature_similarity(
+            prior->op_task_feature_sum[candidate->op],
+            prior->op_success[candidate->op],
+            task_features);
+        score += 2.0 * log1p((double)prior->op_success[candidate->op]) *
+                 (similarity - 0.92);
+    }
+    return score;
+}
+
+static double arc_proposal_trace_linear_raw(const ARCProposalTracePrior *prior,
+                                            const ARCTransformCandidate *candidate,
+                                            const ARCProgramTaskFeatures *task_features)
+{
+    if (prior == NULL || candidate == NULL || task_features == NULL ||
+        prior->linear_updates == 0) {
+        return 0.0;
+    }
+    nn_real features[ARC_PROGRAM_FEATURE_COUNT];
+    if (!arc_encode_program_features(candidate,
+                                     task_features,
+                                     features,
+                                     ARC_PROGRAM_FEATURE_COUNT)) {
+        return 0.0;
+    }
+    double raw = prior->linear_bias;
+    for (size_t i = 0; i < ARC_PROGRAM_FEATURE_COUNT; ++i) {
+        raw += prior->linear_weights[i] * (double)features[i];
+    }
+    if (raw > 8.0) {
+        raw = 8.0;
+    } else if (raw < -8.0) {
+        raw = -8.0;
+    }
+    return raw;
+}
+
+static double arc_proposal_trace_linear_score(const ARCProposalTracePrior *prior,
+                                              const ARCTransformCandidate *candidate,
+                                              const ARCProgramTaskFeatures *task_features)
+{
+    double score = arc_proposal_trace_task_prior_score(prior, candidate, task_features);
+    double raw = arc_proposal_trace_linear_raw(prior, candidate, task_features);
+    return score + 0.75 * (raw > 0.0 ? raw : 0.0);
+}
+
+static double arc_proposal_trace_mlp_raw(ARCProposalTracePrior *prior,
+                                         const ARCTransformCandidate *candidate,
+                                         const ARCProgramTaskFeatures *task_features)
+{
+    if (prior == NULL || prior->mlp == NULL || candidate == NULL ||
+        task_features == NULL || prior->mlp_updates == 0) {
+        return 0.0;
+    }
+    nn_real features[ARC_PROGRAM_FEATURE_COUNT];
+    nn_real output[1];
+    if (!arc_encode_program_features(candidate,
+                                     task_features,
+                                     features,
+                                     ARC_PROGRAM_FEATURE_COUNT)) {
+        return 0.0;
+    }
+    nn_forward(prior->mlp, features, output);
+    double raw = (double)output[0];
+    if (raw > 8.0) {
+        raw = 8.0;
+    } else if (raw < -8.0) {
+        raw = -8.0;
+    }
+    return raw;
+}
+
+static double arc_proposal_trace_mlp_score(ARCProposalTracePrior *prior,
+                                           const ARCTransformCandidate *candidate,
+                                           const ARCProgramTaskFeatures *task_features)
+{
+    double score = arc_proposal_trace_task_prior_score(prior, candidate, task_features);
+    double raw = arc_proposal_trace_mlp_raw(prior, candidate, task_features);
+    return score + 1.5 * (raw > 0.0 ? raw : 0.0);
+}
+
+static void arc_proposal_trace_linear_update(ARCProposalTracePrior *prior,
+                                             const ARCTransformCandidate *candidate,
+                                             const ARCProgramEval *eval,
+                                             const ARCProgramTaskFeatures *task_features)
+{
+    if (prior == NULL || candidate == NULL || eval == NULL || task_features == NULL) {
+        return;
+    }
+    nn_real features[ARC_PROGRAM_FEATURE_COUNT];
+    if (!arc_encode_program_features(candidate,
+                                     task_features,
+                                     features,
+                                     ARC_PROGRAM_FEATURE_COUNT)) {
+        return;
+    }
+    double target = eval->train_consistent ? 1.0 : 0.0;
+    double raw = prior->linear_bias;
+    for (size_t i = 0; i < ARC_PROGRAM_FEATURE_COUNT; ++i) {
+        raw += prior->linear_weights[i] * (double)features[i];
+    }
+    if (raw > 30.0) {
+        raw = 30.0;
+    } else if (raw < -30.0) {
+        raw = -30.0;
+    }
+    double prediction = 1.0 / (1.0 + exp(-raw));
+    double sample_weight = target > 0.5 ? 8.0 : 1.0;
+    double rate = 0.025 * sample_weight;
+    double gradient = rate * (target - prediction);
+    prior->linear_bias += gradient;
+    for (size_t i = 0; i < ARC_PROGRAM_FEATURE_COUNT; ++i) {
+        prior->linear_weights[i] =
+            0.99999 * prior->linear_weights[i] + gradient * (double)features[i];
+    }
+    ++prior->linear_updates;
+}
+
+static void arc_proposal_trace_mlp_update_task(ARCProposalTracePrior *prior,
+                                               const ARCTransformCandidate *candidates,
+                                               const ARCProgramEval *evals,
+                                               size_t candidate_count,
+                                               const ARCProgramTaskFeatures *task_features,
+                                               size_t rejected_cap)
+{
+    if (prior == NULL || prior->mlp == NULL || candidates == NULL || evals == NULL ||
+        task_features == NULL || candidate_count == 0) {
+        return;
+    }
+    size_t emitted_indices[ARC_PROPOSAL_TRACE_NEGATIVE_CAP + ARC_RULE_CANDIDATE_COUNT];
+    size_t emitted_count = 0;
+    size_t rejected_emitted = 0;
+    for (size_t i = 0; i < candidate_count; ++i) {
+        if (!arc_proposal_trace_should_emit(&evals[i], rejected_emitted, rejected_cap)) {
+            continue;
+        }
+        if (!evals[i].train_consistent &&
+            !arc_program_eval_is_exact_success(&evals[i])) {
+            ++rejected_emitted;
+        }
+        if (emitted_count < sizeof(emitted_indices) / sizeof(emitted_indices[0])) {
+            emitted_indices[emitted_count++] = i;
+        }
+    }
+    if (emitted_count < 2) {
+        return;
+    }
+    nn_real *features = calloc(emitted_count * ARC_PROGRAM_FEATURE_COUNT, sizeof(*features));
+    if (features == NULL) {
+        return;
+    }
+    size_t positives = 0;
+    for (size_t row = 0; row < emitted_count; ++row) {
+        size_t index = emitted_indices[row];
+        if (!arc_encode_program_features(&candidates[index],
+                                         task_features,
+                                         &features[row * ARC_PROGRAM_FEATURE_COUNT],
+                                         ARC_PROGRAM_FEATURE_COUNT)) {
+            free(features);
+            return;
+        }
+        positives += evals[index].train_consistent ? 1u : 0u;
+    }
+    if (positives == 0) {
+        free(features);
+        return;
+    }
+    nn_real weight = (nn_real)(1.0 / (double)positives);
+    for (size_t epoch = 0; epoch < 3u; ++epoch) {
+        for (size_t row = 0; row < emitted_count; ++row) {
+            size_t index = emitted_indices[row];
+            if (!evals[index].train_consistent) {
+                continue;
+            }
+            nn_real loss = nn_train_softmax_scorer_weighted(prior->mlp,
+                                                            features,
+                                                            emitted_count,
+                                                            row,
+                                                            weight,
+                                                            (nn_real)0.012);
+            if (!isfinite((double)loss)) {
+                free(features);
+                return;
+            }
+            ++prior->mlp_updates;
+        }
+    }
+    free(features);
+}
+
+static void arc_proposal_trace_prior_observe_candidate(ARCProposalTracePrior *prior,
+                                                       const ARCTransformCandidate *candidate,
+                                                       const ARCProgramEval *eval,
+                                                       const ARCProgramTaskFeatures *task_features)
+{
+    if (prior == NULL || candidate == NULL || eval == NULL) {
+        return;
+    }
+    int success = eval->train_consistent ? 1 : 0;
+    nn_real task_values[ARC_PROGRAM_TASK_FEATURE_COUNT];
+    if (success && task_features != NULL) {
+        arc_program_task_features_write(task_features, task_values);
+    }
+    arc_proposal_trace_linear_update(prior, candidate, eval, task_features);
+    size_t family = arc_candidate_family(candidate);
+    if (family < sizeof(prior->family_seen) / sizeof(prior->family_seen[0])) {
+        ++prior->family_seen[family];
+        prior->family_success[family] += success ? 1u : 0u;
+        if (success && task_features != NULL) {
+            for (size_t i = 0; i < ARC_PROGRAM_TASK_FEATURE_COUNT; ++i) {
+                prior->family_task_feature_sum[family][i] += (double)task_values[i];
+            }
+        }
+    }
+    if (candidate->op < ARC_RULE_COUNT) {
+        ++prior->op_seen[candidate->op];
+        prior->op_success[candidate->op] += success ? 1u : 0u;
+        if (success && task_features != NULL) {
+            for (size_t i = 0; i < ARC_PROGRAM_TASK_FEATURE_COUNT; ++i) {
+                prior->op_task_feature_sum[candidate->op][i] += (double)task_values[i];
+            }
+        }
+    }
+    if (candidate->input_color < ARC_COLOR_COUNT) {
+        ++prior->input_color_seen[candidate->input_color];
+        prior->input_color_success[candidate->input_color] += success ? 1u : 0u;
+    }
+    if (candidate->output_color < ARC_COLOR_COUNT) {
+        ++prior->output_color_seen[candidate->output_color];
+        prior->output_color_success[candidate->output_color] += success ? 1u : 0u;
+    }
+    if (candidate->background_color < ARC_COLOR_COUNT) {
+        ++prior->background_color_seen[candidate->background_color];
+        prior->background_color_success[candidate->background_color] += success ? 1u : 0u;
+    }
+    if (candidate->selector_kind < ARC_OBJECT_SELECTOR_KIND_COUNT) {
+        ++prior->selector_seen[candidate->selector_kind];
+        prior->selector_success[candidate->selector_kind] += success ? 1u : 0u;
+    }
+    if (candidate->output_selector_kind < ARC_OBJECT_SELECTOR_KIND_COUNT) {
+        ++prior->output_selector_seen[candidate->output_selector_kind];
+        prior->output_selector_success[candidate->output_selector_kind] += success ? 1u : 0u;
+    }
+    if (candidate->render_mode < ARC_OBJECT_RENDER_KIND_COUNT) {
+        ++prior->render_seen[candidate->render_mode];
+        prior->render_success[candidate->render_mode] += success ? 1u : 0u;
+    }
+    size_t scale = candidate->scale < sizeof(prior->scale_seen) / sizeof(prior->scale_seen[0])
+                       ? candidate->scale
+                       : 0;
+    ++prior->scale_seen[scale];
+    prior->scale_success[scale] += success ? 1u : 0u;
+    ++prior->observed_rows;
+    prior->positive_rows += success ? 1u : 0u;
+}
+
+static void arc_proposal_trace_prior_observe_task(ARCProposalTracePrior *prior,
+                                                  const ARCTask *task,
+                                                  const ARCTransformCandidate *candidates,
+                                                  const ARCProgramEval *evals,
+                                                  size_t candidate_count,
+                                                  size_t rejected_cap)
+{
+    if (prior == NULL || task == NULL || candidates == NULL || evals == NULL) {
+        return;
+    }
+    ARCProgramTaskFeatures task_features;
+    arc_program_task_features(task, &task_features);
+    arc_proposal_trace_mlp_update_task(prior,
+                                       candidates,
+                                       evals,
+                                       candidate_count,
+                                       &task_features,
+                                       rejected_cap);
+    size_t rejected_emitted = 0;
+    for (size_t i = 0; i < candidate_count; ++i) {
+        if (!arc_proposal_trace_should_emit(&evals[i], rejected_emitted, rejected_cap)) {
+            continue;
+        }
+        if (!evals[i].train_consistent &&
+            !arc_program_eval_is_exact_success(&evals[i])) {
+            ++rejected_emitted;
+        }
+        arc_proposal_trace_prior_observe_candidate(prior,
+                                                   &candidates[i],
+                                                   &evals[i],
+                                                   &task_features);
+    }
+    ++prior->observed_tasks;
+}
+
 static int arc_program_learned_train_hypothesis_prior(ARCProgramLearnedState *state,
                                                       const ARCTransformCandidate *candidates,
                                                       const ARCProgramEval *evals,
@@ -6698,6 +7323,7 @@ static void arc_build_program_ranks(const ARCTask *task,
                                     size_t candidate_count,
                                     ARCProgramStrategy strategy,
                                     ARCProgramLearnedState *learned,
+                                    ARCProposalTracePrior *trace_prior,
                                     const ARCProgramTaskFeatures *task_features,
                                     ARCProgramRank *ranks)
 {
@@ -6724,6 +7350,32 @@ static void arc_build_program_ranks(const ARCTask *task,
             ranks[i].primary =
                 ranks[i].secondary +
                 arc_learned_program_score(learned, &candidates[i], task_features);
+            break;
+        case ARC_PROGRAM_STRATEGY_TRACE_PRIOR:
+            ranks[i].primary =
+                ranks[i].secondary +
+                arc_proposal_trace_prior_score(trace_prior, &candidates[i]);
+            break;
+        case ARC_PROGRAM_STRATEGY_TRACE_TASK_PRIOR:
+            ranks[i].primary =
+                ranks[i].secondary +
+                arc_proposal_trace_task_prior_score(trace_prior,
+                                                    &candidates[i],
+                                                    task_features);
+            break;
+        case ARC_PROGRAM_STRATEGY_TRACE_LINEAR:
+            ranks[i].primary =
+                ranks[i].secondary +
+                arc_proposal_trace_linear_score(trace_prior,
+                                                &candidates[i],
+                                                task_features);
+            break;
+        case ARC_PROGRAM_STRATEGY_TRACE_MLP:
+            ranks[i].primary =
+                ranks[i].secondary +
+                arc_proposal_trace_mlp_score(trace_prior,
+                                             &candidates[i],
+                                             task_features);
             break;
         case ARC_PROGRAM_STRATEGY_ORACLE:
             ranks[i].primary = evals[i].train_consistent ? (double)evals[i].test_correct_cells : -1.0;
@@ -6816,6 +7468,7 @@ static size_t arc_add_learned_compositions(const ARCTask *task,
                             base_count,
                             ARC_PROGRAM_STRATEGY_LEARNED,
                             learned,
+                            NULL,
                             &task_features,
                             ranks);
 
@@ -14796,6 +15449,7 @@ static void arc_program_aggregate_task(ARCProgramProposerAggregate *aggregate,
                                        size_t candidate_count,
                                        ARCProgramStrategy strategy,
                                        ARCProgramLearnedState *learned,
+                                       ARCProposalTracePrior *trace_prior,
                                        size_t budget)
 {
     ARCProgramRank ranks[ARC_RULE_CANDIDATE_COUNT];
@@ -14831,6 +15485,7 @@ static void arc_program_aggregate_task(ARCProgramProposerAggregate *aggregate,
                             candidate_count,
                             strategy,
                             learned,
+                            trace_prior,
                             &task_features,
                             ranks);
     aggregate->summary.event_count += task_cells;
@@ -17758,6 +18413,7 @@ static void arc_emit_builtin_program_summaries(const ARCTask *task, const ARCCon
                                        candidate_count,
                                        (ARCProgramStrategy)strategy,
                                        &learned,
+                                       NULL,
                                        budgets[budget_index]);
             arc_program_print_aggregate(&aggregate);
         }
@@ -17769,20 +18425,57 @@ static void arc_emit_builtin_program_summaries(const ARCTask *task, const ARCCon
 }
 
 static HolographicRanker *g_vsa_ranker = NULL;
+static ARCVSARepresentation g_vsa_representation = ARC_VSA_REPRESENTATION_GRID;
+typedef struct {
+    size_t score_attempts;
+    size_t store_attempts;
+    size_t stores;
+    size_t blocked_no_ranker;
+    size_t blocked_no_engine;
+    size_t blocked_no_train;
+    size_t blocked_hologram;
+    size_t blocked_no_best_rule;
+    size_t blocked_uncertified;
+} ARCVSARankerStats;
+static ARCVSARankerStats g_vsa_stats;
+
+static const char *arc_vsa_representation_name(ARCVSARepresentation representation)
+{
+    switch (representation) {
+    case ARC_VSA_REPRESENTATION_OBJECT_SCENE:
+        return "arc_object_scene_v1";
+    case ARC_VSA_REPRESENTATION_GRID:
+    default:
+        return "arc_grid_hologram_v1";
+    }
+}
+
+static int arc_vsa_encode_grid(const ARCGrid *grid, double *scene_out)
+{
+    if (g_vsa_representation == ARC_VSA_REPRESENTATION_OBJECT_SCENE) {
+        return arc_object_scene_to_hologram(grid, scene_out);
+    }
+    return arc_grid_to_hologram(grid, scene_out);
+}
 
 static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask *task, const ARCTransformCandidate *candidates, size_t candidate_count)
 {
     ARCTransformMetrics metrics; static ARCGrid best[ARC_MAX_PAIRS];
     memset(&metrics,0,sizeof(metrics)); memset(best,0,sizeof(best));
     metrics.test_pairs=task->test_count; metrics.rules=candidate_count;
-    double bs=-1e100; int hp=0;
-    /* g_vsa_ranker is file-scope */
-    static double grid_hologram[256];
-    static int holo_ready = 0;
+    double bs=-1e100; int hp=0; size_t best_rule=SIZE_MAX;
+    double grid_hologram[256];
+    int holo_ready = -1;
     static LeosEngine *vsa_eng = NULL;
-    if (!g_vsa_ranker) { g_vsa_ranker = holo_ranker_create(256); }
-    if (!vsa_eng) { vsa_eng = leos_engine_create(256); }
-    if (!holo_ready) { holo_ready = (arc_grid_to_hologram(&task->train[0].input, grid_hologram) == 0) ? 1 : -1; }
+    if (g_vsa_ranker == NULL) ++g_vsa_stats.blocked_no_ranker;
+    if (g_vsa_ranker && !vsa_eng) { vsa_eng = leos_engine_create(256); }
+    if (g_vsa_ranker && vsa_eng == NULL) ++g_vsa_stats.blocked_no_engine;
+    if (g_vsa_ranker && vsa_eng && task->train_count > 0) {
+        holo_ready = (arc_vsa_encode_grid(&task->train[0].input, grid_hologram) == 0) ? 1 : -1;
+        if (holo_ready <= 0) ++g_vsa_stats.blocked_hologram;
+    } else if (g_vsa_ranker && vsa_eng && task->train_count == 0) {
+        ++g_vsa_stats.blocked_no_train;
+    }
     for(size_t rule=0;rule<metrics.rules;++rule){
         size_t cc=0,mm=0,up=0;
         if(!arc_candidate_matches_train(task,&candidates[rule],&cc,&mm,&up)){metrics.train_checked_cells+=cc;metrics.train_mismatches+=mm;metrics.unsupported_train_pairs+=up;continue;}
@@ -17792,14 +18485,15 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask 
         if(!arc_apply_candidate_to_tests(task,&candidates[rule],pr,&ut)){metrics.unsupported_test_pairs+=ut;continue;}
         /* Blend structural score with holographic similarity when available */
         double sc = arc_structural_program_score(&candidates[rule]);
-        if (g_vsa_ranker && vsa_eng && holo_ready > 0) {
+        if (g_vsa_ranker && vsa_eng && holo_ready > 0 && holo_ranker_count(g_vsa_ranker) > 0) {
             double op_vec[256];
             leos_engine_keygen(vsa_eng, (uint64_t)(candidates[rule].op * 1000 + (size_t)arc_candidate_family(&candidates[rule])), op_vec);
             double vsa_scores[1];
+            ++g_vsa_stats.score_attempts;
             holo_ranker_score(g_vsa_ranker, grid_hologram, op_vec, 1, vsa_scores);
             sc += vsa_scores[0] * 50.0;
         }
-        if(sc>bs){bs=sc;memcpy(best,pr,sizeof(best));hp=1;}
+        if(sc>bs){bs=sc;best_rule=rule;memcpy(best,pr,sizeof(best));hp=1;}
     }
     if(hp){memcpy(metrics.predictions,best,sizeof(metrics.predictions));metrics.prediction_count=task->test_count;}
     metrics.unique_test_prediction=1;
@@ -17808,10 +18502,14 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask 
     metrics.test_exact=atk&&metrics.test_cells>0&&metrics.test_correct_cells==metrics.test_cells;
     metrics.certified=metrics.train_consistent_rules!=0;
     /* Store winning (grid, operator) pair in VSA ranker for future tasks */
-    if (metrics.certified && g_vsa_ranker && vsa_eng && holo_ready > 0) {
+    if (g_vsa_ranker) ++g_vsa_stats.store_attempts;
+    if (g_vsa_ranker && !metrics.certified) ++g_vsa_stats.blocked_uncertified;
+    if (g_vsa_ranker && metrics.certified && best_rule == SIZE_MAX) ++g_vsa_stats.blocked_no_best_rule;
+    if (metrics.certified && best_rule != SIZE_MAX && g_vsa_ranker && vsa_eng && holo_ready > 0) {
         double op_vec[256];
-        leos_engine_keygen(vsa_eng, (uint64_t)(candidates[0].op * 1000 + (size_t)arc_candidate_family(&candidates[0])), op_vec);
+        leos_engine_keygen(vsa_eng, (uint64_t)(candidates[best_rule].op * 1000 + (size_t)arc_candidate_family(&candidates[best_rule])), op_vec);
         holo_ranker_store(g_vsa_ranker, grid_hologram, op_vec);
+        ++g_vsa_stats.stores;
     }
     return metrics;
 }
@@ -17824,7 +18522,19 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates_learned(
     ARCTransformMetrics metrics; static ARCGrid best[ARC_MAX_PAIRS];
     memset(&metrics,0,sizeof(metrics)); memset(best,0,sizeof(best));
     metrics.test_pairs=task->test_count; metrics.rules=candidate_count;
-    double bs=-1e100; int hp=0;
+    double bs=-1e100; int hp=0; size_t best_rule=SIZE_MAX;
+    double grid_hologram[256];
+    int holo_ready = -1;
+    static LeosEngine *vsa_eng = NULL;
+    if (g_vsa_ranker == NULL) ++g_vsa_stats.blocked_no_ranker;
+    if (g_vsa_ranker && !vsa_eng) { vsa_eng = leos_engine_create(256); }
+    if (g_vsa_ranker && vsa_eng == NULL) ++g_vsa_stats.blocked_no_engine;
+    if (g_vsa_ranker && vsa_eng && task->train_count > 0) {
+        holo_ready = (arc_vsa_encode_grid(&task->train[0].input, grid_hologram) == 0) ? 1 : -1;
+        if (holo_ready <= 0) ++g_vsa_stats.blocked_hologram;
+    } else if (g_vsa_ranker && vsa_eng && task->train_count == 0) {
+        ++g_vsa_stats.blocked_no_train;
+    }
     for(size_t rule=0;rule<metrics.rules;++rule){
         size_t cc=0,mm=0,up=0;
         if(!arc_candidate_matches_train(task,&candidates[rule],&cc,&mm,&up)){metrics.train_checked_cells+=cc;metrics.train_mismatches+=mm;metrics.unsupported_train_pairs+=up;continue;}
@@ -17834,7 +18544,15 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates_learned(
         if(!arc_apply_candidate_to_tests(task,&candidates[rule],pr,&ut)){metrics.unsupported_test_pairs+=ut;continue;}
         double sc = arc_structural_program_score(&candidates[rule]);
         if (learned) sc += arc_learned_family_score(learned, &candidates[rule]) * 10.0;
-        if(sc>bs){bs=sc;memcpy(best,pr,sizeof(best));hp=1;}
+        if (g_vsa_ranker && vsa_eng && holo_ready > 0 && holo_ranker_count(g_vsa_ranker) > 0) {
+            double op_vec[256];
+            leos_engine_keygen(vsa_eng, (uint64_t)(candidates[rule].op * 1000 + (size_t)arc_candidate_family(&candidates[rule])), op_vec);
+            double vsa_scores[1];
+            ++g_vsa_stats.score_attempts;
+            holo_ranker_score(g_vsa_ranker, grid_hologram, op_vec, 1, vsa_scores);
+            sc += vsa_scores[0] * 50.0;
+        }
+        if(sc>bs){bs=sc;best_rule=rule;memcpy(best,pr,sizeof(best));hp=1;}
     }
     if(hp){memcpy(metrics.predictions,best,sizeof(metrics.predictions));metrics.prediction_count=task->test_count;}
     metrics.unique_test_prediction=1;
@@ -17842,6 +18560,15 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates_learned(
     for(size_t p=0;p<task->test_count;++p){if(!task->test[p].has_output){atk=0;continue;}size_t cells=arc_grid_cells(&task->test[p].output);metrics.test_cells+=cells;if(!hp||p>=metrics.prediction_count||!arc_grid_same_shape(&metrics.predictions[p],&task->test[p].output))continue;for(size_t c=0;c<cells;++c)metrics.test_correct_cells+=metrics.predictions[p].cells[c]==task->test[p].output.cells[c]?1:0;}
     metrics.test_exact=atk&&metrics.test_cells>0&&metrics.test_correct_cells==metrics.test_cells;
     metrics.certified=metrics.train_consistent_rules!=0;
+    if (g_vsa_ranker) ++g_vsa_stats.store_attempts;
+    if (g_vsa_ranker && !metrics.certified) ++g_vsa_stats.blocked_uncertified;
+    if (g_vsa_ranker && metrics.certified && best_rule == SIZE_MAX) ++g_vsa_stats.blocked_no_best_rule;
+    if (metrics.certified && best_rule != SIZE_MAX && g_vsa_ranker && vsa_eng && holo_ready > 0) {
+        double op_vec[256];
+        leos_engine_keygen(vsa_eng, (uint64_t)(candidates[best_rule].op * 1000 + (size_t)arc_candidate_family(&candidates[best_rule])), op_vec);
+        holo_ranker_store(g_vsa_ranker, grid_hologram, op_vec);
+        ++g_vsa_stats.stores;
+    }
     return metrics;
 }
 
@@ -25118,6 +25845,31 @@ static void print_arc_loader_summary_json(const char *task_dir, const ARCLoaderS
            (double)summary->test_correct_cells / cells);
 }
 
+static void print_arc_vsa_ranker_summary_json(const char *path)
+{
+    printf("{\"schema\":\"crlp.arc_vsa_ranker.summary.v1\",\"report_version\":1,"
+           "\"path\":");
+    print_json_string(path);
+    printf(",\"representation_condition\":");
+    print_json_string(arc_vsa_representation_name(g_vsa_representation));
+    printf(",\"score_attempts\":%zu,\"store_attempts\":%zu,"
+           "\"stores\":%zu,\"stored_count\":%zu,\"fidelity\":%.8f,"
+           "\"blocked_no_ranker\":%zu,\"blocked_no_engine\":%zu,"
+           "\"blocked_no_train\":%zu,\"blocked_hologram\":%zu,"
+           "\"blocked_no_best_rule\":%zu,\"blocked_uncertified\":%zu}\n",
+           g_vsa_stats.score_attempts,
+           g_vsa_stats.store_attempts,
+           g_vsa_stats.stores,
+           holo_ranker_count(g_vsa_ranker),
+           holo_ranker_fidelity(g_vsa_ranker),
+           g_vsa_stats.blocked_no_ranker,
+           g_vsa_stats.blocked_no_engine,
+           g_vsa_stats.blocked_no_train,
+           g_vsa_stats.blocked_hologram,
+           g_vsa_stats.blocked_no_best_rule,
+           g_vsa_stats.blocked_uncertified);
+}
+
 static void print_arc_hypothesis_selection_json(const char *task_id,
                                                 const ARCHypothesisSelectionStats *stats)
 {
@@ -25357,6 +26109,199 @@ static void print_arc_program_task_audit_json(const ARCTask *task,
     printf("]}\n");
 }
 
+static void arc_emit_program_task_features_json(FILE *fp,
+                                                const ARCProgramTaskFeatures *features)
+{
+    fprintf(fp,
+            "{\"input_width\":%.9g,\"input_height\":%.9g,"
+            "\"output_width\":%.9g,\"output_height\":%.9g,"
+            "\"width_ratio\":%.9g,\"height_ratio\":%.9g,"
+            "\"area_ratio\":%.9g,\"same_shape_fraction\":%.9g,"
+            "\"output_smaller_fraction\":%.9g,"
+            "\"output_larger_fraction\":%.9g,"
+            "\"input_color_count\":%.9g,\"output_color_count\":%.9g,"
+            "\"input_foreground_fraction\":%.9g,"
+            "\"output_foreground_fraction\":%.9g,"
+            "\"input_component_count\":%.9g,"
+            "\"output_component_count\":%.9g,"
+            "\"input_bbox_width_fraction\":%.9g,"
+            "\"input_bbox_height_fraction\":%.9g,"
+            "\"output_bbox_width_fraction\":%.9g,"
+            "\"output_bbox_height_fraction\":%.9g,"
+            "\"bbox_area_ratio\":%.9g,\"component_delta\":%.9g,"
+            "\"color_delta\":%.9g,\"foreground_delta\":%.9g,"
+            "\"input_object_count\":%.9g,\"output_object_count\":%.9g,"
+            "\"input_repeated_shape_pairs\":%.9g,"
+            "\"output_repeated_shape_pairs\":%.9g,"
+            "\"input_aligned_pairs\":%.9g,"
+            "\"output_aligned_pairs\":%.9g,"
+            "\"input_adjacent_pairs\":%.9g,"
+            "\"output_adjacent_pairs\":%.9g}",
+            features->input_width,
+            features->input_height,
+            features->output_width,
+            features->output_height,
+            features->width_ratio,
+            features->height_ratio,
+            features->area_ratio,
+            features->same_shape_fraction,
+            features->output_smaller_fraction,
+            features->output_larger_fraction,
+            features->input_color_count,
+            features->output_color_count,
+            features->input_foreground_fraction,
+            features->output_foreground_fraction,
+            features->input_component_count,
+            features->output_component_count,
+            features->input_bbox_width_fraction,
+            features->input_bbox_height_fraction,
+            features->output_bbox_width_fraction,
+            features->output_bbox_height_fraction,
+            features->bbox_area_ratio,
+            features->component_delta,
+            features->color_delta,
+            features->foreground_delta,
+            features->input_object_count,
+            features->output_object_count,
+            features->input_repeated_shape_pairs,
+            features->output_repeated_shape_pairs,
+            features->input_aligned_pairs,
+            features->output_aligned_pairs,
+            features->input_adjacent_pairs,
+            features->output_adjacent_pairs);
+}
+
+static double arc_program_eval_cell_accuracy(const ARCProgramEval *eval)
+{
+    if (eval == NULL || eval->test_cells == 0) {
+        return 0.0;
+    }
+    return (double)eval->test_correct_cells / (double)eval->test_cells;
+}
+
+static int arc_proposal_trace_should_emit(const ARCProgramEval *eval,
+                                          size_t rejected_emitted,
+                                          size_t rejected_cap)
+{
+    if (eval == NULL) {
+        return 0;
+    }
+    if (eval->train_consistent || arc_program_eval_is_exact_success(eval)) {
+        return 1;
+    }
+    return rejected_emitted < rejected_cap;
+}
+
+static void arc_emit_proposal_trace_rows(FILE *fp,
+                                         const ARCTask *task,
+                                         const ARCTransformCandidate *candidates,
+                                         const ARCProgramEval *evals,
+                                         size_t candidate_count,
+                                         size_t rejected_cap)
+{
+    if (fp == NULL || task == NULL || candidates == NULL || evals == NULL) {
+        return;
+    }
+
+    ARCProgramTaskFeatures task_features;
+    arc_program_task_features(task, &task_features);
+    size_t rejected_emitted = 0;
+    for (size_t i = 0; i < candidate_count; ++i) {
+        int exact = arc_program_eval_is_exact_success(&evals[i]);
+        if (!arc_proposal_trace_should_emit(&evals[i], rejected_emitted, rejected_cap)) {
+            continue;
+        }
+        if (!evals[i].train_consistent && !exact) {
+            ++rejected_emitted;
+        }
+
+        const ARCTransformCandidate *candidate = &candidates[i];
+        fprintf(fp,
+                "{\"schema\":\"crlp.arc_proposal_trace.v1\","
+                "\"report_version\":1,"
+                "\"task\":\"arc_agi\","
+                "\"task_instance\":");
+        nn_write_json_string(fp, task->id);
+        fprintf(fp,
+                ",\"candidate_index\":%zu,"
+                "\"candidate_name\":",
+                i);
+        nn_write_json_string(fp, candidate->name);
+        fprintf(fp,
+                ",\"op\":%d,"
+                "\"family\":%zu,"
+                "\"structural_score\":%.9g,"
+                "\"task_conditioned_score\":%.9g,"
+                "\"composed\":%s,"
+                "\"object_program\":%s,"
+                "\"visual_program\":%s,"
+                "\"hypothesis_induced\":%s,"
+                "\"slots\":{\"input_color\":%u,\"output_color\":%u,"
+                "\"background_color\":%u,\"selector_kind\":%u,"
+                "\"output_selector_kind\":%u,\"reference_color\":%u,"
+                "\"render_mode\":%u,\"dx\":%d,\"dy\":%d,\"scale\":%zu,"
+                "\"hypothesis_template_id\":%u,"
+                "\"hypothesis_slot_count\":%u,"
+                "\"hypothesis_slot_integers\":[",
+                (int)candidate->op,
+                arc_candidate_family(candidate),
+                arc_structural_program_score(candidate),
+                arc_task_conditioned_program_score(task, candidate),
+                arc_candidate_is_composed(candidate) ? "true" : "false",
+                evals[i].object_program ? "true" : "false",
+                arc_candidate_is_visual_program_hypothesis(candidate) ? "true" : "false",
+                arc_candidate_is_hypothesis_induced(candidate) ? "true" : "false",
+                (unsigned)candidate->input_color,
+                (unsigned)candidate->output_color,
+                (unsigned)candidate->background_color,
+                (unsigned)candidate->selector_kind,
+                (unsigned)candidate->output_selector_kind,
+                (unsigned)candidate->reference_color,
+                (unsigned)candidate->render_mode,
+                candidate->dx,
+                candidate->dy,
+                candidate->scale,
+                (unsigned)candidate->hypothesis_template_id,
+                (unsigned)candidate->hypothesis_slot_count);
+        size_t slot_count = candidate->hypothesis_slot_count;
+        if (slot_count > NN_HYPOTHESIS_MAX_SLOTS) {
+            slot_count = NN_HYPOTHESIS_MAX_SLOTS;
+        }
+        for (size_t slot = 0; slot < slot_count; ++slot) {
+            if (slot != 0) {
+                fputc(',', fp);
+            }
+            fprintf(fp, "%lld", (long long)candidate->hypothesis_slot_integers[slot]);
+        }
+        fprintf(fp, "]},\"task_features\":");
+        arc_emit_program_task_features_json(fp, &task_features);
+        fprintf(fp,
+                ",\"verifier\":{\"train_consistent\":%s,"
+                "\"test_supported\":%s,\"test_exact\":%s,"
+                "\"train_checked_cells\":%zu,"
+                "\"train_mismatches\":%zu,"
+                "\"unsupported_train_pairs\":%zu,"
+                "\"unsupported_test_pairs\":%zu,"
+                "\"test_correct_cells\":%zu,"
+                "\"test_cells\":%zu,"
+                "\"test_cell_accuracy\":%.9g,"
+                "\"prediction_hash\":\"%016llx\","
+                "\"program_hash\":\"%016llx\"}}\n",
+                evals[i].train_consistent ? "true" : "false",
+                evals[i].test_supported ? "true" : "false",
+                exact ? "true" : "false",
+                evals[i].train_checked_cells,
+                evals[i].train_mismatches,
+                evals[i].unsupported_train_pairs,
+                evals[i].unsupported_test_pairs,
+                evals[i].test_correct_cells,
+                evals[i].test_cells,
+                arc_program_eval_cell_accuracy(&evals[i]),
+                (unsigned long long)evals[i].prediction_hash,
+                (unsigned long long)evals[i].program_hash);
+    }
+}
+
 static void print_arc_metrics_line(const char *model_hash,
                                    const char *evaluation_mode,
                                    const ARCMetrics *metrics)
@@ -25447,11 +26392,22 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
                                                   ARC_PROGRAM_BUDGET_GRID_COUNT);
     ARCProgramProposerAggregate
         program_aggregates[ARC_PROGRAM_BUDGET_GRID_COUNT][ARC_PROGRAM_STRATEGY_COUNT];
-    if (config->vsa_ranker_path != NULL) { g_vsa_ranker = holo_ranker_create(256); if (g_vsa_ranker) { FILE *tf = fopen(config->vsa_ranker_path, "rb"); if (tf) { fclose(tf); holo_ranker_load(g_vsa_ranker, config->vsa_ranker_path); } } }
+    g_arc_active_config = config;
+    g_vsa_representation = config->vsa_representation;
+    if (config->vsa_ranker_path != NULL) { memset(&g_vsa_stats, 0, sizeof(g_vsa_stats)); g_vsa_ranker = holo_ranker_create(256); if (g_vsa_ranker) { FILE *tf = fopen(config->vsa_ranker_path, "rb"); if (tf) { fclose(tf); holo_ranker_load(g_vsa_ranker, config->vsa_ranker_path); } } }
     ARCProgramLearnedState learned_state;
     if (!arc_program_learned_init(&learned_state,
                                   config,
                                   (unsigned int)(config->seed & UINT32_MAX))) {
+        free(files);
+        return 0;
+    }
+    ARCProposalTracePrior proposal_trace_prior;
+    memset(&proposal_trace_prior, 0, sizeof(proposal_trace_prior));
+    proposal_trace_prior.mlp =
+        create_arc_trace_mlp_model((unsigned int)(config->seed & UINT32_MAX));
+    if (proposal_trace_prior.mlp == NULL) {
+        arc_program_learned_free(&learned_state);
         free(files);
         return 0;
     }
@@ -25468,6 +26424,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         free(evals);
         free(learn_candidates);
         free(learn_evals);
+        nn_free(proposal_trace_prior.mlp);
         arc_program_learned_free(&learned_state);
         free(files);
         return 0;
@@ -25482,6 +26439,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         free(evals);
         free(learn_candidates);
         free(learn_evals);
+        nn_free(proposal_trace_prior.mlp);
         arc_program_learned_free(&learned_state);
         free(files);
         return 0;
@@ -25494,6 +26452,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         free(evals);
         free(learn_candidates);
         free(learn_evals);
+        nn_free(proposal_trace_prior.mlp);
         arc_program_learned_free(&learned_state);
         free(files);
         return 0;
@@ -25511,6 +26470,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         free(evals);
         free(learn_candidates);
         free(learn_evals);
+        nn_free(proposal_trace_prior.mlp);
         arc_program_learned_free(&learned_state);
         free(files);
         return 0;
@@ -25521,6 +26481,23 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
                                        "arc_loader",
                                        (ARCProgramStrategy)strategy,
                                        budgets[budget_index]);
+        }
+    }
+    FILE *proposal_trace_fp = NULL;
+    if (config->arc_proposal_trace_path != NULL) {
+        proposal_trace_fp = fopen(config->arc_proposal_trace_path, "w");
+        if (proposal_trace_fp == NULL) {
+            fprintf(stderr,
+                    "failed to open ARC proposal trace path: %s\n",
+                    config->arc_proposal_trace_path);
+            free(candidates);
+            free(evals);
+            free(learn_candidates);
+            free(learn_evals);
+            nn_free(proposal_trace_prior.mlp);
+            arc_program_learned_free(&learned_state);
+            free(files);
+            return 0;
         }
     }
 
@@ -25557,7 +26534,8 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         /* Try cached transforms first */
         ARCTask *rotated = calloc(1, sizeof(ARCTask));
         if (rotated == NULL) break;
-        for (int aug = 0; aug < 8; ++aug) {
+        int aug_limit = config->unique_task_gate ? 1 : 8;
+        for (int aug = 0; aug < aug_limit; ++aug) {
             int r = aug % 4, flip = aug >= 4 ? 1 : 0;
             if (aug == 0) *rotated = task; else arc_transform_task(&task, rotated, r, flip);
         int cache_hit = 0;
@@ -25608,6 +26586,12 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
             evaluate_arc_transform_gate_candidates_learned(rotated, candidates, candidate_count, &learned_state);
         arc_loader_summary_add(&summary, rotated, &transform);
         arc_evaluate_program_candidates(rotated, candidates, candidate_count, evals);
+        arc_emit_proposal_trace_rows(proposal_trace_fp,
+                                     rotated,
+                                     candidates,
+                                     evals,
+                                     candidate_count,
+                                     ARC_PROPOSAL_TRACE_NEGATIVE_CAP);
         
         /* Cache successful transform TYPE for cross-task reuse */
         if (transform.certified && solved_kinds && solved_kind_count < 200) {
@@ -25641,9 +26625,16 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
                                            candidate_count,
                                            (ARCProgramStrategy)strategy,
                                            &learned_state,
+                                           &proposal_trace_prior,
                                            budgets[budget_index]);
             }
         }
+        arc_proposal_trace_prior_observe_task(&proposal_trace_prior,
+                                              rotated,
+                                              candidates,
+                                              evals,
+                                              candidate_count,
+                                              ARC_PROPOSAL_TRACE_NEGATIVE_CAP);
         if (config->program_train_dir == NULL) {
             size_t learn_candidate_count = arc_build_candidates(&task,
                                                                 learn_candidates,
@@ -25662,6 +26653,10 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
                 free(evals);
                 free(learn_candidates);
                 free(learn_evals);
+                if (proposal_trace_fp != NULL) {
+                    fclose(proposal_trace_fp);
+                }
+                nn_free(proposal_trace_prior.mlp);
                 arc_program_learned_free(&learned_state);
                 free(files);
                 return 0;
@@ -25687,16 +26682,24 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
                 "ARC induction emitted %zu hypothesis evidence rows; expected at least %zu\n",
                 induction_evidence_rows,
                 config->min_induction_evidence);
+        if (proposal_trace_fp != NULL) {
+            fclose(proposal_trace_fp);
+        }
         free(candidates);
         free(evals);
-        free(learn_candidates);
-        free(learn_evals);
-        arc_program_learned_free(&learned_state);
-        free(files);
-        return 0;
+            free(learn_candidates);
+            free(learn_evals);
+            nn_free(proposal_trace_prior.mlp);
+            arc_program_learned_free(&learned_state);
+            free(files);
+            return 0;
     }
     if (config->save_hypothesis_prior_path != NULL) arc_program_learned_save_hypothesis_library_prior(&learned_state, config->save_hypothesis_prior_path);
     if (config->vsa_ranker_path != NULL && g_vsa_ranker != NULL) holo_ranker_save(g_vsa_ranker, config->vsa_ranker_path);
+    if (config->vsa_ranker_path != NULL) print_arc_vsa_ranker_summary_json(config->vsa_ranker_path);
+    if (proposal_trace_fp != NULL) {
+        fclose(proposal_trace_fp);
+    }
     print_arc_loader_summary_json(config->task_dir, &summary);
     for (size_t budget_index = 0; budget_index < budget_count; ++budget_index) {
         for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
@@ -25707,6 +26710,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
     free(evals);
     free(learn_candidates);
     free(learn_evals);
+    nn_free(proposal_trace_prior.mlp);
     if (config->save_learned_state_path != NULL) {
         arc_program_learned_save_state(&learned_state, config->save_learned_state_path);
     }
@@ -25729,6 +26733,7 @@ static void print_usage(FILE *stream)
           "[--arc-sketch-probe-candidates path] [--public-arc-dir path] "
           "[--arc-sketch-probe-sources path] [--arc-sketch-probe-prior path] "
           "[--arc-sketch-probe-attempts path] "
+          "[--arc-proposal-trace path] "
           "[--arc-sketches-per-task count] "
           "[--hypothesis-top-k count] [--disable-hypothesis-neural-prior] "
           "[--disable-hypothesis-slot-prior] [--disable-hypothesis-cold-start] "
@@ -25736,9 +26741,11 @@ static void print_usage(FILE *stream)
           "[--disable-hypothesis-coverage-selection] "
           "[--disable-hypothesis-train-filter] "
           "[--disable-hypothesis-train-consistency-prior] "
-          "[--arc-visual-only] [--arc-runtime-sketch-mine-cap count] "
+          "[--arc-visual-only] [--disable-reflect-tile] [--disable-marker-motif-tile] "
+          "[--disable-axis-tile] [--disable-period-extend] "
+          "[--arc-runtime-sketch-mine-cap count] "
           "[--arc-generative-prior-op-cap count] "
-          "[--save-learned-state path] [--load-learned-state path] [--holo-prior path] [--task-epochs count] [--shuffle] [--vsa-ranker path] [--save-hypothesis-prior path] [--hypothesis-library-prior path] [--loader-summary-only] [--induction] "
+          "[--save-learned-state path] [--load-learned-state path] [--holo-prior path] [--task-epochs count] [--shuffle] [--unique-task-gate] [--vsa-ranker path] [--vsa-representation grid|object-scene] [--save-hypothesis-prior path] [--hypothesis-library-prior path] [--loader-summary-only] [--induction] "
           "[--min-induction-evidence count] "
           "[--holo-prior path]\n",
           stream);
@@ -25766,6 +26773,7 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->hypothesis_library_prior_path = NULL;
     config->save_hypothesis_prior_path = NULL;
     config->vsa_ranker_path = NULL;
+    config->vsa_representation = ARC_VSA_REPRESENTATION_GRID;
     config->arc_generative_prior_path = NULL;
     config->task_ids = NULL;
     config->exclude_task_ids = NULL;
@@ -25774,8 +26782,10 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->arc_sketch_probe_sources_path = NULL;
     config->arc_sketch_probe_prior_path = NULL;
     config->arc_sketch_probe_attempts_path = NULL;
+    config->arc_proposal_trace_path = NULL;
     config->loader_summary_only = 0;
     config->shuffle_tasks = 0;
+    config->unique_task_gate = 0;
     config->program_budget_grid = 0;
     config->induction_smoke = 0;
     config->arc_sketch_probe_sketches_per_task = 8;
@@ -25787,6 +26797,10 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->hypothesis_train_filter_enabled = 1;
     config->hypothesis_train_consistency_prior_enabled = 1;
     config->arc_visual_only = 0;
+    config->disable_reflect_tile = 0;
+    config->disable_marker_motif_tile = 0;
+    config->disable_axis_tile = 0;
+    config->disable_period_extend = 0;
     config->holo_prior_path = NULL;
     config->save_learned_state_path = NULL;
     config->load_learned_state_path = NULL;
@@ -25902,6 +26916,12 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             if (config->arc_sketch_probe_attempts_path[0] == '\0') {
                 return 0;
             }
+        } else if (strcmp(argv[i], "--arc-proposal-trace") == 0 &&
+                   i + 1 < argc) {
+            config->arc_proposal_trace_path = argv[++i];
+            if (config->arc_proposal_trace_path[0] == '\0') {
+                return 0;
+            }
         } else if (strcmp(argv[i], "--arc-sketches-per-task") == 0 && i + 1 < argc) {
             if (!nn_parse_size_text(argv[++i], &config->arc_sketch_probe_sketches_per_task)) {
                 return 0;
@@ -25949,6 +26969,14 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             config->hypothesis_train_consistency_prior_enabled = 0;
         } else if (strcmp(argv[i], "--arc-visual-only") == 0) {
             config->arc_visual_only = 1;
+        } else if (strcmp(argv[i], "--disable-reflect-tile") == 0) {
+            config->disable_reflect_tile = 1;
+        } else if (strcmp(argv[i], "--disable-marker-motif-tile") == 0) {
+            config->disable_marker_motif_tile = 1;
+        } else if (strcmp(argv[i], "--disable-axis-tile") == 0) {
+            config->disable_axis_tile = 1;
+        } else if (strcmp(argv[i], "--disable-period-extend") == 0) {
+            config->disable_period_extend = 1;
         } else if (strcmp(argv[i], "--save-learned-state") == 0 && i + 1 < argc) {
             config->save_learned_state_path = argv[++i];
         } else if (strcmp(argv[i], "--load-learned-state") == 0 && i + 1 < argc) {
@@ -25956,7 +26984,9 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
         } else if (strcmp(argv[i], "--holo-prior") == 0 && i + 1 < argc) {
             config->holo_prior_path = argv[++i];
         } else if (strcmp(argv[i], "--vsa-ranker") == 0 && i + 1 < argc) { config->vsa_ranker_path = argv[++i]; if (config->vsa_ranker_path[0] == '\0') return 0;
+        } else if (strcmp(argv[i], "--vsa-representation") == 0 && i + 1 < argc) { const char *value = argv[++i]; if (strcmp(value, "grid") == 0 || strcmp(value, "arc_grid_hologram_v1") == 0) { config->vsa_representation = ARC_VSA_REPRESENTATION_GRID; } else if (strcmp(value, "object-scene") == 0 || strcmp(value, "arc_object_scene_v1") == 0) { config->vsa_representation = ARC_VSA_REPRESENTATION_OBJECT_SCENE; } else { return 0; }
         } else if (strcmp(argv[i], "--shuffle") == 0) { config->shuffle_tasks = 1;
+        } else if (strcmp(argv[i], "--unique-task-gate") == 0) { config->unique_task_gate = 1;
         } else if (strcmp(argv[i], "--loader-summary-only") == 0) {
             config->loader_summary_only = 1;
         } else if (strcmp(argv[i], "--induction") == 0) {
@@ -26174,5 +27204,109 @@ static int arc_grid_to_hologram(const ARCGrid *grid, double *scene_out) {
     return 0;
 }
 
+static size_t arc_vsa_bucket_size(size_t value)
+{
+    if (value == 0) return 0;
+    if (value <= 1) return 1;
+    if (value <= 2) return 2;
+    if (value <= 4) return 3;
+    if (value <= 8) return 4;
+    if (value <= 16) return 5;
+    if (value <= 32) return 6;
+    if (value <= 64) return 7;
+    if (value <= 128) return 8;
+    return 9;
+}
 
+static size_t arc_vsa_bucket_coord(double value, size_t limit)
+{
+    if (limit <= 1) return 0;
+    double scaled = value * 7.0 / (double)(limit - 1u);
+    if (scaled < 0.0) return 0;
+    if (scaled > 7.0) return 7;
+    return (size_t)(scaled + 0.5);
+}
 
+static void arc_vsa_add_feature(LeosEngine *eng,
+                                double *out,
+                                uint64_t attr_seed,
+                                uint64_t value_seed,
+                                double *attr_vec,
+                                double *value_vec,
+                                double *bound)
+{
+    leos_engine_keygen(eng, attr_seed, attr_vec);
+    leos_engine_keygen(eng, value_seed, value_vec);
+    leos_engine_bind(eng, attr_vec, value_vec, bound);
+    for (size_t j = 0; j < 256; ++j) out[j] += bound[j];
+}
+
+static void arc_vsa_add_object_feature(LeosEngine *eng,
+                                       double *object_vec,
+                                       uint64_t attr,
+                                       uint64_t value,
+                                       double *attr_vec,
+                                       double *value_vec,
+                                       double *bound)
+{
+    arc_vsa_add_feature(eng,
+                        object_vec,
+                        UINT64_C(0x9a1d000000000000) ^ attr,
+                        UINT64_C(0x9a1e000000000000) ^ value,
+                        attr_vec,
+                        value_vec,
+                        bound);
+}
+
+static int arc_object_scene_to_hologram(const ARCGrid *grid, double *scene_out)
+{
+    static LeosEngine *eng = NULL;
+    if (eng == NULL) {
+        eng = leos_engine_create(256);
+        if (eng == NULL) return -1;
+    }
+    ARCScene scene;
+    int complete_scene = arc_extract_scene(grid, 0, &scene);
+    memset(scene_out, 0, 256 * sizeof(double));
+    double attr_vec[256], value_vec[256], bound[256], object_vec[256], slot_vec[256];
+    size_t color_objects[10] = {0};
+    size_t foreground_cells = 0;
+    for (size_t i = 0; i < scene.object_count; ++i) {
+        const ARCObject *object = &scene.objects[i];
+        if (object->color < 10) ++color_objects[object->color];
+        foreground_cells += object->count;
+    }
+
+    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000001), UINT64_C(0x9b02000000000000) ^ grid->width, attr_vec, value_vec, bound);
+    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000002), UINT64_C(0x9b02000000000020) ^ grid->height, attr_vec, value_vec, bound);
+    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000003), UINT64_C(0x9b02000000000040) ^ arc_vsa_bucket_size(scene.object_count), attr_vec, value_vec, bound);
+    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000004), UINT64_C(0x9b02000000000060) ^ arc_vsa_bucket_size(foreground_cells), attr_vec, value_vec, bound);
+    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000005), UINT64_C(0x9b02000000000080) ^ arc_vsa_bucket_size(scene.repeated_shape_pairs), attr_vec, value_vec, bound);
+    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000006), UINT64_C(0x9b020000000000a0) ^ arc_vsa_bucket_size(scene.aligned_pairs), attr_vec, value_vec, bound);
+    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000007), UINT64_C(0x9b020000000000c0) ^ arc_vsa_bucket_size(scene.adjacent_pairs), attr_vec, value_vec, bound);
+    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000008), UINT64_C(0x9b020000000000e0) ^ (complete_scene ? 1u : 0u), attr_vec, value_vec, bound);
+    for (uint8_t color = 1; color < 10; ++color) {
+        arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b03000000000000) ^ color, UINT64_C(0x9b04000000000000) ^ arc_vsa_bucket_size(color_objects[color]), attr_vec, value_vec, bound);
+    }
+
+    for (size_t i = 0; i < scene.object_count; ++i) {
+        const ARCObject *object = &scene.objects[i];
+        size_t width = object->max_x - object->min_x + 1u;
+        size_t height = object->max_y - object->min_y + 1u;
+        memset(object_vec, 0, sizeof(object_vec));
+        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x01), UINT64_C(0x100) ^ object->color, attr_vec, value_vec, bound);
+        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x02), UINT64_C(0x200) ^ arc_vsa_bucket_size(object->count), attr_vec, value_vec, bound);
+        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x03), UINT64_C(0x300) ^ arc_vsa_bucket_size(width), attr_vec, value_vec, bound);
+        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x04), UINT64_C(0x400) ^ arc_vsa_bucket_size(height), attr_vec, value_vec, bound);
+        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x05), UINT64_C(0x500) ^ arc_vsa_bucket_coord(object->centroid_x, grid->width), attr_vec, value_vec, bound);
+        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x06), UINT64_C(0x600) ^ arc_vsa_bucket_coord(object->centroid_y, grid->height), attr_vec, value_vec, bound);
+        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x07), UINT64_C(0x700) ^ (object->touches_border ? 1u : 0u), attr_vec, value_vec, bound);
+        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x08), UINT64_C(0x800) ^ (object->shape_hash & UINT64_C(0xffff)), attr_vec, value_vec, bound);
+        leos_engine_normalize(eng, object_vec);
+        leos_engine_keygen(eng, UINT64_C(0x9b05000000000000) ^ i, slot_vec);
+        leos_engine_bind(eng, slot_vec, object_vec, bound);
+        for (size_t j = 0; j < 256; ++j) scene_out[j] += bound[j];
+    }
+    leos_engine_normalize(eng, scene_out);
+    return 0;
+}

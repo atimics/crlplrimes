@@ -191,6 +191,14 @@ const char *nn_program_proposer_strategy_name(NNProgramProposerStrategy strategy
         return "learned";
     case NN_PROGRAM_PROPOSER_CLOSED_LOOP:
         return "closed_loop";
+    case NN_PROGRAM_PROPOSER_TRACE_PRIOR:
+        return "trace_prior";
+    case NN_PROGRAM_PROPOSER_TRACE_TASK_PRIOR:
+        return "trace_task_prior";
+    case NN_PROGRAM_PROPOSER_TRACE_LINEAR:
+        return "trace_linear";
+    case NN_PROGRAM_PROPOSER_TRACE_MLP:
+        return "trace_mlp";
     case NN_PROGRAM_PROPOSER_ORACLE:
         return "oracle";
     }

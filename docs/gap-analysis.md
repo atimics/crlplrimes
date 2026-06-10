@@ -1,6 +1,9 @@
 # HoloNet Engine — Gap Analysis
 
 June 2026. 120 files, 131K lines across leos-c + crlplrimes.
+Updated 2026-06-10 after reviewing `AnOversizedMooseWithSocks/holostuff` as an
+external VSA reference. That repo is reference material only: no visible license
+file was present in the reviewed snapshot, so do not copy source into this repo.
 
 ## What We Built
 
@@ -31,6 +34,7 @@ June 2026. 120 files, 131K lines across leos-c + crlplrimes.
 | Holographic ranker (k-NN scorer) | `nn_holographic_ranker.c` | 90 | **ship** |
 | Experiment runner (accuracy/NLL/latency) | `nn_holo_experiment.c` | 65 | **ship** |
 | Feature envelope (96→100) | `nn_core.h` | 1 | **ship** |
+| Memory neuron grid | `memory_neuron.c` | prototype | **harden** |
 | HoloNet (structured receptive fields) | `holonet.c` | demo | **ship** |
 | Makefile integration | `Makefile` | +50 lines | **ship** |
 
@@ -69,12 +73,37 @@ vectors are near-orthogonal in high dimensions.
   - Estimated 3–5× speedup
 **Effort:** ~2 days
 
-### G3: Online Reinforcement in crlplrimes (MEDIUM)
-**What:** `holo_ranker_store` exists but isn't wired into the eval loop.
-After verifier confirmation, should call `holo_ranker_store(state, correct_action)`.
-**Impact:** Ranker works in demos but not in the real prime_gap/grid_path pipelines.
-**Fix:** ~4 lines of code in `eval.c` and `train.c`.
-**Effort:** ~1 hour
+### G3: Online Reinforcement in crlplrimes (PARTIAL)
+**What:** `holo_ranker_store` is now wired into the ARC transform-gate path
+behind `--vsa-ranker`, with full-scale JSON counters. The 400-task probe stored
+44 verified associations on shuffled pass 1 and ended pass 2 with
+`stored_count=114`.
+**Impact:** The mechanism is real, but raw grid-vector scoring did not improve
+ordered ARC metrics over the 70/400 baseline. `arc_object_scene_v1` also
+persisted and scored cleanly without improving the ordered baseline. Other real pipelines
+(`prime_gap`, `grid_path`, delayed-claim) still need domain-specific verifier
+feedback wiring before claiming online reinforcement generally.
+**Fix:** Next ARC move is trace-first proposal learning before more manual
+operator search. `--arc-proposal-trace` now emits
+`crlp.arc_proposal_trace.v1` rows with task features, candidate family/slot
+fields, structural scores, and verifier labels. The first online
+`trace_prior` proposer learns positive-evidence family/op/slot counts from
+previous tasks and beats structural ordering at budget 64 (`0.01986872` utility
+versus `0.01635728`). `trace_task_prior` adds task-feature success prototypes
+and improves the budget-64 row to `0.02073334`, while still trailing the
+existing learned scorer (`0.02459768`). A first tiny trained `trace_linear`
+logistic head helps at budget 2 but regresses to `0.01986872` at budget 64; a
+listwise `trace_mlp` reaches `0.02018634`, still below the prototype prior. The
+next version should add confidence-gated residual neural heads around the
+prototype prior rather than let a trained router override the measured index.
+The first scale-space
+primitive, `reflect_tile_{2,3,4}x`, has a canonical `--unique-task-gate`
+signal: 31 exact / 34 certified without it versus 34 exact / 37 certified with
+it; `marker_motif_tile` then moves the gate to 36 exact / 39 certified,
+`axis_tile` moves it to 42 exact / 45 certified, and `period_extend` moves it
+again to 43 exact / 46 certified. For other domains, add the same
+verifier-backed store/load/summary pattern locally.
+**Effort:** ARC wiring done; 0.5-1 day per additional domain.
 
 ### G4: Confidence-Gated Routing (MEDIUM)
 **What:** No mechanism to choose between holographic k-NN and neural scorer
@@ -87,10 +116,14 @@ based on holographic recall fidelity.
   - Or blend: score = α·holo + (1−α)·neural where α = fidelity
 **Effort:** ~1 day
 
-### G5: Serialization (LOW)
-**What:** Can't save/load holographic memory traces.
-**Impact:** Every run starts from scratch. Can't checkpoint or transfer models.
-**Fix:** `fwrite(M, dim*sizeof(double), fp)` — literally 2 lines.
+### G5: Serialization (DONE FOR HolographicRanker)
+**What:** `HolographicRanker` save/load now persists the memory trace and
+stored count. The ARC VSA run saved a 2056-byte 256-dim trace and reloaded it
+successfully.
+**Impact:** ARC ranker checkpoints can transfer across passes. Remaining work
+is schema/version hardening and applying the pattern to any future forest or
+memory-neuron trace.
+**Fix:** Add magic/version/dim validation before relying on long-lived traces.
 **Effort:** ~30 minutes
 
 ### G6: HoloNet Centroid Learning (LOW)
@@ -119,6 +152,32 @@ online clustering of feature vectors.
 **What:** Single memory trace at fixed dimension.
 **Impact:** Can't do coarse-to-fine retrieval.
 **Fix:** Pyramid of traces at dim/2, dim/4, dim/8. Route queries through pyramid.
+**Effort:** ~2 days
+
+### G11: Capacity-Partitioned Memory (MEDIUM)
+**What:** A flat holographic trace has a real association-capacity limit. Memory
+neurons spread load, but hot cells can still overload.
+**Impact:** Long-running rankers can look good in smoke tests and then degrade
+when stored associations accumulate. This is especially relevant for VSA
+two-pass ARC ranking, hypothesis-library priors, and any continuous verifier
+feedback loop.
+**Fix:** Implement a deterministic tree/forest around `HolographicRanker`:
+seeded random-projection splits, small leaf memories, beam backtracking or
+multi-tree union, and JSONL recall/cost rows against exact scan and flat trace.
+This refines the old multi-resolution idea into a concrete capacity-control
+experiment.
+**Effort:** ~2 days
+
+### G12: Verifier-Measured Self-Organization (MEDIUM)
+**What:** Centroid learning and prototype stores can fragment, duplicate, or
+stay stale. The current plan names centroid learning but not an adoption rule.
+**Impact:** A memory system can become larger without becoming better, or it can
+forget useful regimes without a verifier-visible reason.
+**Fix:** Build shadow candidates (keep, merge duplicates, split multimodal
+clusters, rebuild from recent verified rows), judge on held-out verifier/replay
+rows, and swap only when utility improves without unsafe false-rejection
+regression. Emit rows with strategy, memory size, held-out utility, and adopted
+choice.
 **Effort:** ~2 days
 
 ### G10: vSA Arithmetic (FUTURE)
@@ -160,11 +219,14 @@ online clustering of feature vectors.
 
 | Priority | Item | Effort | Impact |
 |----------|------|--------|--------|
-| P0 | Wire online reinforcement into eval loop (G3) | 1h | Makes ranker usable in real pipelines |
-| P0 | Serialization (G5) | 30m | Enables checkpointing and model transfer |
+| P0 | Task-conditioned family/slot proposal learning (G3) | 1d | Continue from `trace_task_prior` beating structural/global-trace at budget 64; add confidence-gated residual neural heads so trained routes can help without overriding low-fidelity prototype memory |
+| P0 | Scale-space / visual-program proposal coverage (G3) | 1-2d | Continue from reflected + marker motif + axis tiling + period extension's +12 exact / +12 certified unique-task gain after learned proposal traces identify the next family |
+| P0 | Serialization hardening (G5) | 30m | Adds magic/version/dim checks to existing checkpoints |
 | P1 | vDSP FFT (G2) | 2d | 3–5× throughput improvement |
 | P1 | Confidence-gated routing (G4) | 1d | Combined holo+neural wins on all tasks |
 | P2 | HoloNet centroid learning (G6) | 1d | Better neuron utilization |
 | P2 | Accept k-NN as core, deprecate layer training (G1) | 0 | Ships what works |
+| P2 | Capacity-partitioned memory (G11) | 2d | Prevents flat-trace overload; creates recall/cost evidence |
+| P2 | Verifier-measured self-organization (G12) | 2d | Keeps memory adaptive without unmeasured thresholds |
 | P3 | Cross-task transfer (G7) | 3d | Knowledge sharing between domains |
 | P3 | Multi-resolution memory (G9) | 2d | Coarse-to-fine retrieval |

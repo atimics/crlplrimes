@@ -1,6 +1,7 @@
 # AI Agent Next Steps: Taking `crlplrimes` to the Next Level
 
 Date: 2026-06-07
+Updated: 2026-06-09
 Audience: AI coding/research agents working in this repository
 Companion report: `docs/engineering-improvement-report-2026-06-07.md`
 
@@ -75,6 +76,28 @@ core library
 
 Everything outside that spine should be explicitly marked as sandbox or
 integration.
+
+## Holographic/VSA backlog alignment
+
+The `AnOversizedMooseWithSocks/holostuff` repository was reviewed on
+2026-06-09 as an external reference for VSA mechanisms. Treat it as design
+inspiration only: no visible license file was present in the reviewed snapshot,
+so agents must not vendor or copy code from it.
+
+Use the following fit when working on the holographic backlog:
+
+| Item | Tier | Direction |
+| --- | --- | --- |
+| VSA grid encoder and ARC candidate scoring | sandbox baseline | Keep instrumented. Full-scale raw-grid VSA persisted (`stored_count=114`) but did not improve the 70/400 ordered ARC baseline. |
+| Object-centric scene vectors | sandbox baseline | Implemented as `arc_object_scene_v1`; persisted and scored cleanly but also did not improve the 70/400 ordered ARC baseline. |
+| Scale-space / visual-program proposal coverage | sandbox, immediate workstream | `reflect_tile_{2,3,4}x` is verifier-backed and improves the `--unique-task-gate` induction run from 31 exact / 34 certified to 34 exact / 37 certified; `marker_motif_tile` moves it to 36 exact / 39 certified; `axis_tile` moves it to 42 exact / 45 certified; `period_extend` moves it again to 43 exact / 46 certified. `--arc-proposal-trace` now emits `crlp.arc_proposal_trace.v1` labels for family/slot proposal learning; online `trace_task_prior` beats structural and global-trace ordering at budget 64, while flat `trace_linear` and listwise `trace_mlp` trail it. Next lift should be confidence-gated residual neural heads around the prototype prior rather than more manual miss mining. |
+| `memory_neuron.c` | sandbox/core-adjacent | Already exists as a prototype; harden with tests and real-loop integration. |
+| Capacity-partitioned memory | sandbox | Add a C `HoloForest`-style ablation around `HolographicRanker`; report recall/cost rows before depending on it. |
+| Shadow self-organization | sandbox | Judge split/merge/rebuild candidates on held-out verifier or replay rows before swapping. |
+| Text generation, unified multimodal demos, image archive | sandbox/parked | Do not promote without a separate evidence proposal. |
+
+The rule is the same as the rest of the repo: mechanisms may propose, route, or
+rank, but declared grounding operators own correctness.
 
 ## Workstream 0: First response protocol for every agent
 
@@ -491,11 +514,14 @@ pay the evidence debt.
 If you are the next agent and no more specific user request is given, do these
 in order:
 
-1. Fix `source-policy-check` and remove tracked Python cache artifacts.
-2. Add `core` and `promoted` targets that avoid Signal and sandbox dependencies.
-3. Add a scalar fallback for `src/nn.c` BLAS calls.
-4. Update CI to run the hermetic core/promoted path.
-5. Add `evidence_origin` to the easiest generated report path and wire one
+1. Add confidence-gated residual ARC proposal heads around `trace_task_prior`.
+   Online prototype memory beats structural/global trace ordering at budget 64;
+   flat `trace_linear` and listwise `trace_mlp` are measured and trail it.
+2. Fix `source-policy-check` and remove tracked Python cache artifacts.
+3. Add `core` and `promoted` targets that avoid Signal and sandbox dependencies.
+4. Add a scalar fallback for `src/nn.c` BLAS calls.
+5. Update CI to run the hermetic core/promoted path.
+6. Add `evidence_origin` to the easiest generated report path and wire one
    paper-support check to use it.
 
 Each task should be a separate small PR or commit.
@@ -562,4 +588,3 @@ trusted base, cleaner boundaries, and evidence that remains meaningful after the
 current agent leaves.
 
 Promote less. Certify harder. Make the boring path sacred.
-

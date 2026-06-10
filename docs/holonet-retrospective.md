@@ -1,7 +1,8 @@
 # HoloNet Retrospective & Memory Neuron Architecture
 
 *June 2026 — from nine experiments through four abstraction layers to one
-unified design.*
+unified design. Updated 2026-06-10 after external VSA reference intake and ARC
+trace-proposer measurements.*
 
 ---
 
@@ -18,7 +19,11 @@ learns through normal SGD whether and how to use those features. No post-hoc
 blending, no separate architecture, no confidence gate.
 
 This document captures every experiment finding, the architectural proposal it
-supports, and exactly what code we keep, cut, or build.
+supports, and exactly what code we keep, cut, or build. A later review of
+`AnOversizedMooseWithSocks/holostuff` did not change the core conclusion, but
+it sharpened the backlog: capacity partitioning and verifier-measured
+self-organization should be first-class follow-up work. The reviewed repository
+had no visible license file, so it is reference material only, not a dependency.
 
 ---
 
@@ -237,6 +242,23 @@ graph TB
 
 ---
 
+## 7.1 Current Implementation Status
+
+The memory-neuron grid is no longer only a proposal. The repo contains:
+
+| Artifact | Status | Notes |
+|---|---|---|
+| `include/memory_neuron.h` | implemented API | grid lifecycle, fast context extraction, slow verified storage, diagnostics |
+| `src/memory_neuron.c` | implemented prototype | feature-space centroids, K-nearest activation, per-neuron `HolographicRanker` traces |
+| `examples/memory_neuron_demo.c` | implemented demo | compares base neural features against neural + 4 memory context features |
+| `examples/holo_experiments.c` | implemented sandbox rows | includes memory-neuron routing JSONL used by paper-support diagnostics |
+
+The next task is not "write `memory_neuron.c`"; it is to harden the
+implementation: unit tests, deterministic row schemas, integration into real
+ranker/eval loops, and capacity protection for hot cells.
+
+---
+
 ## 8. The Four Context Features
 
 From the CrlpBridge experiments, these four signals carry all the necessary
@@ -254,6 +276,29 @@ across the K active ones before being appended to the scorer envelope. Since
 they're just 4 additional input features, the neural net naturally learns to
 weight them — no post-hoc blending, no confidence gate, no separate path.
 
+`holostuff` reinforces the same principle from the other direction: its useful
+mechanisms classify/recall/organize over a shared vector substrate, but the
+adoption rule that fits this repo is still verifier measurement. Context
+features may enter the scorer; correctness still comes from the grounding
+operator.
+
+---
+
+## 8.1 Capacity and Self-Organization Intake
+
+Two external patterns should be folded into this architecture:
+
+| Pattern | Fit | Local backlog item |
+|---|---|---|
+| HoloTree/HoloForest | protects fixed-width traces from capacity collapse by routing to small leaf memories | implement a sandbox C `HoloForest` around `HolographicRanker`; compare flat/tree/forest recall and comparisons |
+| Shadow self-organization | rebuilds candidate memories off to the side, judges them, then swaps | implement verifier-measured split/merge/rebuild for hypothesis or rejected-candidate memories |
+
+Capacity partitioning is a better version of the old "multi-resolution memory"
+gap. It should be measured before any long-running memory-neuron claim depends
+on flat traces. Self-organization should not be threshold folklore; it should
+emit rows showing held-out utility, memory size, false-rejection preservation,
+and the adopted strategy.
+
 ---
 
 ## 9. Keep, Cut, Build
@@ -264,7 +309,7 @@ weight them — no post-hoc blending, no confidence gate, no separate path.
 |---|---|
 | **LeosEngine** | Clean, fast, correct VSA compute substrate. The foundation. |
 | **HolographicRanker** | Becomes the core computation inside each MemoryNeuron. |
-| **memory_neuron.h** | Already written. The header defines the new abstraction. |
+| **memory_neuron.h / memory_neuron.c** | Already implemented as a prototype. Harden and integrate rather than rebuilding. |
 
 ### Cut
 
@@ -282,9 +327,11 @@ weight them — no post-hoc blending, no confidence gate, no separate path.
 
 | Artifact | Effort | What it does |
 |---|---|---|
-| `memory_neuron.c` | ~2 days | Implements the grid: create, destroy, context extraction, verified storage, centroid drift |
-| Modified `nn_scorer_envelope_fill_eml()` | ~1 hour | Accepts 4 optional holo context features (96 -> 100) |
-| Wiring into eval/train loop | ~1 hour | holo_ranker_store(state, correct_action) after verifier confirmation |
+| Memory-neuron tests | ~0.5 day | Validate context extraction, slow-tick storage, counts, fidelity, and deterministic routing |
+| Real-loop wiring | ~1 day | Store verified state/action pairs after the grounding operator confirms them |
+| Envelope integration | ~1 day | Make 4 memory context features a declared scorer condition, not ad hoc demo rows |
+| `HoloForest` sandbox | ~2 days | Capacity partitioning around `HolographicRanker`; flat/tree/forest ablation rows |
+| Shadow organizer sandbox | ~2 days | Split/merge/rebuild memory candidates, judge on held-out verifier rows, adopt winner |
 
 ---
 
@@ -305,6 +352,8 @@ quadrantChart
     "G2: vDSP FFT": [0.4, 0.65]
     "G1: Layer training": [0.3, 0.15]
     "G6: Centroid learning": [0.25, 0.45]
+    "G11: Capacity forest": [0.45, 0.75]
+    "G12: Shadow organizer": [0.45, 0.7]
     "G7: Cross-task transfer": [0.7, 0.35]
     "G8: Iterative cleanup": [0.5, 0.2]
     "G9: Multi-resolution": [0.55, 0.3]
@@ -313,12 +362,15 @@ quadrantChart
 
 | Priority | Gap | Effort | Impact |
 |---|---|---|---|
-| P0 | **G3: Wire online reinforcement** — holo_ranker_store after verifier confirm | 1h | Makes ranker usable in real pipelines |
-| P0 | **G5: Serialization** — fwrite(M, dim*sizeof(double), fp) | 30m | Checkpointing and model transfer |
+| P0 | **G3: Task-conditioned ARC proposal learning** — continue from online `trace_task_prior` beating structural/global-trace at budget 64; trained `trace_linear`/`trace_mlp` trail it, so add confidence-gated residual heads around the prototype memory | 1d | Tests the proposal-coverage bottleneck exposed by the full-scale ranker probes without trusting the learner for correctness |
+| P0 | **G3: Scale-space / visual-program coverage** — use learned proposal traces to choose the next family, then add only verifier-backed generic coverage | 1-2d | Keeps operator work tied to measured family/slot gaps |
+| P0 | **G5: Serialization hardening** — add magic/version/dim checks to existing trace save/load | 30m | Safer checkpointing and model transfer |
 | P1 | **G4: Confidence-gated routing** — blend alpha = fidelity; fall back to neural when fidelity < 0.1 | 1d | Combined holo+neural wins on all tasks |
 | P1 | **G2: vDSP FFT** — replace hand-rolled FFT with Accelerate/FFTW | 2d | 3-5x throughput improvement |
 | P2 | **G6: HoloNet centroid learning** — online k-means instead of random init | 1d | Better neuron utilization (currently 8/16 unused) |
 | P2 | **G1: Accept k-NN as core** — deprecate layer training, ship what works | 0 | Removes dead-end research path |
+| P2 | **G11: Capacity forest** — deterministic tree/forest of small holographic memories | 2d | Prevents flat-trace overload; gives recall/cost ablation rows |
+| P2 | **G12: Shadow organizer** — split/merge/rebuild memories by held-out verifier utility | 2d | Keeps memories compact and adaptive without unmeasured thresholds |
 | P3 | **G7: Cross-task transfer** — Rosetta projection or task-tagged keys | 3d | Knowledge sharing between domains |
 | P3 | **G9: Multi-resolution memory** — pyramid of traces at dim/2, dim/4, dim/8 | 2d | Coarse-to-fine retrieval |
 | P4 | **G8: Iterative cleanup** — non-normalized intermediate accumulator | 2d | Recover deeply buried memories |
@@ -341,9 +393,12 @@ gantt
     section P2 - Quality
     Centroid learning (G6)     :g6, after g2, 1d
     Layer training decision    :milestone, after g2, 0d
-    section Build
-    memory_neuron.c            :mn, 2026-06-04, 3d
+    section Harden
+    Memory neuron tests        :mn, 2026-06-09, 1d
     Envelope extension (96to100):env, after mn, 1d
+    section Capacity
+    HoloForest sandbox         :hf, after env, 2d
+    Shadow organizer sandbox   :so, after hf, 2d
     section Archive
     Cut exploration code       :cut, 2026-06-04, 1d
 ```
@@ -355,8 +410,8 @@ gantt
 2.  **Unblock.** Serialization (30 minutes) and online reinforcement (1 hour)
     are trivial to implement and immediately make the ranker usable.
 
-3.  **Build.** Implement `memory_neuron.c` against the header that already
-    exists. Wire it into the eval/train loop. Extend the scorer envelope.
+3.  **Harden.** `memory_neuron.c` already exists. Add tests, wire it into the
+    eval/train loop, and extend the scorer envelope with a declared condition.
 
 4.  **Accelerate.** vDSP FFT and confidence-gated routing together give both
     speed and robustness.
@@ -364,7 +419,13 @@ gantt
 5.  **Refine.** Centroid learning makes the sparse activation actually work
     (instead of leaving half the neurons idle with random centroids).
 
-6.  **Explore.** Cross-task transfer and multi-resolution memory are high-effort
+6.  **Partition capacity.** Add forest-backed memories as a sandbox ablation
+    before claiming long-horizon memory-neuron stability.
+
+7.  **Self-organize by measurement.** Add shadow split/merge/rebuild candidates
+    only where held-out verifier or replay rows can judge the adoption.
+
+8.  **Explore.** Cross-task transfer and multi-resolution memory are high-effort
     research directions; pursue only when the core architecture is stable.
 
 ---
@@ -398,3 +459,11 @@ gantt
 6.  **Zero parameters is a feature, not a limitation.** Training IS storing.
     The model IS the trace. Serialization is 2 lines of fwrite. This is a
     fundamentally different — and simpler — paradigm than SGD-trained weights.
+
+7.  **Capacity is a measured resource.** Fixed-width memory is useful because it
+    is bounded, not because it is infinite. When a trace overloads, partition it
+    into measured leaves and report recall/cost rather than hiding the cliff.
+
+8.  **Self-organization needs an adoption test.** Rebuilding a memory is only an
+    improvement if held-out verifier or replay rows say so. Shadow-and-swap is
+    the right mechanical pattern; verifier measurement is the right authority.
