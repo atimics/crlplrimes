@@ -12,3 +12,16 @@
   (claim: "C8", id: "C8", citations: ("schulman2015trust", "clarke2000cegar", "bayardo1997csp", "gebru2021datasheets", "mitchell2019modelcards")),
 )
 
+#let claim_bibliography_section = [
+== Claim-Anchored Bibliography
+
+- C1: @ellis2021dreamcoder, @bayardo1997csp, @alur2013sygus, @clarke2000cegar, @gebru2021datasheets
+- C4: @clarke2000cegar, @stiennon2020learning, @schulman2015trust, @yeung2024generalized, @bayardo1997csp
+- B2: @yeung2024generalized, @thomas2021theoretical, @alur2013sygus, @schulman2015trust, @mitchell2019modelcards
+- C5: @schulman2015trust, @bayardo1997csp, @yeung2024generalized, @gebru2021datasheets, @ellis2021dreamcoder
+- D1: @alur2013sygus, @bayardo1997csp, @mitchell2019modelcards, @gebru2021datasheets, @ellis2021dreamcoder
+- C1: @gebru2021datasheets, @mitchell2019modelcards, @schulman2017proximal, @stiennon2020learning, @yeung2024generalized
+- C5: @clarke2000cegar, @schulman2015trust, @stiennon2020learning, @pineau2021reproducibility, @gebru2021datasheets
+- C8: @schulman2015trust, @clarke2000cegar, @bayardo1997csp, @gebru2021datasheets, @mitchell2019modelcards
+]
+

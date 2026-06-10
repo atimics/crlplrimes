@@ -34,5 +34,8 @@ jobs:
         with:
           typst-version: 0.14.2
 
+      - name: Install native dependencies
+        run: sudo apt-get update -y && sudo apt-get install -y libopenblas-dev
+
       - name: Run paper CI gate
         run: make paper-ci

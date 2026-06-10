@@ -744,5 +744,3 @@ replay system owns validity and consequence. The learned component owns ranking 
 The repository trace owns what empirical reporting is allowed to say.
 
 #bibliography("references.bib")
-# test
-# test

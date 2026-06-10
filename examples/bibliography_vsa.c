@@ -74,6 +74,18 @@ int main(int argc, char **argv) {
                 fputs(")),\n", tp);
             }
             fputs(")\n\n", tp);
+            fputs("#let claim_bibliography_section = [\n", tp);
+            fputs("== Claim-Anchored Bibliography\n\n", tp);
+            for (int c = 0; c < N; c++) {
+                char bibkeys[5][BIBLIOGRAPHY_BIBKEY_MAX];
+                bibliography_ordinal_query(bib, TEST_CLAIMS[c], DOMAINS[c], bibkeys, 5);
+                fprintf(tp, "- %s: ", CLAIM_IDS[c]);
+                for (int k = 0; k < 5 && bibkeys[k][0]; k++) {
+                    fprintf(tp, "%s@%s", k > 0 ? ", " : "", bibkeys[k]);
+                }
+                fputs("\n", tp);
+            }
+            fputs("]\n\n", tp);
             fclose(tp);
             printf("\n--- Typst output written to %s ---\n", typ_path);
         }

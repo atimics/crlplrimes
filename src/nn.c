@@ -1370,7 +1370,6 @@ NeuralNet *nn_create_config(const NNConfig *config)
     net->sizes = checked_calloc(config->layer_count, sizeof(*net->sizes));
     net->activations = checked_calloc(config->layer_count, sizeof(*net->activations));
     net->pre_activations = checked_calloc(config->layer_count, sizeof(*net->pre_activations));
-    net->pre_activations = checked_calloc(config->layer_count, sizeof(*net->pre_activations));
     net->eml_pre_acts = checked_calloc(config->layer_count, sizeof(*net->eml_pre_acts));
     net->biases = checked_calloc(config->layer_count, sizeof(*net->biases));
     net->weights = checked_calloc(config->layer_count, sizeof(*net->weights));
@@ -1505,6 +1504,7 @@ void nn_free(NeuralNet *net)
 
     free_layer_arrays(net->activations, net->layer_count);
     free_layer_arrays(net->pre_activations, net->layer_count);
+    free_layer_arrays(net->eml_pre_acts, net->layer_count);
     free_layer_arrays(net->biases, net->layer_count);
     free_layer_arrays(net->weights, net->layer_count);
     free_layer_arrays(net->deltas, net->layer_count);
