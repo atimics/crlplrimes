@@ -78,7 +78,7 @@ enum {
     ARC_PROGRAM_TASK_FEATURE_COUNT = 32,
     ARC_PROGRAM_FEATURE_COUNT = NN_PROGRAM_FEATURE_COUNT + ARC_PROGRAM_TASK_FEATURE_COUNT,
     ARC_PROGRAM_TRAIN_EPOCHS = 5,
-    ARC_PROGRAM_STRATEGY_COUNT = 9,
+    ARC_PROGRAM_STRATEGY_COUNT = 10,
     ARC_PROPOSAL_TRACE_NEGATIVE_CAP = 64,
     ARC_OBJECT_CONNECT_HORIZONTAL = 0,
     ARC_OBJECT_CONNECT_VERTICAL = 1,
@@ -823,7 +823,8 @@ typedef enum {
     ARC_PROGRAM_STRATEGY_TRACE_TASK_PRIOR = 5,
     ARC_PROGRAM_STRATEGY_TRACE_LINEAR = 6,
     ARC_PROGRAM_STRATEGY_TRACE_MLP = 7,
-    ARC_PROGRAM_STRATEGY_ORACLE = 8,
+    ARC_PROGRAM_STRATEGY_TRACE_HOLO_RESIDUAL = 8,
+    ARC_PROGRAM_STRATEGY_ORACLE = 9,
 } ARCProgramStrategy;
 
 typedef struct {
@@ -853,6 +854,8 @@ typedef struct {
     size_t linear_updates;
     NeuralNet *mlp;
     size_t mlp_updates;
+    HolographicRanker *holo_residual;
+    size_t holo_updates;
     size_t input_color_seen[ARC_COLOR_COUNT];
     size_t input_color_success[ARC_COLOR_COUNT];
     size_t output_color_seen[ARC_COLOR_COUNT];
@@ -5625,6 +5628,8 @@ static NNProgramProposerStrategy arc_program_strategy_to_nn(ARCProgramStrategy s
         return NN_PROGRAM_PROPOSER_TRACE_LINEAR;
     case ARC_PROGRAM_STRATEGY_TRACE_MLP:
         return NN_PROGRAM_PROPOSER_TRACE_MLP;
+    case ARC_PROGRAM_STRATEGY_TRACE_HOLO_RESIDUAL:
+        return NN_PROGRAM_PROPOSER_TRACE_HOLO_RESIDUAL;
     case ARC_PROGRAM_STRATEGY_ORACLE:
         return NN_PROGRAM_PROPOSER_ORACLE;
     }
@@ -5664,6 +5669,36 @@ static NeuralNet *create_arc_trace_mlp_model(unsigned int seed)
     config.output_activation = NN_ACTIVATION_LINEAR;
     config.loss = NN_LOSS_MSE;
     return nn_create_config(&config);
+}
+
+static int arc_proposal_trace_prior_init(ARCProposalTracePrior *prior, unsigned int seed)
+{
+    if (prior == NULL) {
+        return 0;
+    }
+    memset(prior, 0, sizeof(*prior));
+    prior->mlp = create_arc_trace_mlp_model(seed);
+    if (prior->mlp == NULL) {
+        return 0;
+    }
+    prior->holo_residual = holo_ranker_create(ARC_PROGRAM_FEATURE_COUNT);
+    if (prior->holo_residual == NULL) {
+        nn_free(prior->mlp);
+        prior->mlp = NULL;
+        return 0;
+    }
+    return 1;
+}
+
+static void arc_proposal_trace_prior_free(ARCProposalTracePrior *prior)
+{
+    if (prior == NULL) {
+        return;
+    }
+    nn_free(prior->mlp);
+    prior->mlp = NULL;
+    holo_ranker_destroy(prior->holo_residual);
+    prior->holo_residual = NULL;
 }
 
 static NeuralNet *create_arc_hypothesis_prior_model(unsigned int seed, size_t hidden)
@@ -6956,6 +6991,158 @@ static double arc_proposal_trace_mlp_score(ARCProposalTracePrior *prior,
     return score + 1.5 * (raw > 0.0 ? raw : 0.0);
 }
 
+static void arc_trace_holo_normalize(double *values, size_t count)
+{
+    if (values == NULL || count == 0) {
+        return;
+    }
+    double norm = 0.0;
+    for (size_t i = 0; i < count; ++i) {
+        norm += values[i] * values[i];
+    }
+    if (norm <= 0.0) {
+        return;
+    }
+    double scale = 1.0 / sqrt(norm);
+    for (size_t i = 0; i < count; ++i) {
+        values[i] *= scale;
+    }
+}
+
+static void arc_trace_holo_state_vector(const ARCProgramTaskFeatures *task_features,
+                                        double *state)
+{
+    if (task_features == NULL || state == NULL) {
+        return;
+    }
+    nn_real task_values[ARC_PROGRAM_TASK_FEATURE_COUNT];
+    arc_program_task_features_write(task_features, task_values);
+    for (size_t i = 0; i < ARC_PROGRAM_TASK_FEATURE_COUNT; ++i) {
+        double value = (double)task_values[i] - 0.5;
+        state[i] = value;
+        state[ARC_PROGRAM_TASK_FEATURE_COUNT + i] = (i & 1u) ? -value : value;
+    }
+    arc_trace_holo_normalize(state, ARC_PROGRAM_FEATURE_COUNT);
+}
+
+static int arc_trace_holo_action_vector(const ARCTransformCandidate *candidate,
+                                        const ARCProgramTaskFeatures *task_features,
+                                        double *action)
+{
+    if (candidate == NULL || task_features == NULL || action == NULL) {
+        return 0;
+    }
+    nn_real features[ARC_PROGRAM_FEATURE_COUNT];
+    if (!arc_encode_program_features(candidate,
+                                     task_features,
+                                     features,
+                                     ARC_PROGRAM_FEATURE_COUNT)) {
+        return 0;
+    }
+    for (size_t i = 0; i < ARC_PROGRAM_FEATURE_COUNT; ++i) {
+        action[i] = (double)features[i] - 0.5;
+    }
+    arc_trace_holo_normalize(action, ARC_PROGRAM_FEATURE_COUNT);
+    return 1;
+}
+
+static double arc_proposal_trace_holo_confidence(
+    const ARCProposalTracePrior *prior,
+    const ARCTransformCandidate *candidate,
+    const ARCProgramTaskFeatures *task_features)
+{
+    if (prior == NULL || candidate == NULL || task_features == NULL ||
+        prior->holo_updates < 4u || prior->positive_rows < 4u) {
+        return 0.0;
+    }
+    size_t family = arc_candidate_family(candidate);
+    size_t family_success = 0;
+    size_t op_success = 0;
+    double family_similarity = 0.0;
+    double op_similarity = 0.0;
+    if (family < sizeof(prior->family_seen) / sizeof(prior->family_seen[0])) {
+        family_success = prior->family_success[family];
+        family_similarity = arc_program_task_feature_similarity(
+            prior->family_task_feature_sum[family],
+            prior->family_success[family],
+            task_features);
+    }
+    if (candidate->op < ARC_RULE_COUNT) {
+        op_success = prior->op_success[candidate->op];
+        op_similarity = arc_program_task_feature_similarity(
+            prior->op_task_feature_sum[candidate->op],
+            prior->op_success[candidate->op],
+            task_features);
+    }
+    double support = log1p((double)(family_success + op_success)) / log(12.0);
+    if (support > 1.0) {
+        support = 1.0;
+    }
+    double similarity = family_similarity > op_similarity ? family_similarity : op_similarity;
+    double similarity_gate = (similarity - 0.88) / 0.10;
+    if (similarity_gate < 0.0) {
+        similarity_gate = 0.0;
+    } else if (similarity_gate > 1.0) {
+        similarity_gate = 1.0;
+    }
+    double memory = log1p((double)prior->holo_updates) / log(64.0);
+    if (memory > 1.0) {
+        memory = 1.0;
+    }
+    return support * similarity_gate * memory;
+}
+
+static double arc_proposal_trace_holo_residual_score(
+    ARCProposalTracePrior *prior,
+    const ARCTransformCandidate *candidate,
+    const ARCProgramTaskFeatures *task_features,
+    const double *holo_context)
+{
+    double score = arc_proposal_trace_task_prior_score(prior, candidate, task_features);
+    if (prior == NULL || candidate == NULL || task_features == NULL ||
+        holo_context == NULL || prior->holo_residual == NULL || prior->holo_updates == 0) {
+        return score;
+    }
+    double confidence =
+        arc_proposal_trace_holo_confidence(prior, candidate, task_features);
+    if (confidence <= 0.0) {
+        return score;
+    }
+    double action[ARC_PROGRAM_FEATURE_COUNT] = {0};
+    if (!arc_trace_holo_action_vector(candidate, task_features, action)) {
+        return score;
+    }
+    double raw = 0.0;
+    for (size_t i = 0; i < ARC_PROGRAM_FEATURE_COUNT; ++i) {
+        raw += holo_context[i] * action[i];
+    }
+    if (raw > 4.0) {
+        raw = 4.0;
+    } else if (raw < 0.0) {
+        raw = 0.0;
+    }
+    return score + confidence * 1.25 * raw;
+}
+
+static void arc_proposal_trace_holo_update(ARCProposalTracePrior *prior,
+                                           const ARCTransformCandidate *candidate,
+                                           const ARCProgramEval *eval,
+                                           const ARCProgramTaskFeatures *task_features)
+{
+    if (prior == NULL || prior->holo_residual == NULL || candidate == NULL ||
+        eval == NULL || task_features == NULL || !eval->train_consistent) {
+        return;
+    }
+    double state[ARC_PROGRAM_FEATURE_COUNT] = {0};
+    double action[ARC_PROGRAM_FEATURE_COUNT] = {0};
+    arc_trace_holo_state_vector(task_features, state);
+    if (!arc_trace_holo_action_vector(candidate, task_features, action)) {
+        return;
+    }
+    holo_ranker_store(prior->holo_residual, state, action);
+    ++prior->holo_updates;
+}
+
 static void arc_proposal_trace_linear_update(ARCProposalTracePrior *prior,
                                              const ARCTransformCandidate *candidate,
                                              const ARCProgramEval *eval,
@@ -7079,6 +7266,7 @@ static void arc_proposal_trace_prior_observe_candidate(ARCProposalTracePrior *pr
         arc_program_task_features_write(task_features, task_values);
     }
     arc_proposal_trace_linear_update(prior, candidate, eval, task_features);
+    arc_proposal_trace_holo_update(prior, candidate, eval, task_features);
     size_t family = arc_candidate_family(candidate);
     if (family < sizeof(prior->family_seen) / sizeof(prior->family_seen[0])) {
         ++prior->family_seen[family];
@@ -7328,6 +7516,18 @@ static void arc_build_program_ranks(const ARCTask *task,
                                     ARCProgramRank *ranks)
 {
     uint64_t task_hash = arc_task_hash(task);
+    double holo_context[ARC_PROGRAM_FEATURE_COUNT] = {0};
+    int have_holo_context = 0;
+    if (strategy == ARC_PROGRAM_STRATEGY_TRACE_HOLO_RESIDUAL &&
+        trace_prior != NULL && trace_prior->holo_residual != NULL &&
+        task_features != NULL && trace_prior->holo_updates != 0) {
+        double holo_state[ARC_PROGRAM_FEATURE_COUNT] = {0};
+        arc_trace_holo_state_vector(task_features, holo_state);
+        have_holo_context =
+            holo_ranker_recall(trace_prior->holo_residual,
+                               holo_state,
+                               holo_context) == 0;
+    }
     for (size_t i = 0; i < candidate_count; ++i) {
         ranks[i].candidate_index = i;
         ranks[i].primary = 0.0;
@@ -7376,6 +7576,14 @@ static void arc_build_program_ranks(const ARCTask *task,
                 arc_proposal_trace_mlp_score(trace_prior,
                                              &candidates[i],
                                              task_features);
+            break;
+        case ARC_PROGRAM_STRATEGY_TRACE_HOLO_RESIDUAL:
+            ranks[i].primary =
+                ranks[i].secondary +
+                arc_proposal_trace_holo_residual_score(trace_prior,
+                                                       &candidates[i],
+                                                       task_features,
+                                                       have_holo_context ? holo_context : NULL);
             break;
         case ARC_PROGRAM_STRATEGY_ORACLE:
             ranks[i].primary = evals[i].train_consistent ? (double)evals[i].test_correct_cells : -1.0;
@@ -26403,10 +26611,8 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         return 0;
     }
     ARCProposalTracePrior proposal_trace_prior;
-    memset(&proposal_trace_prior, 0, sizeof(proposal_trace_prior));
-    proposal_trace_prior.mlp =
-        create_arc_trace_mlp_model((unsigned int)(config->seed & UINT32_MAX));
-    if (proposal_trace_prior.mlp == NULL) {
+    if (!arc_proposal_trace_prior_init(&proposal_trace_prior,
+                                       (unsigned int)(config->seed & UINT32_MAX))) {
         arc_program_learned_free(&learned_state);
         free(files);
         return 0;
@@ -26424,7 +26630,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         free(evals);
         free(learn_candidates);
         free(learn_evals);
-        nn_free(proposal_trace_prior.mlp);
+        arc_proposal_trace_prior_free(&proposal_trace_prior);
         arc_program_learned_free(&learned_state);
         free(files);
         return 0;
@@ -26439,7 +26645,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         free(evals);
         free(learn_candidates);
         free(learn_evals);
-        nn_free(proposal_trace_prior.mlp);
+        arc_proposal_trace_prior_free(&proposal_trace_prior);
         arc_program_learned_free(&learned_state);
         free(files);
         return 0;
@@ -26452,7 +26658,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         free(evals);
         free(learn_candidates);
         free(learn_evals);
-        nn_free(proposal_trace_prior.mlp);
+        arc_proposal_trace_prior_free(&proposal_trace_prior);
         arc_program_learned_free(&learned_state);
         free(files);
         return 0;
@@ -26470,7 +26676,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         free(evals);
         free(learn_candidates);
         free(learn_evals);
-        nn_free(proposal_trace_prior.mlp);
+        arc_proposal_trace_prior_free(&proposal_trace_prior);
         arc_program_learned_free(&learned_state);
         free(files);
         return 0;
@@ -26494,7 +26700,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
             free(evals);
             free(learn_candidates);
             free(learn_evals);
-            nn_free(proposal_trace_prior.mlp);
+            arc_proposal_trace_prior_free(&proposal_trace_prior);
             arc_program_learned_free(&learned_state);
             free(files);
             return 0;
@@ -26656,7 +26862,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
                 if (proposal_trace_fp != NULL) {
                     fclose(proposal_trace_fp);
                 }
-                nn_free(proposal_trace_prior.mlp);
+                arc_proposal_trace_prior_free(&proposal_trace_prior);
                 arc_program_learned_free(&learned_state);
                 free(files);
                 return 0;
@@ -26687,12 +26893,12 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         }
         free(candidates);
         free(evals);
-            free(learn_candidates);
-            free(learn_evals);
-            nn_free(proposal_trace_prior.mlp);
-            arc_program_learned_free(&learned_state);
-            free(files);
-            return 0;
+        free(learn_candidates);
+        free(learn_evals);
+        arc_proposal_trace_prior_free(&proposal_trace_prior);
+        arc_program_learned_free(&learned_state);
+        free(files);
+        return 0;
     }
     if (config->save_hypothesis_prior_path != NULL) arc_program_learned_save_hypothesis_library_prior(&learned_state, config->save_hypothesis_prior_path);
     if (config->vsa_ranker_path != NULL && g_vsa_ranker != NULL) holo_ranker_save(g_vsa_ranker, config->vsa_ranker_path);
@@ -26710,7 +26916,7 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
     free(evals);
     free(learn_candidates);
     free(learn_evals);
-    nn_free(proposal_trace_prior.mlp);
+    arc_proposal_trace_prior_free(&proposal_trace_prior);
     if (config->save_learned_state_path != NULL) {
         arc_program_learned_save_state(&learned_state, config->save_learned_state_path);
     }

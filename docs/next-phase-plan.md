@@ -77,7 +77,18 @@ prior (`0.01986872`), but remains below the existing learned scorer
 instrumented, but at budget 64 they reach only `0.01986872` and `0.02018634`.
 That matches the `holostuff` and local HoloNet lesson: measured prototype memory
 is a strong index, while learned routing can underperform on clustered stores
-unless it is confidence-gated or trained on residual mistakes.
+unless it is confidence-gated or trained on residual mistakes. The residual
+step is now implemented as `strategy:"trace_holo_residual"`: verified positive
+proposal rows are stored in `HolographicRanker` as `(task_features,
+candidate_features)` bindings, task recall is computed once per ranking pass,
+and the recalled action similarity can only add a bounded positive residual to
+`trace_task_prior` when family/op support, task-feature similarity, and memory
+count clear confidence gates. The ARC hypothesis fixture smoke emits
+`trace_holo_residual` rows at every program budget with matching solved utility.
+The public unique-task training gate now also runs: the residual changes
+program-set hashes, but matches `trace_task_prior` utility at budgets 8, 16, 32,
+and 64. That makes it an instrumentation and diagnostics surface, not a promoted
+coverage uplift.
 
 ## The Core Bet
 
@@ -268,7 +279,7 @@ rows separate ranker improvement from exact verifier coverage.
 | Unique-task certified/exact tasks | 46 / 43 after reflected + marker motif + axis tiling + period extension | 50+ / 46+ |
 | VSA scoring enabled | Yes, no grid/object-scene uplift | Keep instrumented |
 | Proposal trace rows | `crlp.arc_proposal_trace.v1`: 25,750 rows / 400 tasks / 144 exact candidate rows | Task-conditioned family/slot proposer |
-| Trace-prior proposer | `trace_task_prior` beats structural and global trace prior at budget 64; trained `trace_linear`/`trace_mlp` trail it | Add confidence-gated residual neural heads around the prototype prior |
+| Trace-prior proposer | `trace_task_prior` beats structural and global trace prior at budget 64; trained `trace_linear`/`trace_mlp` trail it; `trace_holo_residual` is wired and measured but matches `trace_task_prior` public utility | Add residual win/loss diagnostics before changing the HoloNet gate |
 | Flat-vs-forest recall rows | No | Yes |
 | Focused shape-scale audit | 55 certified rows after reflected tiling; marker motif adds 2, axis tiling adds 6, and period extension adds 1 unique-task exact solve | Extend to next fixed-scale family |
 | Object-scene ranker condition | Yes, no uplift | Park |
@@ -279,9 +290,9 @@ rows separate ranker improvement from exact verifier coverage.
 1. **Coverage measurement** — keep `--unique-task-gate` as the fast canonical
    all-400-file gate so primitives that help outside the capped augmented slice
    show up in headline metrics.
-2. **Trace-first proposer learning** — run a full unique-task
-   `--arc-proposal-trace`, train/evaluate tiny family and slot proposal heads,
-   and compare against grammar, structural, learned, random, and oracle budgets.
+2. **Trace-first proposer learning** — inspect `trace_holo_residual` residual
+   wins/losses against `trace_task_prior`, especially exact candidates that move
+   within or out of the budget window, before changing confidence thresholds.
 3. **Workstream D** (scale-space pyramid) — continue from `reflect_tile` into
    other shape-evidenced scale transforms. Runtime +5-10s.
 4. **Visual-program proposal coverage** — inspect zero-candidate and

@@ -199,6 +199,8 @@ const char *nn_program_proposer_strategy_name(NNProgramProposerStrategy strategy
         return "trace_linear";
     case NN_PROGRAM_PROPOSER_TRACE_MLP:
         return "trace_mlp";
+    case NN_PROGRAM_PROPOSER_TRACE_HOLO_RESIDUAL:
+        return "trace_holo_residual";
     case NN_PROGRAM_PROPOSER_ORACLE:
         return "oracle";
     }

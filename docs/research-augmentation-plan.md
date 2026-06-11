@@ -193,6 +193,14 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   prototype prior. This matches the holo pattern: memory/prototype indexing is a
   reliable substrate, and neural routing should be confidence-gated or trained
   as a residual correction.
+- Implemented residual bridge: `trace_holo_residual` stores verified positive
+  `(task_features, candidate_features)` pairs in `HolographicRanker`, recalls a
+  task-conditioned action context once per ranking pass, and adds only a bounded
+  positive residual to `trace_task_prior` after support/similarity/memory gates.
+  The fixture smoke validates the wiring and summary rows. Public unique-task
+  rows now show changed program-set hashes but matched utility versus
+  `trace_task_prior`, so the next step is residual win/loss diagnostics rather
+  than claiming a coverage improvement.
 
 **Papers:** Lake 2017 (Compositional Generalization), Bunel 2018 (Neural Program
 Synthesis), Nye 2021 (Scratchpads)
@@ -253,8 +261,9 @@ promoted ARC coverage.
    after shuffled train + ordered load), but ordered metrics remain 70/400.
 5. **Observed:** `arc_object_scene_v1` also persists and scores cleanly
    (`stored_count=114`), but ordered metrics still remain 70/400.
-6. **Next target:** pause ARC VSA scoring and move to scale-space /
-   visual-program proposal coverage.
+6. **Next target:** keep raw-grid ARC VSA scoring parked, and use the measured
+   `trace_holo_residual` no-uplift result to build residual win/loss diagnostics
+   before changing the gate or memory representation.
 
 ### Phase 1B: Object-Scene VSA Representation (done; no uplift)
 
