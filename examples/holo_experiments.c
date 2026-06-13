@@ -3,6 +3,7 @@
 #include <string.h>
 #include <math.h>
 #include <sys/stat.h>
+#include <stdint.h>
 
 #include "nn_holographic_ranker.h"
 #include "memory_neuron.h"
@@ -156,6 +157,119 @@ static int run_exact_retrieval(const char *od) {
         holo_ranker_destroy(r);
     }
     free(states); free(actions); leos_engine_destroy(eng); fclose(fp);
+    return 0;
+}
+
+/* ---- B.1b: Partitioned Retrieval Fidelity ---- */
+static int run_partitioned_retrieval(const char *od) {
+    mkdir_p(od);
+    char path[1024]; snprintf(path, sizeof(path), "%s/partitioned_retrieval.jsonl", od);
+    FILE *fp = fopen(path, "w"); if (!fp) return 1;
+
+    size_t dim = 2048;
+    LeosEngine *eng = leos_engine_create(dim);
+    if (!eng) { fclose(fp); return 1; }
+    size_t test_ns[] = {64, 128, 256, 512, 1024};
+    size_t partition_grid[] = {4, 8, 16, 32};
+    size_t n_tests = sizeof(test_ns) / sizeof(test_ns[0]);
+    size_t n_parts = sizeof(partition_grid) / sizeof(partition_grid[0]);
+    size_t max_n = test_ns[n_tests - 1u];
+
+    double *states = calloc(max_n * dim, sizeof(double));
+    double *actions = calloc(max_n * dim, sizeof(double));
+    double *flat_scores = calloc(max_n, sizeof(double));
+    double *part_scores = calloc(max_n, sizeof(double));
+    if (!states || !actions || !flat_scores || !part_scores) {
+        free(states); free(actions); free(flat_scores); free(part_scores);
+        leos_engine_destroy(eng); fclose(fp); return 1;
+    }
+    for (size_t i = 0; i < max_n; ++i) {
+        gen_unit_vec(eng, 20260613ULL + i * 2u, &states[i * dim]);
+        gen_unit_vec(eng, 20260613ULL + i * 2u + 1u, &actions[i * dim]);
+    }
+
+    for (size_t ti = 0; ti < n_tests; ++ti) {
+        size_t n = test_ns[ti];
+        HolographicRanker *flat = holo_ranker_create(dim);
+        if (!flat) continue;
+        for (size_t i = 0; i < n; ++i) {
+            holo_ranker_store(flat, &states[i * dim], &actions[i * dim]);
+        }
+
+        size_t flat_hits = 0;
+        for (size_t i = 0; i < n; ++i) {
+            holo_ranker_score(flat, &states[i * dim], actions, n, flat_scores);
+            size_t best = 0;
+            for (size_t j = 1; j < n; ++j) {
+                if (flat_scores[j] > flat_scores[best]) best = j;
+            }
+            flat_hits += best == i ? 1u : 0u;
+        }
+
+        for (size_t pi = 0; pi < n_parts; ++pi) {
+            size_t partitions = partition_grid[pi];
+            HoloPartitionedRanker *part =
+                holo_partitioned_ranker_create(dim, partitions, UINT64_C(20260613));
+            if (!part) continue;
+            for (size_t i = 0; i < n; ++i) {
+                holo_partitioned_ranker_store(part,
+                                              &states[i * dim],
+                                              &actions[i * dim]);
+            }
+
+            size_t part_hits = 0;
+            for (size_t i = 0; i < n; ++i) {
+                holo_partitioned_ranker_score(part,
+                                              &states[i * dim],
+                                              actions,
+                                              n,
+                                              part_scores);
+                size_t best = 0;
+                for (size_t j = 1; j < n; ++j) {
+                    if (part_scores[j] > part_scores[best]) best = j;
+                }
+                part_hits += best == i ? 1u : 0u;
+            }
+
+            size_t min_load = SIZE_MAX;
+            size_t max_load = 0;
+            size_t nonempty = 0;
+            for (size_t p = 0; p < partitions; ++p) {
+                size_t load = holo_partitioned_ranker_partition_load(part, p);
+                if (load != 0) {
+                    ++nonempty;
+                    if (load < min_load) min_load = load;
+                }
+                if (load > max_load) max_load = load;
+            }
+            if (min_load == SIZE_MAX) min_load = 0;
+
+            fprintf(fp,
+                    "{\"schema\":\"crlp.holo_partitioned_retrieval.v1\","
+                    "\"dim\":%zu,\"n\":%zu,\"partitions\":%zu,"
+                    "\"flat_top1_hits\":%zu,\"flat_top1_acc\":%.8f,"
+                    "\"partitioned_top1_hits\":%zu,\"partitioned_top1_acc\":%.8f,"
+                    "\"nonempty_partitions\":%zu,\"min_partition_load\":%zu,"
+                    "\"max_partition_load\":%zu,\"mean_partition_load\":%.8f}\n",
+                    dim,
+                    n,
+                    partitions,
+                    flat_hits,
+                    (double)flat_hits / (double)n,
+                    part_hits,
+                    (double)part_hits / (double)n,
+                    nonempty,
+                    min_load,
+                    max_load,
+                    (double)holo_partitioned_ranker_count(part) /
+                        (double)partitions);
+            holo_partitioned_ranker_destroy(part);
+        }
+        holo_ranker_destroy(flat);
+    }
+
+    free(states); free(actions); free(flat_scores); free(part_scores);
+    leos_engine_destroy(eng); fclose(fp);
     return 0;
 }
 
@@ -500,12 +614,13 @@ int main(int argc, char **argv) {
     }
     if (!mode || !od) {
         fprintf(stderr, "usage: %s --mode <mode> --output-dir <dir>\n", argv[0]);
-        fprintf(stderr, "  modes: exact-retrieval, memory-routing, generalization, holo-gate-blend, domain-integration\n");
+        fprintf(stderr, "  modes: exact-retrieval, partitioned-retrieval, memory-routing, generalization, holo-gate-blend, domain-integration\n");
         return 1;
     }
     printf("=== holo %s ===\n", mode);
     
     if (!strcmp(mode, "exact-retrieval"))     return run_exact_retrieval(od);
+    if (!strcmp(mode, "partitioned-retrieval")) return run_partitioned_retrieval(od);
     if (!strcmp(mode, "memory-routing"))       return run_memory_routing(od);
     if (!strcmp(mode, "generalization"))       return run_generalization(od);
     if (!strcmp(mode, "holo-gate-blend"))      return run_holo_gate_blend(od);

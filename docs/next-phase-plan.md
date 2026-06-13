@@ -99,7 +99,11 @@ coverage. The 2026-06-13 HoloNet research pass in
 `docs/holonet-research-brief.md` changes the follow-up: do not tune the residual
 weight first. Add capacity management and cleanup-style routing first, because
 flat holographic traces are expected to lose discriminative power as cross-term
-noise grows.
+noise grows. The first `HoloPartitionedRanker` sandbox confirms the capacity
+claim: at 2048 dimensions, 32 routed partitions lift exact retrieval top-1 from
+about `0.50` flat to `0.98/0.85/0.78/0.63/0.55` at
+`64/128/256/512/1024` stored pairs, with clear wins while local max load stays
+below roughly 50 pairs.
 
 ## The Core Bet
 
@@ -290,8 +294,8 @@ rows separate ranker improvement from exact verifier coverage.
 | Unique-task certified/exact tasks | 46 / 43 after reflected + marker motif + axis tiling + period extension | 50+ / 46+ |
 | VSA scoring enabled | Yes, no grid/object-scene uplift | Keep instrumented |
 | Proposal trace rows | `crlp.arc_proposal_trace.v1`: 25,750 rows / 400 tasks / 144 exact candidate rows | Task-conditioned family/slot proposer |
-| Trace-prior proposer | `trace_task_prior` beats structural and global trace prior at budget 64; trained `trace_linear`/`trace_mlp` trail it; `trace_holo_residual` matches public utility and diagnostics show 0 budget crossings | Add rank-pressure memory plus HoloForest/family partitioning before changing confidence thresholds |
-| Flat-vs-forest recall rows | No | Yes |
+| Trace-prior proposer | `trace_task_prior` beats structural and global trace prior at budget 64; trained `trace_linear`/`trace_mlp` trail it; `trace_holo_residual` matches public utility and diagnostics show 0 budget crossings; first unguarded pressure-memory test was negative, with 2 crossings in and 8 crossings out | Add guarded family/local pressure memory plus HoloForest/family partitioning before changing confidence thresholds |
+| Flat-vs-forest recall rows | Partitioned sandbox rows exist: 32 partitions lift top-1 from ~0.50 flat to 0.98/0.85/0.78/0.63/0.55 at 64/128/256/512/1024 pairs | Add tree/forest or ARC family-partition rows |
 | Focused shape-scale audit | 55 certified rows after reflected tiling; marker motif adds 2, axis tiling adds 6, and period extension adds 1 unique-task exact solve | Extend to next fixed-scale family |
 | Object-scene ranker condition | Yes, no uplift | Park |
 | Runtime (unique-task gate, induction) | 25-29s | <60s |

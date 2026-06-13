@@ -14,6 +14,16 @@ struct HolographicRanker {
     size_t acc_total;
 };
 
+struct HoloPartitionedRanker {
+    LeosEngine *eng;
+    size_t dim;
+    size_t partitions;
+    double *anchors;
+    HolographicRanker **rankers;
+    size_t *loads;
+    size_t stored;
+};
+
 HolographicRanker *holo_ranker_create(size_t dim) {
     LeosEngine *eng = leos_engine_create(dim);
     if (!eng) return NULL;
@@ -149,4 +159,115 @@ int holo_ranker_load(HolographicRanker *r, const char *path) {
     r->stored = (size_t)sc;
     fclose(fp);
     return 0;
+}
+
+HoloPartitionedRanker *holo_partitioned_ranker_create(size_t dim,
+                                                       size_t partitions,
+                                                       uint64_t seed) {
+    if (dim == 0 || partitions == 0) return NULL;
+    HoloPartitionedRanker *r = calloc(1, sizeof(HoloPartitionedRanker));
+    if (!r) return NULL;
+    r->eng = leos_engine_create(dim);
+    r->dim = dim;
+    r->partitions = partitions;
+    r->anchors = calloc(partitions * dim, sizeof(double));
+    r->rankers = calloc(partitions, sizeof(HolographicRanker *));
+    r->loads = calloc(partitions, sizeof(size_t));
+    if (!r->eng || !r->anchors || !r->rankers || !r->loads) {
+        holo_partitioned_ranker_destroy(r);
+        return NULL;
+    }
+    for (size_t i = 0; i < partitions; ++i) {
+        r->rankers[i] = holo_ranker_create(dim);
+        if (!r->rankers[i]) {
+            holo_partitioned_ranker_destroy(r);
+            return NULL;
+        }
+        leos_engine_keygen(r->eng,
+                           seed ^ UINT64_C(0x9e3779b97f4a7c15) ^
+                               (UINT64_C(0xbf58476d1ce4e5b9) * (uint64_t)(i + 1u)),
+                           &r->anchors[i * dim]);
+    }
+    return r;
+}
+
+void holo_partitioned_ranker_destroy(HoloPartitionedRanker *r) {
+    if (!r) return;
+    if (r->rankers) {
+        for (size_t i = 0; i < r->partitions; ++i) {
+            holo_ranker_destroy(r->rankers[i]);
+        }
+    }
+    leos_engine_destroy(r->eng);
+    free(r->anchors);
+    free(r->rankers);
+    free(r->loads);
+    free(r);
+}
+
+size_t holo_partitioned_ranker_route(HoloPartitionedRanker *r,
+                                     const double *state) {
+    if (!r || !state || !r->anchors || r->partitions == 0) return 0;
+    size_t best = 0;
+    double best_score = leos_engine_dot(r->eng, state, &r->anchors[0]);
+    for (size_t i = 1; i < r->partitions; ++i) {
+        double score = leos_engine_dot(r->eng, state, &r->anchors[i * r->dim]);
+        if (score > best_score) {
+            best_score = score;
+            best = i;
+        }
+    }
+    return best;
+}
+
+void holo_partitioned_ranker_store(HoloPartitionedRanker *r,
+                                   const double *state,
+                                   const double *action) {
+    if (!r || !state || !action || !r->rankers) return;
+    size_t partition = holo_partitioned_ranker_route(r, state);
+    if (partition >= r->partitions || !r->rankers[partition]) return;
+    holo_ranker_store(r->rankers[partition], state, action);
+    ++r->loads[partition];
+    ++r->stored;
+}
+
+void holo_partitioned_ranker_score(HoloPartitionedRanker *r,
+                                   const double *state,
+                                   const double *action_vecs,
+                                   size_t n_candidates,
+                                   double *scores_out) {
+    if (!r || !state || !action_vecs || !scores_out || !r->rankers ||
+        n_candidates == 0) {
+        return;
+    }
+    size_t partition = holo_partitioned_ranker_route(r, state);
+    if (partition >= r->partitions || !r->rankers[partition]) return;
+    holo_ranker_score(r->rankers[partition],
+                      state,
+                      action_vecs,
+                      n_candidates,
+                      scores_out);
+}
+
+int holo_partitioned_ranker_recall(HoloPartitionedRanker *r,
+                                   const double *state,
+                                   double *context_out) {
+    if (!r || !state || !context_out || !r->rankers) return -1;
+    size_t partition = holo_partitioned_ranker_route(r, state);
+    if (partition >= r->partitions || !r->rankers[partition]) return -1;
+    return holo_ranker_recall(r->rankers[partition], state, context_out);
+}
+
+size_t holo_partitioned_ranker_count(const HoloPartitionedRanker *r) {
+    return r ? r->stored : 0;
+}
+
+size_t holo_partitioned_ranker_partition_count(const HoloPartitionedRanker *r) {
+    return r ? r->partitions : 0;
+}
+
+size_t holo_partitioned_ranker_partition_load(const HoloPartitionedRanker *r,
+                                              size_t partition) {
+    if (!r || !r->loads || partition >= r->partitions) return 0;
+    return r->loads[partition];
 }

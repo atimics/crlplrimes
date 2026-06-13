@@ -59,6 +59,18 @@ diagnostics show the flat trace is too weak and too coarse: exact candidates mov
 by tens of ranks yet remain far outside budget 64. The next HoloNet step should
 not lower gates or add score weight. It should change the memory geometry.
 
+The first C sandbox for that geometry is now implemented as
+`HoloPartitionedRanker`, a deterministic nearest-anchor router over multiple
+local `HolographicRanker` traces. It is intentionally simpler than a full
+HoloForest, but it tests the same capacity claim: keep each trace small before
+asking it to discriminate actions. The 2026-06-13 `holo_experiments --mode
+partitioned-retrieval` run emits `crlp.holo_partitioned_retrieval.v1` rows. At
+2048 dimensions, a flat trace is about `0.50` top-1 once loaded with 64-1024
+pairs; 32 partitions lift top-1 to `0.98` at 64 pairs, `0.85` at 128, `0.78` at
+256, `0.63` at 512, and `0.55` at 1024. The measured rule of thumb is that the
+local max load needs to stay below roughly 50 pairs before the routed trace is a
+clear win.
+
 The highest-value design is a capacity-managed ARC residual proposer:
 
 1. Keep `trace_task_prior` as the baseline and verifier-owned certification as
@@ -74,14 +86,25 @@ The highest-value design is a capacity-managed ARC residual proposer:
 5. Promote only when the diagnostic schema shows exact candidates crossing into
    budget without matching crossings out.
 
+A first direct pressure-memory wiring was tested on 2026-06-13 and not promoted:
+on the public unique-task gate it moved two exact candidates into a budget window
+but moved eight out, with lower utility at budgets 8, 32, and 64. The failure
+mode was useful: unguarded pressure can boost related but wrong candidates above
+already-in-budget exact candidates. The next version should be family/local and
+should refuse residuals that demote an exact candidate already inside the
+baseline budget.
+
 ## Near-Term Backlog Change
 
 Replace "tune HoloNet residual confidence" with:
 
 1. Build a C HoloForest/partitioning sandbox around `HolographicRanker` and
-   report flat/tree/forest recall rows.
-2. Add ARC pressure-memory training that stores missed exact candidates from
-   `trace_task_prior` rankings.
+   report flat/tree/forest recall rows. The first partitioned-ranker sandbox is
+   complete; the remaining step is tree/forest routing if family partitions are
+   too skewed.
+2. Add guarded ARC pressure-memory training that stores missed exact candidates
+   from `trace_task_prior` rankings, partitioned by family/local route and
+   constrained not to demote exact candidates already inside the baseline budget.
 3. Gate `trace_holo_residual` through the partitioned pressure memory, not one
    global trace.
 4. Use `crlp.arc_holo_residual_diagnostic.v1` as the promotion metric: budget

@@ -2,6 +2,7 @@
 #define NN_HOLOGRAPHIC_RANKER_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 /*
  * Holographic Ranker — zero-parameter action scorer.
@@ -59,8 +60,6 @@ int holo_ranker_recall(HolographicRanker *r,
                        const double *state,
                        double *context_out);
 
-#endif /* NN_HOLOGRAPHIC_RANKER_H */
-
 /* Serialization: save/load the memory trace.
  * Format: raw double array (dim * sizeof(double) bytes) + uint64_t stored_count. */
 int holo_ranker_save(const HolographicRanker *r, const char *path);
@@ -94,3 +93,35 @@ void holo_ranker_record_result(HolographicRanker *r, int correct);
 void holo_ranker_reset_accuracy(HolographicRanker *r);
 double holo_ranker_empirical_fidelity(const HolographicRanker *r);
 
+/* ---- Partitioned ranker ----
+ *
+ * A capacity-managed wrapper over several HolographicRanker traces. A state is
+ * routed to the nearest deterministic anchor; only that local trace is updated
+ * or recalled. This keeps cross-term noise bounded when a single global trace
+ * would be overloaded.
+ */
+typedef struct HoloPartitionedRanker HoloPartitionedRanker;
+
+HoloPartitionedRanker *holo_partitioned_ranker_create(size_t dim,
+                                                       size_t partitions,
+                                                       uint64_t seed);
+void holo_partitioned_ranker_destroy(HoloPartitionedRanker *r);
+void holo_partitioned_ranker_store(HoloPartitionedRanker *r,
+                                   const double *state,
+                                   const double *action);
+void holo_partitioned_ranker_score(HoloPartitionedRanker *r,
+                                   const double *state,
+                                   const double *action_vecs,
+                                   size_t n_candidates,
+                                   double *scores_out);
+int holo_partitioned_ranker_recall(HoloPartitionedRanker *r,
+                                   const double *state,
+                                   double *context_out);
+size_t holo_partitioned_ranker_count(const HoloPartitionedRanker *r);
+size_t holo_partitioned_ranker_partition_count(const HoloPartitionedRanker *r);
+size_t holo_partitioned_ranker_partition_load(const HoloPartitionedRanker *r,
+                                              size_t partition);
+size_t holo_partitioned_ranker_route(HoloPartitionedRanker *r,
+                                     const double *state);
+
+#endif /* NN_HOLOGRAPHIC_RANKER_H */
