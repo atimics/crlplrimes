@@ -95,7 +95,11 @@ emits 20 rows over five exact candidates and zero budget crossings: the largest
 shifts lift `67e8384a` reflected-tile compositions by 30-73 ranks, but only from
 roughly rank 1160-1185 to 1112-1132. The residual is therefore too weak or too
 coarse to move exact candidates into budget, not currently unsafe for accepted
-coverage.
+coverage. The 2026-06-13 HoloNet research pass in
+`docs/holonet-research-brief.md` changes the follow-up: do not tune the residual
+weight first. Add capacity management and cleanup-style routing first, because
+flat holographic traces are expected to lose discriminative power as cross-term
+noise grows.
 
 ## The Core Bet
 
@@ -286,7 +290,7 @@ rows separate ranker improvement from exact verifier coverage.
 | Unique-task certified/exact tasks | 46 / 43 after reflected + marker motif + axis tiling + period extension | 50+ / 46+ |
 | VSA scoring enabled | Yes, no grid/object-scene uplift | Keep instrumented |
 | Proposal trace rows | `crlp.arc_proposal_trace.v1`: 25,750 rows / 400 tasks / 144 exact candidate rows | Task-conditioned family/slot proposer |
-| Trace-prior proposer | `trace_task_prior` beats structural and global trace prior at budget 64; trained `trace_linear`/`trace_mlp` trail it; `trace_holo_residual` matches public utility and diagnostics show 0 budget crossings | Improve residual representation or candidate family gating before changing confidence thresholds |
+| Trace-prior proposer | `trace_task_prior` beats structural and global trace prior at budget 64; trained `trace_linear`/`trace_mlp` trail it; `trace_holo_residual` matches public utility and diagnostics show 0 budget crossings | Add rank-pressure memory plus HoloForest/family partitioning before changing confidence thresholds |
 | Flat-vs-forest recall rows | No | Yes |
 | Focused shape-scale audit | 55 certified rows after reflected tiling; marker motif adds 2, axis tiling adds 6, and period extension adds 1 unique-task exact solve | Extend to next fixed-scale family |
 | Object-scene ranker condition | Yes, no uplift | Park |
@@ -298,15 +302,17 @@ rows separate ranker improvement from exact verifier coverage.
    all-400-file gate so primitives that help outside the capped augmented slice
    show up in headline metrics.
 2. **Trace-first proposer learning** — use `crlp.arc_holo_residual_diagnostic.v1`
-   rows to separate far-out exact lifts from true budget-window wins/losses, then
-   change the action embedding or family gate only when it can move exact rows
-   near budget.
+   rows to separate far-out exact lifts from true budget-window wins/losses.
+   Next, train a rank-pressure HoloNet memory from exact candidates missed by
+   `trace_task_prior`, routed through family or HoloForest partitions so each
+   local trace stays below the flat-memory crosstalk limit.
 3. **Workstream D** (scale-space pyramid) — continue from `reflect_tile` into
    other shape-evidenced scale transforms. Runtime +5-10s.
 4. **Visual-program proposal coverage** — inspect zero-candidate and
    learned-visual-program coverage-gap tasks before adding more hand operators.
-5. **Workstream C** (capacity partitioning) — add flat/tree/forest ablations
-   after a representation shows signal or a flat trace degrades as stores grow.
+5. **Workstream C** (capacity partitioning) — add flat/tree/forest ablations now
+   for the ARC residual proposer; the flat trace already shows useful but
+   budget-irrelevant movement.
 6. **Workstream A/B/E hardening** — keep the reusable encoders, save/load, and VSA
    summary rows stable; avoid more score-weight tuning until candidate coverage
    changes.

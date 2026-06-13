@@ -202,7 +202,10 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   `trace_task_prior`. The residual diagnostic schema now shows why: 20 public
   rows over five exact candidates, zero budget crossings, and the largest lifts
   remain far outside budget 64. The next step is representation/gate redesign,
-  not claiming a coverage improvement.
+  not claiming a coverage improvement. The HoloNet research pass now narrows
+  that redesign: add rank-pressure memory for exact candidates missed by
+  `trace_task_prior`, and route it through family or HoloForest partitions before
+  tuning residual weights.
 
 **Papers:** Lake 2017 (Compositional Generalization), Bunel 2018 (Neural Program
 Synthesis), Nye 2021 (Scratchpads)
@@ -263,9 +266,10 @@ promoted ARC coverage.
    after shuffled train + ordered load), but ordered metrics remain 70/400.
 5. **Observed:** `arc_object_scene_v1` also persists and scores cleanly
    (`stored_count=114`), but ordered metrics still remain 70/400.
-6. **Next target:** keep raw-grid ARC VSA scoring parked, and redesign the
-   `trace_holo_residual` action embedding or family gate until diagnostics show
-   exact candidates moving near the budget window.
+6. **Next target:** keep raw-grid ARC VSA scoring parked, and replace the flat
+   `trace_holo_residual` memory with capacity-managed pressure memory. The
+   promotion metric is exact candidates crossing into the budget window without
+   matching crossings out.
 
 ### Phase 1B: Object-Scene VSA Representation (done; no uplift)
 
