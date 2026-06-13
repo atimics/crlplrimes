@@ -88,11 +88,17 @@ The highest-value design is a capacity-managed ARC residual proposer:
 
 A first direct pressure-memory wiring was tested on 2026-06-13 and not promoted:
 on the public unique-task gate it moved two exact candidates into a budget window
-but moved eight out, with lower utility at budgets 8, 32, and 64. The failure
-mode was useful: unguarded pressure can boost related but wrong candidates above
-already-in-budget exact candidates. The next version should be family/local and
-should refuse residuals that demote an exact candidate already inside the
-baseline budget.
+but moved eight out, with lower utility at budgets 8, 32, and 64. The follow-up
+guarded/local implementation now trains an opt-in partitioned pressure memory
+from exact candidates missed by the active budget grid, and diagnostics report
+`holo_pressure_updates`. Default scoring leaves this pressure residual disabled:
+the public unique-task run records 461 pressure updates, matches
+`trace_task_prior` utility at budgets 8/16/32/64, and keeps 0 crossings in / 0
+crossings out. Enabling `--arc-holo-pressure-residual` is still negative: 2
+crossings in, 27 crossings out, with lower utility at 8, 16, and 64. The useful
+failure mode is that even family/local pressure can boost related but wrong
+candidates ahead of exact candidates; the next version needs a cleanup candidate
+set or verifier-derived residual target, not a raw score boost.
 
 ## Near-Term Backlog Change
 
@@ -102,11 +108,11 @@ Replace "tune HoloNet residual confidence" with:
    report flat/tree/forest recall rows. The first partitioned-ranker sandbox is
    complete; the remaining step is tree/forest routing if family partitions are
    too skewed.
-2. Add guarded ARC pressure-memory training that stores missed exact candidates
-   from `trace_task_prior` rankings, partitioned by family/local route and
-   constrained not to demote exact candidates already inside the baseline budget.
-3. Gate `trace_holo_residual` through the partitioned pressure memory, not one
-   global trace.
+2. Keep the guarded ARC pressure-memory instrument in place, but leave
+   `--arc-holo-pressure-residual` disabled by default until it shows crossings
+   into budget without matching crossings out.
+3. Replace raw pressure score boosts with cleanup-style candidate buckets or a
+   verifier-derived residual target.
 4. Use `crlp.arc_holo_residual_diagnostic.v1` as the promotion metric: budget
    crossings first, utility second, hash changes last.
 
