@@ -97,8 +97,17 @@ the public unique-task run records 461 pressure updates, matches
 crossings out. Enabling `--arc-holo-pressure-residual` is still negative: 2
 crossings in, 27 crossings out, with lower utility at 8, 16, and 64. The useful
 failure mode is that even family/local pressure can boost related but wrong
-candidates ahead of exact candidates; the next version needs a cleanup candidate
-set or verifier-derived residual target, not a raw score boost.
+candidates ahead of exact candidates. The follow-up `trace_holo_bucket` strategy
+uses the same pressure memory as a cleanup/review bucket instead of a raw score
+boost: exact candidates already inside the baseline budget are pinned, and only
+a tiny pressure-retrieved outside-budget review window can enter. On the public
+unique-task gate it improves utility over `trace_task_prior` at every budget
+(`0.01685136/0.02036279/0.02122741/0.02265669` at 8/16/32/64), raises budget-64
+certified programs from 29 to 31, and emits `crlp.arc_holo_bucket_diagnostic.v1`
+with 8 crossings into budget and 0 out.
+The tight-grid check is mixed but mostly supportive: `trace_holo_bucket` trails
+`trace_task_prior` at budget 1, but improves utility at budgets 2, 4, and 8;
+bucket diagnostics show 5 crossings into budget and 0 out.
 
 ## Near-Term Backlog Change
 
@@ -108,11 +117,11 @@ Replace "tune HoloNet residual confidence" with:
    report flat/tree/forest recall rows. The first partitioned-ranker sandbox is
    complete; the remaining step is tree/forest routing if family partitions are
    too skewed.
-2. Keep the guarded ARC pressure-memory instrument in place, but leave
-   `--arc-holo-pressure-residual` disabled by default until it shows crossings
-   into budget without matching crossings out.
-3. Replace raw pressure score boosts with cleanup-style candidate buckets or a
-   verifier-derived residual target.
+2. Keep `--arc-holo-pressure-residual` disabled; raw pressure boosts remain a
+   negative control.
+3. Promote `trace_holo_bucket` from architecture probe to the next focused
+   proposer experiment: tune review-window size, especially for budget 1, then
+   verify whether the uplift survives alternate task orderings.
 4. Use `crlp.arc_holo_residual_diagnostic.v1` as the promotion metric: budget
    crossings first, utility second, hash changes last.
 

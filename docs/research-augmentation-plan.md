@@ -269,15 +269,15 @@ promoted ARC coverage.
    after shuffled train + ordered load), but ordered metrics remain 70/400.
 5. **Observed:** `arc_object_scene_v1` also persists and scores cleanly
    (`stored_count=114`), but ordered metrics still remain 70/400.
-6. **Next target:** keep raw-grid ARC VSA scoring parked, and keep guarded,
-   capacity-managed pressure memory as an instrument rather than a promoted
-   scorer. It now trains from exact candidates missed by the active budget grid
-   and reports `holo_pressure_updates`; the default public run records 461
-   pressure updates with 0 crossings in / 0 out, while opt-in
-   `--arc-holo-pressure-residual` is still negative at 2 in / 27 out. The
-   promotion metric remains exact candidates crossing into the budget window
-   without matching crossings out and without demoting already-in-budget exact
-   candidates.
+6. **Next target:** keep raw-grid ARC VSA scoring parked, keep raw
+   `--arc-holo-pressure-residual` as a negative control, and focus on
+   `trace_holo_bucket`. It treats guarded pressure memory as a cleanup/review
+   bucket rather than a scorer. The public unique-task run records utility
+   improvements at budgets 8/16/32/64 and bucket diagnostics show 8 exact
+   candidates crossing into budget with 0 crossing out. The tight-grid run
+   improves at budgets 2/4/8 but trails at budget 1, with 5 exact crossings in
+   and 0 out. The next promotion test is alternate task orderings plus
+   budget-1 review-window tuning.
 7. **Measured substrate row:** `holo_experiments --mode partitioned-retrieval`
    now emits `crlp.holo_partitioned_retrieval.v1`; use local max-load below
    roughly 50 pairs as the first routing target for ARC residual memories.
