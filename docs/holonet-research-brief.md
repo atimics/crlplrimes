@@ -105,9 +105,9 @@ unique-task gate it improves utility over `trace_task_prior` at every budget
 (`0.01685136/0.02036279/0.02122741/0.02265669` at 8/16/32/64), raises budget-64
 certified programs from 29 to 31, and emits `crlp.arc_holo_bucket_diagnostic.v1`
 with 8 crossings into budget and 0 out.
-The tight-grid check is mixed but mostly supportive: `trace_holo_bucket` trails
-`trace_task_prior` at budget 1, but improves utility at budgets 2, 4, and 8;
-bucket diagnostics show 5 crossings into budget and 0 out.
+The tight-grid check uses a budget floor: `trace_holo_bucket` now matches
+`trace_task_prior` at budget 1, improves utility at budgets 2, 4, and 8, and
+bucket diagnostics show 4 crossings into budget and 0 out.
 
 ## Near-Term Backlog Change
 
@@ -120,8 +120,8 @@ Replace "tune HoloNet residual confidence" with:
 2. Keep `--arc-holo-pressure-residual` disabled; raw pressure boosts remain a
    negative control.
 3. Promote `trace_holo_bucket` from architecture probe to the next focused
-   proposer experiment: tune review-window size, especially for budget 1, then
-   verify whether the uplift survives alternate task orderings.
+   proposer experiment: sweep review-window size and verify whether the uplift
+   survives alternate task orderings.
 4. Use `crlp.arc_holo_residual_diagnostic.v1` as the promotion metric: budget
    crossings first, utility second, hash changes last.
 

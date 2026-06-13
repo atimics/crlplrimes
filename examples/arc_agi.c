@@ -495,6 +495,8 @@ typedef struct {
     int loader_summary_only;
     int arc_holo_residual_diagnostics;
     int arc_holo_pressure_residual;
+    size_t arc_holo_bucket_min_budget;
+    size_t arc_holo_bucket_review_slots;
     int shuffle_tasks;
     int unique_task_gate;
     int program_budget_grid;
@@ -862,6 +864,8 @@ typedef struct {
     HoloPartitionedRanker *holo_pressure;
     size_t holo_pressure_updates;
     int holo_pressure_enabled;
+    size_t holo_bucket_min_budget;
+    size_t holo_bucket_review_slots;
     size_t input_color_seen[ARC_COLOR_COUNT];
     size_t input_color_success[ARC_COLOR_COUNT];
     size_t output_color_seen[ARC_COLOR_COUNT];
@@ -7904,13 +7908,20 @@ static void arc_build_program_ranks(const ARCTask *task,
             break;
         case ARC_PROGRAM_STRATEGY_TRACE_HOLO_BUCKET: {
             ranks[i].primary = baseline_primary[i];
+            size_t min_budget = trace_prior != NULL && trace_prior->holo_bucket_min_budget != 0
+                                    ? trace_prior->holo_bucket_min_budget
+                                    : 2u;
             size_t review_slots = 0;
-            if (budget != 0) {
-                review_slots = budget / 16u;
-                if (review_slots == 0) {
-                    review_slots = 1;
-                } else if (review_slots > 4u) {
-                    review_slots = 4u;
+            if (budget >= min_budget) {
+                if (trace_prior != NULL && trace_prior->holo_bucket_review_slots != 0) {
+                    review_slots = trace_prior->holo_bucket_review_slots;
+                } else {
+                    review_slots = budget / 16u;
+                    if (review_slots == 0) {
+                        review_slots = 1;
+                    } else if (review_slots > 4u) {
+                        review_slots = 4u;
+                    }
                 }
             }
             if (budget != 0 && baseline_rank[i] != 0 &&
@@ -27170,6 +27181,9 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         return 0;
     }
     proposal_trace_prior.holo_pressure_enabled = config->arc_holo_pressure_residual;
+    proposal_trace_prior.holo_bucket_min_budget = config->arc_holo_bucket_min_budget;
+    proposal_trace_prior.holo_bucket_review_slots =
+        config->arc_holo_bucket_review_slots;
     ARCTransformCandidate *candidates =
         calloc(ARC_RULE_CANDIDATE_COUNT, sizeof(*candidates));
     ARCProgramEval *evals = calloc(ARC_RULE_CANDIDATE_COUNT, sizeof(*evals));
@@ -27512,6 +27526,8 @@ static void print_usage(FILE *stream)
           "[--arc-sketch-probe-attempts path] "
           "[--arc-proposal-trace path] "
           "[--arc-holo-residual-diagnostics] [--arc-holo-pressure-residual] "
+          "[--arc-holo-bucket-min-budget count] "
+          "[--arc-holo-bucket-review-slots count] "
           "[--arc-sketches-per-task count] "
           "[--hypothesis-top-k count] [--disable-hypothesis-neural-prior] "
           "[--disable-hypothesis-slot-prior] [--disable-hypothesis-cold-start] "
@@ -27564,6 +27580,8 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->loader_summary_only = 0;
     config->arc_holo_residual_diagnostics = 0;
     config->arc_holo_pressure_residual = 0;
+    config->arc_holo_bucket_min_budget = 2;
+    config->arc_holo_bucket_review_slots = 0;
     config->shuffle_tasks = 0;
     config->unique_task_gate = 0;
     config->program_budget_grid = 0;
@@ -27706,6 +27724,20 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             config->arc_holo_residual_diagnostics = 1;
         } else if (strcmp(argv[i], "--arc-holo-pressure-residual") == 0) {
             config->arc_holo_pressure_residual = 1;
+        } else if (strcmp(argv[i], "--arc-holo-bucket-min-budget") == 0 &&
+                   i + 1 < argc) {
+            if (!nn_parse_size_text(argv[++i], &config->arc_holo_bucket_min_budget)) {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--arc-holo-bucket-review-slots") == 0 &&
+                   i + 1 < argc) {
+            const char *value = argv[++i];
+            if (strcmp(value, "0") == 0) {
+                config->arc_holo_bucket_review_slots = 0;
+            } else if (!nn_parse_size_text(value,
+                                           &config->arc_holo_bucket_review_slots)) {
+                return 0;
+            }
         } else if (strcmp(argv[i], "--arc-sketches-per-task") == 0 && i + 1 < argc) {
             if (!nn_parse_size_text(argv[++i], &config->arc_sketch_probe_sketches_per_task)) {
                 return 0;

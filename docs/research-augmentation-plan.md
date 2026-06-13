@@ -274,10 +274,10 @@ promoted ARC coverage.
    `trace_holo_bucket`. It treats guarded pressure memory as a cleanup/review
    bucket rather than a scorer. The public unique-task run records utility
    improvements at budgets 8/16/32/64 and bucket diagnostics show 8 exact
-   candidates crossing into budget with 0 crossing out. The tight-grid run
-   improves at budgets 2/4/8 but trails at budget 1, with 5 exact crossings in
+   candidates crossing into budget with 0 crossing out. The tight-grid run now
+   matches at budget 1 and improves at budgets 2/4/8, with 4 exact crossings in
    and 0 out. The next promotion test is alternate task orderings plus
-   budget-1 review-window tuning.
+   review-window tuning.
 7. **Measured substrate row:** `holo_experiments --mode partitioned-retrieval`
    now emits `crlp.holo_partitioned_retrieval.v1`; use local max-load below
    roughly 50 pairs as the first routing target for ARC residual memories.
