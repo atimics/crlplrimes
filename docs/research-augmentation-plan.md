@@ -199,8 +199,10 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   positive residual to `trace_task_prior` after support/similarity/memory gates.
   The fixture smoke validates the wiring and summary rows. Public unique-task
   rows now show changed program-set hashes but matched utility versus
-  `trace_task_prior`, so the next step is residual win/loss diagnostics rather
-  than claiming a coverage improvement.
+  `trace_task_prior`. The residual diagnostic schema now shows why: 20 public
+  rows over five exact candidates, zero budget crossings, and the largest lifts
+  remain far outside budget 64. The next step is representation/gate redesign,
+  not claiming a coverage improvement.
 
 **Papers:** Lake 2017 (Compositional Generalization), Bunel 2018 (Neural Program
 Synthesis), Nye 2021 (Scratchpads)
@@ -261,9 +263,9 @@ promoted ARC coverage.
    after shuffled train + ordered load), but ordered metrics remain 70/400.
 5. **Observed:** `arc_object_scene_v1` also persists and scores cleanly
    (`stored_count=114`), but ordered metrics still remain 70/400.
-6. **Next target:** keep raw-grid ARC VSA scoring parked, and use the measured
-   `trace_holo_residual` no-uplift result to build residual win/loss diagnostics
-   before changing the gate or memory representation.
+6. **Next target:** keep raw-grid ARC VSA scoring parked, and redesign the
+   `trace_holo_residual` action embedding or family gate until diagnostics show
+   exact candidates moving near the budget window.
 
 ### Phase 1B: Object-Scene VSA Representation (done; no uplift)
 

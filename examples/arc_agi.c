@@ -493,6 +493,7 @@ typedef struct {
     const char *arc_sketch_probe_attempts_path;
     const char *arc_proposal_trace_path;
     int loader_summary_only;
+    int arc_holo_residual_diagnostics;
     int shuffle_tasks;
     int unique_task_gate;
     int program_budget_grid;
@@ -15747,6 +15748,109 @@ static void arc_program_aggregate_task(ARCProgramProposerAggregate *aggregate,
     }
 }
 
+static void arc_emit_holo_residual_diagnostics(const ARCTask *task,
+                                               const ARCTransformCandidate *candidates,
+                                               const ARCProgramEval *evals,
+                                               size_t candidate_count,
+                                               ARCProgramLearnedState *learned,
+                                               ARCProposalTracePrior *trace_prior,
+                                               size_t budget)
+{
+    if (task == NULL || candidates == NULL || evals == NULL || candidate_count == 0 ||
+        trace_prior == NULL) {
+        return;
+    }
+    ARCProgramTaskFeatures task_features;
+    ARCProgramRank task_ranks[ARC_RULE_CANDIDATE_COUNT];
+    ARCProgramRank holo_ranks[ARC_RULE_CANDIDATE_COUNT];
+    size_t task_position[ARC_RULE_CANDIDATE_COUNT];
+    size_t holo_position[ARC_RULE_CANDIDATE_COUNT];
+    double task_score[ARC_RULE_CANDIDATE_COUNT];
+    double holo_score[ARC_RULE_CANDIDATE_COUNT];
+    for (size_t i = 0; i < candidate_count; ++i) {
+        task_position[i] = SIZE_MAX;
+        holo_position[i] = SIZE_MAX;
+        task_score[i] = 0.0;
+        holo_score[i] = 0.0;
+    }
+    arc_program_task_features(task, &task_features);
+    arc_build_program_ranks(task,
+                            candidates,
+                            evals,
+                            candidate_count,
+                            ARC_PROGRAM_STRATEGY_TRACE_TASK_PRIOR,
+                            learned,
+                            trace_prior,
+                            &task_features,
+                            task_ranks);
+    arc_build_program_ranks(task,
+                            candidates,
+                            evals,
+                            candidate_count,
+                            ARC_PROGRAM_STRATEGY_TRACE_HOLO_RESIDUAL,
+                            learned,
+                            trace_prior,
+                            &task_features,
+                            holo_ranks);
+    for (size_t rank = 0; rank < candidate_count; ++rank) {
+        size_t task_index = task_ranks[rank].candidate_index;
+        size_t holo_index = holo_ranks[rank].candidate_index;
+        if (task_index < candidate_count) {
+            task_position[task_index] = rank + 1u;
+            task_score[task_index] = task_ranks[rank].primary;
+        }
+        if (holo_index < candidate_count) {
+            holo_position[holo_index] = rank + 1u;
+            holo_score[holo_index] = holo_ranks[rank].primary;
+        }
+    }
+    for (size_t i = 0; i < candidate_count; ++i) {
+        if (!arc_program_eval_is_exact_success(&evals[i])) {
+            continue;
+        }
+        if (task_position[i] == SIZE_MAX || holo_position[i] == SIZE_MAX) {
+            continue;
+        }
+        int task_in_budget = task_position[i] <= budget;
+        int holo_in_budget = holo_position[i] <= budget;
+        size_t rank_delta_abs = task_position[i] > holo_position[i]
+                                    ? task_position[i] - holo_position[i]
+                                    : holo_position[i] - task_position[i];
+        if (task_in_budget == holo_in_budget && rank_delta_abs < 8u) {
+            continue;
+        }
+        printf("{\"schema\":\"crlp.arc_holo_residual_diagnostic.v1\","
+               "\"report_version\":1,\"task\":\"arc_agi\",\"task_instance\":");
+        print_json_string(task->id);
+        printf(",\"budget\":%zu,\"candidate_index\":%zu,\"candidate_name\":",
+               budget,
+               i);
+        print_json_string(candidates[i].name);
+        printf(",\"program_hash\":\"%016llx\","
+               "\"task_prior_rank\":%zu,\"holo_residual_rank\":%zu,"
+               "\"rank_delta\":%lld,\"task_prior_score\":%.8f,"
+               "\"holo_residual_score\":%.8f,\"crossed_into_budget\":%s,"
+               "\"crossed_out_of_budget\":%s,\"train_consistent\":%s,"
+               "\"test_supported\":%s,\"test_cells\":%zu,"
+               "\"test_correct_cells\":%zu,\"holo_updates\":%zu,"
+               "\"positive_rows\":%zu}\n",
+               (unsigned long long)evals[i].program_hash,
+               task_position[i],
+               holo_position[i],
+               (long long)task_position[i] - (long long)holo_position[i],
+               task_score[i],
+               holo_score[i],
+               (!task_in_budget && holo_in_budget) ? "true" : "false",
+               (task_in_budget && !holo_in_budget) ? "true" : "false",
+               evals[i].train_consistent ? "true" : "false",
+               evals[i].test_supported ? "true" : "false",
+               evals[i].test_cells,
+               evals[i].test_correct_cells,
+               trace_prior->holo_updates,
+               trace_prior->positive_rows);
+    }
+}
+
 static int arc_program_learned_observe(ARCProgramLearnedState *state,
                                        const ARCTask *task,
                                        const ARCTransformCandidate *candidates,
@@ -26823,6 +26927,15 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
                 arc_emit_induction_smoke(rotated, candidates, evals, candidate_count);
         }
         for (size_t budget_index = 0; budget_index < budget_count; ++budget_index) {
+            if (config->arc_holo_residual_diagnostics) {
+                arc_emit_holo_residual_diagnostics(&task,
+                                                   candidates,
+                                                   evals,
+                                                   candidate_count,
+                                                   &learned_state,
+                                                   &proposal_trace_prior,
+                                                   budgets[budget_index]);
+            }
             for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
                 arc_program_aggregate_task(&program_aggregates[budget_index][strategy],
                                            &task,
@@ -26940,6 +27053,7 @@ static void print_usage(FILE *stream)
           "[--arc-sketch-probe-sources path] [--arc-sketch-probe-prior path] "
           "[--arc-sketch-probe-attempts path] "
           "[--arc-proposal-trace path] "
+          "[--arc-holo-residual-diagnostics] "
           "[--arc-sketches-per-task count] "
           "[--hypothesis-top-k count] [--disable-hypothesis-neural-prior] "
           "[--disable-hypothesis-slot-prior] [--disable-hypothesis-cold-start] "
@@ -26990,6 +27104,7 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->arc_sketch_probe_attempts_path = NULL;
     config->arc_proposal_trace_path = NULL;
     config->loader_summary_only = 0;
+    config->arc_holo_residual_diagnostics = 0;
     config->shuffle_tasks = 0;
     config->unique_task_gate = 0;
     config->program_budget_grid = 0;
@@ -27128,6 +27243,8 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             if (config->arc_proposal_trace_path[0] == '\0') {
                 return 0;
             }
+        } else if (strcmp(argv[i], "--arc-holo-residual-diagnostics") == 0) {
+            config->arc_holo_residual_diagnostics = 1;
         } else if (strcmp(argv[i], "--arc-sketches-per-task") == 0 && i + 1 < argc) {
             if (!nn_parse_size_text(argv[++i], &config->arc_sketch_probe_sketches_per_task)) {
                 return 0;
