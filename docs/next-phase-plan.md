@@ -117,6 +117,14 @@ The first default full public sweep keeps zero crossed-out exact candidates.
 `auto` and one-slot review windows pass the no-regression check; two-/four-slot
 windows are better at larger budgets but regress tight budget 2, so they remain
 exploratory rather than default promotion candidates.
+The bucket invocation gate is now an auditable policy surface:
+`--arc-holo-bucket-min-pressure-updates` controls pressure-memory warmup and
+`crlp.arc_holo_bucket_gate.v1` records gate-open rows, review slots,
+pressure-memory size, and outside-budget pressure candidates. The focused
+`auto,1` public gate audit opens 776/800 rows after warmup, opens 0/800 at tight
+budget 1, and preserves the no-regression result. The next architecture step is
+to learn a sharper invocation policy from those rows, not to widen the review
+window.
 
 ## The Core Bet
 
@@ -307,7 +315,7 @@ rows separate ranker improvement from exact verifier coverage.
 | Unique-task certified/exact tasks | 46 / 43 after reflected + marker motif + axis tiling + period extension | 50+ / 46+ |
 | VSA scoring enabled | Yes, no grid/object-scene uplift | Keep instrumented |
 | Proposal trace rows | `crlp.arc_proposal_trace.v1`: 25,750 rows / 400 tasks / 144 exact candidate rows | Task-conditioned family/slot proposer |
-| Trace-prior proposer | `trace_task_prior` beats structural and global trace prior at budget 64; trained `trace_linear`/`trace_mlp` trail it; default `trace_holo_residual` matches public utility and diagnostics show 0 budget crossings; raw `--arc-holo-pressure-residual` remains negative, but `trace_holo_bucket` improves public utility at budgets 8/16/32/64 to `0.01685136/0.02036279/0.02122741/0.02265669` with 8 crossings in and 0 out; tight grid matches at 1 and improves at 2/4/8; robustness rows show `auto`/`1` are stable and `2`/`4` regress tight budget 2 | Expand task-order seeds for `auto`/`1`; keep larger review windows as exploratory larger-budget settings |
+| Trace-prior proposer | `trace_task_prior` beats structural and global trace prior at budget 64; trained `trace_linear`/`trace_mlp` trail it; default `trace_holo_residual` matches public utility and diagnostics show 0 budget crossings; raw `--arc-holo-pressure-residual` remains negative, but `trace_holo_bucket` improves public utility at budgets 8/16/32/64 to `0.01685136/0.02036279/0.02122741/0.02265669` with 8 crossings in and 0 out; tight grid matches at 1 and improves at 2/4/8; robustness rows show `auto`/`1` are stable and `2`/`4` regress tight budget 2; gate rows show 776/800 open after warmup and 0/800 open at tight budget 1 | Expand task-order seeds for `auto`/`1`; learn a sharper bucket invocation policy from gate rows before widening review |
 | Flat-vs-forest recall rows | Partitioned sandbox rows exist: 32 partitions lift top-1 from ~0.50 flat to 0.98/0.85/0.78/0.63/0.55 at 64/128/256/512/1024 pairs | Add tree/forest or ARC family-partition rows |
 | Focused shape-scale audit | 55 certified rows after reflected tiling; marker motif adds 2, axis tiling adds 6, and period extension adds 1 unique-task exact solve | Extend to next fixed-scale family |
 | Object-scene ranker condition | Yes, no uplift | Park |

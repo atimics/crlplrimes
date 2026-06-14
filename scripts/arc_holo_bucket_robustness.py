@@ -57,9 +57,12 @@ def review_slot_arg(value: str) -> tuple[str, int]:
     return value, parsed
 
 
-def parse_jsonl(path: Path) -> tuple[dict[int, dict[str, dict]], dict[int, dict[str, int]]]:
+def parse_jsonl(
+    path: Path,
+) -> tuple[dict[int, dict[str, dict]], dict[int, dict[str, int]], dict[int, dict[str, float]]]:
     summaries: dict[int, dict[str, dict]] = {}
     diagnostics: dict[int, dict[str, int]] = {}
+    gates: dict[int, dict[str, float]] = {}
     with path.open("r", encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, 1):
             line = line.strip()
@@ -96,7 +99,32 @@ def parse_jsonl(path: Path) -> tuple[dict[int, dict[str, dict]], dict[int, dict[
                     diag["max_holo_pressure_updates"],
                     int(row.get("holo_pressure_updates", 0)),
                 )
-    return summaries, diagnostics
+            elif schema == "crlp.arc_holo_bucket_gate.v1":
+                budget = int(row["budget"])
+                gate = gates.setdefault(
+                    budget,
+                    {
+                        "gate_rows": 0,
+                        "gate_open_rows": 0,
+                        "outside_budget_pressure_candidates": 0,
+                        "outside_budget_exact_pressure_candidates": 0,
+                        "max_pressure_raw": 0.0,
+                    },
+                )
+                gate["gate_rows"] += 1
+                if row.get("gate_open"):
+                    gate["gate_open_rows"] += 1
+                gate["outside_budget_pressure_candidates"] += int(
+                    row.get("outside_budget_pressure_candidates", 0)
+                )
+                gate["outside_budget_exact_pressure_candidates"] += int(
+                    row.get("outside_budget_exact_pressure_candidates", 0)
+                )
+                gate["max_pressure_raw"] = max(
+                    gate["max_pressure_raw"],
+                    float(row.get("max_pressure_raw", 0.0)),
+                )
+    return summaries, diagnostics, gates
 
 
 def run_condition(
@@ -133,6 +161,8 @@ def run_condition(
         str(min_budget),
         "--arc-holo-bucket-review-slots",
         str(review_slots),
+        "--arc-holo-bucket-min-pressure-updates",
+        str(args.min_pressure_updates),
     ]
     if grid == "tight":
         command.append("--program-budget-tight-grid")
@@ -155,7 +185,7 @@ def run_condition(
             f"stderr: {stderr_path}"
         )
 
-    summaries, diagnostics = parse_jsonl(raw_path)
+    summaries, diagnostics, gates = parse_jsonl(raw_path)
     rows: list[dict] = []
     for budget in sorted(summaries):
         by_strategy = summaries[budget]
@@ -170,6 +200,16 @@ def run_condition(
                 "crossed_into_budget": 0,
                 "crossed_out_of_budget": 0,
                 "max_holo_pressure_updates": 0,
+            },
+        )
+        gate = gates.get(
+            budget,
+            {
+                "gate_rows": 0,
+                "gate_open_rows": 0,
+                "outside_budget_pressure_candidates": 0,
+                "outside_budget_exact_pressure_candidates": 0,
+                "max_pressure_raw": 0.0,
             },
         )
         row = {
@@ -198,6 +238,15 @@ def run_condition(
             "crossed_into_budget": diag["crossed_into_budget"],
             "crossed_out_of_budget": diag["crossed_out_of_budget"],
             "max_holo_pressure_updates": diag["max_holo_pressure_updates"],
+            "gate_rows": int(gate["gate_rows"]),
+            "gate_open_rows": int(gate["gate_open_rows"]),
+            "outside_budget_pressure_candidates": int(
+                gate["outside_budget_pressure_candidates"]
+            ),
+            "outside_budget_exact_pressure_candidates": int(
+                gate["outside_budget_exact_pressure_candidates"]
+            ),
+            "max_pressure_raw": float(gate["max_pressure_raw"]),
             "raw_log": str(raw_path),
             "stderr_log": str(stderr_path),
         }
@@ -220,6 +269,8 @@ def aggregate_rows(rows: list[dict]) -> list[dict]:
         certified_deltas = [int(row["certified_delta"]) for row in group]
         crossed_in = sum(int(row["crossed_into_budget"]) for row in group)
         crossed_out = sum(int(row["crossed_out_of_budget"]) for row in group)
+        gate_rows = sum(int(row.get("gate_rows", 0)) for row in group)
+        gate_open_rows = sum(int(row.get("gate_open_rows", 0)) for row in group)
         aggregates.append(
             {
                 "schema": AGG_SCHEMA,
@@ -237,6 +288,19 @@ def aggregate_rows(rows: list[dict]) -> list[dict]:
                 "median_certified_delta": statistics.median(certified_deltas),
                 "crossed_into_budget": crossed_in,
                 "crossed_out_of_budget": crossed_out,
+                "gate_rows": gate_rows,
+                "gate_open_rows": gate_open_rows,
+                "outside_budget_pressure_candidates": sum(
+                    int(row.get("outside_budget_pressure_candidates", 0))
+                    for row in group
+                ),
+                "outside_budget_exact_pressure_candidates": sum(
+                    int(row.get("outside_budget_exact_pressure_candidates", 0))
+                    for row in group
+                ),
+                "max_pressure_raw": max(
+                    float(row.get("max_pressure_raw", 0.0)) for row in group
+                ),
                 "passes_no_regression": all(delta >= 0.0 for delta in deltas)
                 and crossed_out == 0,
             }
@@ -276,6 +340,7 @@ def main(argv: list[str]) -> int:
         help="comma list of original or shuffle:<seed>",
     )
     parser.add_argument("--min-budgets", default="2")
+    parser.add_argument("--min-pressure-updates", type=int, default=4)
     parser.add_argument("--review-slots", default="auto,1,2,4")
     args = parser.parse_args(argv)
 

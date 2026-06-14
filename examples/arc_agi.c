@@ -497,6 +497,7 @@ typedef struct {
     int arc_holo_pressure_residual;
     size_t arc_holo_bucket_min_budget;
     size_t arc_holo_bucket_review_slots;
+    size_t arc_holo_bucket_min_pressure_updates;
     int shuffle_tasks;
     int unique_task_gate;
     int program_budget_grid;
@@ -866,6 +867,7 @@ typedef struct {
     int holo_pressure_enabled;
     size_t holo_bucket_min_budget;
     size_t holo_bucket_review_slots;
+    size_t holo_bucket_min_pressure_updates;
     size_t input_color_seen[ARC_COLOR_COUNT];
     size_t input_color_success[ARC_COLOR_COUNT];
     size_t output_color_seen[ARC_COLOR_COUNT];
@@ -7701,6 +7703,48 @@ static int arc_program_learned_train_task(ARCProgramLearnedState *state,
     return 1;
 }
 
+static size_t arc_holo_bucket_min_budget_value(const ARCProposalTracePrior *prior)
+{
+    return prior != NULL && prior->holo_bucket_min_budget != 0
+               ? prior->holo_bucket_min_budget
+               : 2u;
+}
+
+static size_t arc_holo_bucket_min_pressure_updates_value(
+    const ARCProposalTracePrior *prior)
+{
+    return prior != NULL && prior->holo_bucket_min_pressure_updates != 0
+               ? prior->holo_bucket_min_pressure_updates
+               : 4u;
+}
+
+static size_t arc_holo_bucket_review_slots_value(const ARCProposalTracePrior *prior,
+                                                 size_t budget)
+{
+    if (budget < arc_holo_bucket_min_budget_value(prior)) {
+        return 0;
+    }
+    if (prior != NULL && prior->holo_bucket_review_slots != 0) {
+        return prior->holo_bucket_review_slots;
+    }
+    size_t review_slots = budget / 16u;
+    if (review_slots == 0) {
+        review_slots = 1;
+    } else if (review_slots > 4u) {
+        review_slots = 4u;
+    }
+    return review_slots;
+}
+
+static int arc_holo_bucket_gate_open(const ARCProposalTracePrior *prior,
+                                     size_t budget)
+{
+    return prior != NULL && prior->holo_pressure != NULL &&
+           prior->holo_pressure_updates >=
+               arc_holo_bucket_min_pressure_updates_value(prior) &&
+           arc_holo_bucket_review_slots_value(prior, budget) != 0;
+}
+
 static void arc_build_program_ranks(const ARCTask *task,
                                     const ARCTransformCandidate *candidates,
                                     const ARCProgramEval *evals,
@@ -7784,7 +7828,8 @@ static void arc_build_program_ranks(const ARCTask *task,
         }
         if (strategy == ARC_PROGRAM_STRATEGY_TRACE_HOLO_BUCKET &&
             trace_prior != NULL && trace_prior->holo_pressure != NULL &&
-            trace_prior->holo_pressure_updates >= 4u && task_features != NULL) {
+            arc_holo_bucket_gate_open(trace_prior, budget) &&
+            task_features != NULL) {
             ARCProgramRank pressure_ranks[ARC_RULE_CANDIDATE_COUNT];
             for (size_t i = 0; i < candidate_count; ++i) {
                 pressure_raw[i] =
@@ -7908,22 +7953,10 @@ static void arc_build_program_ranks(const ARCTask *task,
             break;
         case ARC_PROGRAM_STRATEGY_TRACE_HOLO_BUCKET: {
             ranks[i].primary = baseline_primary[i];
-            size_t min_budget = trace_prior != NULL && trace_prior->holo_bucket_min_budget != 0
-                                    ? trace_prior->holo_bucket_min_budget
-                                    : 2u;
-            size_t review_slots = 0;
-            if (budget >= min_budget) {
-                if (trace_prior != NULL && trace_prior->holo_bucket_review_slots != 0) {
-                    review_slots = trace_prior->holo_bucket_review_slots;
-                } else {
-                    review_slots = budget / 16u;
-                    if (review_slots == 0) {
-                        review_slots = 1;
-                    } else if (review_slots > 4u) {
-                        review_slots = 4u;
-                    }
-                }
-            }
+            size_t review_slots =
+                arc_holo_bucket_gate_open(trace_prior, budget)
+                    ? arc_holo_bucket_review_slots_value(trace_prior, budget)
+                    : 0u;
             if (budget != 0 && baseline_rank[i] != 0 &&
                 baseline_rank[i] <= budget &&
                 arc_program_eval_is_exact_success(&evals[i])) {
@@ -16203,6 +16236,86 @@ static void arc_emit_holo_residual_diagnostics(const ARCTask *task,
                trace_prior->holo_pressure_updates,
                trace_prior->positive_rows);
     }
+}
+
+static void arc_emit_holo_bucket_gate_diagnostic(
+    const ARCTask *task,
+    const ARCTransformCandidate *candidates,
+    const ARCProgramEval *evals,
+    size_t candidate_count,
+    ARCProposalTracePrior *trace_prior,
+    size_t budget)
+{
+    if (task == NULL || candidates == NULL || evals == NULL ||
+        candidate_count == 0 || trace_prior == NULL) {
+        return;
+    }
+    ARCProgramTaskFeatures task_features;
+    ARCProgramRank task_ranks[ARC_RULE_CANDIDATE_COUNT];
+    size_t baseline_rank[ARC_RULE_CANDIDATE_COUNT];
+    size_t pressure_candidates = 0;
+    size_t exact_pressure_candidates = 0;
+    double max_pressure_raw = 0.0;
+    for (size_t i = 0; i < candidate_count; ++i) {
+        baseline_rank[i] = 0;
+    }
+    arc_program_task_features(task, &task_features);
+    arc_build_program_ranks(task,
+                            candidates,
+                            evals,
+                            candidate_count,
+                            budget,
+                            ARC_PROGRAM_STRATEGY_TRACE_TASK_PRIOR,
+                            NULL,
+                            trace_prior,
+                            &task_features,
+                            task_ranks);
+    for (size_t rank = 0; rank < candidate_count; ++rank) {
+        size_t index = task_ranks[rank].candidate_index;
+        if (index < candidate_count) {
+            baseline_rank[index] = rank + 1u;
+        }
+    }
+    if (arc_holo_bucket_gate_open(trace_prior, budget)) {
+        for (size_t i = 0; i < candidate_count; ++i) {
+            if (baseline_rank[i] == 0 || baseline_rank[i] <= budget) {
+                continue;
+            }
+            double pressure_raw =
+                arc_proposal_trace_holo_pressure_raw(trace_prior,
+                                                     &candidates[i],
+                                                     &task_features);
+            if (pressure_raw <= 0.0) {
+                continue;
+            }
+            ++pressure_candidates;
+            if (arc_program_eval_is_exact_success(&evals[i])) {
+                ++exact_pressure_candidates;
+            }
+            if (pressure_raw > max_pressure_raw) {
+                max_pressure_raw = pressure_raw;
+            }
+        }
+    }
+    printf("{\"schema\":\"crlp.arc_holo_bucket_gate.v1\","
+           "\"report_version\":1,\"task\":\"arc_agi\",\"task_instance\":");
+    print_json_string(task->id);
+    printf(",\"budget\":%zu,\"gate_open\":%s,"
+           "\"review_slots\":%zu,\"min_budget\":%zu,"
+           "\"min_pressure_updates\":%zu,"
+           "\"holo_pressure_updates\":%zu,"
+           "\"outside_budget_pressure_candidates\":%zu,"
+           "\"outside_budget_exact_pressure_candidates\":%zu,"
+           "\"max_pressure_raw\":%.8f}\n",
+           budget,
+           arc_holo_bucket_gate_open(trace_prior, budget) ? "true" : "false",
+           arc_holo_bucket_review_slots_value(trace_prior, budget),
+           arc_holo_bucket_min_budget_value(trace_prior),
+           arc_holo_bucket_min_pressure_updates_value(trace_prior),
+           trace_prior->holo_pressure_updates,
+           pressure_candidates,
+           exact_pressure_candidates,
+           max_pressure_raw);
 }
 
 static void arc_emit_holo_bucket_diagnostics(const ARCTask *task,
@@ -27184,6 +27297,8 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
     proposal_trace_prior.holo_bucket_min_budget = config->arc_holo_bucket_min_budget;
     proposal_trace_prior.holo_bucket_review_slots =
         config->arc_holo_bucket_review_slots;
+    proposal_trace_prior.holo_bucket_min_pressure_updates =
+        config->arc_holo_bucket_min_pressure_updates;
     ARCTransformCandidate *candidates =
         calloc(ARC_RULE_CANDIDATE_COUNT, sizeof(*candidates));
     ARCProgramEval *evals = calloc(ARC_RULE_CANDIDATE_COUNT, sizeof(*evals));
@@ -27398,6 +27513,12 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
                                                    &learned_state,
                                                    &proposal_trace_prior,
                                                    budgets[budget_index]);
+                arc_emit_holo_bucket_gate_diagnostic(&task,
+                                                     candidates,
+                                                     evals,
+                                                     candidate_count,
+                                                     &proposal_trace_prior,
+                                                     budgets[budget_index]);
                 arc_emit_holo_bucket_diagnostics(&task,
                                                  candidates,
                                                  evals,
@@ -27528,6 +27649,7 @@ static void print_usage(FILE *stream)
           "[--arc-holo-residual-diagnostics] [--arc-holo-pressure-residual] "
           "[--arc-holo-bucket-min-budget count] "
           "[--arc-holo-bucket-review-slots count] "
+          "[--arc-holo-bucket-min-pressure-updates count] "
           "[--arc-sketches-per-task count] "
           "[--hypothesis-top-k count] [--disable-hypothesis-neural-prior] "
           "[--disable-hypothesis-slot-prior] [--disable-hypothesis-cold-start] "
@@ -27582,6 +27704,7 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->arc_holo_pressure_residual = 0;
     config->arc_holo_bucket_min_budget = 2;
     config->arc_holo_bucket_review_slots = 0;
+    config->arc_holo_bucket_min_pressure_updates = 4;
     config->shuffle_tasks = 0;
     config->unique_task_gate = 0;
     config->program_budget_grid = 0;
@@ -27736,6 +27859,12 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
                 config->arc_holo_bucket_review_slots = 0;
             } else if (!nn_parse_size_text(value,
                                            &config->arc_holo_bucket_review_slots)) {
+                return 0;
+            }
+        } else if (strcmp(argv[i], "--arc-holo-bucket-min-pressure-updates") == 0 &&
+                   i + 1 < argc) {
+            if (!nn_parse_size_text(argv[++i],
+                                    &config->arc_holo_bucket_min_pressure_updates)) {
                 return 0;
             }
         } else if (strcmp(argv[i], "--arc-sketches-per-task") == 0 && i + 1 < argc) {

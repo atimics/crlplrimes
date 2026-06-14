@@ -219,7 +219,11 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   and review-window perturbations. The first default full public sweep keeps
   zero crossed-out exact candidates; `auto` and one-slot review pass the
   no-regression check, while two-/four-slot review windows regress tight budget
-  2 and should remain exploratory larger-budget settings.
+  2 and should remain exploratory larger-budget settings. The invocation gate
+  is now explicit via `--arc-holo-bucket-min-pressure-updates` and
+  `crlp.arc_holo_bucket_gate.v1`; the focused public `auto,1` audit opens
+  776/800 rows after warmup, opens 0/800 at tight budget 1, and gives the next
+  learner a direct target for deciding when the review bucket is worth spending.
 
 **Papers:** Lake 2017 (Compositional Generalization), Bunel 2018 (Neural Program
 Synthesis), Nye 2021 (Scratchpads)
@@ -287,8 +291,9 @@ promoted ARC coverage.
    improvements at budgets 8/16/32/64 and bucket diagnostics show 8 exact
    candidates crossing into budget with 0 crossing out. The tight-grid run now
    matches at budget 1 and improves at budgets 2/4/8, with 4 exact crossings in
-   and 0 out. The next promotion test is alternate task orderings plus
-   review-window tuning.
+   and 0 out. The explicit gate rows make this a conditional verifier-feedback
+   memory path rather than an always-on score channel; the next promotion test
+   is more task-order seeds for `auto`/`1` and a learned invocation policy.
 7. **Measured substrate row:** `holo_experiments --mode partitioned-retrieval`
    now emits `crlp.holo_partitioned_retrieval.v1`; use local max-load below
    roughly 50 pairs as the first routing target for ARC residual memories.

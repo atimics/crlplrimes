@@ -127,6 +127,17 @@ standard-grid deltas. Fixed slots `2` and `4` are useful at budgets 4/8 and
 standard-grid budgets, but they regress tight budget 2 in original order; keep
 them as exploratory settings, not defaults.
 
+The bucket invocation gate is now explicit rather than implicit in the ranker.
+`--arc-holo-bucket-min-pressure-updates` controls the pressure-memory warmup,
+the min-budget floor keeps budget 1 closed, and
+`crlp.arc_holo_bucket_gate.v1` records gate-open state, review slots,
+pressure-memory size, outside-budget pressure candidates, exact pressure
+candidates, and max raw pressure. The focused public gate audit over `auto,1`
+opens 776/800 task-budget rows after warmup, opens 0/800 rows at tight budget 1,
+and preserves the stable no-regression result. This row is the training surface
+for a sharper learned invocation policy; it does not make raw pressure residuals
+safe.
+
 ## Near-Term Backlog Change
 
 Replace "tune HoloNet residual confidence" with:
@@ -143,6 +154,8 @@ Replace "tune HoloNet residual confidence" with:
    `ARC_HOLO_BUCKET_ROBUSTNESS_MIN_BUDGETS`, and
    `ARC_HOLO_BUCKET_ROBUSTNESS_REVIEW_SLOTS`; keep `auto`/`1` as the current
    promotion candidates and use `2`/`4` only to study larger-budget recall.
+   Use `ARC_HOLO_BUCKET_ROBUSTNESS_MIN_PRESSURE_UPDATES` to sweep the explicit
+   invocation gate before adding a learned gate.
 4. Use `crlp.arc_holo_residual_diagnostic.v1` as the promotion metric: budget
    crossings first, utility second, hash changes last.
 
