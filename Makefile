@@ -648,6 +648,7 @@ SIGNAL_FLIGHT_SIM_SOURCES := \
 	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/tractor.c) \
 	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/laser.c) \
 	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/trade_paging.c) \
+	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/holographic_nn.c) \
 	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/tweetnacl/tweetnacl.c) \
 	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/tweetnacl/randombytes.c) \
 	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/tweetnacl/signal_crypto_tweetnacl.c) \
@@ -940,8 +941,8 @@ $(SIGNAL_FLIGHT): examples/signal_flight.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DI
 $(SIGNAL_FLIGHT_ROLLOUT): examples/signal_flight_rollout.c $(NN_OBJS) $(NN_HEADERS) $(SIGNAL_FLIGHT_SIM_SOURCES) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(SIGNAL_FLIGHT_INCLUDE_FLAGS) $(CFLAGS) examples/signal_flight_rollout.c $(NN_OBJS) $(SIGNAL_FLIGHT_SIM_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(SIGNAL_MINING): examples/signal_mining.c $(NN_OBJS) $(NN_LEOS_HNN_OBJ) $(NN_HEADERS) $(SIGNAL_FLIGHT_SIM_SOURCES) | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(SIGNAL_FLIGHT_INCLUDE_FLAGS) $(CFLAGS) examples/signal_mining.c $(NN_OBJS) $(NN_LEOS_HNN_OBJ) $(SIGNAL_FLIGHT_SIM_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
+$(SIGNAL_MINING): examples/signal_mining.c $(NN_OBJS) $(NN_HEADERS) $(SIGNAL_FLIGHT_SIM_SOURCES) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(SIGNAL_FLIGHT_INCLUDE_FLAGS) $(CFLAGS) examples/signal_mining.c $(NN_OBJS) $(SIGNAL_FLIGHT_SIM_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
 endif
 
 $(BENCHMARK): benchmarks/benchmark.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
