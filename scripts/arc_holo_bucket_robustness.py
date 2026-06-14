@@ -84,10 +84,16 @@ def parse_positive_int_list(value: str, label: str) -> list[int]:
 
 def parse_jsonl(
     path: Path,
-) -> tuple[dict[int, dict[str, dict]], dict[int, dict[str, int]], dict[int, dict[str, float]]]:
+) -> tuple[
+    dict[int, dict[str, dict]],
+    dict[int, dict[str, int]],
+    dict[int, dict[str, float]],
+    dict[int, dict[str, float]],
+]:
     summaries: dict[int, dict[str, dict]] = {}
     diagnostics: dict[int, dict[str, int]] = {}
     gates: dict[int, dict[str, float]] = {}
+    review_candidates: dict[int, dict[str, float]] = {}
     with path.open("r", encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, 1):
             line = line.strip()
@@ -177,7 +183,45 @@ def parse_jsonl(
                     gate["max_best_exact_pressure_raw"],
                     float(row.get("best_exact_pressure_raw", 0.0)),
                 )
-    return summaries, diagnostics, gates
+            elif schema == "crlp.arc_holo_bucket_review_candidate.v1":
+                budget = int(row["budget"])
+                review = review_candidates.setdefault(
+                    budget,
+                    {
+                        "review_candidate_rows": 0,
+                        "review_candidate_exact_rows": 0,
+                        "review_candidate_selected_rows": 0,
+                        "review_candidate_selected_exact_rows": 0,
+                        "review_candidate_missed_exact_rows": 0,
+                        "exact_review_rank_sum": 0.0,
+                        "exact_review_rank_count": 0,
+                        "max_exact_review_rank": 0,
+                        "max_exact_priority_deficit": 0.0,
+                    },
+                )
+                review["review_candidate_rows"] += 1
+                selected = bool(row.get("selected_for_review"))
+                exact = bool(row.get("exact_label"))
+                if selected:
+                    review["review_candidate_selected_rows"] += 1
+                if exact:
+                    review["review_candidate_exact_rows"] += 1
+                    review_rank = int(row.get("review_rank", 0))
+                    review["exact_review_rank_sum"] += review_rank
+                    review["exact_review_rank_count"] += 1
+                    review["max_exact_review_rank"] = max(
+                        int(review["max_exact_review_rank"]),
+                        review_rank,
+                    )
+                    if selected:
+                        review["review_candidate_selected_exact_rows"] += 1
+                    else:
+                        review["review_candidate_missed_exact_rows"] += 1
+                        review["max_exact_priority_deficit"] = max(
+                            float(review["max_exact_priority_deficit"]),
+                            float(row.get("priority_deficit", 0.0)),
+                        )
+    return summaries, diagnostics, gates, review_candidates
 
 
 def run_condition(
@@ -251,7 +295,7 @@ def run_condition(
             f"stderr: {stderr_path}"
         )
 
-    summaries, diagnostics, gates = parse_jsonl(raw_path)
+    summaries, diagnostics, gates, review_candidates = parse_jsonl(raw_path)
     rows: list[dict] = []
     for budget in sorted(summaries):
         by_strategy = summaries[budget]
@@ -284,6 +328,20 @@ def run_condition(
                 "review_margin_sum": 0.0,
                 "max_pressure_raw": 0.0,
                 "max_best_exact_pressure_raw": 0.0,
+            },
+        )
+        review = review_candidates.get(
+            budget,
+            {
+                "review_candidate_rows": 0,
+                "review_candidate_exact_rows": 0,
+                "review_candidate_selected_rows": 0,
+                "review_candidate_selected_exact_rows": 0,
+                "review_candidate_missed_exact_rows": 0,
+                "exact_review_rank_sum": 0.0,
+                "exact_review_rank_count": 0,
+                "max_exact_review_rank": 0,
+                "max_exact_priority_deficit": 0.0,
             },
         )
         row = {
@@ -353,6 +411,29 @@ def run_condition(
             "max_best_exact_pressure_raw": float(
                 gate.get("max_best_exact_pressure_raw", 0.0)
             ),
+            "review_candidate_rows": int(review.get("review_candidate_rows", 0)),
+            "review_candidate_exact_rows": int(
+                review.get("review_candidate_exact_rows", 0)
+            ),
+            "review_candidate_selected_rows": int(
+                review.get("review_candidate_selected_rows", 0)
+            ),
+            "review_candidate_selected_exact_rows": int(
+                review.get("review_candidate_selected_exact_rows", 0)
+            ),
+            "review_candidate_missed_exact_rows": int(
+                review.get("review_candidate_missed_exact_rows", 0)
+            ),
+            "mean_exact_review_rank": (
+                float(review.get("exact_review_rank_sum", 0.0))
+                / int(review.get("exact_review_rank_count", 0))
+                if int(review.get("exact_review_rank_count", 0)) != 0
+                else 0.0
+            ),
+            "max_exact_review_rank": int(review.get("max_exact_review_rank", 0)),
+            "max_exact_priority_deficit": float(
+                review.get("max_exact_priority_deficit", 0.0)
+            ),
             "raw_log": str(raw_path),
             "stderr_log": str(stderr_path),
         }
@@ -397,6 +478,14 @@ def aggregate_rows(rows: list[dict]) -> list[dict]:
         review_margin_sum = sum(
             float(row.get("mean_review_margin", 0.0))
             * int(row.get("gate_rows", 0))
+            for row in group
+        )
+        exact_review_rank_count = sum(
+            int(row.get("review_candidate_exact_rows", 0)) for row in group
+        )
+        exact_review_rank_sum = sum(
+            float(row.get("mean_exact_review_rank", 0.0))
+            * int(row.get("review_candidate_exact_rows", 0))
             for row in group
         )
         aggregates.append(
@@ -463,6 +552,32 @@ def aggregate_rows(rows: list[dict]) -> list[dict]:
                     float(row.get("max_best_exact_pressure_raw", 0.0))
                     for row in group
                 ),
+                "review_candidate_rows": sum(
+                    int(row.get("review_candidate_rows", 0)) for row in group
+                ),
+                "review_candidate_exact_rows": exact_review_rank_count,
+                "review_candidate_selected_rows": sum(
+                    int(row.get("review_candidate_selected_rows", 0)) for row in group
+                ),
+                "review_candidate_selected_exact_rows": sum(
+                    int(row.get("review_candidate_selected_exact_rows", 0))
+                    for row in group
+                ),
+                "review_candidate_missed_exact_rows": sum(
+                    int(row.get("review_candidate_missed_exact_rows", 0))
+                    for row in group
+                ),
+                "mean_exact_review_rank": exact_review_rank_sum
+                / exact_review_rank_count
+                if exact_review_rank_count
+                else 0.0,
+                "max_exact_review_rank": max(
+                    int(row.get("max_exact_review_rank", 0)) for row in group
+                ),
+                "max_exact_priority_deficit": max(
+                    float(row.get("max_exact_priority_deficit", 0.0))
+                    for row in group
+                ),
                 "passes_no_regression": all(delta >= 0.0 for delta in deltas)
                 and crossed_out == 0,
             }
@@ -517,6 +632,14 @@ def verdict_rows(aggregates: list[dict]) -> list[dict]:
             * int(row.get("gate_rows", 0))
             for row in group
         )
+        exact_review_rank_count = sum(
+            int(row.get("review_candidate_exact_rows", 0)) for row in group
+        )
+        exact_review_rank_sum = sum(
+            float(row.get("mean_exact_review_rank", 0.0))
+            * int(row.get("review_candidate_exact_rows", 0))
+            for row in group
+        )
         median_delta_sum = sum(float(row["median_utility_delta"]) for row in group)
         passes_no_regression = all(bool(row["passes_no_regression"]) for row in group)
         has_uplift = total_positive > 0 or total_crossed_in > 0 or median_delta_sum > 0.0
@@ -564,6 +687,32 @@ def verdict_rows(aggregates: list[dict]) -> list[dict]:
                 "mean_review_margin": review_margin_sum / total_gate_rows
                 if total_gate_rows
                 else 0.0,
+                "review_candidate_rows": sum(
+                    int(row.get("review_candidate_rows", 0)) for row in group
+                ),
+                "review_candidate_exact_rows": exact_review_rank_count,
+                "review_candidate_selected_rows": sum(
+                    int(row.get("review_candidate_selected_rows", 0)) for row in group
+                ),
+                "review_candidate_selected_exact_rows": sum(
+                    int(row.get("review_candidate_selected_exact_rows", 0))
+                    for row in group
+                ),
+                "review_candidate_missed_exact_rows": sum(
+                    int(row.get("review_candidate_missed_exact_rows", 0))
+                    for row in group
+                ),
+                "mean_exact_review_rank": exact_review_rank_sum
+                / exact_review_rank_count
+                if exact_review_rank_count
+                else 0.0,
+                "max_exact_review_rank": max(
+                    int(row.get("max_exact_review_rank", 0)) for row in group
+                ),
+                "max_exact_priority_deficit": max(
+                    float(row.get("max_exact_priority_deficit", 0.0))
+                    for row in group
+                ),
                 "passes_no_regression": passes_no_regression,
                 "has_uplift": has_uplift,
                 "recommended_for_promotion": passes_no_regression

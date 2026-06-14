@@ -144,6 +144,18 @@ shows why: the same smoke found outside-budget exact pressure candidates
 `closed_review_exact_candidates`. The next architectural target is therefore the
 pressure review selector/reranker, not a looser invocation threshold.
 
+The first selector-level improvement is diagnostic rather than a promotion. A
+bounded review priority now blends raw Holo pressure with a small clamped
+`trace_task_prior` baseline bonus, which preserves the fixture uplift at learned
+threshold `0.3` but still produces zero public `review_exact_candidates`.
+`crlp.arc_holo_bucket_review_candidate.v1` now emits bounded frontier contenders
+plus every outside-budget exact pressure candidate as labeled reranker rows. In
+the same 40-task public smoke, those rows capture all 18 tight / 24 standard
+exact pressure candidates, but all are missed by the one-slot/auto review window;
+mean exact review rank is about 518 tight and 516 standard, with worst exact rank
+1101. That makes the next goal a learned selector over candidate rows, not a
+manual pressure-weight search.
+
 ## The Core Bet
 
 The bet: **the operators we have can solve 30-40 more tasks if applied to the
@@ -333,7 +345,7 @@ rows separate ranker improvement from exact verifier coverage.
 | Unique-task certified/exact tasks | 46 / 43 after reflected + marker motif + axis tiling + period extension | 50+ / 46+ |
 | VSA scoring enabled | Yes, no grid/object-scene uplift | Keep instrumented |
 | Proposal trace rows | `crlp.arc_proposal_trace.v1`: 25,750 rows / 400 tasks / 144 exact candidate rows | Task-conditioned family/slot proposer |
-| Trace-prior proposer | `trace_task_prior` beats structural and global trace prior at budget 64; trained `trace_linear`/`trace_mlp` trail it; default `trace_holo_residual` matches public utility and diagnostics show 0 budget crossings; raw `--arc-holo-pressure-residual` remains negative, but `trace_holo_bucket` improves public utility at budgets 8/16/32/64 to `0.01685136/0.02036279/0.02122741/0.02265669` with 8 crossings in and 0 out; tight grid matches at 1 and improves at 2/4/8; robustness rows show `auto`/`1` are stable and `2`/`4` regress tight budget 2; gate rows show 776/800 open after warmup and 0/800 open at tight budget 1 | Expand task-order seeds for `auto`/`1`; learn a sharper bucket invocation policy from gate rows before widening review |
+| Trace-prior proposer | `trace_task_prior` beats structural and global trace prior at budget 64; trained `trace_linear`/`trace_mlp` trail it; default `trace_holo_residual` matches public utility and diagnostics show 0 budget crossings; raw `--arc-holo-pressure-residual` remains negative, but `trace_holo_bucket` improves public utility at budgets 8/16/32/64 to `0.01685136/0.02036279/0.02122741/0.02265669` with 8 crossings in and 0 out; tight grid matches at 1 and improves at 2/4/8; robustness rows show `auto`/`1` are stable and `2`/`4` regress tight budget 2; gate rows show 776/800 open after warmup and 0/800 open at tight budget 1; learned-gate public smoke finds 18 tight / 24 standard outside-budget exact pressure candidates but zero selected exacts; new review-candidate rows label those misses with mean exact review rank about 516-518 | Learn the bucket review selector from `crlp.arc_holo_bucket_review_candidate.v1` rows before widening review or loosening invocation |
 | Flat-vs-forest recall rows | Partitioned sandbox rows exist: 32 partitions lift top-1 from ~0.50 flat to 0.98/0.85/0.78/0.63/0.55 at 64/128/256/512/1024 pairs | Add tree/forest or ARC family-partition rows |
 | Focused shape-scale audit | 55 certified rows after reflected tiling; marker motif adds 2, axis tiling adds 6, and period extension adds 1 unique-task exact solve | Extend to next fixed-scale family |
 | Object-scene ranker condition | Yes, no uplift | Park |
@@ -346,9 +358,10 @@ rows separate ranker improvement from exact verifier coverage.
    show up in headline metrics.
 2. **Trace-first proposer learning** — use `crlp.arc_holo_residual_diagnostic.v1`
    rows to separate far-out exact lifts from true budget-window wins/losses.
-   Next, train a rank-pressure HoloNet memory from exact candidates missed by
-   `trace_task_prior`, routed through family or HoloForest partitions so each
-   local trace stays below the flat-memory crosstalk limit.
+   Use `crlp.arc_holo_bucket_review_candidate.v1` rows as the selector training
+   set for the cleanup bucket: first learn a one-slot reranker that moves labeled
+   exact pressure candidates toward the review frontier, then revisit family or
+   HoloForest partitions if local trace crosstalk remains the limiting factor.
 3. **Workstream D** (scale-space pyramid) — continue from `reflect_tile` into
    other shape-evidenced scale transforms. Runtime +5-10s.
 4. **Visual-program proposal coverage** — inspect zero-candidate and

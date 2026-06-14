@@ -160,6 +160,18 @@ standard outside-budget exact pressure candidates but zero review-window exacts,
 so the bottleneck is the pressure review selector/reranker rather than a missed
 learned-gate opening.
 
+The next selector probe now emits labeled candidate rows instead of hiding the
+miss in aggregate gate counts. The review priority blends raw Holo pressure with
+a small clamped `trace_task_prior` baseline bonus; this recovers the fixture
+crossing at threshold `0.3`, but the bounded 40-task public smoke remains
+non-promotable with zero selected exacts. The new
+`crlp.arc_holo_bucket_review_candidate.v1` rows record bounded review-frontier
+contenders plus every exact pressure candidate outside the frontier. Public
+verdict rows now show 18 tight / 24 standard exact review-candidate labels, all
+missed by the one-slot/auto selector, with mean exact review rank about 518 tight
+and 516 standard and worst exact rank 1101. This is the handoff point from manual
+pressure tuning to a learned review reranker.
+
 ## Near-Term Backlog Change
 
 Replace "tune HoloNet residual confidence" with:
@@ -182,9 +194,11 @@ Replace "tune HoloNet residual confidence" with:
 4. Compare fixed versus learned bucket invocation by rerunning the same harness
    with `ARC_HOLO_BUCKET_ROBUSTNESS_LEARNED_GATE=1`; sweep
    `ARC_HOLO_BUCKET_ROBUSTNESS_LEARNED_GATE_THRESHOLD` before promotion.
-5. Learn or tune the pressure review selector so outside-budget exact pressure
-   candidates enter the bounded review window; track
-   `review_exact_candidates` and `closed_review_exact_candidates` in
+5. Learn the pressure review selector from
+   `crlp.arc_holo_bucket_review_candidate.v1` rows so outside-budget exact
+   pressure candidates enter the bounded review window; track
+   `review_candidate_missed_exact_rows`, `mean_exact_review_rank`,
+   `review_exact_candidates`, and `closed_review_exact_candidates` in
    `verdict.jsonl`.
 6. Use `crlp.arc_holo_residual_diagnostic.v1` as the promotion metric: budget
    crossings first, utility second, hash changes last.

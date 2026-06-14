@@ -7783,7 +7783,8 @@ typedef struct {
     size_t review_exact_candidates;
     double best_pressure_raw;
     double best_exact_pressure_raw;
-    double review_frontier_pressure;
+    double best_exact_review_priority;
+    double review_frontier_priority;
     double review_margin;
     double soft_target;
 } ARCHoloBucketGateSurface;
@@ -7797,6 +7798,21 @@ static double arc_holo_bucket_clamp_unit(double value)
         return 1.0;
     }
     return value;
+}
+
+static double arc_holo_bucket_review_priority(double pressure_raw,
+                                              double baseline_score)
+{
+    if (pressure_raw <= 0.0) {
+        return 0.0;
+    }
+    double baseline_bonus = baseline_score;
+    if (baseline_bonus > 40.0) {
+        baseline_bonus = 40.0;
+    } else if (baseline_bonus < -40.0) {
+        baseline_bonus = -40.0;
+    }
+    return pressure_raw + 0.10 * baseline_bonus;
 }
 
 static void arc_holo_bucket_gate_features(const ARCProposalTracePrior *prior,
@@ -7955,6 +7971,11 @@ static ARCHoloBucketGateSurface arc_holo_bucket_gate_surface(
     }
     ARCProgramRank pressure_ranks[ARC_RULE_CANDIDATE_COUNT];
     for (size_t i = 0; i < candidate_count; ++i) {
+        double baseline_score =
+            arc_task_conditioned_program_score(task, &candidates[i]) +
+            arc_proposal_trace_task_prior_score(prior,
+                                                &candidates[i],
+                                                task_features);
         double pressure_raw =
             baseline_rank[i] > budget
                 ? arc_proposal_trace_holo_pressure_raw(prior,
@@ -7962,12 +7983,9 @@ static ARCHoloBucketGateSurface arc_holo_bucket_gate_surface(
                                                        task_features)
                 : 0.0;
         pressure_ranks[i].candidate_index = i;
-        pressure_ranks[i].primary = pressure_raw;
-        pressure_ranks[i].secondary =
-            arc_task_conditioned_program_score(task, &candidates[i]) +
-            arc_proposal_trace_task_prior_score(prior,
-                                                &candidates[i],
-                                                task_features);
+        pressure_ranks[i].primary =
+            arc_holo_bucket_review_priority(pressure_raw, baseline_score);
+        pressure_ranks[i].secondary = pressure_raw;
         pressure_ranks[i].tie_breaker =
             arc_hash_mix(arc_task_hash(task), evals[i].program_hash ^ (uint64_t)i);
     }
@@ -7992,11 +8010,12 @@ static ARCHoloBucketGateSurface arc_holo_bucket_gate_surface(
     }
     size_t review_limit = review_slots < candidate_count ? review_slots : candidate_count;
     if (review_limit != 0 && pressure_ranks[review_limit - 1u].primary > 0.0) {
-        surface.review_frontier_pressure = pressure_ranks[review_limit - 1u].primary;
+        surface.review_frontier_priority = pressure_ranks[review_limit - 1u].primary;
     }
     for (size_t rank = 0; rank < candidate_count; ++rank) {
         size_t index = pressure_ranks[rank].candidate_index;
-        double pressure_raw = pressure_ranks[rank].primary;
+        double pressure_priority = pressure_ranks[rank].primary;
+        double pressure_raw = pressure_ranks[rank].secondary;
         if (index >= candidate_count || pressure_raw <= 0.0 ||
             baseline_rank[index] <= budget) {
             continue;
@@ -8012,19 +8031,22 @@ static ARCHoloBucketGateSurface arc_holo_bucket_gate_surface(
         if (pressure_raw > surface.best_exact_pressure_raw) {
             surface.best_exact_pressure_raw = pressure_raw;
         }
+        if (pressure_priority > surface.best_exact_review_priority) {
+            surface.best_exact_review_priority = pressure_priority;
+        }
         if (rank < review_slots) {
             ++surface.review_exact_candidates;
         }
     }
     if (surface.review_exact_candidates != 0) {
         surface.review_margin =
-            surface.best_exact_pressure_raw - surface.review_frontier_pressure;
+            surface.best_exact_review_priority - surface.review_frontier_priority;
         if (surface.review_margin < 0.0) {
             surface.review_margin = 0.0;
         }
         double margin_score =
             arc_holo_bucket_clamp_unit(surface.review_margin /
-                                       (fabs(surface.review_frontier_pressure) + 1.0));
+                                       (fabs(surface.review_frontier_priority) + 1.0));
         surface.soft_target = 0.65 + 0.35 * margin_score;
         if (surface.baseline_exact_in_budget != 0) {
             surface.soft_target *= 0.85;
@@ -8051,6 +8073,7 @@ static void arc_build_program_ranks(const ARCTask *task,
     size_t baseline_rank[ARC_RULE_CANDIDATE_COUNT] = {0};
     size_t pressure_rank[ARC_RULE_CANDIDATE_COUNT] = {0};
     double pressure_raw[ARC_RULE_CANDIDATE_COUNT] = {0};
+    double pressure_review_priority[ARC_RULE_CANDIDATE_COUNT] = {0};
     double exact_budget_floor = INFINITY;
     int have_exact_budget_floor = 0;
     ARCProgramRank baseline_ranks[ARC_RULE_CANDIDATE_COUNT];
@@ -8126,9 +8149,12 @@ static void arc_build_program_ranks(const ARCTask *task,
                                                                &candidates[i],
                                                                task_features)
                         : 0.0;
+                pressure_review_priority[i] =
+                    arc_holo_bucket_review_priority(pressure_raw[i],
+                                                    baseline_primary[i]);
                 pressure_ranks[i].candidate_index = i;
-                pressure_ranks[i].primary = pressure_raw[i];
-                pressure_ranks[i].secondary = baseline_primary[i];
+                pressure_ranks[i].primary = pressure_review_priority[i];
+                pressure_ranks[i].secondary = pressure_raw[i];
                 pressure_ranks[i].tie_breaker =
                     arc_hash_mix(task_hash, evals[i].program_hash ^ (uint64_t)i);
             }
@@ -16559,6 +16585,14 @@ static void arc_emit_holo_residual_diagnostics(const ARCTask *task,
     }
 }
 
+static void arc_emit_holo_bucket_review_candidate_diagnostics(
+    const ARCTask *task,
+    const ARCTransformCandidate *candidates,
+    const ARCProgramEval *evals,
+    size_t candidate_count,
+    ARCProposalTracePrior *trace_prior,
+    size_t budget);
+
 static void arc_emit_holo_bucket_gate_diagnostic(
     const ARCTask *task,
     const ARCTransformCandidate *candidates,
@@ -16610,8 +16644,9 @@ static void arc_emit_holo_bucket_gate_diagnostic(
            "\"outside_budget_pressure_candidates\":%zu,"
            "\"outside_budget_exact_pressure_candidates\":%zu,"
            "\"review_exact_candidates\":%zu,"
-           "\"review_frontier_pressure\":%.8f,"
+           "\"review_frontier_priority\":%.8f,"
            "\"best_exact_pressure_raw\":%.8f,"
+           "\"best_exact_review_priority\":%.8f,"
            "\"review_margin\":%.8f,"
            "\"gate_label_target\":%.8f,"
            "\"max_pressure_raw\":%.8f}\n",
@@ -16633,11 +16668,194 @@ static void arc_emit_holo_bucket_gate_diagnostic(
            surface.pressure_candidates,
            surface.exact_pressure_candidates,
            surface.review_exact_candidates,
-           surface.review_frontier_pressure,
+           surface.review_frontier_priority,
            surface.best_exact_pressure_raw,
+           surface.best_exact_review_priority,
            surface.review_margin,
            surface.soft_target,
            surface.best_pressure_raw);
+    arc_emit_holo_bucket_review_candidate_diagnostics(task,
+                                                      candidates,
+                                                      evals,
+                                                      candidate_count,
+                                                      trace_prior,
+                                                      budget);
+}
+
+static void arc_emit_holo_bucket_review_candidate_diagnostics(
+    const ARCTask *task,
+    const ARCTransformCandidate *candidates,
+    const ARCProgramEval *evals,
+    size_t candidate_count,
+    ARCProposalTracePrior *trace_prior,
+    size_t budget)
+{
+    if (task == NULL || candidates == NULL || evals == NULL ||
+        candidate_count == 0 || candidate_count > ARC_RULE_CANDIDATE_COUNT ||
+        trace_prior == NULL) {
+        return;
+    }
+    ARCProgramTaskFeatures task_features;
+    ARCProgramRank baseline_ranks[ARC_RULE_CANDIDATE_COUNT];
+    ARCProgramRank pressure_ranks[ARC_RULE_CANDIDATE_COUNT];
+    size_t baseline_rank[ARC_RULE_CANDIDATE_COUNT];
+    double baseline_score[ARC_RULE_CANDIDATE_COUNT];
+    double structural_score[ARC_RULE_CANDIDATE_COUNT];
+    for (size_t i = 0; i < candidate_count; ++i) {
+        baseline_rank[i] = 0;
+        baseline_score[i] = 0.0;
+        structural_score[i] = 0.0;
+    }
+    arc_program_task_features(task, &task_features);
+    arc_build_program_ranks(task,
+                            candidates,
+                            evals,
+                            candidate_count,
+                            0,
+                            ARC_PROGRAM_STRATEGY_TRACE_TASK_PRIOR,
+                            NULL,
+                            trace_prior,
+                            &task_features,
+                            baseline_ranks);
+    for (size_t rank = 0; rank < candidate_count; ++rank) {
+        size_t index = baseline_ranks[rank].candidate_index;
+        if (index < candidate_count) {
+            baseline_rank[index] = rank + 1u;
+        }
+    }
+    size_t review_slots = arc_holo_bucket_review_slots_value(trace_prior, budget);
+    if (budget == 0 || review_slots == 0 ||
+        !arc_holo_bucket_fixed_gate_open(trace_prior, budget)) {
+        return;
+    }
+    for (size_t i = 0; i < candidate_count; ++i) {
+        structural_score[i] = arc_task_conditioned_program_score(task, &candidates[i]);
+        baseline_score[i] =
+            structural_score[i] +
+            arc_proposal_trace_task_prior_score(trace_prior,
+                                                &candidates[i],
+                                                &task_features);
+        double pressure_raw =
+            baseline_rank[i] > budget
+                ? arc_proposal_trace_holo_pressure_raw(trace_prior,
+                                                       &candidates[i],
+                                                       &task_features)
+                : 0.0;
+        pressure_ranks[i].candidate_index = i;
+        pressure_ranks[i].primary =
+            arc_holo_bucket_review_priority(pressure_raw, baseline_score[i]);
+        pressure_ranks[i].secondary = pressure_raw;
+        pressure_ranks[i].tie_breaker =
+            arc_hash_mix(arc_task_hash(task), evals[i].program_hash ^ (uint64_t)i);
+    }
+    for (size_t i = 1; i < candidate_count; ++i) {
+        ARCProgramRank key = pressure_ranks[i];
+        size_t j = i;
+        while (j > 0) {
+            ARCProgramRank prev = pressure_ranks[j - 1u];
+            int before = key.primary > prev.primary ||
+                         (key.primary == prev.primary &&
+                          key.secondary > prev.secondary) ||
+                         (key.primary == prev.primary &&
+                          key.secondary == prev.secondary &&
+                          key.tie_breaker < prev.tie_breaker);
+            if (!before) {
+                break;
+            }
+            pressure_ranks[j] = pressure_ranks[j - 1u];
+            --j;
+        }
+        pressure_ranks[j] = key;
+    }
+    size_t review_limit = review_slots < candidate_count ? review_slots : candidate_count;
+    double frontier_priority =
+        review_limit != 0 ? pressure_ranks[review_limit - 1u].primary : 0.0;
+    size_t diagnostic_limit = review_slots + 8u;
+    if (diagnostic_limit < 16u) {
+        diagnostic_limit = 16u;
+    }
+    if (diagnostic_limit > 32u) {
+        diagnostic_limit = 32u;
+    }
+    if (diagnostic_limit > candidate_count) {
+        diagnostic_limit = candidate_count;
+    }
+    int gate_open = arc_holo_bucket_gate_open(trace_prior, budget);
+    for (size_t rank = 0; rank < candidate_count; ++rank) {
+        size_t index = pressure_ranks[rank].candidate_index;
+        if (index >= candidate_count || pressure_ranks[rank].secondary <= 0.0 ||
+            baseline_rank[index] <= budget) {
+            continue;
+        }
+        int exact = arc_program_eval_is_exact_success(&evals[index]);
+        if (rank >= diagnostic_limit && !exact) {
+            continue;
+        }
+        double priority_deficit =
+            frontier_priority > pressure_ranks[rank].primary
+                ? frontier_priority - pressure_ranks[rank].primary
+                : 0.0;
+        printf("{\"schema\":\"crlp.arc_holo_bucket_review_candidate.v1\","
+               "\"report_version\":1,\"task\":\"arc_agi\",\"task_instance\":");
+        print_json_string(task->id);
+        printf(",\"budget\":%zu,\"candidate_index\":%zu,\"candidate_name\":",
+               budget,
+               index);
+        print_json_string(candidates[index].name);
+        printf(",\"program_hash\":\"%016llx\","
+               "\"baseline_rank\":%zu,\"review_rank\":%zu,"
+               "\"review_slots\":%zu,\"gate_open\":%s,"
+               "\"fixed_gate_open\":true,\"selected_for_review\":%s,"
+               "\"would_review_under_fixed_gate\":%s,"
+               "\"exact_label\":%s,\"train_consistent\":%s,"
+               "\"test_supported\":%s,\"test_cells\":%zu,"
+               "\"test_correct_cells\":%zu,\"op\":%u,"
+               "\"input_color\":%u,\"output_color\":%u,"
+               "\"background_color\":%u,\"selector_kind\":%u,"
+               "\"output_selector_kind\":%u,\"reference_color\":%u,"
+               "\"render_mode\":%u,\"dx\":%d,\"dy\":%d,\"scale\":%zu,"
+               "\"step_count\":%zu,\"hypothesis_template_id\":%u,"
+               "\"hypothesis_slot_count\":%u,"
+               "\"structural_score\":%.8f,\"baseline_score\":%.8f,"
+               "\"pressure_raw\":%.8f,\"review_priority\":%.8f,"
+               "\"review_frontier_priority\":%.8f,"
+               "\"priority_deficit\":%.8f,"
+               "\"holo_pressure_updates\":%zu,\"positive_rows\":%zu}\n",
+               (unsigned long long)evals[index].program_hash,
+               baseline_rank[index],
+               rank + 1u,
+               review_slots,
+               gate_open ? "true" : "false",
+               (gate_open && rank < review_slots) ? "true" : "false",
+               rank < review_slots ? "true" : "false",
+               exact ? "true" : "false",
+               evals[index].train_consistent ? "true" : "false",
+               evals[index].test_supported ? "true" : "false",
+               evals[index].test_cells,
+               evals[index].test_correct_cells,
+               (unsigned)candidates[index].op,
+               (unsigned)candidates[index].input_color,
+               (unsigned)candidates[index].output_color,
+               (unsigned)candidates[index].background_color,
+               (unsigned)candidates[index].selector_kind,
+               (unsigned)candidates[index].output_selector_kind,
+               (unsigned)candidates[index].reference_color,
+               (unsigned)candidates[index].render_mode,
+               candidates[index].dx,
+               candidates[index].dy,
+               candidates[index].scale,
+               candidates[index].step_count,
+               (unsigned)candidates[index].hypothesis_template_id,
+               (unsigned)candidates[index].hypothesis_slot_count,
+               structural_score[index],
+               baseline_score[index],
+               pressure_ranks[rank].secondary,
+               pressure_ranks[rank].primary,
+               frontier_priority,
+               priority_deficit,
+               trace_prior->holo_pressure_updates,
+               trace_prior->positive_rows);
+    }
 }
 
 static void arc_emit_holo_bucket_diagnostics(const ARCTask *task,

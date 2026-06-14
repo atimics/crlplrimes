@@ -232,12 +232,17 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   `ARC_HOLO_BUCKET_ROBUSTNESS_LEARNED_GATE=1`. It trains online from prior
   task-budget labels and can only close the existing fixed gate. Fixture smoke
   says threshold `0.5` is too conservative, while threshold `0.3` recovers the
-  fixture uplift with zero crossed-out exact candidates; public verdict rows
-  still need to promote or reject it. The learned-gate surface now records
-  review-window exact hits, closed review exacts, mean target, score, and review
-  margin. A bounded 40-task public smoke at threshold `0.3` found outside-budget
-  exact pressure candidates but zero review-window exacts, making the pressure
-  review selector/reranker the next evidence target.
+  fixture uplift with zero crossed-out exact candidates; public verdict rows do
+  not promote it yet. The learned-gate surface now records review-window exact
+  hits, closed review exacts, mean target, score, and review margin. A bounded
+  40-task public smoke at threshold `0.3` found outside-budget exact pressure
+  candidates but zero review-window exacts. The follow-up review-priority probe
+  adds `crlp.arc_holo_bucket_review_candidate.v1` rows: bounded frontier
+  contenders plus every outside-budget exact pressure candidate. On the same
+  public smoke it labels all 18 tight / 24 standard exact pressure candidates as
+  missed by the one-slot/auto selector, with mean exact review rank about
+  516-518 and worst exact rank 1101. The next evidence target is therefore a
+  learned pressure review reranker, not another manual invocation threshold.
 
 **Papers:** Lake 2017 (Compositional Generalization), Bunel 2018 (Neural Program
 Synthesis), Nye 2021 (Scratchpads)
@@ -305,9 +310,10 @@ promoted ARC coverage.
    improvements at budgets 8/16/32/64 and bucket diagnostics show 8 exact
    candidates crossing into budget with 0 crossing out. The tight-grid run now
    matches at budget 1 and improves at budgets 2/4/8, with 4 exact crossings in
-   and 0 out. The explicit gate rows make this a conditional verifier-feedback
-   memory path rather than an always-on score channel; the next promotion test
-   is more task-order seeds for `auto`/`1` and a learned invocation policy.
+   and 0 out. The explicit gate and review-candidate rows make this a conditional
+   verifier-feedback memory path rather than an always-on score channel; the next
+   promotion test is a learned one-slot review selector trained from missed exact
+   candidate rows.
 7. **Measured substrate row:** `holo_experiments --mode partitioned-retrieval`
    now emits `crlp.holo_partitioned_retrieval.v1`; use local max-load below
    roughly 50 pairs as the first routing target for ARC residual memories.
