@@ -799,14 +799,34 @@ int main(int argc, char **argv)
     write_metrics(stdout, "test", test_m, (int)inputs.count, test_rows, epochs, learning_rate, l2, negative_limit, holdout_mod, holdout_bucket);
     write_metrics(out, "all", all_m, (int)inputs.count, rows.count, epochs, learning_rate, l2, negative_limit, holdout_mod, holdout_bucket);
     write_metrics(stdout, "all", all_m, (int)inputs.count, rows.count, epochs, learning_rate, l2, negative_limit, holdout_mod, holdout_bucket);
-    fprintf(out, "{\"schema\":\"%s\",\"feature_count\":%d,\"top_weights\":[", WEIGHT_SCHEMA, feature_count);
-    fprintf(stdout, "{\"schema\":\"%s\",\"feature_count\":%d,\"top_weights\":[", WEIGHT_SCHEMA, feature_count);
+    fprintf(out,
+            "{\"schema\":\"%s\",\"feature_count\":%d,\"hash_bins\":%d,\"weights\":[",
+            WEIGHT_SCHEMA,
+            feature_count,
+            hash_bins);
+    fprintf(stdout,
+            "{\"schema\":\"%s\",\"feature_count\":%d,\"hash_bins\":%d,\"weights\":[",
+            WEIGHT_SCHEMA,
+            feature_count,
+            hash_bins);
+    for (int f = 0; f < feature_count; ++f) {
+        if (f != 0) {
+            fputc(',', out);
+            fputc(',', stdout);
+        }
+        fprintf(out, "%.17g", weights[f]);
+        fprintf(stdout, "%.17g", weights[f]);
+    }
+    fprintf(out, "],\"top_weights\":[");
+    fprintf(stdout, "],\"top_weights\":[");
+    double top_weights[MAX_FEATURES];
+    memcpy(top_weights, weights, sizeof(top_weights));
     int emitted = 0;
     for (int pass = 0; pass < 40; ++pass) {
         int best = -1;
         double best_abs = -1.0;
         for (int f = 0; f < feature_count; ++f) {
-            double a = fabs(weights[f]);
+            double a = fabs(top_weights[f]);
             if (a > best_abs) {
                 best_abs = a;
                 best = f;
@@ -819,9 +839,9 @@ int main(int argc, char **argv)
             fputc(',', out);
             fputc(',', stdout);
         }
-        fprintf(out, "{\"feature\":\"f%d\",\"weight\":%.17g}", best, weights[best]);
-        fprintf(stdout, "{\"feature\":\"f%d\",\"weight\":%.17g}", best, weights[best]);
-        weights[best] = 0.0;
+        fprintf(out, "{\"feature\":\"f%d\",\"weight\":%.17g}", best, top_weights[best]);
+        fprintf(stdout, "{\"feature\":\"f%d\",\"weight\":%.17g}", best, top_weights[best]);
+        top_weights[best] = 0.0;
         ++emitted;
     }
     fprintf(out, "]}\n");

@@ -177,12 +177,18 @@ pressure tuning to a learned review reranker.
 over those rows, exposed as `make arc-holo-bucket-review-selector`. It trains a
 pairwise linear selector from proposal-time features only; verifier labels such
 as train consistency and test support are excluded from the default feature set.
-On the bounded public 40-task diagnostic logs, five task-hash folds move exact
-candidates inside the diagnostic candidate set from mean raw loaded rank 17.5 to
-mean learned loaded rank 5.67, with 17 held-out exact rows selected top-1 versus 0
-for raw review priority. This is useful signal, but not enough to wire into
-runtime: the next learner needs either broader negative coverage from the review
-surface or a less overfit candidate-family feature set.
+It now writes full `crlp.arc_holo_bucket_review_selector.weights.v1` rows with
+`hash_bins`, and `arc_agi --arc-holo-bucket-review-selector-shadow path` can
+load those weights for shadow scoring. On the bounded public 40-task diagnostic
+logs, five task-hash folds move exact candidates inside the diagnostic candidate
+set from mean raw loaded rank 17.5 to mean learned loaded rank 5.67, with 17
+held-out exact rows selected top-1 versus 0 for raw review priority. This is
+useful signal, but not enough to activate in runtime: the shadow path only emits
+`crlp.arc_holo_bucket_review_selector_shadow.v1` rows comparing raw and learned
+review ranks, selected-window crossings, and learned scores. The next learner
+needs broader negative coverage from the review surface or a less overfit
+candidate-family feature set, and any active selector must pass the C robustness
+verdict before promotion.
 
 ## Near-Term Backlog Change
 

@@ -159,13 +159,19 @@ manual pressure-weight search.
 The first offline learner is now the C tool
 `tools/arc_holo_bucket_review_selector.c`, exposed through
 `make arc-holo-bucket-review-selector`. It trains a pairwise linear reranker
-from legal proposal-time features only. On the bounded public 40-task diagnostic
-logs, five task-hash folds improve exact rank inside the emitted diagnostic
-candidate set from mean raw loaded rank 17.5 to mean learned loaded rank 5.67 and
-produce 17 held-out top-1 exact rows versus 0 for raw review priority. Treat this
-as a selector-learning foothold, not a runtime promotion: it still lacks stable
-one-slot hit rate and must pass the C robustness verdict after any runtime
-weight wiring.
+from legal proposal-time features only and now emits a full
+`crlp.arc_holo_bucket_review_selector.weights.v1` vector with `hash_bins` so the
+C ARC runtime can load it. On the bounded public 40-task diagnostic logs, five
+task-hash folds improve exact rank inside the emitted diagnostic candidate set
+from mean raw loaded rank 17.5 to mean learned loaded rank 5.67 and produce 17
+held-out top-1 exact rows versus 0 for raw review priority. The runtime flag
+`--arc-holo-bucket-review-selector-shadow path` loads those weights but keeps
+actual `trace_holo_bucket` selection unchanged; it emits
+`crlp.arc_holo_bucket_review_selector_shadow.v1` rows comparing raw and learned
+review ranks, selected-window crossings, and learned scores. Treat this as a
+selector-learning foothold, not a runtime promotion: shadow smoke emits thousands
+of disagreement rows, so promotion still requires a passing C robustness verdict
+with nonnegative utility deltas and zero crossed-out exact candidates.
 
 ## The Core Bet
 
@@ -356,7 +362,7 @@ rows separate ranker improvement from exact verifier coverage.
 | Unique-task certified/exact tasks | 46 / 43 after reflected + marker motif + axis tiling + period extension | 50+ / 46+ |
 | VSA scoring enabled | Yes, no grid/object-scene uplift | Keep instrumented |
 | Proposal trace rows | `crlp.arc_proposal_trace.v1`: 25,750 rows / 400 tasks / 144 exact candidate rows | Task-conditioned family/slot proposer |
-| Trace-prior proposer | `trace_task_prior` beats structural and global trace prior at budget 64; trained `trace_linear`/`trace_mlp` trail it; default `trace_holo_residual` matches public utility and diagnostics show 0 budget crossings; raw `--arc-holo-pressure-residual` remains negative, but `trace_holo_bucket` improves public utility at budgets 8/16/32/64 to `0.01685136/0.02036279/0.02122741/0.02265669` with 8 crossings in and 0 out; tight grid matches at 1 and improves at 2/4/8; robustness rows show `auto`/`1` are stable and `2`/`4` regress tight budget 2; gate rows show 776/800 open after warmup and 0/800 open at tight budget 1; learned-gate public smoke finds 18 tight / 24 standard outside-budget exact pressure candidates but zero selected exacts; new review-candidate rows label those misses with mean exact review rank about 516-518; offline pairwise selector improves diagnostic-set exact rank to 5.67 across five task-hash folds and gets 17 held-out top-1 exact rows | Improve offline bucket review selector before widening review, loosening invocation, or wiring runtime weights |
+| Trace-prior proposer | `trace_task_prior` beats structural and global trace prior at budget 64; trained `trace_linear`/`trace_mlp` trail it; default `trace_holo_residual` matches public utility and diagnostics show 0 budget crossings; raw `--arc-holo-pressure-residual` remains negative, but `trace_holo_bucket` improves public utility at budgets 8/16/32/64 to `0.01685136/0.02036279/0.02122741/0.02265669` with 8 crossings in and 0 out; tight grid matches at 1 and improves at 2/4/8; robustness rows show `auto`/`1` are stable and `2`/`4` regress tight budget 2; gate rows show 776/800 open after warmup and 0/800 open at tight budget 1; learned-gate public smoke finds 18 tight / 24 standard outside-budget exact pressure candidates but zero selected exacts; new review-candidate rows label those misses with mean exact review rank about 516-518; offline pairwise selector emits runtime-loadable weights and improves diagnostic-set exact rank to 5.67 across five task-hash folds; `--arc-holo-bucket-review-selector-shadow` now emits raw-vs-learned review-rank comparison rows without changing selection | Mine shadow selector disagreements and hard negatives, then require the C robustness verdict before any active selector promotion |
 | Flat-vs-forest recall rows | Partitioned sandbox rows exist: 32 partitions lift top-1 from ~0.50 flat to 0.98/0.85/0.78/0.63/0.55 at 64/128/256/512/1024 pairs | Add tree/forest or ARC family-partition rows |
 | Focused shape-scale audit | 55 certified rows after reflected tiling; marker motif adds 2, axis tiling adds 6, and period extension adds 1 unique-task exact solve | Extend to next fixed-scale family |
 | Object-scene ranker condition | Yes, no uplift | Park |
@@ -372,9 +378,11 @@ rows separate ranker improvement from exact verifier coverage.
    Use `crlp.arc_holo_bucket_review_candidate.v1` rows as the selector training
    set for the cleanup bucket: first learn a one-slot reranker that moves labeled
    exact pressure candidates toward the review frontier; the first pairwise
-   reranker has rank signal but not enough top-1 stability. Next add broader
-   negative rows or cleaner family features, then revisit family or HoloForest
-   partitions if local trace crosstalk remains the limiting factor.
+   reranker has rank signal but not enough top-1 stability. Shadow-load the
+   selector with `--arc-holo-bucket-review-selector-shadow`, mine
+   `crlp.arc_holo_bucket_review_selector_shadow.v1` disagreement rows for hard
+   negatives and overfit family tokens, then require `make
+   arc-holo-bucket-robustness` before any active selector promotion.
 3. **Workstream D** (scale-space pyramid) — continue from `reflect_tile` into
    other shape-evidenced scale transforms. Runtime +5-10s.
 4. **Visual-program proposal coverage** — inspect zero-candidate and

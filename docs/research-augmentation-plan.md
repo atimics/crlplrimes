@@ -246,11 +246,16 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   learned pressure review reranker, not another manual invocation threshold.
   The first offline probe, `tools/arc_holo_bucket_review_selector.c`, is wired
   through `make arc-holo-bucket-review-selector`. It uses legal proposal-time
-  features only and trains a pairwise linear selector. Across five task-hash
-  folds on the bounded public diagnostic logs it moves exact candidates inside
-  the emitted diagnostic set from mean raw loaded rank 17.5 to learned rank 5.67
-  and selects 17 held-out exact rows top-1 versus 0 for raw review priority. That
-  is a learning foothold, not a runtime selector yet.
+  features only and trains a pairwise linear selector. The weights artifact now
+  includes a full vector plus `hash_bins`, and `arc_agi` can load it with
+  `--arc-holo-bucket-review-selector-shadow` to emit
+  `crlp.arc_holo_bucket_review_selector_shadow.v1` raw-vs-learned review-rank
+  comparisons without changing proposal selection. Across five task-hash folds
+  on the bounded public diagnostic logs it moves exact candidates inside the
+  emitted diagnostic set from mean raw loaded rank 17.5 to learned rank 5.67 and
+  selects 17 held-out exact rows top-1 versus 0 for raw review priority. That is
+  a learning foothold, not a promoted runtime selector; mine shadow
+  disagreements and require the C robustness verdict before activation.
 
 **Papers:** Lake 2017 (Compositional Generalization), Bunel 2018 (Neural Program
 Synthesis), Nye 2021 (Scratchpads)

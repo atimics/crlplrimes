@@ -81,6 +81,11 @@ enum {
     ARC_PROGRAM_STRATEGY_COUNT = 11,
     ARC_PROPOSAL_TRACE_NEGATIVE_CAP = 64,
     ARC_HOLO_BUCKET_GATE_FEATURE_COUNT = 8,
+    ARC_HOLO_BUCKET_REVIEW_SELECTOR_BASE_FEATURES = 38,
+    ARC_HOLO_BUCKET_REVIEW_SELECTOR_MAX_HASH_BINS = 256,
+    ARC_HOLO_BUCKET_REVIEW_SELECTOR_MAX_FEATURES =
+        ARC_HOLO_BUCKET_REVIEW_SELECTOR_BASE_FEATURES +
+        ARC_HOLO_BUCKET_REVIEW_SELECTOR_MAX_HASH_BINS,
     ARC_OBJECT_CONNECT_HORIZONTAL = 0,
     ARC_OBJECT_CONNECT_VERTICAL = 1,
     ARC_OBJECT_CONNECT_BOTH = 2,
@@ -502,6 +507,7 @@ typedef struct {
     int arc_holo_bucket_learned_gate;
     size_t arc_holo_bucket_learned_gate_min_examples;
     nn_real arc_holo_bucket_learned_gate_threshold;
+    const char *arc_holo_bucket_review_selector_shadow_path;
     int shuffle_tasks;
     int unique_task_gate;
     int program_budget_grid;
@@ -853,6 +859,13 @@ typedef struct {
 } ARCProgramProposerAggregate;
 
 typedef struct {
+    int enabled;
+    size_t feature_count;
+    size_t hash_bins;
+    double weights[ARC_HOLO_BUCKET_REVIEW_SELECTOR_MAX_FEATURES];
+} ARCHoloBucketReviewSelectorModel;
+
+typedef struct {
     size_t family_seen[32];
     size_t family_success[32];
     size_t op_seen[ARC_RULE_COUNT];
@@ -881,6 +894,7 @@ typedef struct {
     size_t holo_bucket_gate_positive_updates;
     double holo_bucket_gate_target_sum;
     double holo_bucket_gate_margin_sum;
+    ARCHoloBucketReviewSelectorModel holo_bucket_review_selector_shadow;
     size_t input_color_seen[ARC_COLOR_COUNT];
     size_t input_color_success[ARC_COLOR_COUNT];
     size_t output_color_seen[ARC_COLOR_COUNT];
@@ -7813,6 +7827,260 @@ static double arc_holo_bucket_review_priority(double pressure_raw,
         baseline_bonus = -40.0;
     }
     return pressure_raw + 0.10 * baseline_bonus;
+}
+
+static const char *arc_holo_bucket_selector_json_value(const char *line,
+                                                       const char *key)
+{
+    char needle[96];
+    snprintf(needle, sizeof(needle), "\"%s\"", key);
+    const char *p = strstr(line, needle);
+    if (p == NULL) {
+        return NULL;
+    }
+    p += strlen(needle);
+    while (*p != '\0' && isspace((unsigned char)*p)) {
+        ++p;
+    }
+    if (*p != ':') {
+        return NULL;
+    }
+    ++p;
+    while (*p != '\0' && isspace((unsigned char)*p)) {
+        ++p;
+    }
+    return p;
+}
+
+static int arc_holo_bucket_review_selector_load(
+    ARCHoloBucketReviewSelectorModel *model,
+    const char *path)
+{
+    if (model == NULL || path == NULL || path[0] == '\0') {
+        return 0;
+    }
+    FILE *fp = fopen(path, "r");
+    if (fp == NULL) {
+        fprintf(stderr, "failed to open ARC Holo bucket review selector: %s\n", path);
+        return 0;
+    }
+    char line[65536];
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        if (strstr(line, "\"crlp.arc_holo_bucket_review_selector.weights.v1\"") ==
+            NULL) {
+            continue;
+        }
+        const char *feature_text =
+            arc_holo_bucket_selector_json_value(line, "feature_count");
+        const char *hash_text = arc_holo_bucket_selector_json_value(line, "hash_bins");
+        const char *weights_text =
+            arc_holo_bucket_selector_json_value(line, "weights");
+        if (feature_text == NULL || hash_text == NULL || weights_text == NULL) {
+            fclose(fp);
+            return 0;
+        }
+        char *end = NULL;
+        unsigned long feature_count = strtoul(feature_text, &end, 10);
+        if (end == feature_text || feature_count == 0 ||
+            feature_count > ARC_HOLO_BUCKET_REVIEW_SELECTOR_MAX_FEATURES) {
+            fclose(fp);
+            return 0;
+        }
+        unsigned long hash_bins = strtoul(hash_text, &end, 10);
+        if (end == hash_text ||
+            hash_bins > ARC_HOLO_BUCKET_REVIEW_SELECTOR_MAX_HASH_BINS ||
+            feature_count !=
+                ARC_HOLO_BUCKET_REVIEW_SELECTOR_BASE_FEATURES + hash_bins) {
+            fclose(fp);
+            return 0;
+        }
+        const char *p = strchr(weights_text, '[');
+        if (p == NULL) {
+            fclose(fp);
+            return 0;
+        }
+        ++p;
+        double weights[ARC_HOLO_BUCKET_REVIEW_SELECTOR_MAX_FEATURES] = {0};
+        size_t count = 0;
+        while (*p != '\0' && *p != ']' &&
+               count < ARC_HOLO_BUCKET_REVIEW_SELECTOR_MAX_FEATURES) {
+            while (*p != '\0' &&
+                   (isspace((unsigned char)*p) || *p == ',')) {
+                ++p;
+            }
+            if (*p == ']') {
+                break;
+            }
+            char *number_end = NULL;
+            double value = strtod(p, &number_end);
+            if (number_end == p || !isfinite(value)) {
+                fclose(fp);
+                return 0;
+            }
+            weights[count++] = value;
+            p = number_end;
+        }
+        if (count < feature_count) {
+            fclose(fp);
+            return 0;
+        }
+        memset(model, 0, sizeof(*model));
+        model->enabled = 1;
+        model->feature_count = (size_t)feature_count;
+        model->hash_bins = (size_t)hash_bins;
+        memcpy(model->weights, weights, feature_count * sizeof(weights[0]));
+        fclose(fp);
+        return 1;
+    }
+    fclose(fp);
+    return 0;
+}
+
+static void arc_holo_bucket_selector_add_feature(double *features,
+                                                 size_t feature_count,
+                                                 size_t index,
+                                                 double value)
+{
+    if (index < feature_count && isfinite(value)) {
+        features[index] += value;
+    }
+}
+
+static uint64_t arc_holo_bucket_selector_fnv1a_token(const char *text,
+                                                     size_t length)
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+    for (size_t i = 0; i < length; ++i) {
+        hash ^= (uint64_t)(unsigned char)text[i];
+        hash *= UINT64_C(1099511628211);
+    }
+    return hash;
+}
+
+static double arc_holo_bucket_review_selector_score(
+    const ARCHoloBucketReviewSelectorModel *model,
+    const ARCTransformCandidate *candidate,
+    size_t baseline_rank,
+    size_t review_rank,
+    size_t budget,
+    size_t review_slots,
+    int gate_open,
+    double pressure_raw,
+    double review_priority,
+    double review_frontier_priority,
+    double priority_deficit,
+    double baseline_score,
+    double structural_score,
+    const ARCProposalTracePrior *prior)
+{
+    (void)review_slots;
+    if (model == NULL || !model->enabled || candidate == NULL ||
+        model->feature_count == 0 ||
+        model->feature_count > ARC_HOLO_BUCKET_REVIEW_SELECTOR_MAX_FEATURES) {
+        return 0.0;
+    }
+    double features[ARC_HOLO_BUCKET_REVIEW_SELECTOR_MAX_FEATURES] = {0};
+    double base_rank = baseline_rank != 0 ? (double)baseline_rank : 1.0;
+    double raw_rank = review_rank != 0 ? (double)review_rank : 1.0;
+    double budget_value = budget != 0 ? (double)budget : 1.0;
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 0, 1.0);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 1,
+                                         log1p(base_rank) / 8.0);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 2,
+                                         1.0 / base_rank);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 3,
+                                         log1p(raw_rank) / 8.0);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 4,
+                                         1.0 / raw_rank);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 5,
+                                         log1p(budget_value) / 6.0);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 6,
+                                         pressure_raw);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 7,
+                                         review_priority / 8.0);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 8,
+                                         review_frontier_priority / 8.0);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 9,
+                                         priority_deficit / 8.0);
+    arc_holo_bucket_selector_add_feature(
+        features,
+        model->feature_count,
+        10,
+        (review_priority - review_frontier_priority) / 8.0);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 11,
+                                         baseline_score / 160.0);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 12,
+                                         structural_score / 160.0);
+    arc_holo_bucket_selector_add_feature(
+        features,
+        model->feature_count,
+        13,
+        (baseline_score - structural_score) / 80.0);
+    arc_holo_bucket_selector_add_feature(
+        features,
+        model->feature_count,
+        14,
+        prior != NULL ? (double)prior->holo_pressure_updates / 128.0 : 0.0);
+    arc_holo_bucket_selector_add_feature(
+        features,
+        model->feature_count,
+        15,
+        prior != NULL ? (double)prior->positive_rows / 128.0 : 0.0);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 16, 1.0);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 17,
+                                         gate_open ? 1.0 : 0.0);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 18,
+                                         (double)candidate->dx / 16.0);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 19,
+                                         (double)candidate->dy / 16.0);
+    arc_holo_bucket_selector_add_feature(features, model->feature_count, 20,
+                                         (double)candidate->scale / 16.0);
+    int cats[] = {(int)candidate->op,
+                  (int)candidate->input_color,
+                  (int)candidate->output_color,
+                  (int)candidate->background_color,
+                  (int)candidate->selector_kind,
+                  (int)candidate->output_selector_kind,
+                  (int)candidate->reference_color,
+                  (int)candidate->render_mode,
+                  (int)candidate->step_count,
+                  (int)candidate->hypothesis_template_id,
+                  (int)candidate->hypothesis_slot_count};
+    for (size_t i = 0; i < sizeof(cats) / sizeof(cats[0]); ++i) {
+        uint64_t h = (uint64_t)(i + 1u) * UINT64_C(1315423911) ^
+                     (uint64_t)(unsigned)cats[i];
+        arc_holo_bucket_selector_add_feature(features,
+                                             model->feature_count,
+                                             21u + (size_t)(h % 17u),
+                                             1.0);
+    }
+    if (model->hash_bins != 0 && candidate->name[0] != '\0') {
+        const char *start = candidate->name;
+        for (const char *p = candidate->name;; ++p) {
+            if (*p == '\0' || *p == '-' || *p == '_') {
+                size_t length = (size_t)(p - start);
+                if (length != 0) {
+                    uint64_t token_hash =
+                        arc_holo_bucket_selector_fnv1a_token(start, length);
+                    arc_holo_bucket_selector_add_feature(
+                        features,
+                        model->feature_count,
+                        ARC_HOLO_BUCKET_REVIEW_SELECTOR_BASE_FEATURES +
+                            (size_t)(token_hash % model->hash_bins),
+                        1.0);
+                }
+                if (*p == '\0') {
+                    break;
+                }
+                start = p + 1;
+            }
+        }
+    }
+    double score = 0.0;
+    for (size_t i = 0; i < model->feature_count; ++i) {
+        score += model->weights[i] * features[i];
+    }
+    return score;
 }
 
 static void arc_holo_bucket_gate_features(const ARCProposalTracePrior *prior,
@@ -16698,13 +16966,24 @@ static void arc_emit_holo_bucket_review_candidate_diagnostics(
     ARCProgramTaskFeatures task_features;
     ARCProgramRank baseline_ranks[ARC_RULE_CANDIDATE_COUNT];
     ARCProgramRank pressure_ranks[ARC_RULE_CANDIDATE_COUNT];
+    ARCProgramRank learned_ranks[ARC_RULE_CANDIDATE_COUNT];
     size_t baseline_rank[ARC_RULE_CANDIDATE_COUNT];
+    size_t raw_review_rank[ARC_RULE_CANDIDATE_COUNT];
+    size_t learned_review_rank[ARC_RULE_CANDIDATE_COUNT];
     double baseline_score[ARC_RULE_CANDIDATE_COUNT];
     double structural_score[ARC_RULE_CANDIDATE_COUNT];
+    double pressure_raw_value[ARC_RULE_CANDIDATE_COUNT];
+    double review_priority_value[ARC_RULE_CANDIDATE_COUNT];
+    double learned_score[ARC_RULE_CANDIDATE_COUNT];
     for (size_t i = 0; i < candidate_count; ++i) {
         baseline_rank[i] = 0;
+        raw_review_rank[i] = 0;
+        learned_review_rank[i] = 0;
         baseline_score[i] = 0.0;
         structural_score[i] = 0.0;
+        pressure_raw_value[i] = 0.0;
+        review_priority_value[i] = 0.0;
+        learned_score[i] = 0.0;
     }
     arc_program_task_features(task, &task_features);
     arc_build_program_ranks(task,
@@ -16741,9 +17020,11 @@ static void arc_emit_holo_bucket_review_candidate_diagnostics(
                                                        &candidates[i],
                                                        &task_features)
                 : 0.0;
-        pressure_ranks[i].candidate_index = i;
-        pressure_ranks[i].primary =
+        pressure_raw_value[i] = pressure_raw;
+        review_priority_value[i] =
             arc_holo_bucket_review_priority(pressure_raw, baseline_score[i]);
+        pressure_ranks[i].candidate_index = i;
+        pressure_ranks[i].primary = review_priority_value[i];
         pressure_ranks[i].secondary = pressure_raw;
         pressure_ranks[i].tie_breaker =
             arc_hash_mix(arc_task_hash(task), evals[i].program_hash ^ (uint64_t)i);
@@ -16770,6 +17051,13 @@ static void arc_emit_holo_bucket_review_candidate_diagnostics(
     size_t review_limit = review_slots < candidate_count ? review_slots : candidate_count;
     double frontier_priority =
         review_limit != 0 ? pressure_ranks[review_limit - 1u].primary : 0.0;
+    for (size_t rank = 0; rank < candidate_count; ++rank) {
+        size_t index = pressure_ranks[rank].candidate_index;
+        if (index < candidate_count && pressure_ranks[rank].secondary > 0.0 &&
+            baseline_rank[index] > budget) {
+            raw_review_rank[index] = rank + 1u;
+        }
+    }
     size_t diagnostic_limit = review_slots + 8u;
     if (diagnostic_limit < 16u) {
         diagnostic_limit = 16u;
@@ -16781,6 +17069,62 @@ static void arc_emit_holo_bucket_review_candidate_diagnostics(
         diagnostic_limit = candidate_count;
     }
     int gate_open = arc_holo_bucket_gate_open(trace_prior, budget);
+    if (trace_prior->holo_bucket_review_selector_shadow.enabled) {
+        for (size_t i = 0; i < candidate_count; ++i) {
+            double priority_deficit =
+                frontier_priority > review_priority_value[i]
+                    ? frontier_priority - review_priority_value[i]
+                    : 0.0;
+            learned_score[i] =
+                raw_review_rank[i] != 0
+                    ? arc_holo_bucket_review_selector_score(
+                          &trace_prior->holo_bucket_review_selector_shadow,
+                          &candidates[i],
+                          baseline_rank[i],
+                          raw_review_rank[i],
+                          budget,
+                          review_slots,
+                          gate_open,
+                          pressure_raw_value[i],
+                          review_priority_value[i],
+                          frontier_priority,
+                          priority_deficit,
+                          baseline_score[i],
+                          structural_score[i],
+                          trace_prior)
+                    : -INFINITY;
+            learned_ranks[i].candidate_index = i;
+            learned_ranks[i].primary = learned_score[i];
+            learned_ranks[i].secondary = pressure_raw_value[i];
+            learned_ranks[i].tie_breaker =
+                arc_hash_mix(arc_task_hash(task), evals[i].program_hash ^ (uint64_t)i);
+        }
+        for (size_t i = 1; i < candidate_count; ++i) {
+            ARCProgramRank key = learned_ranks[i];
+            size_t j = i;
+            while (j > 0) {
+                ARCProgramRank prev = learned_ranks[j - 1u];
+                int before = key.primary > prev.primary ||
+                             (key.primary == prev.primary &&
+                              key.secondary > prev.secondary) ||
+                             (key.primary == prev.primary &&
+                              key.secondary == prev.secondary &&
+                              key.tie_breaker < prev.tie_breaker);
+                if (!before) {
+                    break;
+                }
+                learned_ranks[j] = learned_ranks[j - 1u];
+                --j;
+            }
+            learned_ranks[j] = key;
+        }
+        for (size_t rank = 0; rank < candidate_count; ++rank) {
+            size_t index = learned_ranks[rank].candidate_index;
+            if (index < candidate_count && isfinite(learned_ranks[rank].primary)) {
+                learned_review_rank[index] = rank + 1u;
+            }
+        }
+    }
     for (size_t rank = 0; rank < candidate_count; ++rank) {
         size_t index = pressure_ranks[rank].candidate_index;
         if (index >= candidate_count || pressure_ranks[rank].secondary <= 0.0 ||
@@ -16855,6 +17199,67 @@ static void arc_emit_holo_bucket_review_candidate_diagnostics(
                priority_deficit,
                trace_prior->holo_pressure_updates,
                trace_prior->positive_rows);
+    }
+    if (trace_prior->holo_bucket_review_selector_shadow.enabled) {
+        for (size_t index = 0; index < candidate_count; ++index) {
+            if (raw_review_rank[index] == 0 || learned_review_rank[index] == 0 ||
+                baseline_rank[index] <= budget || pressure_raw_value[index] <= 0.0) {
+                continue;
+            }
+            int exact = arc_program_eval_is_exact_success(&evals[index]);
+            if (raw_review_rank[index] > diagnostic_limit &&
+                learned_review_rank[index] > diagnostic_limit && !exact) {
+                continue;
+            }
+            double priority_deficit =
+                frontier_priority > review_priority_value[index]
+                    ? frontier_priority - review_priority_value[index]
+                    : 0.0;
+            int raw_selected =
+                gate_open && raw_review_rank[index] <= review_slots;
+            int learned_selected =
+                gate_open && learned_review_rank[index] <= review_slots;
+            printf("{\"schema\":\"crlp.arc_holo_bucket_review_selector_shadow.v1\","
+                   "\"report_version\":1,\"task\":\"arc_agi\",\"task_instance\":");
+            print_json_string(task->id);
+            printf(",\"budget\":%zu,\"candidate_index\":%zu,\"candidate_name\":",
+                   budget,
+                   index);
+            print_json_string(candidates[index].name);
+            printf(",\"program_hash\":\"%016llx\","
+                   "\"baseline_rank\":%zu,\"raw_review_rank\":%zu,"
+                   "\"learned_review_rank\":%zu,\"review_slots\":%zu,"
+                   "\"gate_open\":%s,\"raw_selected_for_review\":%s,"
+                   "\"learned_selected_for_review\":%s,"
+                   "\"crossed_into_review\":%s,\"crossed_out_of_review\":%s,"
+                   "\"exact_label\":%s,\"pressure_raw\":%.8f,"
+                   "\"raw_review_priority\":%.8f,"
+                   "\"learned_review_score\":%.8f,"
+                   "\"review_frontier_priority\":%.8f,"
+                   "\"priority_deficit\":%.8f,"
+                   "\"feature_count\":%zu,\"hash_bins\":%zu,"
+                   "\"holo_pressure_updates\":%zu,\"positive_rows\":%zu}\n",
+                   (unsigned long long)evals[index].program_hash,
+                   baseline_rank[index],
+                   raw_review_rank[index],
+                   learned_review_rank[index],
+                   review_slots,
+                   gate_open ? "true" : "false",
+                   raw_selected ? "true" : "false",
+                   learned_selected ? "true" : "false",
+                   (!raw_selected && learned_selected) ? "true" : "false",
+                   (raw_selected && !learned_selected) ? "true" : "false",
+                   exact ? "true" : "false",
+                   pressure_raw_value[index],
+                   review_priority_value[index],
+                   learned_score[index],
+                   frontier_priority,
+                   priority_deficit,
+                   trace_prior->holo_bucket_review_selector_shadow.feature_count,
+                   trace_prior->holo_bucket_review_selector_shadow.hash_bins,
+                   trace_prior->holo_pressure_updates,
+                   trace_prior->positive_rows);
+        }
     }
 }
 
@@ -27863,6 +28268,22 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         free(files);
         return 0;
     }
+    if (config->arc_holo_bucket_review_selector_shadow_path != NULL &&
+        !arc_holo_bucket_review_selector_load(
+            &proposal_trace_prior.holo_bucket_review_selector_shadow,
+            config->arc_holo_bucket_review_selector_shadow_path)) {
+        fprintf(stderr,
+                "Failed to load ARC Holo bucket review selector shadow model from %s\n",
+                config->arc_holo_bucket_review_selector_shadow_path);
+        free(candidates);
+        free(evals);
+        free(learn_candidates);
+        free(learn_evals);
+        arc_proposal_trace_prior_free(&proposal_trace_prior);
+        arc_program_learned_free(&learned_state);
+        free(files);
+        return 0;
+    }
     if (config->program_train_dir != NULL &&
         !arc_pretrain_program_proposer(&learned_state,
                                        config->program_train_dir,
@@ -28199,6 +28620,7 @@ static void print_usage(FILE *stream)
           "[--arc-holo-bucket-learned-gate] "
           "[--arc-holo-bucket-learned-gate-min-examples count] "
           "[--arc-holo-bucket-learned-gate-threshold rate] "
+          "[--arc-holo-bucket-review-selector-shadow path] "
           "[--arc-sketches-per-task count] "
           "[--hypothesis-top-k count] [--disable-hypothesis-neural-prior] "
           "[--disable-hypothesis-slot-prior] [--disable-hypothesis-cold-start] "
@@ -28257,6 +28679,7 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->arc_holo_bucket_learned_gate = 0;
     config->arc_holo_bucket_learned_gate_min_examples = 32;
     config->arc_holo_bucket_learned_gate_threshold = (nn_real)0.50;
+    config->arc_holo_bucket_review_selector_shadow_path = NULL;
     config->shuffle_tasks = 0;
     config->unique_task_gate = 0;
     config->program_budget_grid = 0;
@@ -28435,6 +28858,12 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
                 return 0;
             }
             config->arc_holo_bucket_learned_gate_threshold = value;
+        } else if (strcmp(argv[i], "--arc-holo-bucket-review-selector-shadow") == 0 &&
+                   i + 1 < argc) {
+            config->arc_holo_bucket_review_selector_shadow_path = argv[++i];
+            if (config->arc_holo_bucket_review_selector_shadow_path[0] == '\0') {
+                return 0;
+            }
         } else if (strcmp(argv[i], "--arc-sketches-per-task") == 0 && i + 1 < argc) {
             if (!nn_parse_size_text(argv[++i], &config->arc_sketch_probe_sketches_per_task)) {
                 return 0;
