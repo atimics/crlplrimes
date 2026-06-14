@@ -321,7 +321,7 @@ and the adopted strategy.
 | CrlpBridge / nn_holographic | Global singleton folded into memory neuron grid. |
 | holonet.c, hybrid_holo_nn.c, holo_envelope.c, holo_replace_envelope.c, holo_claim_reform.c, holo_all_experiments.c | Exploration code; learnings captured in this document. |
 | holographic_prime_gap.c, holographic_ranker_demo.c, cross_domain_big.c | Archive or rewrite against MemoryNeuron grid. |
-| scripts/merge_holo.py | Already untracked. |
+| merge-holo script | Already untracked; future merge orchestration belongs in C runtime tools. |
 
 ### Build
 

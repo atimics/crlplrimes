@@ -8,7 +8,7 @@
 - `89ccb0d` — "sparse verified MCTS Go engine with GTP protocol": new `examples/go_selfplay.c` (824 lines), `nn_dataset.c`/`nn_dataset_music.c`/`nn_paper.c` additions.
 - `8a5422b` — "continuous-learning GTP engine": new `examples/go_gtp.c` (534 lines).
 - **Uncommitted working tree:** further edits to `go_gtp.c`, `go_selfplay.c`, `dataset_action_score.c`, `nn_dataset.c`, and a large `nn_dataset_music.c` refactor (inline data → `#include nn_dataset_music_corpus.inc`).
-- **Untracked:** `src/nn_dataset_proof.c` (new), `nn_dataset_music_corpus.inc` (1030-line generated data), Python harnesses `examples/go_server.py`/`go_web.py`, `scripts/sensor_transfer_proof_grid.sh`.
+- **Untracked at that snapshot:** `src/nn_dataset_proof.c` (new), `nn_dataset_music_corpus.inc` (1030-line generated data), then-external web harnesses, and `scripts/sensor_transfer_proof_grid.sh`.
 
 > **Verification legend:** **[verified]** = I confirmed it by reading the current code directly. **[reported]** = surfaced by a review agent, mechanism is plausible and consistent with surrounding code, but not independently traced end-to-end — confirm before acting.
 
@@ -43,7 +43,7 @@ The two new Go-engine files are well-structured and **memory-safe for the 9×9 c
 char cmd[64], a1[64], a2[64];
 int n = sscanf(p, "%63s %63s %63s", cmd, a1, a2);
 ```
-`sscanf` only writes the buffers it matches and does not NUL-terminate the rest. On a line with `n < 1` tokens, `cmd` is fully uninitialized and every subsequent `strcmp(cmd, ...)` reads indeterminate stack memory (UB — may match garbage or crash). Input arrives over stdin from `go_server.py`/`go_web.py`, which forward HTTP request data verbatim, so this is remotely reachable.
+`sscanf` only writes the buffers it matches and does not NUL-terminate the rest. On a line with `n < 1` tokens, `cmd` is fully uninitialized and every subsequent `strcmp(cmd, ...)` reads indeterminate stack memory (UB — may match garbage or crash). At the reviewed snapshot, external harnesses forwarded HTTP request data verbatim, so this was remotely reachable.
 **Fix:** `cmd[0] = a1[0] = a2[0] = '\0';` before `sscanf`, and `if (n < 1) { gtp_out("? empty"); continue; }`.
 
 ### C2. `boardsize` and `kgs-genmove_cleanup` use args with no arity check → uninitialized read **[verified]**
@@ -106,7 +106,7 @@ The new evaluator filters rows on the literal `"\"schema\":\"crlp.dataset_action
 - **L3. "Adaptive visit budget / confidence gap" advertised but not implemented.** `go_selfplay.c:579, 589`: `budget` and `second_p` are computed then `(void)`-discarded; the search always runs a fixed `MCTS_SIMULATIONS`. [reported]
 - **L4. RAVE statistics mix perspectives and aren't reset across games.** `go_selfplay.c:362–373, 554`: AMAF wins are credited from the unwinding ply's perspective, not the mover's, and `go_match`/`gtp` never call `rave_reset` between games — effectively noise. [reported]
 - **L5. `z_init` reseeds `rand()` with `srand(42)`**, potentially clobbering `main`'s `srand(time(NULL))` and making play deterministic per process. `go_selfplay.c` Zobrist init. Use a private RNG for Zobrist. [reported]
-- **L6. Network harnesses bind `0.0.0.0`** (`go_server.py`, `go_web.py`) and forward client-supplied move lists verbatim as GTP commands — this is what makes C1/C2 remotely reachable. Bind `127.0.0.1` and validate commands in Python. [reported]
+- **L6. Network harnesses bind `0.0.0.0`** and forward client-supplied move lists verbatim as GTP commands — this is what makes C1/C2 remotely reachable. Keep network orchestration inside the C runtime boundary, bind `127.0.0.1`, and validate commands before dispatch. [reported]
 - **L7. Unused variables** `c` (`go_selfplay.c:101`) and `err` (`:680`) — the only compiler warnings. [verified]
 
 ---

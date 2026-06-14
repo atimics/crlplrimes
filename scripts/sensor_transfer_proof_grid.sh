@@ -59,14 +59,21 @@ printf '{"schema":"crlp.sensor_transfer.summary.v1","experiment":"proof_to_grid"
   >> "$RESULT"
 
 echo "Results: $RESULT"
-cat "$RESULT" | grep '"schema"' | python3 -c "
-import sys,json
-for line in sys.stdin:
-    d = json.loads(line.strip().rstrip(','))
-    if 'baseline' in d:
-        bl = d.get('baseline','?')
-        t1 = d.get('test_top1', 0)
-        nl = d.get('test_nll', 0)
-        tg = d.get('test_groups', 0)
-        print(f'{bl:25s} top1={t1:.4f} nll={nl:.4f} groups={tg}')
-"
+grep '"schema"' "$RESULT" | awk '
+  /"baseline"/ {
+    bl="?"; t1="0"; nl="0"; tg="0";
+    if (match($0, /"baseline":"[^"]+"/)) {
+      bl=substr($0, RSTART+12, RLENGTH-13);
+    }
+    if (match($0, /"test_top1":[-0-9.]+/)) {
+      t1=substr($0, RSTART+12, RLENGTH-12);
+    }
+    if (match($0, /"test_nll":[-0-9.]+/)) {
+      nl=substr($0, RSTART+11, RLENGTH-11);
+    }
+    if (match($0, /"test_groups":[0-9]+/)) {
+      tg=substr($0, RSTART+14, RLENGTH-14);
+    }
+    printf "%-25s top1=%.4f nll=%.4f groups=%s\n", bl, t1, nl, tg;
+  }
+'

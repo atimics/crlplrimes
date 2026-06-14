@@ -213,11 +213,12 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   negative control and instead uses guarded pressure memory to open a bounded
   verifier-review window around candidates missed by `trace_task_prior`. The
   ordered public run improves at budgets 8/16/32/64 and the tight grid now
-  matches at budget 1 after adding a min-budget floor. The promotion audit is
-  `make arc-holo-bucket-robustness`, which emits raw ARC logs plus
-  `crlp.arc_holo_bucket_robustness.run.v1`, aggregate rows, and
-  `crlp.arc_holo_bucket_robustness.verdict.v1` rows across task-order,
-  warmup-threshold, and review-window perturbations. The first default full public sweep keeps
+  matches at budget 1 after adding a min-budget floor. The prior promotion audit
+  emitted raw ARC logs plus `crlp.arc_holo_bucket_robustness.run.v1`, aggregate
+  rows, and `crlp.arc_holo_bucket_robustness.verdict.v1` rows across task-order,
+  warmup-threshold, and review-window perturbations. The old sweep target is now
+  retired under the universal-C orchestration policy, so expanding this audit
+  requires a C runtime port first. The first default full public sweep keeps
   zero crossed-out exact candidates; `auto` and one-slot review pass the
   no-regression check, while two-/four-slot review windows regress tight budget
   2 and should remain exploratory larger-budget settings. The invocation gate
@@ -225,12 +226,11 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   `crlp.arc_holo_bucket_gate.v1`; the focused public `auto,1` audit opens
   776/800 rows after warmup, opens 0/800 at tight budget 1, and gives the next
   learner a direct target for deciding when the review bucket is worth spending.
-  `ARC_HOLO_BUCKET_ROBUSTNESS_MIN_PRESSURE_UPDATES` may now be a comma-separated
-  list; `verdict.jsonl` is the threshold-selection artifact.
+  `verdict.jsonl` remains the threshold-selection artifact for the archived
+  sweep rows.
   The first learned invocation gate is implemented behind
-  `--arc-holo-bucket-learned-gate` and exposed through
-  `ARC_HOLO_BUCKET_ROBUSTNESS_LEARNED_GATE=1`. It trains online from prior
-  task-budget labels and can only close the existing fixed gate. Fixture smoke
+  `--arc-holo-bucket-learned-gate`. It trains online from prior task-budget
+  labels and can only close the existing fixed gate. Fixture smoke
   says threshold `0.5` is too conservative, while threshold `0.3` recovers the
   fixture uplift with zero crossed-out exact candidates; public verdict rows do
   not promote it yet. The learned-gate surface now records review-window exact
@@ -243,12 +243,12 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   missed by the one-slot/auto selector, with mean exact review rank about
   516-518 and worst exact rank 1101. The next evidence target is therefore a
   learned pressure review reranker, not another manual invocation threshold.
-  The first offline probe, `scripts/arc_holo_bucket_review_selector.py`, is wired
+  The first offline probe, `tools/arc_holo_bucket_review_selector.c`, is wired
   through `make arc-holo-bucket-review-selector`. It uses legal proposal-time
   features only and trains a pairwise linear selector. Across five task-hash
   folds on the bounded public diagnostic logs it moves exact candidates inside
-  the emitted diagnostic set from mean raw loaded rank 17.5 to learned rank 6.55
-  and selects 4 held-out exact rows top-1 versus 0 for raw review priority. That
+  the emitted diagnostic set from mean raw loaded rank 17.5 to learned rank 5.67
+  and selects 17 held-out exact rows top-1 versus 0 for raw review priority. That
   is a learning foothold, not a runtime selector yet.
 
 **Papers:** Lake 2017 (Compositional Generalization), Bunel 2018 (Neural Program

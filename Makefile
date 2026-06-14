@@ -139,6 +139,18 @@ HOLO_EXPERIMENTS := $(BUILD_DIR)/holo_experiments
 $(HOLO_EXPERIMENTS): examples/holo_experiments.c $(NN_MEMORY_NEURON_OBJ) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_RUNNER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_LEOS_ENGINE_OBJ) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/holo_experiments.c $(NN_MEMORY_NEURON_OBJ) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_RUNNER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_LEOS_ENGINE_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
+ARC_HOLO_BUCKET_REVIEW_SELECTOR := $(BUILD_DIR)/arc_holo_bucket_review_selector_tool
+$(ARC_HOLO_BUCKET_REVIEW_SELECTOR): tools/arc_holo_bucket_review_selector.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) tools/arc_holo_bucket_review_selector.c $(LDFLAGS) $(LDLIBS) -o $@
+
+PREPROCESS_PRIME_GAP_TRACE := $(BUILD_DIR)/preprocess_prime_gap_trace
+$(PREPROCESS_PRIME_GAP_TRACE): tools/preprocess_prime_gap_trace.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) tools/preprocess_prime_gap_trace.c $(LDFLAGS) $(LDLIBS) -o $@
+
+HOLO_DOMAIN_RUNNER := $(BUILD_DIR)/holo_domain_runner
+$(HOLO_DOMAIN_RUNNER): tools/holo_domain_runner.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) tools/holo_domain_runner.c $(LDFLAGS) $(LDLIBS) -o $@
+
 NN_GRAMMAR_DISCOVERY_RUNTIME := $(BUILD_DIR)/neural_grammar_discovery_runtime
 BENCHMARK := $(BUILD_DIR)/benchmark
 TEST_RUNNER := $(BUILD_DIR)/test_nn
@@ -1355,21 +1367,11 @@ arc-agi-evidence-surface: $(ARC_AGI)
 	$(RETIRED_SCRIPT_TARGET)
 
 arc-holo-bucket-robustness: $(ARC_AGI) arc-public-data
-	python3 scripts/arc_holo_bucket_robustness.py \
-		--arc-agi "./$(ARC_AGI)" \
-		--task-dir "$(ARC_HOLO_BUCKET_ROBUSTNESS_TASK_DIR)" \
-		--out-dir "$(ARC_HOLO_BUCKET_ROBUSTNESS_DIR)" \
-		--max-tasks "$(ARC_HOLO_BUCKET_ROBUSTNESS_MAX_TASKS)" \
-		--orders "$(ARC_HOLO_BUCKET_ROBUSTNESS_ORDERS)" \
-		--grids "$(ARC_HOLO_BUCKET_ROBUSTNESS_GRIDS)" \
-		--min-budgets "$(ARC_HOLO_BUCKET_ROBUSTNESS_MIN_BUDGETS)" \
-		--min-pressure-updates "$(ARC_HOLO_BUCKET_ROBUSTNESS_MIN_PRESSURE_UPDATES)" \
-		--review-slots "$(ARC_HOLO_BUCKET_ROBUSTNESS_REVIEW_SLOTS)" \
-		$(ARC_HOLO_BUCKET_ROBUSTNESS_LEARNED_GATE_ARGS)
+	$(RETIRED_SCRIPT_TARGET)
 
-arc-holo-bucket-review-selector:
+arc-holo-bucket-review-selector: $(ARC_HOLO_BUCKET_REVIEW_SELECTOR)
 	mkdir -p "$(ARC_HOLO_BUCKET_REVIEW_SELECTOR_DIR)"
-	python3 scripts/arc_holo_bucket_review_selector.py \
+	./$(ARC_HOLO_BUCKET_REVIEW_SELECTOR) \
 		"$(ARC_HOLO_BUCKET_REVIEW_SELECTOR_INPUT)" \
 		--out "$(ARC_HOLO_BUCKET_REVIEW_SELECTOR_DIR)/summary.jsonl" \
 		--epochs "$(ARC_HOLO_BUCKET_REVIEW_SELECTOR_EPOCHS)" \
@@ -1490,13 +1492,13 @@ arc-learned-sketch-ops: arc-verified-self-play-public
 	mkdir -p $(ARC_LEARNED_SKETCH_OPS_DIR)
 	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --arc-learned-sketch-ops --attempts-tsv "$(ARC_LEARNED_SKETCH_OPS_ATTEMPTS)" --trace "$(ARC_LEARNED_SKETCH_OPS_TRACE)" --operators "$(ARC_LEARNED_SKETCH_OPS_OPERATORS)" --prior "$(ARC_LEARNED_SKETCH_OPS_PRIOR)" --summary "$(ARC_LEARNED_SKETCH_OPS_SUMMARY)" --markdown "$(ARC_LEARNED_SKETCH_OPS_MARKDOWN)" --min-accepted "$(ARC_LEARNED_SKETCH_OPS_MIN_ACCEPTED)" --min-tasks "$(ARC_LEARNED_SKETCH_OPS_MIN_TASKS)" --near-miss-score "$(ARC_LEARNED_SKETCH_OPS_NEAR_MISS_SCORE)" --diagnostic-score "$(ARC_LEARNED_SKETCH_OPS_DIAGNOSTIC_SCORE)"
 
-holo-experiments: $(HOLO_EXPERIMENTS) prime-gap-trace
+holo-experiments: $(HOLO_EXPERIMENTS) $(PREPROCESS_PRIME_GAP_TRACE) prime-gap-trace
 	mkdir -p $(BUILD_DIR)/holo_results
 	./$(HOLO_EXPERIMENTS) --mode exact-retrieval --output-dir $(BUILD_DIR)/holo_results
 	./$(HOLO_EXPERIMENTS) --mode memory-routing --output-dir $(BUILD_DIR)/holo_results
 	./$(HOLO_EXPERIMENTS) --mode generalization --output-dir $(BUILD_DIR)/holo_results
 	./$(HOLO_EXPERIMENTS) --mode holo-gate-blend --output-dir $(BUILD_DIR)/holo_results
-	python3 scripts/preprocess_prime_gap_trace.py "$(BUILD_DIR)/traces/prime_gap.jsonl" "$(BUILD_DIR)/holo_results/prime_gap_holo_input.txt"
+	./$(PREPROCESS_PRIME_GAP_TRACE) "$(BUILD_DIR)/traces/prime_gap.jsonl" "$(BUILD_DIR)/holo_results/prime_gap_holo_input.txt"
 	./$(HOLO_EXPERIMENTS) --mode prime-gap-integration --output-dir $(BUILD_DIR)/holo_results
 
 
@@ -1508,13 +1510,13 @@ arc-discovery: $(ARC_DISCOVERY) arc-public-data
 	mkdir -p $(BUILD_DIR)/holo_results
 	./$(ARC_DISCOVERY) $(ARC_PUBLIC_DATA_DIR)/training $(BUILD_DIR)/holo_results
 
-holo-domain-experiments: $(HOLO_EXPERIMENTS) prime-gap-trace delayed-claim-trace grid-path-trace dataset-action-score-arc-smoke dataset-action-score-signal-smoke arc-public-data
+holo-domain-experiments: $(HOLO_EXPERIMENTS) $(HOLO_DOMAIN_RUNNER) prime-gap-trace delayed-claim-trace grid-path-trace dataset-action-score-arc-smoke dataset-action-score-signal-smoke arc-public-data
 	mkdir -p $(BUILD_DIR)/holo_results
-	python3 scripts/holo_domain_runner.py prime_gap $(BUILD_DIR)/traces/prime_gap.jsonl $(BUILD_DIR)/holo_results
-	python3 scripts/holo_domain_runner.py delayed_claim $(BUILD_DIR)/delayed_claim.jsonl $(BUILD_DIR)/holo_results
-	python3 scripts/holo_domain_runner.py grid_path $(BUILD_DIR)/grid_path.jsonl $(BUILD_DIR)/holo_results
-	python3 scripts/holo_domain_runner.py arc $(BUILD_DIR)/dataset_action_score_artifacts/arc_smoke_trace.jsonl $(BUILD_DIR)/holo_results
-	python3 scripts/holo_domain_runner.py signal $(BUILD_DIR)/dataset_action_score_artifacts/signal_smoke_trace.jsonl $(BUILD_DIR)/holo_results
+	./$(HOLO_DOMAIN_RUNNER) prime_gap $(BUILD_DIR)/traces/prime_gap.jsonl $(BUILD_DIR)/holo_results
+	./$(HOLO_DOMAIN_RUNNER) delayed_claim $(BUILD_DIR)/delayed_claim.jsonl $(BUILD_DIR)/holo_results
+	./$(HOLO_DOMAIN_RUNNER) grid_path $(BUILD_DIR)/grid_path.jsonl $(BUILD_DIR)/holo_results
+	./$(HOLO_DOMAIN_RUNNER) arc $(BUILD_DIR)/dataset_action_score_artifacts/arc_smoke_trace.jsonl $(BUILD_DIR)/holo_results
+	./$(HOLO_DOMAIN_RUNNER) signal $(BUILD_DIR)/dataset_action_score_artifacts/signal_smoke_trace.jsonl $(BUILD_DIR)/holo_results
 
 paper-grade-evidence-core: compounding-loop tiny-net-plateau-audit multitask-adapter-heads experiment-matrix holo-domain-experiments
 	mkdir -p $(SUBSTRATE_EXTENSION_RESULTS_DIR) $(MULTITASK_ROADMAP_RESULTS_DIR) $(HOLO_RESULTS_DIR)
@@ -1874,8 +1876,7 @@ experimental-results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME
 	@if [ -f "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" ]; then cp "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl"; elif [ -f "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl" ]; then echo "reusing existing prime gate seed interval"; else echo "missing prime gate seed interval artifact"
 
 paper-gen:
-	python3 scripts/build_paper.py
-	cd paper && typst compile paper-v3.typ paper-v3.pdf
+	$(RETIRED_SCRIPT_TARGET)
 
 paper-pdf: experiment-matrix paper-bibliography paper/paper.typ
 	cd paper && typst compile paper.typ paper.pdf
@@ -1908,14 +1909,14 @@ neurosymbolic-tune: all
 	$(RETIRED_SCRIPT_TARGET)
 
 source-policy-check:
-	@found=$$(find . -path ./.git -prune -o \( -name '*.pyc' -o -name '__pycache__' \) -print); \
+	@found=$$(find . -path ./.git -prune -o -path ./build -prune -o -path ./paper/sources -prune -o \( -name '*.py' -o -name '*.pyi' -o -name '*.pyc' -o -name '__pycache__' \) -print); \
 	if [ -n "$$found" ]; then echo "$$found"; exit 1; fi
 source-policy-report:
-	@echo "Tracked Python scripts (for audit; not a policy failure):"
-	@git ls-files 'scripts/*.py' | sed 's/^/  /'
+	@echo "Tracked Python source files:"
+	@git ls-files '*.py' '*.pyi' | sed 's/^/  /' || true
 	@echo ""
-	@echo "Use retire-or-reclassify: each script must become a C binary or be documented as"
-	@echo "an acceptable deviation (e.g. build-time helpers) to keep the source policy tight."
+	@echo "Policy: orchestration is first-class C runtime surface; tracked Python must be"
+	@echo "ported into C or retired before merge."
 
 
 test: $(TEST_RUNNER)

@@ -26,8 +26,7 @@ Important caveat: the working tree was dirty before this report was written.
 Current uncommitted changes include `Makefile`, `examples/arc_agi.c`,
 `examples/substrate_experiments.c`, generated paper files, latest trace output,
 and new untracked files such as `examples/hologram_merge.c`,
-`examples/vanity_hologram.c`, `include/base58.h`, and
-`scripts/vanity_enrich.py`. This report should be read as an analysis of the
+`examples/vanity_hologram.c`, and `include/base58.h`. This report should be read as an analysis of the
 current working tree, not a clean release tag.
 
 ## Executive summary
@@ -153,10 +152,10 @@ may not have.
 make: *** [source-policy-check] Error 2
 ```
 
-The target is missing a closing `fi` in `Makefile`. More importantly, the policy
-as written bans all `*.py`, `*.pyc`, and `__pycache__` entries, while the repo
-currently tracks multiple Python scripts and even a tracked pyc file. So this is
-both a syntax bug and a policy contradiction.
+The target is missing a closing `fi` in `Makefile`. This was later resolved by
+making source policy explicit: orchestration belongs in the C runtime surface,
+and tracked Python source is rejected rather than reclassified as a permanent
+exception.
 
 ### Local warnings from `make -j4 all`
 
@@ -271,8 +270,8 @@ the repository.
 Evidence:
 
 - The shell block ends without `fi`.
-- The repo currently tracks Python scripts under `scripts/` and a tracked
-  `scripts/__pycache__/arc_operators.cpython-314.pyc`.
+- The repo had mixed orchestration artifacts in tracked source, including
+  script sources and generated cache files.
 
 Impact:
 
@@ -733,4 +732,3 @@ Recommended guiding rule for the next phase:
 
 > Promote less, certify harder, and make every artifact say exactly what kind of
 > evidence it is.
-
