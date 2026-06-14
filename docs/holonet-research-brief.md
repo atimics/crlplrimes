@@ -142,6 +142,18 @@ and preserves the stable no-regression result. This row is the training surface
 for a sharper learned invocation policy; it does not make raw pressure residuals
 safe.
 
+The first learned invocation policy is now implemented behind
+`--arc-holo-bucket-learned-gate`. It is an online logistic gate that can close,
+but not bypass, the fixed budget/warmup/review-slot gate. The diagnostic row
+now records fixed-gate state, learned-gate score, example count, and threshold.
+Fixture smoke shows the default learned threshold `0.5` is conservative, while
+`--arc-holo-bucket-learned-gate-threshold 0.3` recovers the fixture crossing
+with fewer openings and zero crossed-out exact candidates. Treat it as an
+experimental proposer-control policy until the robustness verdict rows pass on
+public task-order sweeps. A bounded 40-task public smoke at threshold `0.3`
+opened 21/320 tight and 28/320 standard task-budget rows, crossed no exact
+candidates in or out, and therefore passed no-regression without showing uplift.
+
 ## Near-Term Backlog Change
 
 Replace "tune HoloNet residual confidence" with:
@@ -161,7 +173,10 @@ Replace "tune HoloNet residual confidence" with:
    Use `ARC_HOLO_BUCKET_ROBUSTNESS_MIN_PRESSURE_UPDATES` to sweep the explicit
    invocation gate before adding a learned gate; when it contains comma-separated
    values, read `verdict.jsonl` as the threshold-selection surface.
-4. Use `crlp.arc_holo_residual_diagnostic.v1` as the promotion metric: budget
+4. Compare fixed versus learned bucket invocation by rerunning the same harness
+   with `ARC_HOLO_BUCKET_ROBUSTNESS_LEARNED_GATE=1`; sweep
+   `ARC_HOLO_BUCKET_ROBUSTNESS_LEARNED_GATE_THRESHOLD` before promotion.
+5. Use `crlp.arc_holo_residual_diagnostic.v1` as the promotion metric: budget
    crossings first, utility second, hash changes last.
 
 ## Sources

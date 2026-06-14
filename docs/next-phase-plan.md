@@ -130,6 +130,16 @@ budget 1, and preserves the no-regression result. The next architecture step is
 to learn a sharper invocation policy from gate and verdict rows, not to widen
 the review window.
 
+That first learned policy now exists as an opt-in control:
+`--arc-holo-bucket-learned-gate` trains an online logistic invocation gate from
+previous task-budget labels. It remains conservative because it can only close
+the fixed gate, never bypass the fixed min-budget/warmup/review-slot guard.
+Fixture smoke shows threshold `0.5` closes too much, while threshold `0.3`
+recovers the fixture uplift with zero crossed-out exact candidates. The next
+evidence step is a public robustness sweep over learned thresholds and features,
+not default promotion: a bounded 40-task public smoke at threshold `0.3` passed
+no-regression but had zero crossings into budget.
+
 ## The Core Bet
 
 The bet: **the operators we have can solve 30-40 more tasks if applied to the

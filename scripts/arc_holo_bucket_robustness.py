@@ -163,10 +163,12 @@ def run_condition(
     review_label: str,
     review_slots: int,
 ) -> list[dict]:
+    gate_label = "learned" if args.learned_gate else "fixed"
     file_stem = (
         f"{grid}_{order_label}"
         f"{'' if order_seed is None else '_' + str(order_seed)}"
         f"_min{min_budget}_pressure{min_pressure_updates}_review{review_label}"
+        f"_{gate_label}gate"
     )
     raw_path = raw_dir / f"{file_stem}.jsonl"
     stderr_path = raw_dir / f"{file_stem}.stderr"
@@ -190,6 +192,16 @@ def run_condition(
         "--arc-holo-bucket-min-pressure-updates",
         str(min_pressure_updates),
     ]
+    if args.learned_gate:
+        command.append("--arc-holo-bucket-learned-gate")
+        command.extend(
+            [
+                "--arc-holo-bucket-learned-gate-min-examples",
+                str(args.learned_gate_min_examples),
+                "--arc-holo-bucket-learned-gate-threshold",
+                str(args.learned_gate_threshold),
+            ]
+        )
     if grid == "tight":
         command.append("--program-budget-tight-grid")
     elif grid == "standard":
@@ -247,6 +259,13 @@ def run_condition(
             "min_budget": min_budget,
             "min_pressure_updates": min_pressure_updates,
             "review_slots": review_label,
+            "gate_policy": gate_label,
+            "learned_gate_min_examples": args.learned_gate_min_examples
+            if args.learned_gate
+            else 0,
+            "learned_gate_threshold": args.learned_gate_threshold
+            if args.learned_gate
+            else 0.0,
             "budget": budget,
             "baseline_utility": float(baseline["utility"]),
             "bucket_utility": float(bucket["utility"]),
@@ -291,13 +310,14 @@ def aggregate_rows(rows: list[dict]) -> list[dict]:
             row["min_budget"],
             row["min_pressure_updates"],
             row["review_slots"],
+            row["gate_policy"],
             row["budget"],
         )
         buckets.setdefault(key, []).append(row)
 
     aggregates = []
     for key, group in sorted(buckets.items()):
-        grid, min_budget, min_pressure_updates, review_slots, budget = key
+        grid, min_budget, min_pressure_updates, review_slots, gate_policy, budget = key
         deltas = [float(row["utility_delta"]) for row in group]
         certified_deltas = [int(row["certified_delta"]) for row in group]
         crossed_in = sum(int(row["crossed_into_budget"]) for row in group)
@@ -311,6 +331,13 @@ def aggregate_rows(rows: list[dict]) -> list[dict]:
                 "min_budget": min_budget,
                 "min_pressure_updates": min_pressure_updates,
                 "review_slots": review_slots,
+                "gate_policy": gate_policy,
+                "learned_gate_min_examples": group[0].get(
+                    "learned_gate_min_examples", 0
+                ),
+                "learned_gate_threshold": group[0].get(
+                    "learned_gate_threshold", 0.0
+                ),
                 "budget": budget,
                 "run_count": len(group),
                 "median_utility_delta": statistics.median(deltas),
@@ -350,12 +377,13 @@ def verdict_rows(aggregates: list[dict]) -> list[dict]:
             row["min_budget"],
             row["min_pressure_updates"],
             row["review_slots"],
+            row["gate_policy"],
         )
         buckets.setdefault(key, []).append(row)
 
     verdicts = []
     for key, group in sorted(buckets.items()):
-        grid, min_budget, min_pressure_updates, review_slots = key
+        grid, min_budget, min_pressure_updates, review_slots, gate_policy = key
         group = sorted(group, key=lambda row: int(row["budget"]))
         total_runs = sum(int(row["run_count"]) for row in group)
         total_crossed_in = sum(int(row["crossed_into_budget"]) for row in group)
@@ -374,6 +402,13 @@ def verdict_rows(aggregates: list[dict]) -> list[dict]:
                 "min_budget": min_budget,
                 "min_pressure_updates": min_pressure_updates,
                 "review_slots": review_slots,
+                "gate_policy": gate_policy,
+                "learned_gate_min_examples": group[0].get(
+                    "learned_gate_min_examples", 0
+                ),
+                "learned_gate_threshold": group[0].get(
+                    "learned_gate_threshold", 0.0
+                ),
                 "budgets": ",".join(str(int(row["budget"])) for row in group),
                 "aggregate_rows": len(group),
                 "run_count": total_runs,
@@ -430,7 +465,14 @@ def main(argv: list[str]) -> int:
         help="comma list of Holo pressure-memory warmup thresholds",
     )
     parser.add_argument("--review-slots", default="auto,1,2,4")
+    parser.add_argument("--learned-gate", action="store_true")
+    parser.add_argument("--learned-gate-min-examples", type=int, default=32)
+    parser.add_argument("--learned-gate-threshold", type=float, default=0.5)
     args = parser.parse_args(argv)
+    if args.learned_gate_min_examples < 0:
+        parser.error("--learned-gate-min-examples must be non-negative")
+    if args.learned_gate_threshold < 0.0 or args.learned_gate_threshold > 1.0:
+        parser.error("--learned-gate-threshold must be in [0, 1]")
 
     out_dir = Path(args.out_dir)
     raw_dir = out_dir / "raw"

@@ -227,6 +227,13 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   learner a direct target for deciding when the review bucket is worth spending.
   `ARC_HOLO_BUCKET_ROBUSTNESS_MIN_PRESSURE_UPDATES` may now be a comma-separated
   list; `verdict.jsonl` is the threshold-selection artifact.
+  The first learned invocation gate is implemented behind
+  `--arc-holo-bucket-learned-gate` and exposed through
+  `ARC_HOLO_BUCKET_ROBUSTNESS_LEARNED_GATE=1`. It trains online from prior
+  task-budget labels and can only close the existing fixed gate. Fixture smoke
+  says threshold `0.5` is too conservative, while threshold `0.3` recovers the
+  fixture uplift with zero crossed-out exact candidates; public verdict rows
+  still need to promote or reject it.
 
 **Papers:** Lake 2017 (Compositional Generalization), Bunel 2018 (Neural Program
 Synthesis), Nye 2021 (Scratchpads)
