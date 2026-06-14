@@ -233,7 +233,11 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   task-budget labels and can only close the existing fixed gate. Fixture smoke
   says threshold `0.5` is too conservative, while threshold `0.3` recovers the
   fixture uplift with zero crossed-out exact candidates; public verdict rows
-  still need to promote or reject it.
+  still need to promote or reject it. The learned-gate surface now records
+  review-window exact hits, closed review exacts, mean target, score, and review
+  margin. A bounded 40-task public smoke at threshold `0.3` found outside-budget
+  exact pressure candidates but zero review-window exacts, making the pressure
+  review selector/reranker the next evidence target.
 
 **Papers:** Lake 2017 (Compositional Generalization), Bunel 2018 (Neural Program
 Synthesis), Nye 2021 (Scratchpads)

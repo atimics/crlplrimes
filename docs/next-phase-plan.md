@@ -138,7 +138,11 @@ Fixture smoke shows threshold `0.5` closes too much, while threshold `0.3`
 recovers the fixture uplift with zero crossed-out exact candidates. The next
 evidence step is a public robustness sweep over learned thresholds and features,
 not default promotion: a bounded 40-task public smoke at threshold `0.3` passed
-no-regression but had zero crossings into budget.
+no-regression but had zero crossings into budget. The new learned-gate surface
+shows why: the same smoke found outside-budget exact pressure candidates
+(18 tight, 24 standard), but zero `review_exact_candidates` and zero
+`closed_review_exact_candidates`. The next architectural target is therefore the
+pressure review selector/reranker, not a looser invocation threshold.
 
 ## The Core Bet
 

@@ -133,21 +133,49 @@ def parse_jsonl(
                         "gate_open_rows": 0,
                         "outside_budget_pressure_candidates": 0,
                         "outside_budget_exact_pressure_candidates": 0,
+                        "review_exact_candidates": 0,
+                        "closed_review_exact_candidates": 0,
+                        "baseline_exact_in_budget": 0,
+                        "fixed_gate_open_rows": 0,
+                        "learned_gate_score_sum": 0.0,
+                        "gate_label_target_sum": 0.0,
+                        "review_margin_sum": 0.0,
                         "max_pressure_raw": 0.0,
+                        "max_best_exact_pressure_raw": 0.0,
                     },
                 )
                 gate["gate_rows"] += 1
                 if row.get("gate_open"):
                     gate["gate_open_rows"] += 1
+                if row.get("fixed_gate_open"):
+                    gate["fixed_gate_open_rows"] += 1
                 gate["outside_budget_pressure_candidates"] += int(
                     row.get("outside_budget_pressure_candidates", 0)
                 )
                 gate["outside_budget_exact_pressure_candidates"] += int(
                     row.get("outside_budget_exact_pressure_candidates", 0)
                 )
+                review_exact = int(row.get("review_exact_candidates", 0))
+                gate["review_exact_candidates"] += review_exact
+                if review_exact and not row.get("gate_open"):
+                    gate["closed_review_exact_candidates"] += review_exact
+                gate["baseline_exact_in_budget"] += int(
+                    row.get("baseline_exact_in_budget", 0)
+                )
+                gate["learned_gate_score_sum"] += float(
+                    row.get("learned_gate_score", 0.0)
+                )
+                gate["gate_label_target_sum"] += float(
+                    row.get("gate_label_target", 0.0)
+                )
+                gate["review_margin_sum"] += float(row.get("review_margin", 0.0))
                 gate["max_pressure_raw"] = max(
                     gate["max_pressure_raw"],
                     float(row.get("max_pressure_raw", 0.0)),
+                )
+                gate["max_best_exact_pressure_raw"] = max(
+                    gate["max_best_exact_pressure_raw"],
+                    float(row.get("best_exact_pressure_raw", 0.0)),
                 )
     return summaries, diagnostics, gates
 
@@ -247,7 +275,15 @@ def run_condition(
                 "gate_open_rows": 0,
                 "outside_budget_pressure_candidates": 0,
                 "outside_budget_exact_pressure_candidates": 0,
+                "review_exact_candidates": 0,
+                "closed_review_exact_candidates": 0,
+                "baseline_exact_in_budget": 0,
+                "fixed_gate_open_rows": 0,
+                "learned_gate_score_sum": 0.0,
+                "gate_label_target_sum": 0.0,
+                "review_margin_sum": 0.0,
                 "max_pressure_raw": 0.0,
+                "max_best_exact_pressure_raw": 0.0,
             },
         )
         row = {
@@ -286,13 +322,37 @@ def run_condition(
             "max_holo_pressure_updates": diag["max_holo_pressure_updates"],
             "gate_rows": int(gate["gate_rows"]),
             "gate_open_rows": int(gate["gate_open_rows"]),
+            "fixed_gate_open_rows": int(gate.get("fixed_gate_open_rows", 0)),
             "outside_budget_pressure_candidates": int(
                 gate["outside_budget_pressure_candidates"]
             ),
             "outside_budget_exact_pressure_candidates": int(
                 gate["outside_budget_exact_pressure_candidates"]
             ),
+            "review_exact_candidates": int(gate.get("review_exact_candidates", 0)),
+            "closed_review_exact_candidates": int(
+                gate.get("closed_review_exact_candidates", 0)
+            ),
+            "baseline_exact_in_budget": int(gate.get("baseline_exact_in_budget", 0)),
+            "mean_learned_gate_score": (
+                float(gate.get("learned_gate_score_sum", 0.0)) / int(gate["gate_rows"])
+                if int(gate["gate_rows"]) != 0
+                else 0.0
+            ),
+            "mean_gate_label_target": (
+                float(gate.get("gate_label_target_sum", 0.0)) / int(gate["gate_rows"])
+                if int(gate["gate_rows"]) != 0
+                else 0.0
+            ),
+            "mean_review_margin": (
+                float(gate.get("review_margin_sum", 0.0)) / int(gate["gate_rows"])
+                if int(gate["gate_rows"]) != 0
+                else 0.0
+            ),
             "max_pressure_raw": float(gate["max_pressure_raw"]),
+            "max_best_exact_pressure_raw": float(
+                gate.get("max_best_exact_pressure_raw", 0.0)
+            ),
             "raw_log": str(raw_path),
             "stderr_log": str(stderr_path),
         }
@@ -324,6 +384,21 @@ def aggregate_rows(rows: list[dict]) -> list[dict]:
         crossed_out = sum(int(row["crossed_out_of_budget"]) for row in group)
         gate_rows = sum(int(row.get("gate_rows", 0)) for row in group)
         gate_open_rows = sum(int(row.get("gate_open_rows", 0)) for row in group)
+        learned_score_sum = sum(
+            float(row.get("mean_learned_gate_score", 0.0))
+            * int(row.get("gate_rows", 0))
+            for row in group
+        )
+        gate_target_sum = sum(
+            float(row.get("mean_gate_label_target", 0.0))
+            * int(row.get("gate_rows", 0))
+            for row in group
+        )
+        review_margin_sum = sum(
+            float(row.get("mean_review_margin", 0.0))
+            * int(row.get("gate_rows", 0))
+            for row in group
+        )
         aggregates.append(
             {
                 "schema": AGG_SCHEMA,
@@ -351,6 +426,9 @@ def aggregate_rows(rows: list[dict]) -> list[dict]:
                 "crossed_out_of_budget": crossed_out,
                 "gate_rows": gate_rows,
                 "gate_open_rows": gate_open_rows,
+                "fixed_gate_open_rows": sum(
+                    int(row.get("fixed_gate_open_rows", 0)) for row in group
+                ),
                 "outside_budget_pressure_candidates": sum(
                     int(row.get("outside_budget_pressure_candidates", 0))
                     for row in group
@@ -359,8 +437,31 @@ def aggregate_rows(rows: list[dict]) -> list[dict]:
                     int(row.get("outside_budget_exact_pressure_candidates", 0))
                     for row in group
                 ),
+                "review_exact_candidates": sum(
+                    int(row.get("review_exact_candidates", 0)) for row in group
+                ),
+                "closed_review_exact_candidates": sum(
+                    int(row.get("closed_review_exact_candidates", 0))
+                    for row in group
+                ),
+                "baseline_exact_in_budget": sum(
+                    int(row.get("baseline_exact_in_budget", 0)) for row in group
+                ),
+                "mean_learned_gate_score": learned_score_sum / gate_rows
+                if gate_rows
+                else 0.0,
+                "mean_gate_label_target": gate_target_sum / gate_rows
+                if gate_rows
+                else 0.0,
+                "mean_review_margin": review_margin_sum / gate_rows
+                if gate_rows
+                else 0.0,
                 "max_pressure_raw": max(
                     float(row.get("max_pressure_raw", 0.0)) for row in group
+                ),
+                "max_best_exact_pressure_raw": max(
+                    float(row.get("max_best_exact_pressure_raw", 0.0))
+                    for row in group
                 ),
                 "passes_no_regression": all(delta >= 0.0 for delta in deltas)
                 and crossed_out == 0,
@@ -392,6 +493,30 @@ def verdict_rows(aggregates: list[dict]) -> list[dict]:
         total_negative = sum(int(row["negative_runs"]) for row in group)
         total_gate_rows = sum(int(row.get("gate_rows", 0)) for row in group)
         total_gate_open_rows = sum(int(row.get("gate_open_rows", 0)) for row in group)
+        total_fixed_gate_open_rows = sum(
+            int(row.get("fixed_gate_open_rows", 0)) for row in group
+        )
+        total_review_exact = sum(
+            int(row.get("review_exact_candidates", 0)) for row in group
+        )
+        total_closed_review_exact = sum(
+            int(row.get("closed_review_exact_candidates", 0)) for row in group
+        )
+        learned_score_sum = sum(
+            float(row.get("mean_learned_gate_score", 0.0))
+            * int(row.get("gate_rows", 0))
+            for row in group
+        )
+        gate_target_sum = sum(
+            float(row.get("mean_gate_label_target", 0.0))
+            * int(row.get("gate_rows", 0))
+            for row in group
+        )
+        review_margin_sum = sum(
+            float(row.get("mean_review_margin", 0.0))
+            * int(row.get("gate_rows", 0))
+            for row in group
+        )
         median_delta_sum = sum(float(row["median_utility_delta"]) for row in group)
         passes_no_regression = all(bool(row["passes_no_regression"]) for row in group)
         has_uplift = total_positive > 0 or total_crossed_in > 0 or median_delta_sum > 0.0
@@ -419,9 +544,31 @@ def verdict_rows(aggregates: list[dict]) -> list[dict]:
                 "crossed_out_of_budget": total_crossed_out,
                 "gate_rows": total_gate_rows,
                 "gate_open_rows": total_gate_open_rows,
+                "fixed_gate_open_rows": total_fixed_gate_open_rows,
+                "review_exact_candidates": total_review_exact,
+                "closed_review_exact_candidates": total_closed_review_exact,
+                "outside_budget_pressure_candidates": sum(
+                    int(row.get("outside_budget_pressure_candidates", 0))
+                    for row in group
+                ),
+                "outside_budget_exact_pressure_candidates": sum(
+                    int(row.get("outside_budget_exact_pressure_candidates", 0))
+                    for row in group
+                ),
+                "mean_learned_gate_score": learned_score_sum / total_gate_rows
+                if total_gate_rows
+                else 0.0,
+                "mean_gate_label_target": gate_target_sum / total_gate_rows
+                if total_gate_rows
+                else 0.0,
+                "mean_review_margin": review_margin_sum / total_gate_rows
+                if total_gate_rows
+                else 0.0,
                 "passes_no_regression": passes_no_regression,
                 "has_uplift": has_uplift,
-                "recommended_for_promotion": passes_no_regression and has_uplift,
+                "recommended_for_promotion": passes_no_regression
+                and has_uplift
+                and total_closed_review_exact == 0,
             }
         )
     return verdicts

@@ -153,6 +153,12 @@ experimental proposer-control policy until the robustness verdict rows pass on
 public task-order sweeps. A bounded 40-task public smoke at threshold `0.3`
 opened 21/320 tight and 28/320 standard task-budget rows, crossed no exact
 candidates in or out, and therefore passed no-regression without showing uplift.
+The learned-gate surface now emits `review_exact_candidates`,
+`closed_review_exact_candidates`, mean label target, mean score, and review
+margin into the robustness rows. On that public smoke there were 18 tight and 24
+standard outside-budget exact pressure candidates but zero review-window exacts,
+so the bottleneck is the pressure review selector/reranker rather than a missed
+learned-gate opening.
 
 ## Near-Term Backlog Change
 
@@ -176,7 +182,11 @@ Replace "tune HoloNet residual confidence" with:
 4. Compare fixed versus learned bucket invocation by rerunning the same harness
    with `ARC_HOLO_BUCKET_ROBUSTNESS_LEARNED_GATE=1`; sweep
    `ARC_HOLO_BUCKET_ROBUSTNESS_LEARNED_GATE_THRESHOLD` before promotion.
-5. Use `crlp.arc_holo_residual_diagnostic.v1` as the promotion metric: budget
+5. Learn or tune the pressure review selector so outside-budget exact pressure
+   candidates enter the bounded review window; track
+   `review_exact_candidates` and `closed_review_exact_candidates` in
+   `verdict.jsonl`.
+6. Use `crlp.arc_holo_residual_diagnostic.v1` as the promotion metric: budget
    crossings first, utility second, hash changes last.
 
 ## Sources
