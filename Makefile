@@ -143,6 +143,10 @@ ARC_HOLO_BUCKET_REVIEW_SELECTOR := $(BUILD_DIR)/arc_holo_bucket_review_selector_
 $(ARC_HOLO_BUCKET_REVIEW_SELECTOR): tools/arc_holo_bucket_review_selector.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) tools/arc_holo_bucket_review_selector.c $(LDFLAGS) $(LDLIBS) -o $@
 
+ARC_HOLO_BUCKET_ROBUSTNESS := $(BUILD_DIR)/arc_holo_bucket_robustness_tool
+$(ARC_HOLO_BUCKET_ROBUSTNESS): tools/arc_holo_bucket_robustness.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) tools/arc_holo_bucket_robustness.c $(LDFLAGS) $(LDLIBS) -o $@
+
 PREPROCESS_PRIME_GAP_TRACE := $(BUILD_DIR)/preprocess_prime_gap_trace
 $(PREPROCESS_PRIME_GAP_TRACE): tools/preprocess_prime_gap_trace.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) tools/preprocess_prime_gap_trace.c $(LDFLAGS) $(LDLIBS) -o $@
@@ -1367,8 +1371,18 @@ arc-agi-induction-public: $(ARC_AGI)
 arc-agi-evidence-surface: $(ARC_AGI)
 	$(RETIRED_SCRIPT_TARGET)
 
-arc-holo-bucket-robustness: $(ARC_AGI) arc-public-data
-	$(RETIRED_SCRIPT_TARGET)
+arc-holo-bucket-robustness: $(ARC_AGI) $(ARC_HOLO_BUCKET_ROBUSTNESS) arc-public-data
+	./$(ARC_HOLO_BUCKET_ROBUSTNESS) \
+		--arc-bin "./$(ARC_AGI)" \
+		--task-dir "$(ARC_HOLO_BUCKET_ROBUSTNESS_TASK_DIR)" \
+		--out-dir "$(ARC_HOLO_BUCKET_ROBUSTNESS_DIR)" \
+		--max-tasks "$(ARC_HOLO_BUCKET_ROBUSTNESS_MAX_TASKS)" \
+		--orders "$(ARC_HOLO_BUCKET_ROBUSTNESS_ORDERS)" \
+		--grids "$(ARC_HOLO_BUCKET_ROBUSTNESS_GRIDS)" \
+		--min-budgets "$(ARC_HOLO_BUCKET_ROBUSTNESS_MIN_BUDGETS)" \
+		--review-slots "$(ARC_HOLO_BUCKET_ROBUSTNESS_REVIEW_SLOTS)" \
+		--min-pressure-updates "$(ARC_HOLO_BUCKET_ROBUSTNESS_MIN_PRESSURE_UPDATES)" \
+		$(ARC_HOLO_BUCKET_ROBUSTNESS_LEARNED_GATE_ARGS)
 
 arc-holo-bucket-review-selector: $(ARC_HOLO_BUCKET_REVIEW_SELECTOR)
 	mkdir -p "$(ARC_HOLO_BUCKET_REVIEW_SELECTOR_DIR)"

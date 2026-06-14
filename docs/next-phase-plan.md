@@ -109,13 +109,14 @@ The active cleanup-routing test is now `trace_holo_bucket`. It uses guarded
 rank-pressure memory as a bounded review window instead of a direct score
 boost. The ordered public run improves over `trace_task_prior` at budgets 8,
 16, 32, and 64; the tight-grid run now matches budget 1 and improves budgets 2,
-4, and 8 after adding the default min-budget floor. The prior robustness sweep
-artifacts remain the evidence surface: they cover task order, budget grid,
-min-budget floor, and review-window size while preserving raw JSONL logs and
-emitting `crlp.arc_holo_bucket_robustness.run.v1` plus aggregate rows. The old
-script target is now retired under the universal-C orchestration policy; the
-next engineering step is to reimplement that sweep as a C runtime tool before
-expanding the promotion audit.
+4, and 8 after adding the default min-budget floor. The robustness sweep is now
+back inside the universal-C orchestration boundary: `make
+arc-holo-bucket-robustness` builds `tools/arc_holo_bucket_robustness.c`, runs the
+ARC binary across task order, budget grid, min-budget floor, and review-window
+perturbations, preserves raw JSONL logs, and emits
+`crlp.arc_holo_bucket_robustness.{run,aggregate,verdict}.v1` rows. The target
+fails when the verdict sees negative utility deltas or crossed-out exact
+candidates, so it is the promotion gate for learned bucket policies.
 The first default full public sweep keeps zero crossed-out exact candidates.
 `auto` and one-slot review windows pass the no-regression check; two-/four-slot
 windows are better at larger budgets but regress tight budget 2, so they remain
@@ -163,7 +164,8 @@ logs, five task-hash folds improve exact rank inside the emitted diagnostic
 candidate set from mean raw loaded rank 17.5 to mean learned loaded rank 5.67 and
 produce 17 held-out top-1 exact rows versus 0 for raw review priority. Treat this
 as a selector-learning foothold, not a runtime promotion: it still lacks stable
-one-slot hit rate and needs broader negative rows or better family features.
+one-slot hit rate and must pass the C robustness verdict after any runtime
+weight wiring.
 
 ## The Core Bet
 

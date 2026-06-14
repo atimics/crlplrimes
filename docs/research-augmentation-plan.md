@@ -216,9 +216,10 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   matches at budget 1 after adding a min-budget floor. The prior promotion audit
   emitted raw ARC logs plus `crlp.arc_holo_bucket_robustness.run.v1`, aggregate
   rows, and `crlp.arc_holo_bucket_robustness.verdict.v1` rows across task-order,
-  warmup-threshold, and review-window perturbations. The old sweep target is now
-  retired under the universal-C orchestration policy, so expanding this audit
-  requires a C runtime port first. The first default full public sweep keeps
+  warmup-threshold, and review-window perturbations. The sweep has now been
+  ported into `tools/arc_holo_bucket_robustness.c` and exposed as `make
+  arc-holo-bucket-robustness`, so promotion audits stay in the same C runtime
+  boundary as the engine. The first default full public sweep keeps
   zero crossed-out exact candidates; `auto` and one-slot review pass the
   no-regression check, while two-/four-slot review windows regress tight budget
   2 and should remain exploratory larger-budget settings. The invocation gate
