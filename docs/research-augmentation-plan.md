@@ -215,8 +215,9 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   ordered public run improves at budgets 8/16/32/64 and the tight grid now
   matches at budget 1 after adding a min-budget floor. The promotion audit is
   `make arc-holo-bucket-robustness`, which emits raw ARC logs plus
-  `crlp.arc_holo_bucket_robustness.run.v1` and aggregate rows across task-order
-  and review-window perturbations. The first default full public sweep keeps
+  `crlp.arc_holo_bucket_robustness.run.v1`, aggregate rows, and
+  `crlp.arc_holo_bucket_robustness.verdict.v1` rows across task-order,
+  warmup-threshold, and review-window perturbations. The first default full public sweep keeps
   zero crossed-out exact candidates; `auto` and one-slot review pass the
   no-regression check, while two-/four-slot review windows regress tight budget
   2 and should remain exploratory larger-budget settings. The invocation gate
@@ -224,6 +225,8 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   `crlp.arc_holo_bucket_gate.v1`; the focused public `auto,1` audit opens
   776/800 rows after warmup, opens 0/800 at tight budget 1, and gives the next
   learner a direct target for deciding when the review bucket is worth spending.
+  `ARC_HOLO_BUCKET_ROBUSTNESS_MIN_PRESSURE_UPDATES` may now be a comma-separated
+  list; `verdict.jsonl` is the threshold-selection artifact.
 
 **Papers:** Lake 2017 (Compositional Generalization), Bunel 2018 (Neural Program
 Synthesis), Nye 2021 (Scratchpads)

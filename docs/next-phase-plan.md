@@ -113,6 +113,10 @@ boost. The ordered public run improves over `trace_task_prior` at budgets 8,
 scripted as `make arc-holo-bucket-robustness`, which sweeps task order, budget
 grid, min-budget floor, and review-window size while preserving raw JSONL logs
 and emitting `crlp.arc_holo_bucket_robustness.run.v1` plus aggregate rows.
+It now sweeps comma-separated pressure-memory warmup thresholds as well and
+writes `crlp.arc_holo_bucket_robustness.verdict.v1` rows so the invocation
+threshold can be selected from no-regression/uplift evidence instead of a
+single hand-picked setting.
 The first default full public sweep keeps zero crossed-out exact candidates.
 `auto` and one-slot review windows pass the no-regression check; two-/four-slot
 windows are better at larger budgets but regress tight budget 2, so they remain
@@ -123,8 +127,8 @@ The bucket invocation gate is now an auditable policy surface:
 pressure-memory size, and outside-budget pressure candidates. The focused
 `auto,1` public gate audit opens 776/800 rows after warmup, opens 0/800 at tight
 budget 1, and preserves the no-regression result. The next architecture step is
-to learn a sharper invocation policy from those rows, not to widen the review
-window.
+to learn a sharper invocation policy from gate and verdict rows, not to widen
+the review window.
 
 ## The Core Bet
 
