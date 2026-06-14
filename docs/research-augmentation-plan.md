@@ -209,6 +209,17 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   why: 32 routed local traces improve 2048-d exact retrieval top-1 from about
   `0.50` flat to `0.98`, `0.85`, `0.78`, `0.63`, and `0.55` at
   64, 128, 256, 512, and 1024 stored pairs respectively.
+- Current cleanup bridge: `trace_holo_bucket` keeps raw pressure residuals as a
+  negative control and instead uses guarded pressure memory to open a bounded
+  verifier-review window around candidates missed by `trace_task_prior`. The
+  ordered public run improves at budgets 8/16/32/64 and the tight grid now
+  matches at budget 1 after adding a min-budget floor. The promotion audit is
+  `make arc-holo-bucket-robustness`, which emits raw ARC logs plus
+  `crlp.arc_holo_bucket_robustness.run.v1` and aggregate rows across task-order
+  and review-window perturbations. The first default full public sweep keeps
+  zero crossed-out exact candidates; `auto` and one-slot review pass the
+  no-regression check, while two-/four-slot review windows regress tight budget
+  2 and should remain exploratory larger-budget settings.
 
 **Papers:** Lake 2017 (Compositional Generalization), Bunel 2018 (Neural Program
 Synthesis), Nye 2021 (Scratchpads)

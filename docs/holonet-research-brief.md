@@ -108,6 +108,24 @@ with 8 crossings into budget and 0 out.
 The tight-grid check uses a budget floor: `trace_holo_bucket` now matches
 `trace_task_prior` at budget 1, improves utility at budgets 2, 4, and 8, and
 bucket diagnostics show 4 crossings into budget and 0 out.
+The next audit is now scripted as `make arc-holo-bucket-robustness`. It reruns
+the bucket strategy against `trace_task_prior` across task-order perturbations,
+budget grids, the min-budget floor, and fixed/auto review-window sizes. Each raw
+ARC JSONL log is kept, while `summary.jsonl` records one
+`crlp.arc_holo_bucket_robustness.run.v1` row per matched budget and
+`aggregate.jsonl` records median/min/max deltas plus crossed-in/out totals. This
+is the promotion boundary: the bucket is a claim only if positive utility
+survives alternate orderings with no budget-1 regression and no exact candidates
+crossed out of budget.
+
+The first default full public robustness run uses original order plus
+`shuffle:20240516`, tight and standard grids, min budget 2, and review windows
+`auto/1/2/4`. It keeps zero crossed-out exact candidates across all rows. The
+stable configs are `auto` and fixed review slot `1`: both preserve tight budget
+1 and avoid negative utility deltas, while still producing positive median
+standard-grid deltas. Fixed slots `2` and `4` are useful at budgets 4/8 and
+standard-grid budgets, but they regress tight budget 2 in original order; keep
+them as exploratory settings, not defaults.
 
 ## Near-Term Backlog Change
 
@@ -120,8 +138,11 @@ Replace "tune HoloNet residual confidence" with:
 2. Keep `--arc-holo-pressure-residual` disabled; raw pressure boosts remain a
    negative control.
 3. Promote `trace_holo_bucket` from architecture probe to the next focused
-   proposer experiment: sweep review-window size and verify whether the uplift
-   survives alternate task orderings.
+   proposer experiment: run `make arc-holo-bucket-robustness` and expand
+   `ARC_HOLO_BUCKET_ROBUSTNESS_ORDERS`,
+   `ARC_HOLO_BUCKET_ROBUSTNESS_MIN_BUDGETS`, and
+   `ARC_HOLO_BUCKET_ROBUSTNESS_REVIEW_SLOTS`; keep `auto`/`1` as the current
+   promotion candidates and use `2`/`4` only to study larger-budget recall.
 4. Use `crlp.arc_holo_residual_diagnostic.v1` as the promotion metric: budget
    crossings first, utility second, hash changes last.
 
