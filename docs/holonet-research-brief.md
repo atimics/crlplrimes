@@ -172,6 +172,17 @@ missed by the one-slot/auto selector, with mean exact review rank about 518 tigh
 and 516 standard and worst exact rank 1101. This is the handoff point from manual
 pressure tuning to a learned review reranker.
 
+`scripts/arc_holo_bucket_review_selector.py` is the first offline reranker probe
+over those rows, exposed as `make arc-holo-bucket-review-selector`. It trains a
+pairwise linear selector from proposal-time features only; verifier labels such
+as train consistency and test support are excluded from the default feature set.
+On the bounded public 40-task diagnostic logs, five task-hash folds move exact
+candidates inside the diagnostic candidate set from mean raw loaded rank 17.5 to
+mean learned loaded rank 6.55, with 4 held-out exact rows selected top-1 versus 0
+for raw review priority. This is useful signal, but not enough to wire into
+runtime: the next learner needs either broader negative coverage from the review
+surface or a less overfit candidate-family feature set.
+
 ## Near-Term Backlog Change
 
 Replace "tune HoloNet residual confidence" with:
@@ -199,7 +210,8 @@ Replace "tune HoloNet residual confidence" with:
    pressure candidates enter the bounded review window; track
    `review_candidate_missed_exact_rows`, `mean_exact_review_rank`,
    `review_exact_candidates`, and `closed_review_exact_candidates` in
-   `verdict.jsonl`.
+   `verdict.jsonl`. Use `make arc-holo-bucket-review-selector` as the offline
+   learning check before wiring selector weights into `trace_holo_bucket`.
 6. Use `crlp.arc_holo_residual_diagnostic.v1` as the promotion metric: budget
    crossings first, utility second, hash changes last.
 

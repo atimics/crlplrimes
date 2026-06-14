@@ -243,6 +243,13 @@ Santoro 2018 (Relation Networks), Battaglia 2018 (Graph Networks)
   missed by the one-slot/auto selector, with mean exact review rank about
   516-518 and worst exact rank 1101. The next evidence target is therefore a
   learned pressure review reranker, not another manual invocation threshold.
+  The first offline probe, `scripts/arc_holo_bucket_review_selector.py`, is wired
+  through `make arc-holo-bucket-review-selector`. It uses legal proposal-time
+  features only and trains a pairwise linear selector. Across five task-hash
+  folds on the bounded public diagnostic logs it moves exact candidates inside
+  the emitted diagnostic set from mean raw loaded rank 17.5 to learned rank 6.55
+  and selects 4 held-out exact rows top-1 versus 0 for raw review priority. That
+  is a learning foothold, not a runtime selector yet.
 
 **Papers:** Lake 2017 (Compositional Generalization), Bunel 2018 (Neural Program
 Synthesis), Nye 2021 (Scratchpads)
@@ -312,8 +319,8 @@ promoted ARC coverage.
    matches at budget 1 and improves at budgets 2/4/8, with 4 exact crossings in
    and 0 out. The explicit gate and review-candidate rows make this a conditional
    verifier-feedback memory path rather than an always-on score channel; the next
-   promotion test is a learned one-slot review selector trained from missed exact
-   candidate rows.
+   promotion test is improving the offline one-slot selector until held-out
+   top-1 exact hits are stable enough to justify runtime wiring.
 7. **Measured substrate row:** `holo_experiments --mode partitioned-retrieval`
    now emits `crlp.holo_partitioned_retrieval.v1`; use local max-load below
    roughly 50 pairs as the first routing target for ARC residual memories.
