@@ -2836,6 +2836,68 @@ static void print_grid_compare_json(const NNCheckpointMeta *meta,
     printf("}\n");
 }
 
+static void print_grid_prior_ablation_json(const NNCheckpointMeta *meta,
+                                           const char *hash,
+                                           const char *evaluation_mode,
+                                           const char *rule_set_hash,
+                                           size_t accepted_rules,
+                                           const GridFeatureSet *reference_feature_set,
+                                           const GridFeatureSet *ablated_feature_set,
+                                           const GridMetrics *reference,
+                                           const GridMetrics *ablated)
+{
+    const GridFeatureSet *reference_set =
+        grid_feature_set_or_default(reference_feature_set);
+    const GridFeatureSet *ablation_set =
+        grid_feature_set_or_default(ablated_feature_set);
+    double reference_samples = reference->samples == 0 ? 1.0 : (double)reference->samples;
+    double ablated_samples = ablated->samples == 0 ? 1.0 : (double)ablated->samples;
+    double reference_accuracy = (double)reference->correct / reference_samples;
+    double ablated_accuracy = (double)ablated->correct / ablated_samples;
+    printf("{\"schema\":\"crlp.grid_path.prior_ablation.v1\","
+           "\"report_version\":1,\"task\":\"grid_path\","
+           "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
+           "\"evaluation_mode\":\"%s\",\"rule_set_hash\":\"%s\","
+           "\"rule_family\":\"%s\","
+           "\"gate_cost_model\":\"%s\","
+           "\"accepted_rules\":%zu,"
+           "\"reference_feature_set\":\"%s\","
+           "\"ablated_feature_set\":\"%s\","
+           "\"disabled_structural_prior_features\":%zu,"
+           "\"benchmark_seed\":%u,\"sample_count\":%zu,"
+           "\"ablated_minus_reference_accuracy\":%.8f,"
+           "\"ablated_minus_reference_nll\":%.8f,"
+           "\"ablated_minus_reference_ece\":%.8f,"
+           "\"ablated_minus_reference_decision_utility\":%.8f,"
+           "\"ablated_minus_reference_proposal_steps\":%.8f,"
+           "\"ablated_minus_reference_verifier_nodes\":%.8f,"
+           "\"ablated_minus_reference_rejected_candidates\":%.8f}\n",
+           hash == NULL ? "unknown" : hash,
+           meta == NULL || meta->parent_model_hash[0] == '\0' ? "unknown"
+                                                               : meta->parent_model_hash,
+           evaluation_mode == NULL ? "raw_prior_disabled_ablation" : evaluation_mode,
+           rule_set_hash == NULL ? "none" : rule_set_hash,
+           grid_rule_family_name_for_hash(rule_set_hash),
+           grid_rule_cost_model_for_hash(rule_set_hash),
+           accepted_rules,
+           reference_set->name,
+           ablation_set->name,
+           reference_set->enabled_structural_prior_features >
+                   ablation_set->enabled_structural_prior_features
+               ? reference_set->enabled_structural_prior_features -
+                     ablation_set->enabled_structural_prior_features
+               : 0u,
+           (unsigned int)GP_TEST_SEED_START,
+           ablated->samples,
+           ablated_accuracy - reference_accuracy,
+           ablated->nll - reference->nll,
+           ablated->ece - reference->ece,
+           ablated->utility - reference->utility,
+           ablated->proposal_steps - reference->proposal_steps,
+           ablated->verifier_nodes - reference->verifier_nodes,
+           ablated->rejected_candidates - reference->rejected_candidates);
+}
+
 static void print_usage(FILE *stream);
 
 static int compare_grid_models(int argc, char **argv)
@@ -2980,6 +3042,15 @@ static int compare_grid_models(int argc, char **argv)
                                     0,
                                     &GRID_FEATURE_SET_NO_PRIORS,
                                     &no_prior_metrics);
+            print_grid_prior_ablation_json(&meta,
+                                           hash,
+                                           "raw_prior_disabled_ablation",
+                                           "none",
+                                           0,
+                                           checkpoint_feature_set,
+                                           &GRID_FEATURE_SET_NO_PRIORS,
+                                           &metrics,
+                                           &no_prior_metrics);
             print_grid_metrics("raw-prior-disabled-ablation", hash, no_prior_metrics);
         }
 
@@ -3022,6 +3093,16 @@ static int compare_grid_models(int argc, char **argv)
                                         family_rules[family_i].accepted_rules,
                                         &GRID_FEATURE_SET_NO_PRIORS,
                                         &gated_no_prior_metrics);
+                print_grid_prior_ablation_json(
+                    &meta,
+                    hash,
+                    "budgeted_legality_gate_prior_disabled_ablation",
+                    grid_rule_set_hash(&family_configs[family_i]),
+                    family_rules[family_i].accepted_rules,
+                    checkpoint_feature_set,
+                    &GRID_FEATURE_SET_NO_PRIORS,
+                    &gated_metrics,
+                    &gated_no_prior_metrics);
                 print_grid_metrics("budgeted-certified-gate-prior-disabled-ablation",
                                    hash,
                                    gated_no_prior_metrics);
