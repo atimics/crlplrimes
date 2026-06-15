@@ -737,6 +737,8 @@ make signal-npc-worker
 make signal-npc-worker-smoke
 make signal-npc-worker-economy
 make signal-npc-worker-economy-stress
+make signal-npc-worker-persistent
+make signal-npc-worker-persistent-smoke
 ```
 
 Current artifacts:
@@ -747,6 +749,8 @@ Current artifacts:
 - trace schema: `signal.npc_worker_counterfactual.v1`
 - social slice schema: `crlp.signal_npc_worker.social_slice.v1`
 - summary schema: `crlp.signal_npc_worker.summary.v1`
+- persistent trace schema: `crlp.signal_npc_worker.persistent_world.v1`
+- persistent summary schema: `crlp.signal_npc_worker.persistent_summary.v1`
 - feature set: `signal-npc-worker-v2`
 
 This is the strategic layer above the contract/flight tactics. The first
@@ -789,6 +793,20 @@ social regret to `1.0362`, ahead of the simple baseline (`2.3701` regret). That
 suggests the frontier/faction/pirate slice is now a good fit for fun worker NPC
 brains, with the next step being to teach memory/gossip as first-class scorer
 features rather than only post-score nudges.
+
+The persistent target stops resetting the world per group. It creates one
+Signal `world_t`, seeds station manifests and ledgers, spawns worker NPCs through
+Signal's `spawn_npc`, and carries station credit, delivered inventory, faction
+control, frontier need, and pirate risk across ticks. The default run requests
+100 NPCs, 24 stations, and 720 ticks; on the current fresh-world asset pool it
+spawns 87 NPCs before ship-asset capacity, emits 720 decision rows, preserves
+`legal_rate=1.0`, records 213 pirate-work events and 117 frontier-supply events,
+and ends with mean utility `3.2387`. A 128-station variant also runs for 720
+ticks with the same 87 spawned NPCs, producing 52 pirate-work events, 122
+frontier-supply events, and mean utility `5.8259`. This is now a persistent
+economy pressure test, but pirates, faction control, and frontier need are still
+strategic state variables updated by the experiment oracle rather than fully
+simulated hostile ships, diplomacy, or construction chains.
 
 ### Construction Agent
 

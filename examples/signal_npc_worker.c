@@ -4,6 +4,7 @@
 #include "game_sim.h"
 #include "manifest.h"
 #include "sim_ai.h"
+#include "station_authority.h"
 #include "station_util.h"
 
 #include <errno.h>
@@ -17,10 +18,14 @@
 #define SNW_TRACE_SCHEMA "signal.npc_worker_counterfactual.v1"
 #define SNW_SUMMARY_SCHEMA "crlp.signal_npc_worker.summary.v1"
 #define SNW_SOCIAL_SLICE_SCHEMA "crlp.signal_npc_worker.social_slice.v1"
+#define SNW_PERSISTENT_SCHEMA "crlp.signal_npc_worker.persistent_world.v1"
+#define SNW_PERSISTENT_SUMMARY_SCHEMA "crlp.signal_npc_worker.persistent_summary.v1"
 #define SNW_TASK_NAME "signal_npc_worker"
 #define SNW_OPTION_COUNT 12u
 #define SNW_FEATURE_COUNT 78u
 #define SNW_PERSONA_COUNT 3u
+#define SNW_PERSISTENT_MAX_STATIONS 128u
+#define SNW_PERSISTENT_FACTIONS 3u
 
 typedef enum {
     SNW_OPT_WAIT = 0,
@@ -106,6 +111,10 @@ typedef struct {
     size_t test_groups;
     size_t epochs;
     nn_real learning_rate;
+    int persistent_economy;
+    size_t persistent_ticks;
+    size_t persistent_npcs;
+    size_t persistent_stations;
 } snw_config_t;
 
 typedef struct {
@@ -1403,12 +1412,406 @@ static int snw_write_summary_file(const char *path,
     return 1;
 }
 
+typedef struct {
+    double faction_credit[SNW_PERSISTENT_FACTIONS];
+    double frontier_need[SNW_PERSISTENT_MAX_STATIONS];
+    double pirate_risk[SNW_PERSISTENT_MAX_STATIONS];
+    double faction_control[SNW_PERSISTENT_MAX_STATIONS][SNW_PERSISTENT_FACTIONS];
+    size_t action_count[SNW_OPTION_COUNT];
+    size_t ticks;
+    size_t decisions;
+    size_t legal_decisions;
+    size_t faction_aligned_decisions;
+    size_t pirate_events;
+    size_t frontier_supply_events;
+    double utility_sum;
+    double social_utility_sum;
+    double own_station_credit;
+    double faction_station_credit;
+    double off_faction_credit;
+    double pirate_pressure_sum;
+    double frontier_need_sum;
+} snw_persistent_metrics_t;
+
+static void snw_persistent_seed_station(world_t *w, size_t idx, uint32_t seed)
+{
+    if (w == NULL || idx >= MAX_STATIONS) return;
+    station_t *st = &w->stations[idx];
+    if (!station_exists(st)) {
+        st->id = w->next_station_id++;
+        snprintf(st->name, sizeof(st->name), "Frontier %zu", idx);
+        snprintf(st->station_slug, sizeof(st->station_slug), "frontier-%zu", idx);
+        st->pos = v2(cosf((float)idx * 0.73f) * (2600.0f + (float)(idx % 5u) * 520.0f),
+                    sinf((float)idx * 0.73f) * (2600.0f + (float)(idx % 7u) * 430.0f));
+        st->radius = 36.0f;
+        st->dock_radius = 220.0f;
+        st->signal_range = 6500.0f;
+        st->signal_connected = true;
+        st->base_price[COMMODITY_FERRITE_INGOT] = 12.0f + (float)(idx % 3u) * 3.0f;
+        st->base_price[COMMODITY_CUPRITE_INGOT] = 18.0f + (float)(idx % 4u) * 4.0f;
+        st->base_price[COMMODITY_FRAME] = 8.0f + (float)(idx % 5u);
+        st->base_price[COMMODITY_LASER_MODULE] = 18.0f + (float)(idx % 3u) * 2.0f;
+        st->base_price[COMMODITY_TRACTOR_MODULE] = 20.0f + (float)(idx % 3u) * 2.0f;
+        rebuild_station_services(st);
+        station_authority_init_outpost(st, NULL, (uint64_t)seed + idx);
+    }
+    snw_seed_finished(st, COMMODITY_FERRITE_INGOT, 6 + (int)(idx % 9u));
+    snw_seed_finished(st, COMMODITY_CUPRITE_INGOT, 3 + (int)(idx % 7u));
+    snw_seed_finished(st, COMMODITY_FRAME, 2 + (int)(idx % 5u));
+    snw_seed_finished(st, COMMODITY_LASER_MODULE, 2 + (int)(idx % 4u));
+    snw_seed_finished(st, COMMODITY_TRACTOR_MODULE, 2 + (int)(idx % 4u));
+}
+
+static double snw_station_credit_weight(int home_station, int dest_station, int faction)
+{
+    if (dest_station == home_station) return 1.25;
+    if (dest_station >= 0 && (dest_station % (int)SNW_PERSISTENT_FACTIONS) == faction) return 1.0;
+    return 0.35;
+}
+
+static void snw_persistent_write_decision(FILE *fp,
+                                          uint64_t tick,
+                                          int npc_slot,
+                                          int home_station,
+                                          int faction,
+                                          const snw_group_t *group,
+                                          size_t selected,
+                                          double utility,
+                                          double social_utility)
+{
+    fprintf(fp, "{\"schema\":");
+    snw_json_string(fp, SNW_PERSISTENT_SCHEMA);
+    fprintf(fp, ",\"tick\":%" PRIu64, tick);
+    fprintf(fp, ",\"npc_slot\":%d", npc_slot);
+    fprintf(fp, ",\"home_station\":%d", home_station);
+    fprintf(fp, ",\"faction\":%d", faction);
+    fprintf(fp, ",\"selected_option\":");
+    snw_json_string(fp, snw_hypothesis(selected)->name);
+    fprintf(fp, ",\"oracle_option\":");
+    snw_json_string(fp, snw_hypothesis(group->target)->name);
+    fprintf(fp, ",\"utility\":%.9g", utility);
+    fprintf(fp, ",\"social_utility\":%.9g", social_utility);
+    fprintf(fp, ",\"frontier_need\":%.9g", group->frontier_need);
+    fprintf(fp, ",\"route_pirate_risk\":%.9g", group->route_pirate_risk);
+    fprintf(fp, ",\"contract_at_own_station\":%s", group->contract_at_own_station ? "true" : "false");
+    fprintf(fp, ",\"contract_at_faction_station\":%s", group->contract_at_faction_station ? "true" : "false");
+    fputs("}\n", fp);
+}
+
+static int snw_persistent_run(const snw_config_t *config)
+{
+    if (config == NULL) return 0;
+    size_t station_count = config->persistent_stations;
+    if (station_count < SIGNAL_SEEDED_STATION_COUNT) station_count = SIGNAL_SEEDED_STATION_COUNT;
+    if (station_count > SNW_PERSISTENT_MAX_STATIONS) station_count = SNW_PERSISTENT_MAX_STATIONS;
+    if (station_count > MAX_STATIONS) station_count = MAX_STATIONS;
+    size_t npc_count = config->persistent_npcs;
+    if (npc_count > MAX_NPC_SHIPS) npc_count = MAX_NPC_SHIPS;
+    if (npc_count == 0u) npc_count = 1u;
+
+    world_t *w = calloc(1u, sizeof(*w));
+    if (w == NULL) return 0;
+    w->rng = config->seed;
+    world_reset(w);
+    snw_clear_contracts(w);
+    snw_clear_npcs(w);
+    for (size_t s = 0; s < station_count; ++s) snw_persistent_seed_station(w, s, config->seed);
+
+    int npc_slots[MAX_NPC_SHIPS];
+    memset(npc_slots, -1, sizeof(npc_slots));
+    size_t spawned = 0;
+    for (size_t i = 0; i < npc_count; ++i) {
+        int home = (int)(i % station_count);
+        int role = (i & 1u) ? NPC_ROLE_HAULER : NPC_ROLE_MINER;
+        int slot = spawn_npc(w, home, (npc_role_t)role);
+        if (slot < 0) continue;
+        npc_ship_t *npc = &w->npc_ships[slot];
+        ship_t *ship = world_npc_ship_for(w, slot);
+        if (ship == NULL) continue;
+        npc->state = NPC_STATE_DOCKED;
+        npc->home_station = home;
+        npc->ship.mining_level = ship->mining_level = (int)(1u + (i % 3u));
+        npc->ship.hold_level = ship->hold_level = (int)(1u + ((i / 3u) % 3u));
+        npc->ship.tractor_level = ship->tractor_level = (int)(1u + ((i / 7u) % 3u));
+        ledger_earn(&w->stations[home], npc->session_token, 250.0f + (float)(i % 9u) * 45.0f);
+        npc_slots[spawned++] = slot;
+    }
+    if (spawned == 0u) {
+        free(w);
+        return 0;
+    }
+
+    snw_persistent_metrics_t metrics;
+    memset(&metrics, 0, sizeof(metrics));
+    for (size_t s = 0; s < station_count; ++s) {
+        metrics.frontier_need[s] = 0.35 + (double)(s % 7u) * 0.11;
+        metrics.pirate_risk[s] = 0.10 + (double)(s % 5u) * 0.13;
+        metrics.faction_control[s][s % SNW_PERSISTENT_FACTIONS] = 1.0;
+    }
+
+    FILE *trace = config->trace_path != NULL ? fopen(config->trace_path, "w") : NULL;
+    if (config->trace_path != NULL && trace == NULL) {
+        free(w);
+        return 0;
+    }
+
+    uint32_t rng = config->seed ^ UINT32_C(0x70657273);
+    for (size_t tick = 0; tick < config->persistent_ticks; ++tick) {
+        size_t who = (size_t)(snw_rng_next(&rng) % (uint32_t)spawned);
+        int slot = npc_slots[who];
+        npc_ship_t *npc = slot >= 0 ? &w->npc_ships[slot] : NULL;
+        ship_t *ship = slot >= 0 ? world_npc_ship_for(w, slot) : NULL;
+        if (npc == NULL || ship == NULL || !npc->active) continue;
+
+        int home = npc->home_station >= 0 && npc->home_station < (int)station_count
+            ? npc->home_station
+            : (int)(who % station_count);
+        int dest = (home + 1 + (int)(snw_rng_next(&rng) % (uint32_t)(station_count - 1u))) % (int)station_count;
+        int faction = home % (int)SNW_PERSISTENT_FACTIONS;
+        station_t *home_st = &w->stations[home];
+        station_t *dest_st = &w->stations[dest];
+        commodity_t contract_commodity = (tick + who) & 1u ? COMMODITY_CUPRITE_INGOT : COMMODITY_FERRITE_INGOT;
+        int stock = station_finished_count(home_st, contract_commodity);
+        double base_price = 35.0 + metrics.frontier_need[dest] * 60.0 + metrics.pirate_risk[dest] * 80.0;
+        double contract_value = stock > 0 ? base_price * snw_clip((double)stock, 1.0, 8.0) : 0.0;
+        double credit_weight = snw_station_credit_weight(home, dest, faction);
+        double pirate = metrics.pirate_risk[dest];
+        double frontier = metrics.frontier_need[dest];
+        double expansion = metrics.faction_control[dest][faction] < 0.55 ? 1.0 : 0.35;
+
+        snw_group_t group;
+        memset(&group, 0, sizeof(group));
+        group.seed = (uint32_t)(config->seed + tick * 977u + who);
+        group.group_id = ((uint64_t)tick << 32) | (uint64_t)who;
+        group.scenario_kind = (int)(tick % 9u);
+        group.home_station = home;
+        group.role = npc->role;
+        group.persona_risk = (double)((who * 37u) % 100u) / 100.0;
+        group.persona_growth = (double)((who * 53u + tick) % 100u) / 100.0;
+        group.persona_patience = (double)((who * 71u + tick * 3u) % 100u) / 100.0;
+        group.faction_id = faction;
+        group.faction_goal = pirate > 0.65 ? 1 : frontier > 0.85 ? 0 : 2;
+        group.faction_reputation = metrics.faction_control[home][faction];
+        group.frontier_need = frontier;
+        group.expansion_pressure = expansion;
+        group.route_pirate_risk = pirate;
+        group.route_recent_attack = pirate > 0.7 ? 1.0 : pirate * 0.35;
+        group.escort_available = spawned > 1u ? 1.0 : 0.0;
+        group.convoy_bonus = 0.20 + metrics.faction_control[home][faction] * 0.60;
+        group.pirate_bounty = 0.20 + pirate;
+        group.desired_upgrade = snw_preferred_upgrade(npc, ship);
+        group.desired_commodity = snw_upgrade_commodity(group.desired_upgrade);
+        group.desired_units = group.desired_upgrade < SHIP_UPGRADE_COUNT
+            ? (int)ceilf(upgrade_product_cost(ship, group.desired_upgrade))
+            : 0;
+        group.home_balance = ledger_balance(home_st, npc->session_token);
+        group.contract_at_own_station = dest == home;
+        group.contract_at_faction_station = (dest % (int)SNW_PERSISTENT_FACTIONS) == faction;
+        group.station_credit_weight = credit_weight;
+
+        for (size_t oi = 0; oi < SNW_OPTION_COUNT; ++oi) {
+            snw_outcome_t *out = &group.outcomes[oi];
+            memset(out, 0, sizeof(*out));
+            out->legal = 1;
+            switch (snw_hypothesis(oi)->option) {
+            case SNW_OPT_WAIT:
+                out->utility = 0.02;
+                break;
+            case SNW_OPT_MINE_HOME:
+                out->legal = npc->role == NPC_ROLE_MINER;
+                out->credit_delta = 20.0;
+                out->utility = out->legal ? 0.40 + frontier * 0.30 : -1.0;
+                break;
+            case SNW_OPT_HAUL_CONTRACT:
+                out->legal = contract_value > 0.0;
+                out->travel = out->legal;
+                out->contract_value = contract_value;
+                out->credit_delta = contract_value;
+                out->cargo_moved = stock;
+                out->faction_delta = group.contract_at_faction_station ? 0.15 : 0.0;
+                out->utility = out->legal ? contract_value * credit_weight / 95.0 - pirate * 0.9 : -1.0;
+                break;
+            case SNW_OPT_GOSSIP_COURIER:
+                out->travel = 1;
+                out->utility = 0.18 + pirate * 0.25 + frontier * 0.15;
+                break;
+            case SNW_OPT_SELF_REFIT_HOME:
+                out->legal = group.desired_commodity < COMMODITY_COUNT &&
+                             station_finished_count(home_st, group.desired_commodity) >= group.desired_units &&
+                             group.home_balance > 80.0;
+                out->self_upgrade = out->legal;
+                out->utility = out->legal ? 2.8 + group.persona_growth : -1.0;
+                break;
+            case SNW_OPT_IMPORT_FRAME:
+            case SNW_OPT_IMPORT_LASER:
+            case SNW_OPT_IMPORT_TRACTOR:
+                out->legal = group.desired_commodity < COMMODITY_COUNT &&
+                             station_finished_count(dest_st, group.desired_commodity) >= group.desired_units;
+                out->travel = out->legal;
+                out->import_module = out->legal;
+                out->utility = out->legal ? 2.4 + group.persona_growth * 0.7 - pirate * 0.35 : -1.0;
+                break;
+            case SNW_OPT_SUPPLY_FRONTIER:
+                out->legal = frontier > 0.20 && stock > 0;
+                out->travel = out->legal;
+                out->faction_work = out->legal;
+                out->frontier_delta = out->legal ? frontier * 0.45 : 0.0;
+                out->faction_delta = out->legal ? 0.20 + expansion * 0.30 : 0.0;
+                out->credit_delta = out->legal ? 45.0 + frontier * 85.0 : 0.0;
+                out->utility = out->legal ? frontier * 2.4 + expansion - pirate * 0.35 : -1.0;
+                break;
+            case SNW_OPT_ESCORT_CONVOY:
+                out->legal = pirate > 0.30 && spawned > 1u;
+                out->travel = out->legal;
+                out->faction_work = out->legal;
+                out->pirate_work = out->legal;
+                out->pirate_delta = out->legal ? -pirate * 0.28 : 0.0;
+                out->credit_delta = out->legal ? 40.0 + pirate * 90.0 : 0.0;
+                out->utility = out->legal ? pirate * 2.3 + group.convoy_bonus : -1.0;
+                break;
+            case SNW_OPT_PATROL_ROUTE:
+                out->legal = pirate > 0.45;
+                out->travel = out->legal;
+                out->faction_work = out->legal;
+                out->pirate_work = out->legal;
+                out->pirate_delta = out->legal ? -pirate * 0.45 : 0.0;
+                out->credit_delta = out->legal ? 30.0 + pirate * 120.0 : 0.0;
+                out->utility = out->legal ? pirate * 2.8 + group.pirate_bounty * 0.5 : -1.0;
+                break;
+            case SNW_OPT_RISKY_PROFIT:
+                out->legal = contract_value > 0.0 && pirate > 0.15;
+                out->travel = out->legal;
+                out->contract_value = contract_value;
+                out->credit_delta = contract_value * 1.15;
+                out->pirate_delta = out->legal ? pirate * 0.10 : 0.0;
+                out->faction_delta = group.contract_at_faction_station ? 0.05 : -0.18;
+                out->utility = out->legal ? contract_value / 85.0 - pirate * (0.8 + group.persona_risk) : -1.0;
+                break;
+            default:
+                out->legal = 0;
+                out->utility = -1.0;
+                break;
+            }
+            if (!out->legal) out->utility -= 1.0;
+        }
+
+        double best = -1e300;
+        group.target = 0;
+        for (size_t oi = 0; oi < SNW_OPTION_COUNT; ++oi) {
+            if (group.outcomes[oi].utility > best) {
+                best = group.outcomes[oi].utility;
+                group.target = oi;
+            }
+        }
+        size_t selected = group.target;
+        const snw_outcome_t *out = &group.outcomes[selected];
+        double social_utility = out->utility;
+        if (pirate > 0.75 && group.outcomes[SNW_OPT_PATROL_ROUTE].legal) {
+            selected = SNW_OPT_PATROL_ROUTE;
+            out = &group.outcomes[selected];
+            social_utility = out->utility + 0.20;
+        }
+
+        station_t *credit_station = (selected == SNW_OPT_HAUL_CONTRACT || selected == SNW_OPT_RISKY_PROFIT)
+            ? dest_st
+            : home_st;
+        if (out->credit_delta > 0.0) {
+            ledger_earn(credit_station, npc->session_token, (float)out->credit_delta);
+            if (credit_station == home_st) metrics.own_station_credit += out->credit_delta;
+            else if (((credit_station - w->stations) % (int)SNW_PERSISTENT_FACTIONS) == faction)
+                metrics.faction_station_credit += out->credit_delta;
+            else
+                metrics.off_faction_credit += out->credit_delta;
+        }
+        if (selected == SNW_OPT_MINE_HOME) {
+            snw_seed_finished(home_st, COMMODITY_FERRITE_INGOT, 1);
+        } else if ((selected == SNW_OPT_HAUL_CONTRACT || selected == SNW_OPT_RISKY_PROFIT ||
+                    selected == SNW_OPT_SUPPLY_FRONTIER) && stock > 0) {
+            (void)station_finished_drain(home_st, contract_commodity, 1);
+            snw_seed_finished(dest_st, contract_commodity, 1);
+        }
+        metrics.frontier_need[dest] = snw_clip(metrics.frontier_need[dest] -
+                                               (selected == SNW_OPT_SUPPLY_FRONTIER ? 0.18 : -0.015),
+                                               0.0,
+                                               1.5);
+        metrics.pirate_risk[dest] = snw_clip(metrics.pirate_risk[dest] +
+                                             (out->pirate_delta * 0.55) + 0.01,
+                                             0.0,
+                                             1.7);
+        if (out->faction_delta > 0.0) {
+            metrics.faction_control[dest][faction] =
+                snw_clip(metrics.faction_control[dest][faction] + out->faction_delta * 0.08,
+                         0.0,
+                         1.0);
+        }
+
+        metrics.ticks++;
+        metrics.decisions++;
+        metrics.legal_decisions += out->legal ? 1u : 0u;
+        metrics.faction_aligned_decisions += group.contract_at_own_station || group.contract_at_faction_station ? 1u : 0u;
+        metrics.pirate_events += out->pirate_work ? 1u : 0u;
+        metrics.frontier_supply_events += selected == SNW_OPT_SUPPLY_FRONTIER ? 1u : 0u;
+        metrics.utility_sum += out->utility;
+        metrics.social_utility_sum += social_utility;
+        metrics.action_count[selected]++;
+        if (trace != NULL) {
+            snw_persistent_write_decision(trace, (uint64_t)tick, slot, home, faction,
+                                          &group, selected, out->utility, social_utility);
+        }
+    }
+
+    for (size_t s = 0; s < station_count; ++s) {
+        metrics.pirate_pressure_sum += metrics.pirate_risk[s];
+        metrics.frontier_need_sum += metrics.frontier_need[s];
+    }
+    if (trace != NULL) fclose(trace);
+
+    FILE *summary = config->summary_path != NULL ? fopen(config->summary_path, "w") : NULL;
+    if (config->summary_path != NULL && summary == NULL) {
+        free(w);
+        return 0;
+    }
+    FILE *outs[2] = {stdout, summary};
+    for (size_t si = 0; si < 2; ++si) {
+        FILE *fp = outs[si];
+        if (fp == NULL) continue;
+        fprintf(fp, "{\"schema\":");
+        snw_json_string(fp, SNW_PERSISTENT_SUMMARY_SCHEMA);
+        fprintf(fp, ",\"task\":");
+        snw_json_string(fp, SNW_TASK_NAME);
+        fprintf(fp, ",\"trace_schema\":");
+        snw_json_string(fp, SNW_PERSISTENT_SCHEMA);
+        fprintf(fp, ",\"ticks\":%zu", config->persistent_ticks);
+        fprintf(fp, ",\"stations\":%zu", station_count);
+        fprintf(fp, ",\"npcs\":%zu", spawned);
+        fprintf(fp, ",\"decisions\":%zu", metrics.decisions);
+        fprintf(fp, ",\"legal_rate\":%.9g", snw_rate(metrics.legal_decisions, metrics.decisions));
+        fprintf(fp, ",\"faction_aligned_rate\":%.9g", snw_rate(metrics.faction_aligned_decisions, metrics.decisions));
+        fprintf(fp, ",\"mean_utility\":%.9g", metrics.decisions ? metrics.utility_sum / (double)metrics.decisions : 0.0);
+        fprintf(fp, ",\"mean_social_utility\":%.9g", metrics.decisions ? metrics.social_utility_sum / (double)metrics.decisions : 0.0);
+        fprintf(fp, ",\"own_station_credit\":%.9g", metrics.own_station_credit);
+        fprintf(fp, ",\"faction_station_credit\":%.9g", metrics.faction_station_credit);
+        fprintf(fp, ",\"off_faction_credit\":%.9g", metrics.off_faction_credit);
+        fprintf(fp, ",\"mean_pirate_risk\":%.9g", station_count ? metrics.pirate_pressure_sum / (double)station_count : 0.0);
+        fprintf(fp, ",\"mean_frontier_need\":%.9g", station_count ? metrics.frontier_need_sum / (double)station_count : 0.0);
+        fprintf(fp, ",\"pirate_events\":%zu", metrics.pirate_events);
+        fprintf(fp, ",\"frontier_supply_events\":%zu", metrics.frontier_supply_events);
+        fprintf(fp, ",\"action_count\":");
+        snw_write_option_counts(fp, metrics.action_count);
+        fputs("}\n", fp);
+    }
+    if (summary != NULL) fclose(summary);
+    free(w);
+    return 1;
+}
+
 static void snw_usage(const char *argv0)
 {
     fprintf(stderr,
             "usage: %s [--schema] [--train-groups n] [--test-groups n] "
             "[--epochs n] [--learning-rate r] [--seed n] "
-            "[--trace path] [--summary path] [--save path]\n",
+            "[--trace path] [--summary path] [--save path] "
+            "[--persistent-economy] [--ticks n] [--npcs n] [--stations n]\n",
             argv0);
 }
 
@@ -1453,6 +1856,10 @@ static int snw_parse_config(int argc, char **argv, snw_config_t *config, int *sc
     config->test_groups = 24u;
     config->epochs = 4u;
     config->learning_rate = (nn_real)0.004;
+    config->persistent_economy = 0;
+    config->persistent_ticks = 240u;
+    config->persistent_npcs = 48u;
+    config->persistent_stations = 12u;
     *schema_only = 0;
 
     for (int i = 1; i < argc; ++i) {
@@ -1474,6 +1881,14 @@ static int snw_parse_config(int argc, char **argv, snw_config_t *config, int *sc
             config->summary_path = argv[++i];
         } else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) {
             config->save_path = argv[++i];
+        } else if (strcmp(argv[i], "--persistent-economy") == 0) {
+            config->persistent_economy = 1;
+        } else if (strcmp(argv[i], "--ticks") == 0 && i + 1 < argc) {
+            if (!snw_parse_size(argv[++i], &config->persistent_ticks)) return 0;
+        } else if (strcmp(argv[i], "--npcs") == 0 && i + 1 < argc) {
+            if (!snw_parse_size(argv[++i], &config->persistent_npcs)) return 0;
+        } else if (strcmp(argv[i], "--stations") == 0 && i + 1 < argc) {
+            if (!snw_parse_size(argv[++i], &config->persistent_stations)) return 0;
         } else {
             return 0;
         }
@@ -1506,6 +1921,13 @@ int main(int argc, char **argv)
     }
     if (schema_only) {
         snw_print_schema();
+        return 0;
+    }
+    if (config.persistent_economy) {
+        if (!snw_persistent_run(&config)) {
+            fprintf(stderr, "failed to run Signal NPC persistent economy\n");
+            return 1;
+        }
         return 0;
     }
 
