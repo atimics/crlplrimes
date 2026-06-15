@@ -834,6 +834,19 @@ shadow state rather than a promoted Signal commodity, and faction
 control/frontier need are still strategic state variables updated by the
 experiment oracle rather than full diplomacy.
 
+The Signal-side promotion target should treat contraband as a station-policy
+classification derived from cargo provenance, not as a mutable cargo flag or a
+new commodity class. In v1, every station can share the same deterministic
+classifier, but the inputs belong to the station: recognized authorities,
+banned origins, tolerated pirate markets, embargoed route pairs, incomplete
+receipt tolerance, and buy/sell multipliers. The same receipt chain can
+therefore be clean at one station, suspicious at another, and contraband at a
+third without changing the cargo object. Pirate-market demand in this experiment
+is only a local demand proxy; the real game contract should let stations publish
+policy, then derive legality by walking the receipt/chain evidence and returning
+both a classification and a reason such as `pirate_authority_in_chain`,
+`broken_receipt_link`, `banned_origin`, or `embargoed_route`.
+
 ### Construction Agent
 
 Focus on build candidates and certified legality.
