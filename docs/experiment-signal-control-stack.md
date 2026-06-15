@@ -797,24 +797,31 @@ features rather than only post-score nudges.
 The persistent target stops resetting the world per group. It creates one
 Signal `world_t`, seeds station manifests and ledgers, spawns worker NPCs through
 Signal's `spawn_npc`, and carries station credit, delivered inventory, faction
-control, frontier need, and pirate risk across ticks. It now also advances
-Signal's real `world_sim_step`, sets frontier virtual-pilot pressure so the
-built-in frontier director/scaffold counters can move, and routes high-risk
-travel through `apply_npc_ship_damage` so pirate pressure can leave hull damage
-and NPC losses in the trace. The default run requests 100 NPCs, 24 stations, and
-720 ticks; on the current fresh-world asset pool it spawns 87 NPCs before
-ship-asset capacity, emits 720 decisions, records 71 pirate-damage events for
-1872.0711 hull damage, records no NPC losses, and moves the frontier loop to 24
-plans, 47 scaffold orders, 39 virtual scaffold manufactures, 38 virtual
-scaffold deliveries, and 36 virtual supply deliveries. A saturated 128-station
-run emits 716 decisions after 5 NPC losses, records 161 pirate-damage events for
-4300.6583 hull damage, and keeps frontier director counters at zero because all
-station slots are already seeded. This is now a stronger persistent economy
-pressure test, but pirates, faction control, and frontier need are still
-strategic state variables updated by the experiment oracle rather than fully
-simulated hostile ships or diplomacy. Frontier construction is partially
-authentic: the summary reports Signal's actual frontier director,
-scaffold-order, and virtual-delivery counters after the persistent world steps.
+control, frontier need, and pirate risk across ticks. Pirate stations are now a
+level-design primitive in this experiment: every seventh station is a pirate
+market with local contraband demand, and ships homed there use the same core
+reward function as lawful workers, earning credit at their own station by
+moving shadow contraband home. The risky-profit option therefore becomes
+smuggling for pirate-home ships, while lawful ships still use it as a dangerous
+off-faction profit branch. The trace records pirate-market alignment,
+contraband movement, local contraband demand, hull damage, and frontier state.
+
+The default persistent run requests 100 NPCs, 24 stations, and 720 ticks; on the
+current fresh-world asset pool it spawns 87 NPCs before ship-asset capacity. It
+creates 3 pirate markets and 11 pirate-home NPCs, emits 720 decisions, records
+18 smuggling runs, moves 39.0500 contraband units, pays 6128.8748 contraband
+credit, leaks 22.5500 units from lawful supply, and keeps lawful stations ahead
+on credit (`156052.916` lawful versus `31313.9753` pirate-market credit). It
+also records 77 pirate-damage events for 1943.1186 hull damage, no NPC losses,
+and moves the frontier loop to 24 plans, 47 scaffold orders, 39 virtual
+scaffold manufactures, 38 virtual scaffold deliveries, and 36 virtual supply
+deliveries. A saturated 128-station run creates 18 pirate markets, records 39
+smuggling runs, moves 67.8036 contraband units, pays 13692.5967 contraband
+credit, loses 10 NPCs, and keeps frontier director counters at zero because all
+station slots are already seeded. This is now a civilization pressure test, but
+contraband remains experiment-local shadow state rather than a promoted Signal
+commodity, and faction control/frontier need are still strategic state variables
+updated by the experiment oracle rather than full diplomacy.
 
 ### Construction Agent
 
