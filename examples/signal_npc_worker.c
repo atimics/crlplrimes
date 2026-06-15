@@ -18,8 +18,8 @@
 #define SNW_SUMMARY_SCHEMA "crlp.signal_npc_worker.summary.v1"
 #define SNW_SOCIAL_SLICE_SCHEMA "crlp.signal_npc_worker.social_slice.v1"
 #define SNW_TASK_NAME "signal_npc_worker"
-#define SNW_OPTION_COUNT 8u
-#define SNW_FEATURE_COUNT 56u
+#define SNW_OPTION_COUNT 12u
+#define SNW_FEATURE_COUNT 78u
 #define SNW_PERSONA_COUNT 3u
 
 typedef enum {
@@ -31,6 +31,10 @@ typedef enum {
     SNW_OPT_IMPORT_FRAME = 5,
     SNW_OPT_IMPORT_LASER = 6,
     SNW_OPT_IMPORT_TRACTOR = 7,
+    SNW_OPT_SUPPLY_FRONTIER = 8,
+    SNW_OPT_ESCORT_CONVOY = 9,
+    SNW_OPT_PATROL_ROUTE = 10,
+    SNW_OPT_RISKY_PROFIT = 11,
 } snw_option_t;
 
 typedef struct {
@@ -44,10 +48,15 @@ typedef struct {
     double refit_progress;
     double cargo_moved;
     double contract_value;
+    double faction_delta;
+    double frontier_delta;
+    double pirate_delta;
     int legal;
     int travel;
     int self_upgrade;
     int import_module;
+    int faction_work;
+    int pirate_work;
 } snw_outcome_t;
 
 typedef struct {
@@ -63,6 +72,19 @@ typedef struct {
     double persona_risk;
     double persona_growth;
     double persona_patience;
+    int faction_id;
+    int faction_goal;
+    double faction_reputation;
+    double frontier_need;
+    double expansion_pressure;
+    double route_pirate_risk;
+    double route_recent_attack;
+    double escort_available;
+    double convoy_bonus;
+    double pirate_bounty;
+    int contract_at_own_station;
+    int contract_at_faction_station;
+    double station_credit_weight;
     nn_real features[SNW_OPTION_COUNT][SNW_FEATURE_COUNT];
     snw_outcome_t outcomes[SNW_OPTION_COUNT];
     size_t target;
@@ -156,6 +178,10 @@ static const snw_hypothesis_t SNW_HYPOTHESES[SNW_OPTION_COUNT] = {
     {SNW_OPT_IMPORT_FRAME, "import_frame_modules"},
     {SNW_OPT_IMPORT_LASER, "import_laser_modules"},
     {SNW_OPT_IMPORT_TRACTOR, "import_tractor_modules"},
+    {SNW_OPT_SUPPLY_FRONTIER, "supply_frontier"},
+    {SNW_OPT_ESCORT_CONVOY, "escort_convoy"},
+    {SNW_OPT_PATROL_ROUTE, "patrol_route"},
+    {SNW_OPT_RISKY_PROFIT, "take_risky_profit_contract"},
 };
 
 static const snw_persona_t SNW_PERSONAS[SNW_PERSONA_COUNT] = {
@@ -217,6 +243,14 @@ static const char *snw_intent_for(size_t option, const snw_group_t *group)
         return "importing laser modules: remote stock unlocks combat/mining refit";
     case SNW_OPT_IMPORT_TRACTOR:
         return "importing tractor modules: remote stock improves hauling reach";
+    case SNW_OPT_SUPPLY_FRONTIER:
+        return "supplying frontier: faction expansion needs materials more than cash";
+    case SNW_OPT_ESCORT_CONVOY:
+        return "escorting convoy: pirate pressure makes shared travel valuable";
+    case SNW_OPT_PATROL_ROUTE:
+        return "patrolling route: reduce pirate pressure before trade resumes";
+    case SNW_OPT_RISKY_PROFIT:
+        return "taking risky profit contract: payout beats political caution";
     default:
         break;
     }
@@ -227,6 +261,10 @@ static const char *snw_intent_for(size_t option, const snw_group_t *group)
 static const char *snw_memory_for(size_t option, const snw_outcome_t *out)
 {
     if (out != NULL && out->import_module) return "module import helped future refit planning";
+    if (out != NULL && out->pirate_work && out->pirate_delta < 0.0) return "pirate pressure fell after defensive work";
+    if (out != NULL && out->frontier_delta > 0.0) return "frontier supply improved faction expansion";
+    if (out != NULL && out->pirate_work) return "pirate route stayed dangerous and needs caution";
+    if (out != NULL && out->faction_delta > 0.0) return "faction reputation improved after aligned work";
     if (out != NULL && out->self_upgrade) return "self refit completed and raises growth confidence";
     if (out != NULL && out->contract_value > 0.0) return "contract route paid and becomes preferred work";
     if (snw_hypothesis(option)->option == SNW_OPT_MINE_HOME) return "home ore loop was productive";
@@ -237,6 +275,10 @@ static const char *snw_memory_for(size_t option, const snw_outcome_t *out)
 static const char *snw_gossip_for(size_t option, const snw_outcome_t *out)
 {
     if (out != NULL && out->contract_value > 0.0) return "good contract value seen near home station";
+    if (out != NULL && out->pirate_work && out->pirate_delta < 0.0) return "pirate route pressure reduced after patrol or escort";
+    if (out != NULL && out->pirate_work) return "pirate threat seen on profitable route";
+    if (out != NULL && out->frontier_delta > 0.0) return "frontier station needs supply for expansion";
+    if (out != NULL && out->faction_delta > 0.0) return "faction-aligned work is earning trust";
     if (out != NULL && out->import_module) return "remote module stock exists for crew refits";
     if (out != NULL && out->self_upgrade) return "home station has enough stock for a refit";
     if (snw_hypothesis(option)->option == SNW_OPT_GOSSIP_COURIER) return "route scout reports low immediate work pressure";
@@ -260,8 +302,16 @@ static double snw_social_bonus(const snw_group_t *group,
         bonus -= persona->risk_weight * memory->route_risk * 0.30;
         if (memory_used) *memory_used = 1;
     }
+    if (out->pirate_work && memory->route_risk > 0.20) {
+        bonus += memory->route_risk * (0.20 + persona->risk_weight * 0.16);
+        if (memory_used) *memory_used = 1;
+    }
     if (out->contract_value > 0.0 && memory->job_profit > 0.10) {
         bonus += memory->job_profit * (0.15 + persona->logistics_weight * 0.10);
+        if (memory_used) *memory_used = 1;
+    }
+    if (out->frontier_delta > 0.0 && memory->refit_need > 0.10) {
+        bonus += memory->refit_need * (0.12 + persona->growth_weight * 0.10);
         if (memory_used) *memory_used = 1;
     }
     if ((out->self_upgrade || out->import_module) && memory->refit_need > 0.10) {
@@ -276,6 +326,10 @@ static double snw_social_bonus(const snw_group_t *group,
         bonus -= memory->gossip_route_risk * (0.10 + persona->risk_weight * 0.08);
         if (gossip_used) *gossip_used = 1;
     }
+    if (out->pirate_work && memory->gossip_route_risk > 0.20) {
+        bonus += memory->gossip_route_risk * (0.22 + persona->risk_weight * 0.14);
+        if (gossip_used) *gossip_used = 1;
+    }
     if (snw_hypothesis(option)->option == SNW_OPT_WAIT) {
         bonus += persona->patience_weight * 0.03;
     }
@@ -284,6 +338,12 @@ static double snw_social_bonus(const snw_group_t *group,
     }
     if (snw_hypothesis(option)->option == SNW_OPT_MINE_HOME) {
         bonus += persona->growth_weight * 0.04;
+    }
+    if (snw_hypothesis(option)->option == SNW_OPT_SUPPLY_FRONTIER) {
+        bonus += persona->growth_weight * 0.05 + persona->logistics_weight * 0.03;
+    }
+    if (snw_hypothesis(option)->option == SNW_OPT_RISKY_PROFIT) {
+        bonus += (1.0 - persona->risk_weight) * 0.06;
     }
     return bonus;
 }
@@ -422,12 +482,43 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
     snw_clear_contracts(w);
     snw_clear_npcs(w);
 
-    group->scenario_kind = (int)(snw_rng_next(&rng) % 5u);
+    group->scenario_kind = (int)(snw_rng_next(&rng) % 9u);
     group->home_station = (int)(snw_rng_next(&rng) % 3u);
     group->role = (snw_rng_next(&rng) & 1u) ? NPC_ROLE_HAULER : NPC_ROLE_MINER;
     group->persona_risk = snw_rand01(&rng);
     group->persona_growth = snw_rand01(&rng);
     group->persona_patience = snw_rand01(&rng);
+    group->faction_id = (int)(snw_rng_next(&rng) % 3u);
+    group->faction_goal = (int)(snw_rng_next(&rng) % 4u);
+    group->faction_reputation = snw_rand01(&rng);
+    group->frontier_need = snw_clip(0.20 + snw_rand01(&rng) * 0.95 +
+                                    (group->scenario_kind == 5 ? 0.55 : 0.0),
+                                    0.0,
+                                    1.5);
+    group->expansion_pressure = snw_clip(snw_rand01(&rng) +
+                                         (group->faction_goal == 0 ? 0.35 : 0.0) +
+                                         (group->scenario_kind == 5 ? 0.35 : 0.0),
+                                         0.0,
+                                         1.5);
+    group->route_pirate_risk = snw_clip(snw_rand01(&rng) +
+                                        (group->scenario_kind == 6 ? 0.65 : 0.0) +
+                                        (group->scenario_kind == 8 ? 0.45 : 0.0),
+                                        0.0,
+                                        1.6);
+    group->route_recent_attack = snw_clip(snw_rand01(&rng) +
+                                          (group->scenario_kind == 6 ? 0.60 : 0.0),
+                                          0.0,
+                                          1.5);
+    group->escort_available = snw_rand01(&rng) > 0.35 ? 1.0 : 0.0;
+    if (group->scenario_kind == 6 || group->scenario_kind == 8) group->escort_available = 1.0;
+    group->convoy_bonus = snw_clip(snw_rand01(&rng) +
+                                   (group->faction_goal == 1 ? 0.30 : 0.0),
+                                   0.0,
+                                   1.4);
+    group->pirate_bounty = snw_clip(0.10 + snw_rand01(&rng) * 1.15 +
+                                    (group->scenario_kind == 7 ? 0.55 : 0.0),
+                                    0.0,
+                                    1.7);
 
     int slot = spawn_npc(w, group->home_station, (npc_role_t)group->role);
     if (slot < 0) {
@@ -482,23 +573,25 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
         snw_seed_finished(&w->stations[remote], group->desired_commodity, remote_stock);
     }
 
-    if (group->scenario_kind == 0 || group->scenario_kind == 3) {
+    if (group->scenario_kind == 0 || group->scenario_kind == 3 ||
+        group->scenario_kind == 5 || group->scenario_kind == 8) {
         snw_seed_finished(home, COMMODITY_FERRITE_INGOT, 20);
         snw_make_contract(&w->contracts[0], CONTRACT_TRACTOR,
                           (group->home_station + 1) % 3,
                           -1,
                           COMMODITY_FERRITE_INGOT,
                           8.0f,
-                          group->scenario_kind == 3 ? 70.0f : 25.0f);
+                          group->scenario_kind == 3 ? 70.0f :
+                          group->scenario_kind == 8 ? 95.0f : 25.0f);
     }
-    if (group->scenario_kind == 3) {
+    if (group->scenario_kind == 3 || group->scenario_kind == 5 || group->scenario_kind == 8) {
         snw_seed_finished(home, COMMODITY_CUPRITE_INGOT, 12);
         snw_make_contract(&w->contracts[1], CONTRACT_TRACTOR,
                           (group->home_station + 2) % 3,
                           -1,
                           COMMODITY_CUPRITE_INGOT,
                           5.0f,
-                          90.0f);
+                          group->scenario_kind == 8 ? 135.0f : 90.0f);
     }
 
     int mine_pressure = group->scenario_kind == 4 ? 1 : 0;
@@ -534,6 +627,28 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
     if (remote_refit_station >= 0) {
         route_km = v2_len(v2_sub(w->stations[remote_refit_station].pos, home->pos)) / 1000.0;
     }
+    int contract_at_own_station = best_contract_dest == group->home_station;
+    int contract_at_faction_station = best_contract_dest >= 0 &&
+                                      (best_contract_dest % 3) == group->faction_id;
+    double station_credit_weight = contract_at_own_station ? 1.25 :
+                                   contract_at_faction_station ? 1.0 : 0.45;
+    group->contract_at_own_station = contract_at_own_station;
+    group->contract_at_faction_station = contract_at_faction_station;
+    group->station_credit_weight = station_credit_weight;
+    double pirate_pressure = snw_clip(group->route_pirate_risk * 0.65 +
+                                      group->route_recent_attack * 0.35,
+                                      0.0,
+                                      1.7);
+    double faction_alignment = 0.45 + group->faction_reputation * 0.35 +
+                               group->expansion_pressure * 0.25;
+    double frontier_value = group->frontier_need * (1.4 + group->expansion_pressure) +
+                            (group->faction_goal == 0 ? 0.85 : 0.0);
+    double pirate_defense_value = pirate_pressure * (1.3 + group->pirate_bounty) +
+                                  (group->faction_goal == 1 ? 0.65 : 0.0);
+    double station_aligned_contract_value = best_contract_value * station_credit_weight;
+    double risky_profit_value = best_contract_value / 80.0 +
+                                group->convoy_bonus * 0.70 -
+                                pirate_pressure * (1.05 + group->persona_risk * 0.75);
 
     for (size_t oi = 0; oi < SNW_OPTION_COUNT; ++oi) {
         snw_outcome_t *out = &group->outcomes[oi];
@@ -556,8 +671,11 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
             out->cargo_moved = best_contract_stock > 0 ? snw_clip(best_contract_value / 50.0, 1.0, 10.0) : 0.0;
             out->travel = out->legal && best_contract_dest != group->home_station;
             out->credit_delta = best_contract_value;
+            out->faction_delta = out->legal && contract_at_faction_station ? 0.18 : 0.0;
             out->utility = out->legal
-                ? (best_contract_value / 85.0) + (npc->role == NPC_ROLE_HAULER ? 0.45 : 0.0)
+                ? (station_aligned_contract_value / 90.0) +
+                  (npc->role == NPC_ROLE_HAULER ? 0.45 : 0.0) -
+                  pirate_pressure * (0.65 + group->persona_risk * 0.55)
                 : -0.85;
             break;
         case SNW_OPT_GOSSIP_COURIER:
@@ -593,10 +711,69 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
             out->refit_progress = out->legal ? 0.65 : 0.0;
             out->credit_delta = out->legal ? -refit_cost : 0.0;
             out->utility = out->legal
-                ? 4.8 + group->persona_growth * 1.6 - route_km * 0.08
+                ? 4.8 + group->persona_growth * 1.6 - route_km * 0.08 -
+                  pirate_pressure * (0.30 + group->persona_risk * 0.35)
                 : -0.65;
             break;
         }
+        case SNW_OPT_SUPPLY_FRONTIER:
+            out->legal = best_contract_stock > 0 || mine_pressure || home_refit_stock > 0;
+            out->travel = out->legal;
+            out->faction_work = out->legal;
+            out->cargo_moved = out->legal ? snw_clip(4.0 + group->frontier_need * 8.0, 1.0, 14.0) : 0.0;
+            out->frontier_delta = out->legal ? group->frontier_need * 0.70 : 0.0;
+            out->faction_delta = out->legal ? 0.20 + group->expansion_pressure * 0.35 : 0.0;
+            out->credit_delta = out->legal ? 65.0 + group->frontier_need * 80.0 : 0.0;
+            out->utility = out->legal
+                ? frontier_value + faction_alignment - pirate_pressure * 0.45
+                : -0.80;
+            break;
+        case SNW_OPT_ESCORT_CONVOY:
+            out->legal = group->escort_available > 0.5 &&
+                         (pirate_pressure > 0.35 || best_contract_value > 0.0);
+            out->travel = out->legal;
+            out->faction_work = out->legal;
+            out->pirate_work = out->legal;
+            out->pirate_delta = out->legal ? -0.35 * pirate_pressure : 0.0;
+            out->faction_delta = out->legal ? 0.15 + group->convoy_bonus * 0.25 : 0.0;
+            out->credit_delta = out->legal ? 80.0 + group->convoy_bonus * 95.0 : 0.0;
+            out->utility = out->legal
+                ? pirate_defense_value + group->convoy_bonus * 0.80 +
+                  (npc->role == NPC_ROLE_HAULER ? 0.25 : 0.0) -
+                  group->persona_risk * 0.25
+                : -0.70;
+            break;
+        case SNW_OPT_PATROL_ROUTE:
+            out->legal = pirate_pressure > 0.45;
+            out->travel = out->legal;
+            out->faction_work = out->legal;
+            out->pirate_work = out->legal;
+            out->pirate_delta = out->legal ? -0.55 * pirate_pressure : 0.0;
+            out->faction_delta = out->legal ? 0.18 + group->pirate_bounty * 0.20 : 0.0;
+            out->credit_delta = out->legal ? 45.0 + group->pirate_bounty * 130.0 : 0.0;
+            out->utility = out->legal
+                ? pirate_defense_value + group->pirate_bounty * 0.65 +
+                  (npc->role == NPC_ROLE_MINER ? 0.20 : 0.0) -
+                  group->persona_patience * 0.15
+                : -0.75;
+            break;
+        case SNW_OPT_RISKY_PROFIT:
+            out->legal = best_contract_value > 0.0 && pirate_pressure > 0.20;
+            out->travel = out->legal;
+            out->contract_value = out->legal ? best_contract_value * (1.0 + group->convoy_bonus * 0.25) : 0.0;
+            out->credit_delta = out->contract_value;
+            out->cargo_moved = out->legal ? snw_clip(best_contract_value / 45.0, 1.0, 14.0) : 0.0;
+            out->faction_delta = out->legal
+                ? (contract_at_own_station || contract_at_faction_station ? 0.05 : -0.18) -
+                  pirate_pressure * 0.08
+                : 0.0;
+            out->pirate_delta = out->legal ? pirate_pressure * 0.12 : 0.0;
+            out->utility = out->legal
+                ? risky_profit_value +
+                  (contract_at_own_station || contract_at_faction_station ? 0.35 : -0.35) +
+                  (1.0 - group->persona_risk) * 0.70
+                : -0.85;
+            break;
         default:
             out->legal = 0;
             out->utility = -1.0;
@@ -610,6 +787,8 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
     group->target = 0;
     group->baseline = best_contract_value > 0.0 ? SNW_OPT_HAUL_CONTRACT :
                       mine_pressure ? SNW_OPT_MINE_HOME :
+                      pirate_pressure > 0.65 ? SNW_OPT_PATROL_ROUTE :
+                      group->frontier_need > 1.0 ? SNW_OPT_SUPPLY_FRONTIER :
                       SNW_OPT_GOSSIP_COURIER;
     for (size_t i = 0; i < SNW_OPTION_COUNT; ++i) {
         double u = group->outcomes[i].utility;
@@ -630,54 +809,72 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
         f[0] = 1.0f;
         f[1] = (nn_real)oi / (nn_real)(SNW_OPTION_COUNT - 1u);
         for (size_t k = 0; k < SNW_OPTION_COUNT; ++k) f[2 + k] = oi == k ? 1.0f : 0.0f;
-        f[10] = npc->role == NPC_ROLE_MINER ? 1.0f : 0.0f;
-        f[11] = npc->role == NPC_ROLE_HAULER ? 1.0f : 0.0f;
-        f[12] = (nn_real)ship->mining_level / 5.0f;
-        f[13] = (nn_real)ship->hold_level / 5.0f;
-        f[14] = (nn_real)ship->tractor_level / 5.0f;
-        f[15] = (nn_real)group->home_station / 2.0f;
-        f[16] = (nn_real)snw_clip(group->home_balance / 1500.0, 0.0, 1.5);
-        f[17] = (nn_real)home_refit_stock / 24.0f;
-        f[18] = (nn_real)remote_refit_stock / 24.0f;
-        f[19] = (nn_real)group->desired_units / 20.0f;
-        f[20] = (nn_real)snw_clip(refit_cost / 1500.0, 0.0, 2.0);
-        f[21] = (nn_real)can_pay_refit;
-        f[22] = group->desired_upgrade == SHIP_UPGRADE_MINING ? 1.0f : 0.0f;
-        f[23] = group->desired_upgrade == SHIP_UPGRADE_HOLD ? 1.0f : 0.0f;
-        f[24] = group->desired_upgrade == SHIP_UPGRADE_TRACTOR ? 1.0f : 0.0f;
-        f[25] = group->desired_commodity == COMMODITY_FRAME ? 1.0f : 0.0f;
-        f[26] = group->desired_commodity == COMMODITY_LASER_MODULE ? 1.0f : 0.0f;
-        f[27] = group->desired_commodity == COMMODITY_TRACTOR_MODULE ? 1.0f : 0.0f;
-        f[28] = (nn_real)snw_clip(best_contract_value / 600.0, 0.0, 2.0);
-        f[29] = (nn_real)best_contract_stock / 24.0f;
-        f[30] = best_contract_dest >= 0 && best_contract_dest != group->home_station ? 1.0f : 0.0f;
-        f[31] = mine_pressure ? 1.0f : 0.0f;
-        f[32] = (nn_real)group->persona_risk;
-        f[33] = (nn_real)group->persona_growth;
-        f[34] = (nn_real)group->persona_patience;
-        f[35] = (nn_real)snw_clip(route_km / 20.0, 0.0, 1.0);
-        f[36] = station_has_module(home, MODULE_DOCK) ? 1.0f : 0.0f;
-        f[37] = station_has_module(home, MODULE_SHIPYARD) ? 1.0f : 0.0f;
-        f[38] = station_has_module(home, MODULE_FURNACE) ? 1.0f : 0.0f;
-        f[39] = station_has_module(home, MODULE_FRAME_PRESS) ? 1.0f : 0.0f;
-        f[40] = station_has_module(home, MODULE_LASER_FAB) ? 1.0f : 0.0f;
-        f[41] = station_has_module(home, MODULE_TRACTOR_FAB) ? 1.0f : 0.0f;
-        f[42] = h->option == SNW_OPT_WAIT ? 1.0f : 0.0f;
-        f[43] = h->option == SNW_OPT_SELF_REFIT_HOME ? (nn_real)(home_refit_stock >= group->desired_units) : 0.0f;
-        f[44] = (h->option == SNW_OPT_IMPORT_FRAME ||
+        f[14] = npc->role == NPC_ROLE_MINER ? 1.0f : 0.0f;
+        f[15] = npc->role == NPC_ROLE_HAULER ? 1.0f : 0.0f;
+        f[16] = (nn_real)ship->mining_level / 5.0f;
+        f[17] = (nn_real)ship->hold_level / 5.0f;
+        f[18] = (nn_real)ship->tractor_level / 5.0f;
+        f[19] = (nn_real)group->home_station / 2.0f;
+        f[20] = (nn_real)snw_clip(group->home_balance / 1500.0, 0.0, 1.5);
+        f[21] = (nn_real)home_refit_stock / 24.0f;
+        f[22] = (nn_real)remote_refit_stock / 24.0f;
+        f[23] = (nn_real)group->desired_units / 20.0f;
+        f[24] = (nn_real)snw_clip(refit_cost / 1500.0, 0.0, 2.0);
+        f[25] = (nn_real)can_pay_refit;
+        f[26] = group->desired_upgrade == SHIP_UPGRADE_MINING ? 1.0f : 0.0f;
+        f[27] = group->desired_upgrade == SHIP_UPGRADE_HOLD ? 1.0f : 0.0f;
+        f[28] = group->desired_upgrade == SHIP_UPGRADE_TRACTOR ? 1.0f : 0.0f;
+        f[29] = group->desired_commodity == COMMODITY_FRAME ? 1.0f : 0.0f;
+        f[30] = group->desired_commodity == COMMODITY_LASER_MODULE ? 1.0f : 0.0f;
+        f[31] = group->desired_commodity == COMMODITY_TRACTOR_MODULE ? 1.0f : 0.0f;
+        f[32] = (nn_real)snw_clip(best_contract_value / 600.0, 0.0, 2.0);
+        f[33] = (nn_real)best_contract_stock / 24.0f;
+        f[34] = best_contract_dest >= 0 && best_contract_dest != group->home_station ? 1.0f : 0.0f;
+        f[35] = mine_pressure ? 1.0f : 0.0f;
+        f[36] = (nn_real)group->persona_risk;
+        f[37] = (nn_real)group->persona_growth;
+        f[38] = (nn_real)group->persona_patience;
+        f[39] = (nn_real)snw_clip(route_km / 20.0, 0.0, 1.0);
+        f[40] = station_has_module(home, MODULE_DOCK) ? 1.0f : 0.0f;
+        f[41] = station_has_module(home, MODULE_SHIPYARD) ? 1.0f : 0.0f;
+        f[42] = station_has_module(home, MODULE_FURNACE) ? 1.0f : 0.0f;
+        f[43] = station_has_module(home, MODULE_FRAME_PRESS) ? 1.0f : 0.0f;
+        f[44] = station_has_module(home, MODULE_LASER_FAB) ? 1.0f : 0.0f;
+        f[45] = station_has_module(home, MODULE_TRACTOR_FAB) ? 1.0f : 0.0f;
+        f[46] = h->option == SNW_OPT_WAIT ? 1.0f : 0.0f;
+        f[47] = h->option == SNW_OPT_SELF_REFIT_HOME ? (nn_real)(home_refit_stock >= group->desired_units) : 0.0f;
+        f[48] = (h->option == SNW_OPT_IMPORT_FRAME ||
                  h->option == SNW_OPT_IMPORT_LASER ||
                  h->option == SNW_OPT_IMPORT_TRACTOR) ? 1.0f : 0.0f;
-        f[45] = group->outcomes[oi].legal ? 1.0f : 0.0f;
-        f[46] = group->outcomes[oi].travel ? 1.0f : 0.0f;
-        f[47] = group->outcomes[oi].self_upgrade ? 1.0f : 0.0f;
-        f[48] = group->outcomes[oi].import_module ? 1.0f : 0.0f;
-        f[49] = (nn_real)snw_clip(group->outcomes[oi].credit_delta / 1000.0, -1.5, 2.0);
-        f[50] = (nn_real)group->outcomes[oi].refit_progress;
-        f[51] = (nn_real)snw_clip(group->outcomes[oi].contract_value / 600.0, 0.0, 2.0);
-        f[52] = (nn_real)snw_clip(group->outcomes[oi].cargo_moved / 16.0, 0.0, 1.0);
-        f[53] = best_contract_commodity == COMMODITY_FERRITE_INGOT ? 1.0f : 0.0f;
-        f[54] = best_contract_commodity == COMMODITY_CUPRITE_INGOT ? 1.0f : 0.0f;
-        f[55] = best_contract_commodity == COMMODITY_CRYSTAL_INGOT ? 1.0f : 0.0f;
+        f[49] = group->outcomes[oi].legal ? 1.0f : 0.0f;
+        f[50] = group->outcomes[oi].travel ? 1.0f : 0.0f;
+        f[51] = group->outcomes[oi].self_upgrade ? 1.0f : 0.0f;
+        f[52] = group->outcomes[oi].import_module ? 1.0f : 0.0f;
+        f[53] = (nn_real)snw_clip(group->outcomes[oi].credit_delta / 1000.0, -1.5, 2.0);
+        f[54] = (nn_real)group->outcomes[oi].refit_progress;
+        f[55] = (nn_real)snw_clip(group->outcomes[oi].contract_value / 600.0, 0.0, 2.0);
+        f[56] = (nn_real)snw_clip(group->outcomes[oi].cargo_moved / 16.0, 0.0, 1.0);
+        f[57] = (nn_real)group->faction_id / 2.0f;
+        f[58] = (nn_real)group->faction_goal / 3.0f;
+        f[59] = (nn_real)group->faction_reputation;
+        f[60] = (nn_real)snw_clip(group->frontier_need / 1.5, 0.0, 1.0);
+        f[61] = (nn_real)snw_clip(group->expansion_pressure / 1.5, 0.0, 1.0);
+        f[62] = (nn_real)snw_clip(group->route_pirate_risk / 1.6, 0.0, 1.0);
+        f[63] = (nn_real)snw_clip(group->route_recent_attack / 1.5, 0.0, 1.0);
+        f[64] = (nn_real)group->escort_available;
+        f[65] = (nn_real)snw_clip(group->convoy_bonus / 1.4, 0.0, 1.0);
+        f[66] = (nn_real)snw_clip(group->pirate_bounty / 1.7, 0.0, 1.0);
+        f[67] = (nn_real)snw_clip(pirate_pressure / 1.7, 0.0, 1.0);
+        f[68] = group->outcomes[oi].faction_work ? 1.0f : 0.0f;
+        f[69] = group->outcomes[oi].pirate_work ? 1.0f : 0.0f;
+        f[70] = (nn_real)snw_clip(group->outcomes[oi].faction_delta, -1.0, 1.0);
+        f[71] = (nn_real)snw_clip(group->outcomes[oi].frontier_delta, 0.0, 1.0);
+        f[72] = (nn_real)snw_clip(group->outcomes[oi].pirate_delta, -1.0, 1.0);
+        f[73] = best_contract_commodity == COMMODITY_FERRITE_INGOT ? 1.0f : 0.0f;
+        f[74] = best_contract_commodity == COMMODITY_CUPRITE_INGOT ? 1.0f : 0.0f;
+        f[75] = best_contract_commodity == COMMODITY_CRYSTAL_INGOT ? 1.0f : 0.0f;
+        f[76] = contract_at_own_station ? 1.0f : 0.0f;
+        f[77] = contract_at_faction_station ? 1.0f : 0.0f;
     }
     free(w);
     return 1;
@@ -815,8 +1012,19 @@ static void snw_update_worker_memory(snw_worker_memory_t *memory,
     if (out->travel && (regret > 0.25 || out->utility < 0.5)) {
         memory->route_risk = snw_clip(memory->route_risk + 0.35 + regret * 0.08, 0.0, 1.5);
     }
+    if (out->pirate_work && out->pirate_delta < 0.0) {
+        memory->route_risk = snw_clip(memory->route_risk * 0.70, 0.0, 1.5);
+    }
+    if (out->pirate_work && out->pirate_delta > 0.0) {
+        memory->route_risk = snw_clip(memory->route_risk + out->pirate_delta * 0.80, 0.0, 1.5);
+    }
     if (out->contract_value > 0.0) {
         memory->job_profit = snw_clip(memory->job_profit + out->contract_value / 900.0, 0.0, 1.5);
+    }
+    if (out->frontier_delta > 0.0 || out->faction_delta > 0.0) {
+        memory->refit_need = snw_clip(memory->refit_need + 0.15 + out->frontier_delta * 0.30,
+                                      0.0,
+                                      1.5);
     }
     if (group->desired_upgrade < SHIP_UPGRADE_COUNT &&
         (selected == SNW_OPT_SELF_REFIT_HOME ||
@@ -850,6 +1058,18 @@ static void snw_publish_gossip(snw_worker_memory_t memories[SNW_PERSONA_COUNT],
                 snw_clip(memories[i].gossip_route_risk * 0.90 + 0.25 + regret * 0.05,
                          0.0,
                          1.5);
+            memories[i].heard_gossip = 1;
+        }
+        if (out->pirate_work) {
+            double delta = out->pirate_delta < 0.0 ? 0.18 : 0.35;
+            memories[i].gossip_route_risk =
+                snw_clip(memories[i].gossip_route_risk * 0.85 + delta,
+                         0.0,
+                         1.5);
+            memories[i].heard_gossip = 1;
+        }
+        if (out->frontier_delta > 0.0 || out->faction_delta > 0.0) {
+            memories[i].refit_need = snw_clip(memories[i].refit_need + 0.12, 0.0, 1.5);
             memories[i].heard_gossip = 1;
         }
         if (out->import_module || out->self_upgrade) {
@@ -950,6 +1170,12 @@ static int snw_append_social_slice_trace(const char *path,
         snw_json_string(fp, snw_hypothesis(selected)->name);
         fprintf(fp, ",\"target_option\":");
         snw_json_string(fp, snw_hypothesis(group->target)->name);
+        fprintf(fp, ",\"faction_id\":%d", group->faction_id);
+        fprintf(fp, ",\"faction_goal\":%d", group->faction_goal);
+        fprintf(fp, ",\"frontier_need\":%.9g", group->frontier_need);
+        fprintf(fp, ",\"route_pirate_risk\":%.9g", group->route_pirate_risk);
+        fprintf(fp, ",\"route_recent_attack\":%.9g", group->route_recent_attack);
+        fprintf(fp, ",\"escort_available\":%.9g", group->escort_available);
         fprintf(fp, ",\"intent\":");
         snw_json_string(fp, intent);
         fprintf(fp, ",\"memory_written\":");
@@ -1031,9 +1257,30 @@ static int snw_write_trace(const char *path, const snw_dataset_t *train, const s
                 fprintf(fp, ",\"legal\":%s", g->outcomes[oi].legal ? "true" : "false");
                 fprintf(fp, ",\"self_upgrade\":%s", g->outcomes[oi].self_upgrade ? "true" : "false");
                 fprintf(fp, ",\"import_module\":%s", g->outcomes[oi].import_module ? "true" : "false");
+                fprintf(fp, ",\"faction_work\":%s", g->outcomes[oi].faction_work ? "true" : "false");
+                fprintf(fp, ",\"pirate_work\":%s", g->outcomes[oi].pirate_work ? "true" : "false");
+                fprintf(fp, ",\"faction_delta\":%.9g", g->outcomes[oi].faction_delta);
+                fprintf(fp, ",\"frontier_delta\":%.9g", g->outcomes[oi].frontier_delta);
+                fprintf(fp, ",\"pirate_delta\":%.9g", g->outcomes[oi].pirate_delta);
                 fprintf(fp, ",\"home_station\":%d", g->home_station);
                 fprintf(fp, ",\"role\":%d", g->role);
                 fprintf(fp, ",\"desired_upgrade\":%d", (int)g->desired_upgrade);
+                fprintf(fp, ",\"scenario_kind\":%d", g->scenario_kind);
+                fprintf(fp, ",\"faction_id\":%d", g->faction_id);
+                fprintf(fp, ",\"faction_goal\":%d", g->faction_goal);
+                fprintf(fp, ",\"faction_reputation\":%.9g", g->faction_reputation);
+                fprintf(fp, ",\"frontier_need\":%.9g", g->frontier_need);
+                fprintf(fp, ",\"expansion_pressure\":%.9g", g->expansion_pressure);
+                fprintf(fp, ",\"route_pirate_risk\":%.9g", g->route_pirate_risk);
+                fprintf(fp, ",\"route_recent_attack\":%.9g", g->route_recent_attack);
+                fprintf(fp, ",\"escort_available\":%.9g", g->escort_available);
+                fprintf(fp, ",\"convoy_bonus\":%.9g", g->convoy_bonus);
+                fprintf(fp, ",\"pirate_bounty\":%.9g", g->pirate_bounty);
+                fprintf(fp, ",\"contract_at_own_station\":%s",
+                        g->contract_at_own_station ? "true" : "false");
+                fprintf(fp, ",\"contract_at_faction_station\":%s",
+                        g->contract_at_faction_station ? "true" : "false");
+                fprintf(fp, ",\"station_credit_weight\":%.9g", g->station_credit_weight);
                 fprintf(fp, ",\"features\":[");
                 for (size_t fi = 0; fi < SNW_FEATURE_COUNT; ++fi) {
                     fprintf(fp, "%s%.9g", fi == 0 ? "" : ",", (double)g->features[oi][fi]);
@@ -1054,8 +1301,8 @@ static int snw_save_checkpoint(NeuralNet *net, const char *path, const char *tra
     if (!nn_checkpoint_meta_set_parent_model_hash(&meta, "none") ||
         !nn_checkpoint_meta_set_benchmark_report_hash(&meta, "pending") ||
         !nn_checkpoint_meta_set_training_trace_root(&meta, trace_path != NULL ? trace_path : "generated_in_memory") ||
-        !nn_checkpoint_meta_set_notes(&meta, "Signal NPC worker strategic option scorer trained from Signal simulator state and certified utility rows") ||
-        !nn_checkpoint_meta_set_feature_set(&meta, "signal-npc-worker-v1")) {
+        !nn_checkpoint_meta_set_notes(&meta, "Signal NPC worker strategic option scorer trained from Signal simulator state, frontier pressure, faction goals, pirate risk, and certified utility rows") ||
+        !nn_checkpoint_meta_set_feature_set(&meta, "signal-npc-worker-v2")) {
         return 0;
     }
     return nn_save_checkpoint(net, path, &meta) && nn_hash_checkpoint_hex(path, out_hash);
@@ -1092,7 +1339,7 @@ static void snw_write_summary(FILE *fp,
     fprintf(fp, ",\"trace_schema\":");
     snw_json_string(fp, SNW_TRACE_SCHEMA);
     fprintf(fp, ",\"training_mode\":\"counterfactual_worker_option_utility\"");
-    fprintf(fp, ",\"candidate_layer\":\"npc_worker_strategy_v1\"");
+    fprintf(fp, ",\"candidate_layer\":\"npc_worker_strategy_v2_frontier_factions_pirates\"");
     fprintf(fp, ",\"model_hash\":");
     snw_json_string(fp, model_hash != NULL ? model_hash : "unsaved");
     fprintf(fp, ",\"trace_path\":");
@@ -1239,7 +1486,7 @@ static void snw_print_schema(void)
     printf("{\"task\":\"%s\",\"trace_schema\":\"%s\",\"summary_schema\":\"%s\","
            "\"social_slice_schema\":\"%s\","
            "\"candidate_count\":%u,\"feature_count\":%u,"
-           "\"feature_set\":\"signal-npc-worker-v1\",\"options\":[",
+           "\"feature_set\":\"signal-npc-worker-v2\",\"options\":[",
            SNW_TASK_NAME, SNW_TRACE_SCHEMA, SNW_SUMMARY_SCHEMA, SNW_SOCIAL_SLICE_SCHEMA,
            SNW_OPTION_COUNT, SNW_FEATURE_COUNT);
     for (size_t i = 0; i < SNW_OPTION_COUNT; ++i) {

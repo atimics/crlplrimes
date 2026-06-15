@@ -747,16 +747,22 @@ Current artifacts:
 - trace schema: `signal.npc_worker_counterfactual.v1`
 - social slice schema: `crlp.signal_npc_worker.social_slice.v1`
 - summary schema: `crlp.signal_npc_worker.summary.v1`
-- feature set: `signal-npc-worker-v1`
+- feature set: `signal-npc-worker-v2`
 
 This is the strategic layer above the contract/flight tactics. The first
 candidate grammar covers `wait`, `mine_home_ore`, `haul_best_contract`,
-`gossip_courier`, `self_refit_home`, and module-import routes for frame, laser,
-and tractor refits. It is deliberately a shared scorer conditioned on ship and
-station features rather than one checkpoint per ship: role, upgrade levels,
-home station, local/remote module stock, home credit, contract value, route
-pressure, and persona scalars give different ships different brains at scale
-without multiplying deployment artifacts.
+`gossip_courier`, `self_refit_home`, module-import routes for frame, laser, and
+tractor refits, plus frontier/faction/pirate choices: `supply_frontier`,
+`escort_convoy`, `patrol_route`, and `take_risky_profit_contract`. It is
+deliberately a shared scorer conditioned on ship and station features rather
+than one checkpoint per ship. Role, upgrade levels, home station, local/remote
+module stock, home credit, contract value, frontier need, expansion pressure,
+faction goal/reputation, pirate risk, recent attacks, escort availability,
+convoy bonuses, and persona scalars give different ships different brains at
+scale without multiplying deployment artifacts. The certified reward treats
+credit at the worker's own station and faction-aligned stations as the core
+economic payoff; off-faction profit is discounted unless the candidate is
+explicitly the risky-profit branch.
 
 The worker experiment also runs a sequential "nice brains" social slice. Three
 named personas (`mira_cautious_hauler`, `voss_greedy_miner`, and
@@ -766,18 +772,23 @@ selected option, intent string, memory write, published gossip, and whether
 memory or gossip changed the decision.
 
 The large economy target uses 96 training groups and 768 held-out worker
-situations. On the current seed the base scorer is already perfect (`top1=1.0`,
-`regret=0.0`), so the social slice acts as legibility telemetry rather than an
-active correction layer: 768 intent rows, 768 memory writes, 651 gossip facts,
-and zero persona divergences. The stress target intentionally undertrains the
-same scorer with 12 training groups and one epoch. In that setting the base
-policy reaches `top1=0.6745`, `selected_legal_rate=0.9010`, and
-`regret=1.3745`, while the social slice changes 177 decisions, records 118
-memory-influenced and 103 gossip-influenced changes, preserves
-`social_selected_legal_rate=1.0`, and lowers social regret to `0.3854`. That
-suggests the slice is a good fit as a readable fallback/context layer, but the
-synthetic economy distribution is too easy once the option scorer has moderate
-coverage.
+situations. With the v2 frontier/faction/pirate expansion, the task is no longer
+a solved local-choice problem: the base scorer reaches `top1=0.7422`,
+`top3=0.9661`, `selected_legal_rate=1.0`, and `regret=0.2627`, versus
+baseline regret `2.3701`. The target distribution now selects frontier supply
+115 times, escort 50 times, patrol 93 times, and risky profit 279 times. The
+social slice records 768 intent rows, 768 memory writes, 761 gossip facts, 34
+persona divergences, and lowers regret slightly to `0.2431`.
+
+The stress target intentionally undertrains the same scorer with 12 training
+groups and one epoch. In that setting the base policy reaches `top1=0.4089`,
+`top3=0.6237`, `selected_legal_rate=0.9622`, and `regret=1.5069`. The social
+slice changes 237 decisions, records 210 memory-influenced and 185
+gossip-influenced changes, restores `social_selected_legal_rate=1.0`, and lowers
+social regret to `1.0362`, ahead of the simple baseline (`2.3701` regret). That
+suggests the frontier/faction/pirate slice is now a good fit for fun worker NPC
+brains, with the next step being to teach memory/gossip as first-class scorer
+features rather than only post-score nudges.
 
 ### Construction Agent
 
