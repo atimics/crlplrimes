@@ -735,6 +735,8 @@ against Signal's simulator sources through `SIGNAL_FLIGHT_SIM_SOURCES`:
 ```sh
 make signal-npc-worker
 make signal-npc-worker-smoke
+make signal-npc-worker-economy
+make signal-npc-worker-economy-stress
 ```
 
 Current artifacts:
@@ -756,15 +758,26 @@ home station, local/remote module stock, home credit, contract value, route
 pressure, and persona scalars give different ships different brains at scale
 without multiplying deployment artifacts.
 
-The worker smoke also runs a sequential "nice brains" social slice. Three named
-personas (`mira_cautious_hauler`, `voss_greedy_miner`, and
+The worker experiment also runs a sequential "nice brains" social slice. Three
+named personas (`mira_cautious_hauler`, `voss_greedy_miner`, and
 `iko_logistics_nerd`) reuse the scored option rows, then apply tiny personality,
 memory, and gossip nudges. The appended trace rows record the base option,
 selected option, intent string, memory write, published gossip, and whether
-memory or gossip changed the decision. On the current smoke seed, all six test
-groups emit intent, memory, and gossip rows; one gossip-influenced divergence
-changes a `mine_home_ore` base choice into the oracle `haul_best_contract`,
-taking social-slice regret to `0.0` while preserving `selected_legal_rate=1.0`.
+memory or gossip changed the decision.
+
+The large economy target uses 96 training groups and 768 held-out worker
+situations. On the current seed the base scorer is already perfect (`top1=1.0`,
+`regret=0.0`), so the social slice acts as legibility telemetry rather than an
+active correction layer: 768 intent rows, 768 memory writes, 651 gossip facts,
+and zero persona divergences. The stress target intentionally undertrains the
+same scorer with 12 training groups and one epoch. In that setting the base
+policy reaches `top1=0.6745`, `selected_legal_rate=0.9010`, and
+`regret=1.3745`, while the social slice changes 177 decisions, records 118
+memory-influenced and 103 gossip-influenced changes, preserves
+`social_selected_legal_rate=1.0`, and lowers social regret to `0.3854`. That
+suggests the slice is a good fit as a readable fallback/context layer, but the
+synthetic economy distribution is too easy once the option scorer has moderate
+coverage.
 
 ### Construction Agent
 

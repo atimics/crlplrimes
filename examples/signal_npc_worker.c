@@ -105,6 +105,7 @@ typedef struct {
     size_t social_intent_rows;
     size_t social_memory_updates;
     size_t social_gossip_facts;
+    size_t social_selected_legal;
     size_t social_memory_influenced;
     size_t social_gossip_influenced;
     size_t social_persona_divergent;
@@ -415,11 +416,11 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
     group->group_id = seed;
     uint32_t rng = seed;
 
-    world_t w;
-    memset(&w, 0, sizeof(w));
-    world_reset(&w);
-    snw_clear_contracts(&w);
-    snw_clear_npcs(&w);
+    world_t *w = calloc(1u, sizeof(*w));
+    if (w == NULL) return 0;
+    world_reset(w);
+    snw_clear_contracts(w);
+    snw_clear_npcs(w);
 
     group->scenario_kind = (int)(snw_rng_next(&rng) % 5u);
     group->home_station = (int)(snw_rng_next(&rng) % 3u);
@@ -428,11 +429,17 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
     group->persona_growth = snw_rand01(&rng);
     group->persona_patience = snw_rand01(&rng);
 
-    int slot = spawn_npc(&w, group->home_station, (npc_role_t)group->role);
-    if (slot < 0) return 0;
-    npc_ship_t *npc = &w.npc_ships[slot];
-    ship_t *ship = world_npc_ship_for(&w, slot);
-    if (ship == NULL) return 0;
+    int slot = spawn_npc(w, group->home_station, (npc_role_t)group->role);
+    if (slot < 0) {
+        free(w);
+        return 0;
+    }
+    npc_ship_t *npc = &w->npc_ships[slot];
+    ship_t *ship = world_npc_ship_for(w, slot);
+    if (ship == NULL) {
+        free(w);
+        return 0;
+    }
     npc->state = NPC_STATE_DOCKED;
     npc->state_timer = 0.0f;
     npc->known_contract_count = 0;
@@ -452,7 +459,7 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
         ? (int)ceilf(upgrade_product_cost(ship, group->desired_upgrade))
         : 0;
 
-    station_t *home = &w.stations[group->home_station];
+    station_t *home = &w->stations[group->home_station];
     double balance = 80.0 + 940.0 * snw_rand01(&rng);
     if (group->scenario_kind == 1 || group->scenario_kind == 2) balance += 650.0;
     ledger_earn(home, npc->session_token, (float)balance);
@@ -472,12 +479,12 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
         }
         snw_seed_finished(home, group->desired_commodity, home_stock);
         int remote = (group->home_station + 1 + (int)(snw_rng_next(&rng) % 2u)) % 3;
-        snw_seed_finished(&w.stations[remote], group->desired_commodity, remote_stock);
+        snw_seed_finished(&w->stations[remote], group->desired_commodity, remote_stock);
     }
 
     if (group->scenario_kind == 0 || group->scenario_kind == 3) {
         snw_seed_finished(home, COMMODITY_FERRITE_INGOT, 20);
-        snw_make_contract(&w.contracts[0], CONTRACT_TRACTOR,
+        snw_make_contract(&w->contracts[0], CONTRACT_TRACTOR,
                           (group->home_station + 1) % 3,
                           -1,
                           COMMODITY_FERRITE_INGOT,
@@ -486,7 +493,7 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
     }
     if (group->scenario_kind == 3) {
         snw_seed_finished(home, COMMODITY_CUPRITE_INGOT, 12);
-        snw_make_contract(&w.contracts[1], CONTRACT_TRACTOR,
+        snw_make_contract(&w->contracts[1], CONTRACT_TRACTOR,
                           (group->home_station + 2) % 3,
                           -1,
                           COMMODITY_CUPRITE_INGOT,
@@ -504,13 +511,13 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
     commodity_t best_contract_commodity = COMMODITY_COUNT;
     int best_contract_dest = -1;
     int best_contract_stock = 0;
-    double best_contract_value = snw_best_contract_value(&w,
+    double best_contract_value = snw_best_contract_value(w,
                                                          group->home_station,
                                                          &best_contract_commodity,
                                                          &best_contract_dest,
                                                          &best_contract_stock);
     int remote_refit_stock = 0;
-    int remote_refit_station = snw_best_remote_source(&w,
+    int remote_refit_station = snw_best_remote_source(w,
                                                       group->home_station,
                                                       group->desired_commodity,
                                                       &remote_refit_stock);
@@ -525,7 +532,7 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
     double can_pay_refit = group->home_balance + 1e-6 >= refit_cost ? 1.0 : 0.0;
     double route_km = 0.0;
     if (remote_refit_station >= 0) {
-        route_km = v2_len(v2_sub(w.stations[remote_refit_station].pos, home->pos)) / 1000.0;
+        route_km = v2_len(v2_sub(w->stations[remote_refit_station].pos, home->pos)) / 1000.0;
     }
 
     for (size_t oi = 0; oi < SNW_OPTION_COUNT; ++oi) {
@@ -672,6 +679,7 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
         f[54] = best_contract_commodity == COMMODITY_CUPRITE_INGOT ? 1.0f : 0.0f;
         f[55] = best_contract_commodity == COMMODITY_CRYSTAL_INGOT ? 1.0f : 0.0f;
     }
+    free(w);
     return 1;
 }
 
@@ -920,6 +928,7 @@ static int snw_append_social_slice_trace(const char *path,
         ++metrics->social_intent_rows;
         ++metrics->social_memory_updates;
         if (strcmp(gossip, "no high-value gossip published") != 0) ++metrics->social_gossip_facts;
+        if (sel->legal) ++metrics->social_selected_legal;
         if (memory_influenced) ++metrics->social_memory_influenced;
         if (gossip_influenced) ++metrics->social_gossip_influenced;
         if (persona_divergent) ++metrics->social_persona_divergent;
@@ -1113,6 +1122,8 @@ static void snw_write_summary(FILE *fp,
     fprintf(fp, ",\"social_intent_rows\":%zu", metrics->social_intent_rows);
     fprintf(fp, ",\"social_memory_updates\":%zu", metrics->social_memory_updates);
     fprintf(fp, ",\"social_gossip_facts\":%zu", metrics->social_gossip_facts);
+    fprintf(fp, ",\"social_selected_legal_rate\":%.9g",
+            snw_rate(metrics->social_selected_legal, metrics->social_groups));
     fprintf(fp, ",\"social_memory_influenced\":%zu", metrics->social_memory_influenced);
     fprintf(fp, ",\"social_gossip_influenced\":%zu", metrics->social_gossip_influenced);
     fprintf(fp, ",\"social_persona_divergent\":%zu", metrics->social_persona_divergent);
