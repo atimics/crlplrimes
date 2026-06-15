@@ -16,9 +16,11 @@
 
 #define SNW_TRACE_SCHEMA "signal.npc_worker_counterfactual.v1"
 #define SNW_SUMMARY_SCHEMA "crlp.signal_npc_worker.summary.v1"
+#define SNW_SOCIAL_SLICE_SCHEMA "crlp.signal_npc_worker.social_slice.v1"
 #define SNW_TASK_NAME "signal_npc_worker"
 #define SNW_OPTION_COUNT 8u
 #define SNW_FEATURE_COUNT 56u
+#define SNW_PERSONA_COUNT 3u
 
 typedef enum {
     SNW_OPT_WAIT = 0,
@@ -99,7 +101,50 @@ typedef struct {
     size_t selected_travel;
     size_t option_selected[SNW_OPTION_COUNT];
     size_t option_target[SNW_OPTION_COUNT];
+    size_t social_groups;
+    size_t social_intent_rows;
+    size_t social_memory_updates;
+    size_t social_gossip_facts;
+    size_t social_memory_influenced;
+    size_t social_gossip_influenced;
+    size_t social_persona_divergent;
+    double social_selected_utility;
+    double social_oracle_utility;
+    double social_regret;
 } snw_metrics_t;
+
+typedef struct {
+    const char *name;
+    double risk_weight;
+    double growth_weight;
+    double logistics_weight;
+    double patience_weight;
+} snw_persona_t;
+
+typedef struct {
+    double route_risk;
+    double job_profit;
+    double refit_need;
+    double gossip_contract;
+    double gossip_route_risk;
+    int has_memory;
+    int heard_gossip;
+} snw_worker_memory_t;
+
+typedef struct {
+    size_t worker;
+    size_t base_option;
+    size_t selected_option;
+    const char *intent;
+    const char *memory;
+    const char *gossip;
+    int memory_influenced;
+    int gossip_influenced;
+    int persona_divergent;
+    double selected_utility;
+    double oracle_utility;
+    double regret;
+} snw_social_decision_t;
 
 static const snw_hypothesis_t SNW_HYPOTHESES[SNW_OPTION_COUNT] = {
     {SNW_OPT_WAIT, "wait"},
@@ -110,6 +155,12 @@ static const snw_hypothesis_t SNW_HYPOTHESES[SNW_OPTION_COUNT] = {
     {SNW_OPT_IMPORT_FRAME, "import_frame_modules"},
     {SNW_OPT_IMPORT_LASER, "import_laser_modules"},
     {SNW_OPT_IMPORT_TRACTOR, "import_tractor_modules"},
+};
+
+static const snw_persona_t SNW_PERSONAS[SNW_PERSONA_COUNT] = {
+    {"mira_cautious_hauler", 1.15, 0.25, 0.65, 0.80},
+    {"voss_greedy_miner", -0.25, 0.95, 0.20, 0.15},
+    {"iko_logistics_nerd", 0.35, 0.65, 1.10, 0.45},
 };
 
 static uint32_t snw_rng_next(uint32_t *state)
@@ -133,6 +184,107 @@ static double snw_clip(double v, double lo, double hi)
 static const snw_hypothesis_t *snw_hypothesis(size_t idx)
 {
     return idx < SNW_OPTION_COUNT ? &SNW_HYPOTHESES[idx] : &SNW_HYPOTHESES[0];
+}
+
+static const snw_persona_t *snw_persona(size_t idx)
+{
+    return idx < SNW_PERSONA_COUNT ? &SNW_PERSONAS[idx] : &SNW_PERSONAS[0];
+}
+
+static size_t snw_group_worker(const snw_group_t *group)
+{
+    if (group == NULL) return 0u;
+    return (size_t)((group->seed / UINT32_C(7919)) % SNW_PERSONA_COUNT);
+}
+
+static const char *snw_intent_for(size_t option, const snw_group_t *group)
+{
+    switch (snw_hypothesis(option)->option) {
+    case SNW_OPT_WAIT:
+        return "waiting: no safe profitable work beats patience";
+    case SNW_OPT_MINE_HOME:
+        return "mining home ore: low-risk resource loop";
+    case SNW_OPT_HAUL_CONTRACT:
+        return "hauling contract: best payout and route looks acceptable";
+    case SNW_OPT_GOSSIP_COURIER:
+        return "running gossip courier: scouting work for the crew";
+    case SNW_OPT_SELF_REFIT_HOME:
+        return "refitting at home: module stock can improve future jobs";
+    case SNW_OPT_IMPORT_FRAME:
+        return "importing frame modules: remote stock unlocks refit";
+    case SNW_OPT_IMPORT_LASER:
+        return "importing laser modules: remote stock unlocks combat/mining refit";
+    case SNW_OPT_IMPORT_TRACTOR:
+        return "importing tractor modules: remote stock improves hauling reach";
+    default:
+        break;
+    }
+    (void)group;
+    return "choosing worker option: highest certified utility score";
+}
+
+static const char *snw_memory_for(size_t option, const snw_outcome_t *out)
+{
+    if (out != NULL && out->import_module) return "module import helped future refit planning";
+    if (out != NULL && out->self_upgrade) return "self refit completed and raises growth confidence";
+    if (out != NULL && out->contract_value > 0.0) return "contract route paid and becomes preferred work";
+    if (snw_hypothesis(option)->option == SNW_OPT_MINE_HOME) return "home ore loop was productive";
+    if (snw_hypothesis(option)->option == SNW_OPT_GOSSIP_COURIER) return "scouting run refreshed shared route facts";
+    return "idle outcome recorded for patience baseline";
+}
+
+static const char *snw_gossip_for(size_t option, const snw_outcome_t *out)
+{
+    if (out != NULL && out->contract_value > 0.0) return "good contract value seen near home station";
+    if (out != NULL && out->import_module) return "remote module stock exists for crew refits";
+    if (out != NULL && out->self_upgrade) return "home station has enough stock for a refit";
+    if (snw_hypothesis(option)->option == SNW_OPT_GOSSIP_COURIER) return "route scout reports low immediate work pressure";
+    return "no high-value gossip published";
+}
+
+static double snw_social_bonus(const snw_group_t *group,
+                               const snw_worker_memory_t *memory,
+                               const snw_persona_t *persona,
+                               size_t option,
+                               int *memory_used,
+                               int *gossip_used)
+{
+    if (memory_used) *memory_used = 0;
+    if (gossip_used) *gossip_used = 0;
+    if (group == NULL || memory == NULL || persona == NULL) return 0.0;
+
+    const snw_outcome_t *out = &group->outcomes[option];
+    double bonus = 0.0;
+    if (out->travel && memory->route_risk > 0.25) {
+        bonus -= persona->risk_weight * memory->route_risk * 0.30;
+        if (memory_used) *memory_used = 1;
+    }
+    if (out->contract_value > 0.0 && memory->job_profit > 0.10) {
+        bonus += memory->job_profit * (0.15 + persona->logistics_weight * 0.10);
+        if (memory_used) *memory_used = 1;
+    }
+    if ((out->self_upgrade || out->import_module) && memory->refit_need > 0.10) {
+        bonus += memory->refit_need * (0.20 + persona->growth_weight * 0.10);
+        if (memory_used) *memory_used = 1;
+    }
+    if (out->contract_value > 0.0 && memory->gossip_contract > 0.10) {
+        bonus += memory->gossip_contract * (0.12 + persona->logistics_weight * 0.08);
+        if (gossip_used) *gossip_used = 1;
+    }
+    if (out->travel && memory->gossip_route_risk > 0.20) {
+        bonus -= memory->gossip_route_risk * (0.10 + persona->risk_weight * 0.08);
+        if (gossip_used) *gossip_used = 1;
+    }
+    if (snw_hypothesis(option)->option == SNW_OPT_WAIT) {
+        bonus += persona->patience_weight * 0.03;
+    }
+    if (snw_hypothesis(option)->option == SNW_OPT_HAUL_CONTRACT) {
+        bonus += persona->logistics_weight * 0.04;
+    }
+    if (snw_hypothesis(option)->option == SNW_OPT_MINE_HOME) {
+        bonus += persona->growth_weight * 0.04;
+    }
+    return bonus;
 }
 
 static commodity_t snw_upgrade_commodity(ship_upgrade_t upgrade)
@@ -585,6 +737,8 @@ static int snw_train_model(NeuralNet *net, const snw_dataset_t *train, const snw
     return 1;
 }
 
+static void snw_json_string(FILE *fp, const char *s);
+
 static snw_metrics_t snw_evaluate_model(NeuralNet *net, const snw_dataset_t *test)
 {
     snw_metrics_t metrics;
@@ -638,6 +792,186 @@ static snw_metrics_t snw_evaluate_model(NeuralNet *net, const snw_dataset_t *tes
     metrics.baseline_utility /= denom;
     metrics.baseline_regret /= denom;
     return metrics;
+}
+
+static void snw_update_worker_memory(snw_worker_memory_t *memory,
+                                     const snw_group_t *group,
+                                     size_t selected,
+                                     double regret)
+{
+    if (memory == NULL || group == NULL || selected >= SNW_OPTION_COUNT) return;
+    const snw_outcome_t *out = &group->outcomes[selected];
+    memory->route_risk *= 0.88;
+    memory->job_profit *= 0.86;
+    memory->refit_need *= 0.82;
+    if (out->travel && (regret > 0.25 || out->utility < 0.5)) {
+        memory->route_risk = snw_clip(memory->route_risk + 0.35 + regret * 0.08, 0.0, 1.5);
+    }
+    if (out->contract_value > 0.0) {
+        memory->job_profit = snw_clip(memory->job_profit + out->contract_value / 900.0, 0.0, 1.5);
+    }
+    if (group->desired_upgrade < SHIP_UPGRADE_COUNT &&
+        (selected == SNW_OPT_SELF_REFIT_HOME ||
+         selected == SNW_OPT_IMPORT_FRAME ||
+         selected == SNW_OPT_IMPORT_LASER ||
+         selected == SNW_OPT_IMPORT_TRACTOR)) {
+        memory->refit_need = snw_clip(memory->refit_need + 0.35, 0.0, 1.5);
+    }
+    memory->has_memory = 1;
+}
+
+static void snw_publish_gossip(snw_worker_memory_t memories[SNW_PERSONA_COUNT],
+                               size_t source,
+                               const snw_group_t *group,
+                               size_t selected,
+                               double regret)
+{
+    if (memories == NULL || group == NULL || selected >= SNW_OPTION_COUNT) return;
+    const snw_outcome_t *out = &group->outcomes[selected];
+    for (size_t i = 0; i < SNW_PERSONA_COUNT; ++i) {
+        if (i == source) continue;
+        if (out->contract_value > 0.0) {
+            memories[i].gossip_contract =
+                snw_clip(memories[i].gossip_contract * 0.90 + out->contract_value / 1000.0,
+                         0.0,
+                         1.5);
+            memories[i].heard_gossip = 1;
+        }
+        if (out->travel && regret > 0.25) {
+            memories[i].gossip_route_risk =
+                snw_clip(memories[i].gossip_route_risk * 0.90 + 0.25 + regret * 0.05,
+                         0.0,
+                         1.5);
+            memories[i].heard_gossip = 1;
+        }
+        if (out->import_module || out->self_upgrade) {
+            memories[i].refit_need = snw_clip(memories[i].refit_need + 0.10, 0.0, 1.5);
+            memories[i].heard_gossip = 1;
+        }
+    }
+}
+
+static int snw_append_social_slice_trace(const char *path,
+                                         NeuralNet *net,
+                                         const snw_dataset_t *test,
+                                         snw_metrics_t *metrics)
+{
+    if (path == NULL || net == NULL || test == NULL || metrics == NULL) return 1;
+    FILE *fp = fopen(path, "a");
+    if (fp == NULL) {
+        fprintf(stderr, "failed to append Signal NPC worker social slice trace: %s\n", path);
+        return 0;
+    }
+
+    snw_worker_memory_t memories[SNW_PERSONA_COUNT];
+    memset(memories, 0, sizeof(memories));
+    nn_real scores[SNW_OPTION_COUNT];
+    nn_real probabilities[SNW_OPTION_COUNT];
+    size_t ranked[SNW_OPTION_COUNT];
+
+    for (size_t gi = 0; gi < test->count; ++gi) {
+        const snw_group_t *group = &test->groups[gi];
+        if (!nn_score_action_rows(net,
+                                  &group->features[0][0],
+                                  SNW_OPTION_COUNT,
+                                  scores,
+                                  probabilities) ||
+            !nn_rank_action_scores(scores, SNW_OPTION_COUNT, ranked)) {
+            continue;
+        }
+
+        size_t worker = snw_group_worker(group);
+        const snw_persona_t *persona = snw_persona(worker);
+        size_t base = ranked[0];
+        size_t selected = base;
+        double best_adjusted = -1e300;
+        int selected_memory_used = 0;
+        int selected_gossip_used = 0;
+        for (size_t oi = 0; oi < SNW_OPTION_COUNT; ++oi) {
+            int memory_used = 0;
+            int gossip_used = 0;
+            double bonus = snw_social_bonus(group,
+                                            &memories[worker],
+                                            persona,
+                                            oi,
+                                            &memory_used,
+                                            &gossip_used);
+            double adjusted = (double)scores[oi] + bonus;
+            if (!group->outcomes[oi].legal) adjusted -= 1000.0;
+            if (adjusted > best_adjusted) {
+                best_adjusted = adjusted;
+                selected = oi;
+                selected_memory_used = memory_used;
+                selected_gossip_used = gossip_used;
+            }
+        }
+
+        const snw_outcome_t *sel = &group->outcomes[selected];
+        const snw_outcome_t *oracle = &group->outcomes[group->target];
+        double regret = oracle->utility - sel->utility;
+        int memory_influenced = selected != base && selected_memory_used;
+        int gossip_influenced = selected != base && selected_gossip_used;
+        int persona_divergent = selected != base;
+        const char *intent = snw_intent_for(selected, group);
+        const char *memory = snw_memory_for(selected, sel);
+        const char *gossip = snw_gossip_for(selected, sel);
+
+        ++metrics->social_groups;
+        ++metrics->social_intent_rows;
+        ++metrics->social_memory_updates;
+        if (strcmp(gossip, "no high-value gossip published") != 0) ++metrics->social_gossip_facts;
+        if (memory_influenced) ++metrics->social_memory_influenced;
+        if (gossip_influenced) ++metrics->social_gossip_influenced;
+        if (persona_divergent) ++metrics->social_persona_divergent;
+        metrics->social_selected_utility += sel->utility;
+        metrics->social_oracle_utility += oracle->utility;
+        metrics->social_regret += regret;
+
+        fprintf(fp, "{\"schema\":");
+        snw_json_string(fp, SNW_SOCIAL_SLICE_SCHEMA);
+        fprintf(fp, ",\"task\":");
+        snw_json_string(fp, SNW_TASK_NAME);
+        fprintf(fp, ",\"group_id\":%" PRIu64, group->group_id);
+        fprintf(fp, ",\"worker_index\":%zu", worker);
+        fprintf(fp, ",\"persona\":");
+        snw_json_string(fp, persona->name);
+        fprintf(fp, ",\"base_option\":");
+        snw_json_string(fp, snw_hypothesis(base)->name);
+        fprintf(fp, ",\"selected_option\":");
+        snw_json_string(fp, snw_hypothesis(selected)->name);
+        fprintf(fp, ",\"target_option\":");
+        snw_json_string(fp, snw_hypothesis(group->target)->name);
+        fprintf(fp, ",\"intent\":");
+        snw_json_string(fp, intent);
+        fprintf(fp, ",\"memory_written\":");
+        snw_json_string(fp, memory);
+        fprintf(fp, ",\"gossip_published\":");
+        snw_json_string(fp, gossip);
+        fprintf(fp, ",\"memory_influenced\":%s", memory_influenced ? "true" : "false");
+        fprintf(fp, ",\"gossip_influenced\":%s", gossip_influenced ? "true" : "false");
+        fprintf(fp, ",\"persona_divergent\":%s", persona_divergent ? "true" : "false");
+        fprintf(fp, ",\"selected_utility\":%.9g", sel->utility);
+        fprintf(fp, ",\"oracle_utility\":%.9g", oracle->utility);
+        fprintf(fp, ",\"regret\":%.9g", regret);
+        fprintf(fp, ",\"worker_memory\":{\"route_risk\":%.9g,\"job_profit\":%.9g,"
+                    "\"refit_need\":%.9g,\"gossip_contract\":%.9g,"
+                    "\"gossip_route_risk\":%.9g}}\n",
+                memories[worker].route_risk,
+                memories[worker].job_profit,
+                memories[worker].refit_need,
+                memories[worker].gossip_contract,
+                memories[worker].gossip_route_risk);
+
+        snw_update_worker_memory(&memories[worker], group, selected, regret);
+        snw_publish_gossip(memories, worker, group, selected, regret);
+    }
+
+    double denom = metrics->social_groups == 0u ? 1.0 : (double)metrics->social_groups;
+    metrics->social_selected_utility /= denom;
+    metrics->social_oracle_utility /= denom;
+    metrics->social_regret /= denom;
+    fclose(fp);
+    return 1;
 }
 
 static void snw_json_string(FILE *fp, const char *s)
@@ -773,6 +1107,18 @@ static void snw_write_summary(FILE *fp,
     fprintf(fp, ",\"selected_self_upgrade_rate\":%.9g", snw_rate(metrics->selected_self_upgrade, metrics->groups));
     fprintf(fp, ",\"selected_import_rate\":%.9g", snw_rate(metrics->selected_import, metrics->groups));
     fprintf(fp, ",\"selected_travel_rate\":%.9g", snw_rate(metrics->selected_travel, metrics->groups));
+    fprintf(fp, ",\"social_slice_schema\":");
+    snw_json_string(fp, SNW_SOCIAL_SLICE_SCHEMA);
+    fprintf(fp, ",\"social_groups\":%zu", metrics->social_groups);
+    fprintf(fp, ",\"social_intent_rows\":%zu", metrics->social_intent_rows);
+    fprintf(fp, ",\"social_memory_updates\":%zu", metrics->social_memory_updates);
+    fprintf(fp, ",\"social_gossip_facts\":%zu", metrics->social_gossip_facts);
+    fprintf(fp, ",\"social_memory_influenced\":%zu", metrics->social_memory_influenced);
+    fprintf(fp, ",\"social_gossip_influenced\":%zu", metrics->social_gossip_influenced);
+    fprintf(fp, ",\"social_persona_divergent\":%zu", metrics->social_persona_divergent);
+    fprintf(fp, ",\"social_selected_utility\":%.9g", metrics->social_selected_utility);
+    fprintf(fp, ",\"social_oracle_utility\":%.9g", metrics->social_oracle_utility);
+    fprintf(fp, ",\"social_regret\":%.9g", metrics->social_regret);
     fprintf(fp, ",\"option_selected\":");
     snw_write_option_counts(fp, metrics->option_selected);
     fprintf(fp, ",\"option_target\":");
@@ -880,9 +1226,10 @@ static int snw_parse_config(int argc, char **argv, snw_config_t *config, int *sc
 static void snw_print_schema(void)
 {
     printf("{\"task\":\"%s\",\"trace_schema\":\"%s\",\"summary_schema\":\"%s\","
+           "\"social_slice_schema\":\"%s\","
            "\"candidate_count\":%u,\"feature_count\":%u,"
            "\"feature_set\":\"signal-npc-worker-v1\",\"options\":[",
-           SNW_TASK_NAME, SNW_TRACE_SCHEMA, SNW_SUMMARY_SCHEMA,
+           SNW_TASK_NAME, SNW_TRACE_SCHEMA, SNW_SUMMARY_SCHEMA, SNW_SOCIAL_SLICE_SCHEMA,
            SNW_OPTION_COUNT, SNW_FEATURE_COUNT);
     for (size_t i = 0; i < SNW_OPTION_COUNT; ++i) {
         if (i > 0) fputc(',', stdout);
@@ -945,6 +1292,12 @@ int main(int argc, char **argv)
     }
 
     snw_metrics_t metrics = snw_evaluate_model(net, &test);
+    if (!snw_append_social_slice_trace(config.trace_path, net, &test, &metrics)) {
+        nn_free(net);
+        snw_dataset_free(&train);
+        snw_dataset_free(&test);
+        return 1;
+    }
     snw_write_summary(stdout, &config, model_hash, net, &train, &test, &metrics);
     if (!snw_write_summary_file(config.summary_path,
                                 &config,

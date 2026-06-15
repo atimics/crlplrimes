@@ -743,6 +743,7 @@ Current artifacts:
 - trace: `build/float/signal_npc_worker_experiment/trace.jsonl`
 - summary: `build/float/signal_npc_worker_experiment/summary.jsonl`
 - trace schema: `signal.npc_worker_counterfactual.v1`
+- social slice schema: `crlp.signal_npc_worker.social_slice.v1`
 - summary schema: `crlp.signal_npc_worker.summary.v1`
 - feature set: `signal-npc-worker-v1`
 
@@ -754,6 +755,16 @@ station features rather than one checkpoint per ship: role, upgrade levels,
 home station, local/remote module stock, home credit, contract value, route
 pressure, and persona scalars give different ships different brains at scale
 without multiplying deployment artifacts.
+
+The worker smoke also runs a sequential "nice brains" social slice. Three named
+personas (`mira_cautious_hauler`, `voss_greedy_miner`, and
+`iko_logistics_nerd`) reuse the scored option rows, then apply tiny personality,
+memory, and gossip nudges. The appended trace rows record the base option,
+selected option, intent string, memory write, published gossip, and whether
+memory or gossip changed the decision. On the current smoke seed, all six test
+groups emit intent, memory, and gossip rows; one gossip-influenced divergence
+changes a `mine_home_ore` base choice into the oracle `haul_best_contract`,
+taking social-slice regret to `0.0` while preserving `selected_legal_rate=1.0`.
 
 ### Construction Agent
 
