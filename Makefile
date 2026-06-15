@@ -663,6 +663,7 @@ SIGNAL_FLIGHT_SIM_SOURCES := \
 	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_ai.c) \
 	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/signal_brain.c) \
 	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/signal_contract_brain.c) \
+	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/signal_npc_worker_brain.c) \
 	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/gossip.c) \
 	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_autopilot.c) \
 	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_flight.c) \
@@ -1693,7 +1694,7 @@ signal-shadow-replay-audit:
 
 else  # WITH_SIGNAL=0: skip messages for Signal targets
 
-signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit:
+signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke signal-npc-worker signal-npc-worker-smoke signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit:
 	@echo "$@: skipped (../signal not found)"
 
 endif  # WITH_SIGNAL
