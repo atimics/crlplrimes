@@ -797,16 +797,24 @@ features rather than only post-score nudges.
 The persistent target stops resetting the world per group. It creates one
 Signal `world_t`, seeds station manifests and ledgers, spawns worker NPCs through
 Signal's `spawn_npc`, and carries station credit, delivered inventory, faction
-control, frontier need, and pirate risk across ticks. The default run requests
-100 NPCs, 24 stations, and 720 ticks; on the current fresh-world asset pool it
-spawns 87 NPCs before ship-asset capacity, emits 720 decision rows, preserves
-`legal_rate=1.0`, records 213 pirate-work events and 117 frontier-supply events,
-and ends with mean utility `3.2387`. A 128-station variant also runs for 720
-ticks with the same 87 spawned NPCs, producing 52 pirate-work events, 122
-frontier-supply events, and mean utility `5.8259`. This is now a persistent
-economy pressure test, but pirates, faction control, and frontier need are still
+control, frontier need, and pirate risk across ticks. It now also advances
+Signal's real `world_sim_step`, sets frontier virtual-pilot pressure so the
+built-in frontier director/scaffold counters can move, and routes high-risk
+travel through `apply_npc_ship_damage` so pirate pressure can leave hull damage
+and NPC losses in the trace. The default run requests 100 NPCs, 24 stations, and
+720 ticks; on the current fresh-world asset pool it spawns 87 NPCs before
+ship-asset capacity, emits 720 decisions, records 71 pirate-damage events for
+1872.0711 hull damage, records no NPC losses, and moves the frontier loop to 24
+plans, 47 scaffold orders, 39 virtual scaffold manufactures, 38 virtual
+scaffold deliveries, and 36 virtual supply deliveries. A saturated 128-station
+run emits 716 decisions after 5 NPC losses, records 161 pirate-damage events for
+4300.6583 hull damage, and keeps frontier director counters at zero because all
+station slots are already seeded. This is now a stronger persistent economy
+pressure test, but pirates, faction control, and frontier need are still
 strategic state variables updated by the experiment oracle rather than fully
-simulated hostile ships, diplomacy, or construction chains.
+simulated hostile ships or diplomacy. Frontier construction is partially
+authentic: the summary reports Signal's actual frontier director,
+scaffold-order, and virtual-delivery counters after the persistent world steps.
 
 ### Construction Agent
 

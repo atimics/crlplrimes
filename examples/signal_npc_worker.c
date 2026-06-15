@@ -1424,11 +1424,14 @@ typedef struct {
     size_t faction_aligned_decisions;
     size_t pirate_events;
     size_t frontier_supply_events;
+    size_t pirate_damage_events;
+    size_t npc_losses;
     double utility_sum;
     double social_utility_sum;
     double own_station_credit;
     double faction_station_credit;
     double off_faction_credit;
+    double pirate_damage;
     double pirate_pressure_sum;
     double frontier_need_sum;
 } snw_persistent_metrics_t;
@@ -1477,7 +1480,9 @@ static void snw_persistent_write_decision(FILE *fp,
                                           const snw_group_t *group,
                                           size_t selected,
                                           double utility,
-                                          double social_utility)
+                                          double social_utility,
+                                          double pirate_damage,
+                                          double hull_after)
 {
     fprintf(fp, "{\"schema\":");
     snw_json_string(fp, SNW_PERSISTENT_SCHEMA);
@@ -1491,6 +1496,8 @@ static void snw_persistent_write_decision(FILE *fp,
     snw_json_string(fp, snw_hypothesis(group->target)->name);
     fprintf(fp, ",\"utility\":%.9g", utility);
     fprintf(fp, ",\"social_utility\":%.9g", social_utility);
+    fprintf(fp, ",\"pirate_damage\":%.9g", pirate_damage);
+    fprintf(fp, ",\"npc_hull_after\":%.9g", hull_after);
     fprintf(fp, ",\"frontier_need\":%.9g", group->frontier_need);
     fprintf(fp, ",\"route_pirate_risk\":%.9g", group->route_pirate_risk);
     fprintf(fp, ",\"contract_at_own_station\":%s", group->contract_at_own_station ? "true" : "false");
@@ -1540,6 +1547,7 @@ static int snw_persistent_run(const snw_config_t *config)
         free(w);
         return 0;
     }
+    frontier_virtual_pilots_set(w, (int)snw_clip((double)spawned * 12.0, 0.0, 5000.0));
 
     snw_persistent_metrics_t metrics;
     memset(&metrics, 0, sizeof(metrics));
@@ -1561,7 +1569,12 @@ static int snw_persistent_run(const snw_config_t *config)
         int slot = npc_slots[who];
         npc_ship_t *npc = slot >= 0 ? &w->npc_ships[slot] : NULL;
         ship_t *ship = slot >= 0 ? world_npc_ship_for(w, slot) : NULL;
-        if (npc == NULL || ship == NULL || !npc->active) continue;
+        if (npc == NULL || ship == NULL || !npc->active) {
+            world_sim_step(w, 1.0f / 30.0f);
+            continue;
+        }
+        int active_before = npc->active ? 1 : 0;
+        float hull_before = ship->hull;
 
         int home = npc->home_station >= 0 && npc->home_station < (int)station_count
             ? npc->home_station
@@ -1745,6 +1758,31 @@ static int snw_persistent_run(const snw_config_t *config)
                          1.0);
         }
 
+        double pirate_damage = 0.0;
+        if (out->travel &&
+            selected != SNW_OPT_ESCORT_CONVOY &&
+            selected != SNW_OPT_PATROL_ROUTE) {
+            double hazard_prob = snw_clip((pirate - 0.35) * 0.85 +
+                                          (selected == SNW_OPT_RISKY_PROFIT ? 0.22 : 0.0),
+                                          0.0,
+                                          0.82);
+            double hazard_roll = (double)(snw_rng_next(&rng) % 1000u) / 1000.0;
+            if (hazard_roll < hazard_prob) {
+                float dmg = (float)(6.0 + pirate * 18.0 +
+                                    (selected == SNW_OPT_RISKY_PROFIT ? 12.0 : 0.0));
+                apply_npc_ship_damage(w, slot, dmg);
+                ship = world_npc_ship_for(w, slot);
+                float hull_now = ship != NULL ? ship->hull : npc->hull;
+                pirate_damage = (double)fmaxf(0.0f, hull_before - hull_now);
+                metrics.pirate_damage_events++;
+                metrics.pirate_damage += pirate_damage;
+            }
+        }
+        world_sim_step(w, 1.0f / 30.0f);
+        ship = world_npc_ship_for(w, slot);
+        double hull_after = ship != NULL ? (double)ship->hull : (double)npc->hull;
+        if (active_before && (!npc->active || hull_after <= 0.0)) metrics.npc_losses++;
+
         metrics.ticks++;
         metrics.decisions++;
         metrics.legal_decisions += out->legal ? 1u : 0u;
@@ -1756,7 +1794,8 @@ static int snw_persistent_run(const snw_config_t *config)
         metrics.action_count[selected]++;
         if (trace != NULL) {
             snw_persistent_write_decision(trace, (uint64_t)tick, slot, home, faction,
-                                          &group, selected, out->utility, social_utility);
+                                          &group, selected, out->utility, social_utility,
+                                          pirate_damage, hull_after);
         }
     }
 
@@ -1765,6 +1804,11 @@ static int snw_persistent_run(const snw_config_t *config)
         metrics.frontier_need_sum += metrics.frontier_need[s];
     }
     if (trace != NULL) fclose(trace);
+
+    size_t active_scaffolds = 0;
+    for (int i = 0; i < MAX_SCAFFOLDS; ++i) {
+        if (w->scaffolds[i].active) active_scaffolds++;
+    }
 
     FILE *summary = config->summary_path != NULL ? fopen(config->summary_path, "w") : NULL;
     if (config->summary_path != NULL && summary == NULL) {
@@ -1795,7 +1839,19 @@ static int snw_persistent_run(const snw_config_t *config)
         fprintf(fp, ",\"mean_pirate_risk\":%.9g", station_count ? metrics.pirate_pressure_sum / (double)station_count : 0.0);
         fprintf(fp, ",\"mean_frontier_need\":%.9g", station_count ? metrics.frontier_need_sum / (double)station_count : 0.0);
         fprintf(fp, ",\"pirate_events\":%zu", metrics.pirate_events);
+        fprintf(fp, ",\"pirate_damage_events\":%zu", metrics.pirate_damage_events);
+        fprintf(fp, ",\"pirate_damage\":%.9g", metrics.pirate_damage);
+        fprintf(fp, ",\"npc_losses\":%zu", metrics.npc_losses);
         fprintf(fp, ",\"frontier_supply_events\":%zu", metrics.frontier_supply_events);
+        fprintf(fp, ",\"frontier_virtual_pilots\":%d", w->frontier_virtual_pilots);
+        fprintf(fp, ",\"frontier_plans_created\":%u", w->frontier_plans_created);
+        fprintf(fp, ",\"frontier_scaffold_orders\":%u", w->frontier_scaffold_orders);
+        fprintf(fp, ",\"frontier_module_plans_created\":%u", w->frontier_module_plans_created);
+        fprintf(fp, ",\"frontier_module_scaffold_orders\":%u", w->frontier_module_scaffold_orders);
+        fprintf(fp, ",\"frontier_virtual_scaffolds_manufactured\":%u", w->frontier_virtual_scaffolds_manufactured);
+        fprintf(fp, ",\"frontier_virtual_scaffold_deliveries\":%u", w->frontier_virtual_scaffold_deliveries);
+        fprintf(fp, ",\"frontier_virtual_supply_deliveries\":%u", w->frontier_virtual_supply_deliveries);
+        fprintf(fp, ",\"active_scaffolds\":%zu", active_scaffolds);
         fprintf(fp, ",\"action_count\":");
         snw_write_option_counts(fp, metrics.action_count);
         fputs("}\n", fp);
