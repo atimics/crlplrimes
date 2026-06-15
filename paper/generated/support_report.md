@@ -28,4 +28,4 @@ Status: passing
 - `B.1.holo_exact_retrieval`: missing - missing required source artifact build/float/holo_results/retrieval_fidelity.jsonl. (origin: measured_run)
 - `B.2.memory_neuron_routing`: missing - missing required source artifact build/float/holo_results/memory_neuron_routing.jsonl. (origin: measured_run)
 - `B.3.holo_generalization`: missing - missing required source artifact build/float/holo_results/holo_generalization.jsonl. (origin: measured_run)
-- `D.1.claim_compiler_self_check`: supported - Claim compiler produces claims.json artifact (45 lines). (origin: measured_run)
+- `D.1.claim_compiler_self_check`: supported - Claim compiler produces claims.json artifact (46 lines). (origin: measured_run)
