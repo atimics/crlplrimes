@@ -1418,6 +1418,8 @@ typedef struct {
     double pirate_risk[SNW_PERSISTENT_MAX_STATIONS];
     double contraband_stock[SNW_PERSISTENT_MAX_STATIONS];
     double contraband_demand[SNW_PERSISTENT_MAX_STATIONS];
+    double route_profit_memory[SNW_PERSISTENT_MAX_STATIONS][SNW_PERSISTENT_MAX_STATIONS];
+    double route_patrol_heat[SNW_PERSISTENT_MAX_STATIONS][SNW_PERSISTENT_MAX_STATIONS];
     double faction_control[SNW_PERSISTENT_MAX_STATIONS][SNW_PERSISTENT_FACTIONS];
     size_t action_count[SNW_OPTION_COUNT];
     size_t ticks;
@@ -1433,6 +1435,9 @@ typedef struct {
     size_t lawful_npcs;
     size_t smuggle_runs;
     size_t lawful_risky_profit_runs;
+    size_t autonomous_route_choices;
+    size_t memory_route_reuses;
+    size_t patrol_deterrence_events;
     double utility_sum;
     double social_utility_sum;
     double own_station_credit;
@@ -1447,6 +1452,8 @@ typedef struct {
     double pirate_pressure_sum;
     double frontier_need_sum;
     double contraband_demand_sum;
+    double route_profit_memory_sum;
+    double route_patrol_heat_sum;
 } snw_persistent_metrics_t;
 
 static void snw_persistent_seed_station(world_t *w, size_t idx, uint32_t seed)
@@ -1491,6 +1498,63 @@ static int snw_persistent_is_pirate_market(size_t station_idx, size_t station_co
     return station_idx % 7u == 6u;
 }
 
+static int snw_persistent_choose_destination(const snw_persistent_metrics_t *metrics,
+                                             size_t station_count,
+                                             int home,
+                                             int home_is_pirate,
+                                             int default_dest,
+                                             uint32_t *rng,
+                                             int *used_memory,
+                                             int *patrol_deterrence)
+{
+    if (used_memory != NULL) *used_memory = 0;
+    if (patrol_deterrence != NULL) *patrol_deterrence = 0;
+    if (metrics == NULL || station_count <= 1u || home < 0 || home >= (int)station_count)
+        return default_dest;
+
+    double best_score = -1e300;
+    int best_dest = default_dest;
+    for (size_t tries = 0; tries < station_count; ++tries) {
+        int dest = (int)tries;
+        if (dest == home) continue;
+        double jitter = (double)(snw_rng_next(rng) % 1000u) / 10000.0;
+        double patrol_heat = metrics->route_patrol_heat[home][dest];
+        double profit_memory = metrics->route_profit_memory[home][dest];
+        double score = metrics->frontier_need[dest] * 0.35 +
+                       metrics->pirate_risk[dest] * 0.20 +
+                       jitter;
+        if (home_is_pirate) {
+            score += metrics->contraband_stock[dest] * 0.55 +
+                     metrics->contraband_demand[home] * 0.75 +
+                     profit_memory * 0.65 -
+                     patrol_heat * 1.15;
+            if (snw_persistent_is_pirate_market((size_t)dest, station_count)) score += 0.15;
+        } else {
+            score += metrics->pirate_risk[dest] * 0.65 +
+                     metrics->contraband_stock[dest] * 0.18 -
+                     profit_memory * 0.10 +
+                     patrol_heat * 0.20;
+            if (snw_persistent_is_pirate_market((size_t)dest, station_count)) score += 0.35;
+        }
+        if (score > best_score) {
+            best_score = score;
+            best_dest = dest;
+        }
+    }
+    if (used_memory != NULL && metrics->route_profit_memory[home][best_dest] > 0.35) {
+        *used_memory = 1;
+    }
+    if (patrol_deterrence != NULL &&
+        home_is_pirate &&
+        default_dest >= 0 &&
+        default_dest < (int)station_count &&
+        metrics->route_patrol_heat[home][default_dest] >
+            metrics->route_patrol_heat[home][best_dest] + 0.20) {
+        *patrol_deterrence = 1;
+    }
+    return best_dest;
+}
+
 static void snw_persistent_write_decision(FILE *fp,
                                           uint64_t tick,
                                           int npc_slot,
@@ -1505,7 +1569,12 @@ static void snw_persistent_write_decision(FILE *fp,
                                           int home_is_pirate,
                                           int dest_is_pirate,
                                           double contraband_delta,
-                                          double contraband_demand)
+                                          double contraband_demand,
+                                          double route_profit_memory,
+                                          double route_patrol_heat,
+                                          int autonomous_route,
+                                          int memory_route,
+                                          int patrol_deterrence)
 {
     fprintf(fp, "{\"schema\":");
     snw_json_string(fp, SNW_PERSISTENT_SCHEMA);
@@ -1525,6 +1594,11 @@ static void snw_persistent_write_decision(FILE *fp,
     fprintf(fp, ",\"dest_is_pirate_market\":%s", dest_is_pirate ? "true" : "false");
     fprintf(fp, ",\"contraband_delta\":%.9g", contraband_delta);
     fprintf(fp, ",\"contraband_demand\":%.9g", contraband_demand);
+    fprintf(fp, ",\"route_profit_memory\":%.9g", route_profit_memory);
+    fprintf(fp, ",\"route_patrol_heat\":%.9g", route_patrol_heat);
+    fprintf(fp, ",\"autonomous_route\":%s", autonomous_route ? "true" : "false");
+    fprintf(fp, ",\"memory_route\":%s", memory_route ? "true" : "false");
+    fprintf(fp, ",\"patrol_deterrence\":%s", patrol_deterrence ? "true" : "false");
     fprintf(fp, ",\"frontier_need\":%.9g", group->frontier_need);
     fprintf(fp, ",\"route_pirate_risk\":%.9g", group->route_pirate_risk);
     fprintf(fp, ",\"contract_at_own_station\":%s", group->contract_at_own_station ? "true" : "false");
@@ -1618,10 +1692,24 @@ static int snw_persistent_run(const snw_config_t *config)
         int home = npc->home_station >= 0 && npc->home_station < (int)station_count
             ? npc->home_station
             : (int)(who % station_count);
-        int dest = (home + 1 + (int)(snw_rng_next(&rng) % (uint32_t)(station_count - 1u))) % (int)station_count;
         int faction = home % (int)SNW_PERSISTENT_FACTIONS;
         int home_is_pirate = snw_persistent_is_pirate_market((size_t)home, station_count);
+        int default_dest = (home + 1 + (int)(snw_rng_next(&rng) % (uint32_t)(station_count - 1u))) %
+                           (int)station_count;
+        int memory_route = 0;
+        int patrol_deterrence = 0;
+        int dest = snw_persistent_choose_destination(&metrics,
+                                                     station_count,
+                                                     home,
+                                                     home_is_pirate,
+                                                     default_dest,
+                                                     &rng,
+                                                     &memory_route,
+                                                     &patrol_deterrence);
+        int autonomous_route = dest != default_dest;
         int dest_is_pirate = snw_persistent_is_pirate_market((size_t)dest, station_count);
+        metrics.route_profit_memory[home][dest] *= 0.995;
+        metrics.route_patrol_heat[home][dest] *= 0.985;
         station_t *home_st = &w->stations[home];
         station_t *dest_st = &w->stations[dest];
         commodity_t contract_commodity = (tick + who) & 1u ? COMMODITY_CUPRITE_INGOT : COMMODITY_FERRITE_INGOT;
@@ -1634,6 +1722,8 @@ static int snw_persistent_run(const snw_config_t *config)
         double expansion = metrics.faction_control[dest][faction] < 0.55 ? 1.0 : 0.35;
         double home_contraband_demand = metrics.contraband_demand[home];
         double dest_contraband_stock = metrics.contraband_stock[dest];
+        double route_profit_memory = metrics.route_profit_memory[home][dest];
+        double route_patrol_heat = metrics.route_patrol_heat[home][dest];
         double contraband_price = 70.0 + home_contraband_demand * 95.0 + pirate * 30.0;
 
         snw_group_t group;
@@ -1652,7 +1742,10 @@ static int snw_persistent_run(const snw_config_t *config)
         group.frontier_need = frontier;
         group.expansion_pressure = expansion;
         group.route_pirate_risk = pirate;
-        group.route_recent_attack = pirate > 0.7 ? 1.0 : pirate * 0.35;
+        group.route_recent_attack = snw_clip((pirate > 0.7 ? 1.0 : pirate * 0.35) +
+                                             route_patrol_heat * (home_is_pirate ? 0.40 : -0.15),
+                                             0.0,
+                                             1.5);
         group.escort_available = spawned > 1u ? 1.0 : 0.0;
         group.convoy_bonus = 0.20 + metrics.faction_control[home][faction] * 0.60;
         group.pirate_bounty = 0.20 + pirate;
@@ -1755,7 +1848,8 @@ static int snw_persistent_run(const snw_config_t *config)
                 out->utility = out->legal
                     ? (home_is_pirate
                        ? out->contract_value / 90.0 + home_contraband_demand * 1.4 -
-                         pirate * (0.45 + group.persona_risk * 0.45)
+                         pirate * (0.45 + group.persona_risk * 0.45) +
+                         route_profit_memory * 0.55 - route_patrol_heat * 1.10
                        : contract_value / 85.0 - pirate * (0.8 + group.persona_risk))
                     : -1.0;
                 break;
@@ -1824,15 +1918,35 @@ static int snw_persistent_run(const snw_config_t *config)
             metrics.contraband_credit += out->credit_delta;
             metrics.contraband_volume += contraband_delta;
             metrics.lawful_supply_leakage += dest_is_pirate ? contraband_delta * 0.25 : contraband_delta;
+            metrics.route_profit_memory[home][dest] =
+                snw_clip(metrics.route_profit_memory[home][dest] +
+                         out->credit_delta / 900.0 + contraband_delta * 0.12,
+                         0.0,
+                         6.0);
+            metrics.pirate_risk[home] = snw_clip(metrics.pirate_risk[home] + contraband_delta * 0.012,
+                                                  0.0,
+                                                  1.7);
             metrics.smuggle_runs++;
         } else if (selected == SNW_OPT_PATROL_ROUTE && out->legal) {
             metrics.contraband_stock[dest] = snw_clip(metrics.contraband_stock[dest] - 0.4 - pirate * 0.2,
                                                        0.0,
                                                        75.0);
+            metrics.route_patrol_heat[home][dest] =
+                snw_clip(metrics.route_patrol_heat[home][dest] + 0.55 + pirate * 0.20,
+                         0.0,
+                         5.0);
+            metrics.route_profit_memory[home][dest] =
+                snw_clip(metrics.route_profit_memory[home][dest] - 0.35 - pirate * 0.10,
+                         0.0,
+                         6.0);
         } else if (selected == SNW_OPT_ESCORT_CONVOY && out->legal) {
             metrics.contraband_demand[dest] = snw_clip(metrics.contraband_demand[dest] + 0.03,
                                                         0.0,
                                                         1.8);
+            metrics.route_patrol_heat[home][dest] =
+                snw_clip(metrics.route_patrol_heat[home][dest] + 0.18,
+                         0.0,
+                         5.0);
         }
         if (selected == SNW_OPT_RISKY_PROFIT && !home_is_pirate && out->legal) {
             metrics.lawful_risky_profit_runs++;
@@ -1887,6 +2001,9 @@ static int snw_persistent_run(const snw_config_t *config)
         metrics.legal_decisions += out->legal ? 1u : 0u;
         metrics.faction_aligned_decisions += group.contract_at_own_station || group.contract_at_faction_station ? 1u : 0u;
         metrics.pirate_events += out->pirate_work ? 1u : 0u;
+        metrics.autonomous_route_choices += autonomous_route ? 1u : 0u;
+        metrics.memory_route_reuses += memory_route ? 1u : 0u;
+        metrics.patrol_deterrence_events += patrol_deterrence ? 1u : 0u;
         metrics.frontier_supply_events += selected == SNW_OPT_SUPPLY_FRONTIER ? 1u : 0u;
         metrics.utility_sum += out->utility;
         metrics.social_utility_sum += social_utility;
@@ -1896,7 +2013,12 @@ static int snw_persistent_run(const snw_config_t *config)
                                           &group, selected, out->utility, social_utility,
                                           pirate_damage, hull_after, home_is_pirate,
                                           dest_is_pirate, contraband_delta,
-                                          metrics.contraband_demand[home]);
+                                          metrics.contraband_demand[home],
+                                          metrics.route_profit_memory[home][dest],
+                                          metrics.route_patrol_heat[home][dest],
+                                          autonomous_route,
+                                          memory_route,
+                                          patrol_deterrence);
         }
     }
 
@@ -1904,6 +2026,10 @@ static int snw_persistent_run(const snw_config_t *config)
         metrics.pirate_pressure_sum += metrics.pirate_risk[s];
         metrics.frontier_need_sum += metrics.frontier_need[s];
         metrics.contraband_demand_sum += metrics.contraband_demand[s];
+        for (size_t d = 0; d < station_count; ++d) {
+            metrics.route_profit_memory_sum += metrics.route_profit_memory[s][d];
+            metrics.route_patrol_heat_sum += metrics.route_patrol_heat[s][d];
+        }
     }
     if (trace != NULL) fclose(trace);
 
@@ -1955,6 +2081,13 @@ static int snw_persistent_run(const snw_config_t *config)
         fprintf(fp, ",\"lawful_npcs\":%zu", metrics.lawful_npcs);
         fprintf(fp, ",\"smuggle_runs\":%zu", metrics.smuggle_runs);
         fprintf(fp, ",\"lawful_risky_profit_runs\":%zu", metrics.lawful_risky_profit_runs);
+        fprintf(fp, ",\"autonomous_route_choices\":%zu", metrics.autonomous_route_choices);
+        fprintf(fp, ",\"memory_route_reuses\":%zu", metrics.memory_route_reuses);
+        fprintf(fp, ",\"patrol_deterrence_events\":%zu", metrics.patrol_deterrence_events);
+        fprintf(fp, ",\"mean_route_profit_memory\":%.9g",
+                station_count ? metrics.route_profit_memory_sum / (double)(station_count * station_count) : 0.0);
+        fprintf(fp, ",\"mean_route_patrol_heat\":%.9g",
+                station_count ? metrics.route_patrol_heat_sum / (double)(station_count * station_count) : 0.0);
         fprintf(fp, ",\"frontier_supply_events\":%zu", metrics.frontier_supply_events);
         fprintf(fp, ",\"frontier_virtual_pilots\":%d", w->frontier_virtual_pilots);
         fprintf(fp, ",\"frontier_plans_created\":%u", w->frontier_plans_created);

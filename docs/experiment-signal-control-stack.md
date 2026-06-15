@@ -805,23 +805,34 @@ moving shadow contraband home. The risky-profit option therefore becomes
 smuggling for pirate-home ships, while lawful ships still use it as a dangerous
 off-faction profit branch. The trace records pirate-market alignment,
 contraband movement, local contraband demand, hull damage, and frontier state.
+The autonomy slice adds route-level memory on top of that level design: smuggling
+success raises a home-to-destination profit memory, patrol and escort work raises
+route heat, and future destination choice uses those memories instead of a pure
+random destination. This gives pirate-home ships a primitive territorial sense:
+reuse profitable lanes, avoid hot lanes, and let patrols leave deterrence in the
+map.
 
 The default persistent run requests 100 NPCs, 24 stations, and 720 ticks; on the
 current fresh-world asset pool it spawns 87 NPCs before ship-asset capacity. It
-creates 3 pirate markets and 11 pirate-home NPCs, emits 720 decisions, records
-18 smuggling runs, moves 39.0500 contraband units, pays 6128.8748 contraband
-credit, leaks 22.5500 units from lawful supply, and keeps lawful stations ahead
-on credit (`156052.916` lawful versus `31313.9753` pirate-market credit). It
-also records 77 pirate-damage events for 1943.1186 hull damage, no NPC losses,
-and moves the frontier loop to 24 plans, 47 scaffold orders, 39 virtual
-scaffold manufactures, 38 virtual scaffold deliveries, and 36 virtual supply
-deliveries. A saturated 128-station run creates 18 pirate markets, records 39
-smuggling runs, moves 67.8036 contraband units, pays 13692.5967 contraband
-credit, loses 10 NPCs, and keeps frontier director counters at zero because all
-station slots are already seeded. This is now a civilization pressure test, but
-contraband remains experiment-local shadow state rather than a promoted Signal
-commodity, and faction control/frontier need are still strategic state variables
-updated by the experiment oracle rather than full diplomacy.
+creates 3 pirate markets and 11 pirate-home NPCs, emits 717 decisions, records
+690 autonomous route choices, 70 memory-route reuses, and 4 patrol-deterrence
+events. It records 19 smuggling runs, moves 70.8273 contraband units, pays
+10350.3163 contraband credit, leaks 19.2068 units from lawful supply, and flips
+the credit balance toward pirate markets (`24550.0685` lawful versus
+`208380.101` pirate-market credit). It also records 107 pirate-damage events for
+2925.9141 hull damage, 2 NPC losses, and moves the frontier loop to 24 plans, 47
+scaffold orders, 39 virtual scaffold manufactures, 38 virtual scaffold
+deliveries, and 36 virtual supply deliveries. A saturated 128-station run creates
+18 pirate markets, records 679 autonomous route choices, 37 memory-route reuses,
+33 smuggling runs, moves 162.9003 contraband units, pays 26684.1213 contraband
+credit, loses 15 NPCs, and concentrates `527453.252` credit at pirate markets
+versus `21531.4683` at lawful stations while frontier director counters remain
+zero because all station slots are already seeded. This is now a civilization
+pressure test with a clear balance warning: autonomous route choice makes market
+placement a dominant level-design knob. Contraband remains experiment-local
+shadow state rather than a promoted Signal commodity, and faction
+control/frontier need are still strategic state variables updated by the
+experiment oracle rather than full diplomacy.
 
 ### Construction Agent
 
