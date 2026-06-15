@@ -36,8 +36,8 @@ jobs:
       - name: Run unit + sanitizer + trace determinism + numeric certificate gates
         run: make check NN_BLAS=openblas
 
-      - name: Smoke-run experimental sandboxes
-        run: make experimental-check NN_BLAS=openblas
+      - name: Smoke-run sandboxes
+        run: make sandbox NN_BLAS=openblas
 
       - name: Upload environment manifest
         if: always()

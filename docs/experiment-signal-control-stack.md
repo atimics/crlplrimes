@@ -1,13 +1,19 @@
 # Experiment Proposal: Signal Full-Spectrum Control Stack
 
-Status: implemented as an offline flight replay ranker, closed-loop flight
-rollout evaluator, live websocket shadow pilot, and first tactical mining
-option-ranker MVP. `examples/signal_flight.c` trains/saves the flight
-checkpoint; `examples/signal_flight_rollout.c` runs deterministic Signal
-rollouts against baselines; `examples/signal_mining.c` generates
-replay-certified mine/tow/smelt option rows; `scripts/signal_live_brain.mjs`
-loads the flight checkpoint, defaults to `shadow_neural`, and only lets neural
-choices drive the ship under explicit `--brain-mode neural_active`.
+Status: application-pressure sandbox, not promoted evidence. The current code
+implements an offline flight replay ranker, closed-loop flight rollout
+evaluator, live websocket shadow pilot, and first tactical mining option-ranker
+MVP. `examples/signal_flight.c` trains/saves the flight checkpoint;
+`examples/signal_flight_rollout.c` runs deterministic Signal rollouts against
+baselines; `examples/signal_mining.c` generates replay-certified mine/tow/smelt
+option rows; `scripts/signal_live_brain.mjs` loads the flight checkpoint,
+defaults to `shadow_neural`, and only lets neural choices drive the ship under
+explicit `--brain-mode neural_active`.
+
+Promotion boundary: Signal rows can support a systems vignette, but they do not
+belong to `make evidence` until hermetic replay inputs, CI availability,
+matched-baseline rollout rows, and stable trace artifacts are owned by the
+promoted evidence gate.
 
 ## Purpose
 
@@ -720,6 +726,34 @@ Do not use raw WASD as the target. Produce:
 - simulator replay harness
 - baseline comparison
 - regret/safety summary
+
+### NPC Worker Brain
+
+The research-side worker brain now stays in `crlplrimes` and links directly
+against Signal's simulator sources through `SIGNAL_FLIGHT_SIM_SOURCES`:
+
+```sh
+make signal-npc-worker
+make signal-npc-worker-smoke
+```
+
+Current artifacts:
+
+- checkpoint: `build/float/signal_npc_worker_experiment/signal_npc_worker.nnckpt`
+- trace: `build/float/signal_npc_worker_experiment/trace.jsonl`
+- summary: `build/float/signal_npc_worker_experiment/summary.jsonl`
+- trace schema: `signal.npc_worker_counterfactual.v1`
+- summary schema: `crlp.signal_npc_worker.summary.v1`
+- feature set: `signal-npc-worker-v1`
+
+This is the strategic layer above the contract/flight tactics. The first
+candidate grammar covers `wait`, `mine_home_ore`, `haul_best_contract`,
+`gossip_courier`, `self_refit_home`, and module-import routes for frame, laser,
+and tractor refits. It is deliberately a shared scorer conditioned on ship and
+station features rather than one checkpoint per ship: role, upgrade levels,
+home station, local/remote module stock, home credit, contract value, route
+pressure, and persona scalars give different ships different brains at scale
+without multiplying deployment artifacts.
 
 ### Construction Agent
 

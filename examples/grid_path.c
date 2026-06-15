@@ -3058,14 +3058,6 @@ static void print_usage(FILE *stream)
           stream);
 }
 
-#ifdef GRID_PATH_EML
-#define GP_SCORE_ACTIONS(net, inputs, count, scores, probs) \
-    nn_score_action_rows_eml(net, inputs, count, GP_FEATURE_COUNT, scores, probs)
-#else
-#define GP_SCORE_ACTIONS(net, inputs, count, scores, probs) \
-    GP_SCORE_ACTIONS(net, inputs, count, scores, probs)
-#endif
-
 int main(int argc, char **argv)
 {
     if (argc == 2 && strcmp(argv[1], "--schema") == 0) {

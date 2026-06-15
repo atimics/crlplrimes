@@ -13,7 +13,7 @@ LDLIBS ?= -lm
 # Portable BLAS: accelerate (macOS default), openblas (Linux default), none (scalar fallback).
 NN_BLAS ?= $(shell uname -s | grep -q Darwin && echo accelerate || echo openblas)
 ifeq ($(NN_BLAS),accelerate)
-CPPFLAGS += -DNN_USE_ACCELERATE
+CPPFLAGS += -DNN_USE_ACCELERATE -DACCELERATE_NEW_LAPACK
 LDFLAGS ?= -framework Accelerate
 else ifeq ($(NN_BLAS),openblas)
 CPPFLAGS += -DNN_USE_CBLAS
@@ -26,6 +26,7 @@ endif
 RETIRED_SCRIPT_TARGET = @echo "$@: retired after script removal; port this workflow into the C runtime before use."; exit 2
 
 BUILD_DIR := build/$(REAL)
+BLAS_MODE_STAMP := $(BUILD_DIR)/.nn_blas_mode
 NN_HEADERS := include/nn.h include/nn_core.h include/nn_train.h include/nn_experiment.h include/nn_symbolic.h include/nn_bitgrid.h include/nn_tilebot.h include/nn_layer.h include/nn_program.h include/nn_hypothesis.h include/nn_protocol.h include/nn_json.h include/nn_text.h include/nn_text_vsa.h include/nn_term_bridge.h include/nn_dataset.h include/nn_grammar_discovery.h include/nn_paper.h
 PRIME_GAP_TASK_HEADERS := include/nn_tasks_prime_gap.h src/prime_gap/internal.h
 PRIME_GAP_MODULE_SOURCES := $(wildcard src/prime_gap/*.c)
@@ -111,10 +112,38 @@ SYMBOLIC_DOMAINS := $(BUILD_DIR)/symbolic_domains
 PROGRAM_SYNTHESIS := $(BUILD_DIR)/program_synthesis
 MODULAR_GATE_SEARCH := $(BUILD_DIR)/modular_gate_search
 CROSS_DOMAIN_TRANSFER := $(BUILD_DIR)/cross_domain_transfer
+TRACE_DETERMINISM_TOOL := $(BUILD_DIR)/trace_determinism
+NN_SRCS := src/nn.c \
+	src/nn_numeric_certificate.inc \
+	src/nn_checkpoint.inc \
+	src/nn_trace.inc
+NN_PAPER_SRCS := src/nn_paper.c \
+	src/nn_paper_claim_registry.inc \
+	src/nn_paper_test_api.inc \
+	src/nn_paper_claim_evaluators.inc \
+	src/nn_paper_experiment_matrix.inc \
+	src/nn_paper_evidence_origin.inc
+ARC_AGI_INCS := examples/arc_agi_hypothesis_templates.inc \
+	examples/arc_agi_hypothesis_template_rules.inc \
+	examples/arc_agi_hypothesis_program_eval.inc \
+	examples/arc_agi_hypothesis_learned_prior.inc \
+	examples/arc_agi_hypothesis_selection_manifest.inc \
+	examples/arc_agi_hypothesis_selection.inc \
+	examples/arc_agi_hypothesis_induction.inc \
+	examples/arc_agi_hypothesis_sketch_programs.inc \
+	examples/arc_agi_hypothesis_selection_core.inc \
+	examples/arc_agi_hypothesis_template_impls.inc \
+	examples/arc_agi_visual_program.inc \
+	examples/arc_agi_sketch_probes.inc \
+	examples/arc_agi_sketch_probe_metadata.inc \
+	examples/arc_agi_sketch_probe_miners.inc \
+	examples/arc_agi_sketch_probe_runtime_prior.inc \
+	examples/arc_agi_sketch_probe_export.inc
 ARC_AGI := $(BUILD_DIR)/arc_agi
 SIGNAL_FLIGHT := $(BUILD_DIR)/signal_flight
 SIGNAL_FLIGHT_ROLLOUT := $(BUILD_DIR)/signal_flight_rollout
 SIGNAL_MINING := $(BUILD_DIR)/signal_mining
+SIGNAL_NPC_WORKER := $(BUILD_DIR)/signal_npc_worker
 HAIKU_LM := $(BUILD_DIR)/haiku_lm
 HAIKU_WORD_LM := $(BUILD_DIR)/haiku_word_lm
 HAIKU_UNDERSTANDING := $(BUILD_DIR)/haiku_understanding
@@ -351,6 +380,12 @@ SIGNAL_MINING_HORIZON_TICKS ?= 1200
 SIGNAL_MINING_EPOCHS ?= 4
 SIGNAL_MINING_SEED ?= 5252
 SIGNAL_MINING_LEARNING_RATE ?= 0.004
+SIGNAL_NPC_WORKER_RESULT_DIR ?= $(BUILD_DIR)/signal_npc_worker_experiment
+SIGNAL_NPC_WORKER_TRAIN_GROUPS ?= 64
+SIGNAL_NPC_WORKER_TEST_GROUPS ?= 24
+SIGNAL_NPC_WORKER_EPOCHS ?= 4
+SIGNAL_NPC_WORKER_SEED ?= 6262
+SIGNAL_NPC_WORKER_LEARNING_RATE ?= 0.004
 HAIKU_LM_CORPUS ?= data/haiku_tiny.txt
 HAIKU_LM_DIR ?= $(BUILD_DIR)/haiku_lm_artifacts
 HAIKU_LM_EPOCHS ?= 8
@@ -591,8 +626,15 @@ PROTOCOL_OPERATOR_MIN_DOMAINS ?= 2
 PROTOCOL_OPERATOR_MIN_SUPPORT_ROWS ?= 4
 NUMERIC_CERTIFICATE_DIR ?= $(BUILD_DIR)/numeric_certificates
 NUMERIC_CERTIFICATE_TARGETS ?= action-score dataset-action-score-smoke dataset-action-score-replay-smoke prime-gap-trace prime-rule-search-smoke delayed-claim-eval grid-path-eval multitask-domain symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search-smoke arc-agi-induction-smoke haiku-lm-smoke haiku-word-lm-smoke haiku-understanding-smoke haiku-rule-search-smoke signal-mining-smoke
+NUMERIC_CERTIFICATE_PROMOTED_TARGETS ?= prime-gap-trace prime-rule-search-smoke delayed-claim-eval grid-path-eval modular-gate-search-smoke
+NUMERIC_CERTIFICATE_PROMOTED_DIR ?= $(BUILD_DIR)/numeric_certificates_promoted
+NUMERIC_CERTIFICATE_PROMOTED_REPORT ?= $(NUMERIC_CERTIFICATE_PROMOTED_DIR)/report.jsonl
+NUMERIC_CERTIFICATE_PROMOTED_STRICT_DIR ?= $(BUILD_DIR)/numeric_certificates_promoted_strict
+NUMERIC_CERTIFICATE_PROMOTED_STRICT_REPORT ?= $(NUMERIC_CERTIFICATE_PROMOTED_STRICT_DIR)/report.jsonl
 NUMERIC_CERTIFICATE_REPORT ?= $(NUMERIC_CERTIFICATE_DIR)/report.jsonl
 NUMERIC_CERTIFICATE_COMPARE_REUSE_FLOAT ?= 0
+NUMERIC_CERTIFICATE_COMPARE_FLOAT_DIR ?= build/float/numeric_certificates
+NUMERIC_CERTIFICATE_COMPARE_DOUBLE_DIR ?= build/double/numeric_certificates
 NUMERIC_CERTIFICATE_STRICT_DIR ?= $(BUILD_DIR)/numeric_certificates_strict
 NUMERIC_CERTIFICATE_STRICT_REPORT ?= $(NUMERIC_CERTIFICATE_STRICT_DIR)/report.jsonl
 NUMERIC_CERTIFICATE_STRICT_MAX_ABS_PARAMETER ?= 100
@@ -670,20 +712,25 @@ ifeq ($(SIGNAL_FLIGHT_WALL_PROBE),1)
 SIGNAL_FLIGHT_TRACE_EXTRA += --wall-probe
 endif
 
-.PHONY: all run holo-experiments holo-domain-experiments arc-discovery action-score dataset-action-score dataset-action-score-smoke dataset-action-score-replay-smoke dataset-action-score-adapter-smoke dataset-action-score-multitarget-smoke dataset-action-score-bitwise-smoke dataset-action-score-bitwise-macro-smoke dataset-action-score-haiku-smoke dataset-action-score-grid-smoke dataset-action-score-delayed-claim-smoke dataset-action-score-prime-gap-smoke dataset-action-score-arc-smoke dataset-action-score-program-smoke dataset-action-score-signal-smoke dataset-action-score-rest-smoke dataset-action-score-engine-evidence bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit tiny-net-stronger-baseline symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-public-data arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-holo-bucket-robustness arc-holo-bucket-review-selector arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop compounding-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-rule-search haiku-rule-search-baselines haiku-rule-search-smoke haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-verified-self-play arc-verified-self-play-public arc-learned-sketch-ops arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-bibliography paper-ci neurosymbolic-tune source-policy-check benchmark test sanitize check experimental-check clean cross-domain-transfer cross-domain-transfer-smoke bibliography-vsa haiku-vsa haiku-line-search haiku-line-search-smoke core promoted evidence evidence-audit all-core source-policy-report
+.PHONY: all run holo-experiments holo-domain-experiments arc-discovery action-score dataset-action-score dataset-action-score-smoke dataset-action-score-replay-smoke dataset-action-score-adapter-smoke dataset-action-score-multitarget-smoke dataset-action-score-bitwise-smoke dataset-action-score-bitwise-macro-smoke dataset-action-score-haiku-smoke dataset-action-score-grid-smoke dataset-action-score-delayed-claim-smoke dataset-action-score-prime-gap-smoke dataset-action-score-arc-smoke dataset-action-score-program-smoke dataset-action-score-signal-smoke dataset-action-score-rest-smoke dataset-action-score-engine-evidence bitwise-recursive tile-recursive tile-feature-entropy life-curriculum layer-discovery experiment-schemas prime-gap prime-gap-trace prime-gap-replay prime-gap-eval prime-rule-search prime-rule-search-baselines prime-rule-search-conditional prime-rule-search-smoke prime-gap-sweep prime-gap-regularization-sweep prime-gap-experiments prime-gate-seed-audit trace-determinism-audit trace-determinism-compare trace-determinism-ci delayed-claim delayed-claim-trace delayed-claim-replay delayed-claim-eval delayed-claim-self-test grid-path grid-path-rule-search grid-path-budget-sweep grid-path-trace grid-path-replay grid-path-eval multitask-domain multitask-adapter-heads multitask-failure-diagnostics tiny-net-plateau-audit tiny-net-stronger-baseline symbolic-domains program-synthesis program-synthesis-baselines modular-gate-search modular-gate-search-smoke arc-public-data arc-agi arc-agi-loader arc-gate-invariance arc-agi-induction-smoke arc-agi-induction-public arc-agi-evidence-surface arc-holo-bucket-robustness arc-holo-bucket-review-selector arc-family-discovery rejected-candidate-learning rejected-candidate-seed-audit hypothesis-library-promotion hypothesis-library-ablation hypothesis-library-split-sweep hypothesis-library-feedback-loop compounding-loop hypothesis-library-public hypothesis-library-public-filter hypothesis-library-public-report hypothesis-library-public-triage hypothesis-library-neural-discovery hypothesis-library-neural-failure-proof paper-grade-evidence paper-grade-evidence-core signal-flight-data signal-flight signal-flight-pain signal-flight-rollout-eval signal-mining signal-mining-smoke signal-npc-worker signal-npc-worker-smoke haiku-corpus-hf haiku-corpus-hf-dictionary haiku-corpus-synthetic haiku-lm haiku-lm-hf haiku-lm-lexicon haiku-lm-smoke haiku-lm-synthetic haiku-coherence-hard-negatives haiku-coherence-hard-negatives-hf-dictionary haiku-rule-search haiku-rule-search-baselines haiku-rule-search-smoke haiku-understanding haiku-understanding-hf haiku-understanding-hf-dictionary haiku-understanding-smoke haiku-understanding-synthetic haiku-word-lm haiku-word-lm-hf haiku-word-lm-hf-dictionary haiku-word-lm-smoke haiku-word-lm-synthetic signal-live-brain signal-live-brain-smoke signal-live-swarm signal-live-status signal-live-active-summary signal-flight-report signal-shadow-replay-audit learned-grammar-coverage learned-grammar-coverage-public learned-grammar-coverage-arc-visual-compare arc-visual-active-curriculum arc-visual-capacity-sweep arc-ranker-benchmark arc-ranker-failure-report arc-synthetic-shape-curriculum arc-synthetic-shape-probe arc-verified-self-play arc-verified-self-play-public arc-learned-sketch-ops arc-visual-hole-proposer learned-grammar-coverage-extended protocol-spine protocol-operator-promotion experiment-health experiment-health-extended experiment-matrix numeric-certificate-experiments numeric-certificate-report numeric-certificate-strict numeric-certificate-compare numeric-certificate-budget-refresh numeric-certificate-mandatory results experimental-results paper-pdf paper-data paper-claims paper-agent-propose paper-pre-commit install-hooks paper-support editorial-pr-check paper-bibliography paper-ci neurosymbolic-tune source-policy-check benchmark test sanitize check experimental-check clean cross-domain-transfer cross-domain-transfer-smoke bibliography-vsa haiku-vsa haiku-line-search haiku-line-search-smoke core promoted evidence evidence-audit all-core source-policy-report
+.PHONY: sandbox numeric-certificate-promoted experiment-schemas-promoted FORCE
 
 # all is the full superset including sandboxes and integrations.
-# CI gate should use `promoted`; desktop developers use `core`.
+# `promoted` intentionally builds only the evidence-spine binaries; `core` is
+# the broader library/test object set for desktop development.
 
 # ── Tiered build targets ──
 # core: library objects + grammar-discovery + paper + unit test runner.
 core: $(NN_OBJS) $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(TEST_RUNNER)
 
-# promoted: core + canonical evidence binaries (no Signal/sandbox deps).
-promoted: core $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MODULAR_GATE_SEARCH)
+# promoted: canonical evidence binaries (no Signal/sandbox/grammar-discovery deps).
+promoted: $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MODULAR_GATE_SEARCH)
 
-# evidence: promoted + result capture + paper claims.
-evidence: promoted results paper-support
+# evidence: one promoted truth pass: policy, binaries, result capture, numeric gates, trace replay.
+evidence: source-policy-check promoted results numeric-certificate-promoted trace-determinism-compare
+
+# sandbox: explicit smoke surface for non-promoted experiments.
+sandbox: experimental-check
 
 # evidence-audit: list every registered claim with support status.
 evidence-audit: promoted $(NN_GRAMMAR_DISCOVERY_RUNTIME) dataset-action-score-engine-evidence
@@ -691,15 +738,21 @@ evidence-audit: promoted $(NN_GRAMMAR_DISCOVERY_RUNTIME) dataset-action-score-en
 
 all-core: core
 
-all: $(GO_EXPERIMENT) $(HOLO_EXPERIMENTS) $(XOR_EXAMPLE) $(BITWISE_RECURSIVE) $(TILE_RECURSIVE) $(TILE_FEATURE_ENTROPY) $(LIFE_CURRICULUM) $(LAYER_DISCOVERY) $(ACTION_SCORE_EXAMPLE) $(DATASET_ACTION_SCORE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(CROSS_DOMAIN_TRANSFER) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(HAIKU_RULE_SEARCH) $(BIBLIOGRAPHY_VSA) $(HAIKU_VSA) $(HAIKU_LINE_SEARCH) $(BENCHMARK)
+all: $(GO_EXPERIMENT) $(HOLO_EXPERIMENTS) $(XOR_EXAMPLE) $(BITWISE_RECURSIVE) $(TILE_RECURSIVE) $(TILE_FEATURE_ENTROPY) $(LIFE_CURRICULUM) $(LAYER_DISCOVERY) $(ACTION_SCORE_EXAMPLE) $(DATASET_ACTION_SCORE) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(DELAYED_CLAIM) $(GRID_PATH) $(MULTITASK_DOMAIN) $(SYMBOLIC_DOMAINS) $(PROGRAM_SYNTHESIS) $(MODULAR_GATE_SEARCH) $(CROSS_DOMAIN_TRANSFER) $(ARC_AGI) $(SIGNAL_FLIGHT) $(SIGNAL_MINING) $(SIGNAL_NPC_WORKER) $(HAIKU_LM) $(HAIKU_WORD_LM) $(HAIKU_UNDERSTANDING) $(HAIKU_RULE_SEARCH) $(BIBLIOGRAPHY_VSA) $(HAIKU_VSA) $(HAIKU_LINE_SEARCH) $(BENCHMARK)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(NN_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
+$(BLAS_MODE_STAMP): FORCE | $(BUILD_DIR)
+	@mode="$(NN_BLAS)|$(CPPFLAGS)"; \
+	if [ ! -f "$@" ] || [ "$$(cat "$@")" != "$$mode" ]; then \
+		printf '%s\n' "$$mode" > "$@"; \
+	fi
+
+$(NN_OBJ): $(NN_SRCS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn.c -o $@
 
-$(NN_BLAS_OBJ): src/nn_blas.c include/nn_blas.h include/nn_core.h | $(BUILD_DIR)
+$(NN_BLAS_OBJ): src/nn_blas.c include/nn_blas.h include/nn_core.h $(BLAS_MODE_STAMP) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_blas.c -o $@
 
 $(NN_EXPERIMENT_OBJ): src/nn_experiment.c include/nn_experiment.h | $(BUILD_DIR)
@@ -751,16 +804,19 @@ $(NN_TERM_BRIDGE_OBJ): src/nn_term_bridge.c include/nn_term_bridge.h | $(BUILD_D
 $(NN_DATASET_OBJ): src/nn_dataset.c include/nn_dataset.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_dataset.c -o $@
 
-$(NN_GRAMMAR_DISCOVERY_OBJ): src/nn_grammar_discovery.c include/nn_grammar_discovery.h | $(BUILD_DIR)
+$(NN_GRAMMAR_DISCOVERY_OBJ): src/nn_grammar_discovery.c src/nn_grammar_discovery_json.inc src/nn_grammar_discovery_haiku.inc src/nn_grammar_discovery_arc.inc src/nn_grammar_discovery_arc_failure.inc src/nn_grammar_discovery_arc_synthetic_curriculum.inc src/nn_grammar_discovery_arc_ranker.inc src/nn_grammar_discovery_report.inc src/nn_grammar_discovery_health.inc src/nn_grammar_discovery_arc_neural_discovery.inc include/nn_grammar_discovery.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_grammar_discovery.c -o $@
 
 $(NN_ARC_SELFPLAY_OBJ): src/nn_arc_selfplay.c include/nn_grammar_discovery.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_arc_selfplay.c -o $@
 
-$(NN_PAPER_OBJ): src/nn_paper.c include/nn_paper.h include/nn.h include/nn_core.h | $(BUILD_DIR)
+$(NN_PAPER_OBJ): $(NN_PAPER_SRCS) include/nn_paper.h include/nn.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_paper.c -o $@
 
-$(NN_TEST_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
+$(TRACE_DETERMINISM_TOOL): examples/trace_determinism.c $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_BLAS_OBJ) $(NN_TEXT_OBJ) include/nn_paper.h include/nn.h include/nn_core.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) examples/trace_determinism.c $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_BLAS_OBJ) $(NN_TEXT_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(NN_TEST_OBJ): $(NN_SRCS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn.c -o $@
 
 $(NN_EXPERIMENT_TEST_OBJ): src/nn_experiment.c include/nn_experiment.h | $(BUILD_DIR)
@@ -799,13 +855,13 @@ $(NN_DATASET_TEST_OBJ): src/nn_dataset.c include/nn_dataset.h include/nn_core.h 
 $(NN_DATASET_TEST_STUBS_OBJ): src/nn_dataset_test_stubs.c include/nn_dataset.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/nn_dataset_test_stubs.c -o $@
 
-$(NN_PAPER_TEST_OBJ): src/nn_paper.c include/nn_paper.h include/nn.h include/nn_core.h | $(BUILD_DIR)
+$(NN_PAPER_TEST_OBJ): $(NN_PAPER_SRCS) include/nn_paper.h include/nn.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) -c src/nn_paper.c -o $@
 
-$(NN_SANITIZE_OBJ): src/nn.c $(NN_HEADERS) | $(BUILD_DIR)
+$(NN_SANITIZE_OBJ): $(NN_SRCS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn.c -o $@
 
-$(NN_BLAS_SANITIZE_OBJ): src/nn_blas.c include/nn_blas.h include/nn_core.h | $(BUILD_DIR)
+$(NN_BLAS_SANITIZE_OBJ): src/nn_blas.c include/nn_blas.h include/nn_core.h $(BLAS_MODE_STAMP) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_blas.c -o $@
 
 $(NN_EXPERIMENT_SANITIZE_OBJ): src/nn_experiment.c include/nn_experiment.h | $(BUILD_DIR)
@@ -841,7 +897,7 @@ $(NN_TEXT_SANITIZE_OBJ): src/nn_text.c include/nn_text.h include/nn_text_vsa.h i
 $(NN_DATASET_SANITIZE_OBJ): src/nn_dataset.c include/nn_dataset.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_dataset.c -o $@
 
-$(NN_PAPER_SANITIZE_OBJ): src/nn_paper.c include/nn_paper.h include/nn.h include/nn_core.h | $(BUILD_DIR)
+$(NN_PAPER_SANITIZE_OBJ): $(NN_PAPER_SRCS) include/nn_paper.h include/nn.h include/nn_core.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DNN_ENABLE_TEST_API $(CFLAGS) $(SANITIZE_CFLAGS) -c src/nn_paper.c -o $@
 
 $(BUILD_DIR)/obj/prime_gap/%.o: src/prime_gap/%.c $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
@@ -917,7 +973,7 @@ $(DELAYED_CLAIM): examples/delayed_claim.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DI
 $(GRID_PATH): examples/grid_path.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/grid_path.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(MULTITASK_DOMAIN): examples/multitask_domain.c $(NN_OBJS) $(PRIME_GAP_TASK_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
+$(MULTITASK_DOMAIN): examples/multitask_domain.c examples/multitask_domain_reports.inc $(NN_OBJS) $(PRIME_GAP_TASK_OBJS) $(NN_HEADERS) $(PRIME_GAP_TASK_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/multitask_domain.c $(NN_OBJS) $(PRIME_GAP_TASK_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(SYMBOLIC_DOMAINS): examples/symbolic_domains.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
@@ -932,7 +988,7 @@ $(MODULAR_GATE_SEARCH): examples/modular_gate_search.c $(NN_OBJS) $(NN_HEADERS) 
 $(CROSS_DOMAIN_TRANSFER): examples/cross_domain_transfer.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/cross_domain_transfer.c $(NN_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(ARC_AGI): examples/arc_agi.c $(NN_OBJS) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_LEOS_ENGINE_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
+$(ARC_AGI): examples/arc_agi.c $(ARC_AGI_INCS) $(NN_OBJS) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_LEOS_ENGINE_OBJ) $(NN_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) examples/arc_agi.c $(NN_OBJS) $(NN_HOLO_RANKER_OBJ) $(NN_HOLO_GATE_OBJ) $(NN_LEOS_ENGINE_OBJ) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(NN_GRAMMAR_DISCOVERY_RUNTIME): examples/neural_grammar_discovery.c $(NN_GRAMMAR_DISCOVERY_OBJ) $(NN_ARC_SELFPLAY_OBJ) $(NN_PAPER_OBJ) $(NN_OBJ) $(NN_BLAS_OBJ) $(NN_TEXT_OBJ) include/nn_grammar_discovery.h include/nn_paper.h include/nn.h include/nn_text.h include/nn_text_vsa.h include/nn_term_bridge.h | $(BUILD_DIR)
@@ -947,6 +1003,9 @@ $(SIGNAL_FLIGHT_ROLLOUT): examples/signal_flight_rollout.c $(NN_OBJS) $(NN_HEADE
 
 $(SIGNAL_MINING): examples/signal_mining.c $(NN_OBJS) $(NN_HEADERS) $(SIGNAL_FLIGHT_SIM_SOURCES) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(SIGNAL_FLIGHT_INCLUDE_FLAGS) $(CFLAGS) examples/signal_mining.c $(NN_OBJS) $(SIGNAL_FLIGHT_SIM_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(SIGNAL_NPC_WORKER): examples/signal_npc_worker.c $(NN_OBJS) $(NN_HEADERS) $(SIGNAL_FLIGHT_SIM_SOURCES) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(SIGNAL_FLIGHT_INCLUDE_FLAGS) $(CFLAGS) examples/signal_npc_worker.c $(NN_OBJS) $(SIGNAL_FLIGHT_SIM_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
 endif
 
 $(BENCHMARK): benchmarks/benchmark.c $(NN_OBJS) $(NN_HEADERS) | $(BUILD_DIR)
@@ -1158,6 +1217,11 @@ experiment-schemas: $(GO_EXPERIMENT) $(PRIME_GAP_EXAMPLE) $(GRID_PATH) $(DELAYED
 	./$(SIGNAL_FLIGHT) --schema
 	./$(SIGNAL_MINING) --schema
 
+experiment-schemas-promoted: $(PRIME_GAP_EXAMPLE) $(GRID_PATH) $(DELAYED_CLAIM)
+	./$(PRIME_GAP_EXAMPLE) --schema
+	./$(GRID_PATH) --schema
+	./$(DELAYED_CLAIM) --schema
+
 prime-gap: $(PRIME_GAP_EXAMPLE)
 	./$(PRIME_GAP_EXAMPLE)
 
@@ -1216,25 +1280,25 @@ prime-gap-experiments: $(PRIME_GAP_EXAMPLE)
 prime-gate-seed-audit: $(PRIME_GAP_EXAMPLE) $(PRIME_RULE_SEARCH) $(PRIME_REPLAY) $(PRIME_COMPARE)
 	$(RETIRED_SCRIPT_TARGET)
 
-trace-determinism-audit: prime-gap-trace $(NN_GRAMMAR_DISCOVERY_RUNTIME)
-	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --trace-determinism-audit \
+trace-determinism-audit: prime-gap-trace $(TRACE_DETERMINISM_TOOL)
+	./$(TRACE_DETERMINISM_TOOL) --trace-determinism-audit \
 		--trace-input $(BUILD_DIR)/traces/prime_gap.jsonl \
 		--output $(TRACE_DETERMINISM_AUDIT) \
 		--canonical-output $(TRACE_DETERMINISM_CANONICAL)
 
-trace-determinism-compare: $(NN_GRAMMAR_DISCOVERY_RUNTIME)
+trace-determinism-compare: $(TRACE_DETERMINISM_TOOL)
 	$(MAKE) trace-determinism-audit REAL=float
 	$(MAKE) trace-determinism-audit REAL=double
 	mkdir -p $(RESULTS_DIR)
-	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --trace-determinism-compare \
+	./$(TRACE_DETERMINISM_TOOL) --trace-determinism-compare \
 		--trace-input build/float/traces/prime_gap.jsonl \
 		--trace-input build/double/traces/prime_gap.jsonl \
 		--output $(TRACE_DETERMINISM_COMPARE)
 	cp build/float/traces/prime_gap.semantic.jsonl $(TRACE_DETERMINISM_RESULTS_CANONICAL)
 
-trace-determinism-ci: $(NN_GRAMMAR_DISCOVERY_RUNTIME)
+trace-determinism-ci: $(TRACE_DETERMINISM_TOOL)
 	$(MAKE) trace-determinism-compare
-	./$(NN_GRAMMAR_DISCOVERY_RUNTIME) --trace-determinism-compare \
+	./$(TRACE_DETERMINISM_TOOL) --trace-determinism-compare \
 		--trace-input build/float/traces/prime_gap.jsonl \
 		--trace-input build/double/traces/prime_gap.jsonl \
 		--gate \
@@ -1596,6 +1660,16 @@ signal-mining-smoke: SIGNAL_MINING_HORIZON_TICKS=420
 signal-mining-smoke: SIGNAL_MINING_EPOCHS=2
 signal-mining-smoke: signal-mining
 
+signal-npc-worker: $(SIGNAL_NPC_WORKER)
+	mkdir -p $(SIGNAL_NPC_WORKER_RESULT_DIR)
+	./$(SIGNAL_NPC_WORKER) --train-groups $(SIGNAL_NPC_WORKER_TRAIN_GROUPS) --test-groups $(SIGNAL_NPC_WORKER_TEST_GROUPS) --epochs $(SIGNAL_NPC_WORKER_EPOCHS) --learning-rate $(SIGNAL_NPC_WORKER_LEARNING_RATE) --seed $(SIGNAL_NPC_WORKER_SEED) --trace "$(SIGNAL_NPC_WORKER_RESULT_DIR)/trace.jsonl" --summary "$(SIGNAL_NPC_WORKER_RESULT_DIR)/summary.jsonl" --save "$(SIGNAL_NPC_WORKER_RESULT_DIR)/signal_npc_worker.nnckpt"
+
+signal-npc-worker-smoke: SIGNAL_NPC_WORKER_RESULT_DIR=$(BUILD_DIR)/signal_npc_worker_smoke
+signal-npc-worker-smoke: SIGNAL_NPC_WORKER_TRAIN_GROUPS=12
+signal-npc-worker-smoke: SIGNAL_NPC_WORKER_TEST_GROUPS=6
+signal-npc-worker-smoke: SIGNAL_NPC_WORKER_EPOCHS=2
+signal-npc-worker-smoke: signal-npc-worker
+
 signal-live-brain:
 	node scripts/signal_live_brain.mjs --server "$(SIGNAL_LIVE_BRAIN_SERVER)" --session "$(SIGNAL_LIVE_BRAIN_SESSION)" --log "$(SIGNAL_LIVE_BRAIN_LOG)" --callsign "$(SIGNAL_LIVE_BRAIN_CALLSIGN)" --max-ms "$(SIGNAL_LIVE_BRAIN_MAX_MS)" --brain-mode "$(SIGNAL_LIVE_BRAIN_MODE)" --option-mode "$(SIGNAL_LIVE_BRAIN_OPTION_MODE)" $(SIGNAL_LIVE_BRAIN_PROTOCOL_ARG) $(SIGNAL_LIVE_BRAIN_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_OPTION_CHECKPOINT_ARG) $(SIGNAL_LIVE_BRAIN_EXTRA)
 
@@ -1843,17 +1917,17 @@ numeric-certificate-strict:
 
 numeric-certificate-compare:
 ifeq ($(NUMERIC_CERTIFICATE_COMPARE_REUSE_FLOAT),1)
-	@if [ -s build/float/numeric_certificates/summary.jsonl ]; then \
-		echo "numeric-certificate-compare: reusing build/float/numeric_certificates/summary.jsonl"; \
+	@if [ -s "$(NUMERIC_CERTIFICATE_COMPARE_FLOAT_DIR)/summary.jsonl" ]; then \
+		echo "numeric-certificate-compare: reusing $(NUMERIC_CERTIFICATE_COMPARE_FLOAT_DIR)/summary.jsonl"; \
 	else \
-		$(MAKE) numeric-certificate-experiments REAL=float NUMERIC_CERTIFICATE_DIR=build/float/numeric_certificates; \
+		$(MAKE) numeric-certificate-experiments REAL=float NUMERIC_CERTIFICATE_DIR="$(NUMERIC_CERTIFICATE_COMPARE_FLOAT_DIR)"; \
 	fi
 else
-	$(MAKE) numeric-certificate-experiments REAL=float NUMERIC_CERTIFICATE_DIR=build/float/numeric_certificates
+	$(MAKE) numeric-certificate-experiments REAL=float NUMERIC_CERTIFICATE_DIR="$(NUMERIC_CERTIFICATE_COMPARE_FLOAT_DIR)"
 endif
-	$(MAKE) numeric-certificate-experiments REAL=double NUMERIC_CERTIFICATE_DIR=build/double/numeric_certificates
+	$(MAKE) numeric-certificate-experiments REAL=double NUMERIC_CERTIFICATE_DIR="$(NUMERIC_CERTIFICATE_COMPARE_DOUBLE_DIR)"
 	mkdir -p "$(NUMERIC_CERTIFICATE_COMPARE_DIR)"
-	cat build/float/numeric_certificates/summary.jsonl build/double/numeric_certificates/summary.jsonl > "$(NUMERIC_CERTIFICATE_COMPARE_DIR)/float_vs_double.jsonl"
+	cat "$(NUMERIC_CERTIFICATE_COMPARE_FLOAT_DIR)/summary.jsonl" "$(NUMERIC_CERTIFICATE_COMPARE_DOUBLE_DIR)/summary.jsonl" > "$(NUMERIC_CERTIFICATE_COMPARE_DIR)/float_vs_double.jsonl"
 	@if grep -Eq '"status":"failed"|"rejected_rows":[1-9]' "$(NUMERIC_CERTIFICATE_COMPARE_DIR)/float_vs_double.jsonl"; then echo "numeric certificate compare failed"; exit 1; fi
 
 numeric-certificate-budget-refresh:
@@ -1864,31 +1938,37 @@ numeric-certificate-mandatory:
 	$(MAKE) numeric-certificate-strict
 	$(MAKE) numeric-certificate-compare NUMERIC_CERTIFICATE_COMPARE_REUSE_FLOAT=1
 
+numeric-certificate-promoted:
+	$(MAKE) numeric-certificate-report \
+		NUMERIC_CERTIFICATE_TARGETS="$(NUMERIC_CERTIFICATE_PROMOTED_TARGETS)" \
+		NUMERIC_CERTIFICATE_DIR="$(NUMERIC_CERTIFICATE_PROMOTED_DIR)" \
+		NUMERIC_CERTIFICATE_REPORT="$(NUMERIC_CERTIFICATE_PROMOTED_REPORT)"
+	$(MAKE) numeric-certificate-strict \
+		NUMERIC_CERTIFICATE_TARGETS="$(NUMERIC_CERTIFICATE_PROMOTED_TARGETS)" \
+		NUMERIC_CERTIFICATE_STRICT_DIR="$(NUMERIC_CERTIFICATE_PROMOTED_STRICT_DIR)" \
+		NUMERIC_CERTIFICATE_STRICT_REPORT="$(NUMERIC_CERTIFICATE_PROMOTED_STRICT_REPORT)"
+	$(MAKE) numeric-certificate-compare NUMERIC_CERTIFICATE_COMPARE_REUSE_FLOAT=1 \
+		NUMERIC_CERTIFICATE_TARGETS="$(NUMERIC_CERTIFICATE_PROMOTED_TARGETS)" \
+		NUMERIC_CERTIFICATE_COMPARE_FLOAT_DIR="$(NUMERIC_CERTIFICATE_PROMOTED_DIR)" \
+		NUMERIC_CERTIFICATE_COMPARE_DOUBLE_DIR="build/double/numeric_certificates_promoted"
+
 results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH)
 	mkdir -p $(RESULTS_DIR)/logs
 	printf '{"schema":"crlp.environment_manifest.v1","real":"%s","cc":"%s"}\n' "$(REAL)" "$(CC)" > $(RESULTS_DIR)/environment.json
 	@: > $(RESULTS_DIR)/comparison.jsonl
 	@: > $(RESULTS_DIR)/commands.txt
-	@set -e; for target in experiment-schemas delayed-claim-eval grid-path-eval grid-path-budget-sweep modular-gate-search-smoke prime-rule-search prime-rule-search-baselines prime-gap-eval; do \
-		echo "make REAL=$(REAL) $$target" >> $(RESULTS_DIR)/commands.txt; \
-		$(MAKE) REAL="$(REAL)" "$$target" > "$(RESULTS_DIR)/logs/$$target.log" 2>&1; \
-		awk '/^\{/{print}' "$(RESULTS_DIR)/logs/$$target.log" >> $(RESULTS_DIR)/comparison.jsonl; \
-	done
+	./scripts/capture_make_targets.sh "$(RESULTS_DIR)" "$(REAL)" experiment-schemas-promoted delayed-claim-eval grid-path-eval grid-path-budget-sweep modular-gate-search-smoke prime-rule-search prime-rule-search-baselines prime-gap-eval
 	cp $(RESULTS_DIR)/comparison.jsonl $(RESULTS_DIR)/comparison.canonical.jsonl
 	$(MAKE) trace-determinism-compare RESULTS_DIR=$(RESULTS_DIR)
-	@if [ -f "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" ]; then cp "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl"; elif [ -f "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl" ]; then echo "reusing existing prime gate seed interval"; else echo "missing prime gate seed interval artifact"
+	@if [ -f "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" ]; then cp "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl"; elif [ -f "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl" ]; then echo "reusing existing prime gate seed interval"; else echo "missing prime gate seed interval artifact"; fi
 	printf '# Latest Verifier Results\n\nScalar type: `%s`.\n\nGenerated by `make results` with C and shell targets.\n' "$(REAL)" > $(RESULTS_DIR)/summary.md
 
 experimental-results: $(DELAYED_CLAIM) $(GRID_PATH) $(PRIME_GAP_EXAMPLE) $(PRIME_REPLAY) $(PRIME_COMPARE) $(PRIME_RULE_SEARCH) $(MODULAR_GATE_SEARCH) $(ARC_AGI) $(PROGRAM_SYNTHESIS) $(MULTITASK_DOMAIN)
 	$(MAKE) results
-	@set -e; for target in arc-agi arc-agi-induction-smoke program-synthesis-baselines multitask-domain; do \
-		echo "make REAL=$(REAL) $$target" >> $(RESULTS_DIR)/commands.txt; \
-		$(MAKE) REAL="$(REAL)" "$$target" > "$(RESULTS_DIR)/logs/$$target.log" 2>&1; \
-		awk '/^\{/{print}' "$(RESULTS_DIR)/logs/$$target.log" >> $(RESULTS_DIR)/comparison.jsonl; \
-	done
+	./scripts/capture_make_targets.sh "$(RESULTS_DIR)" "$(REAL)" arc-agi arc-agi-induction-smoke program-synthesis-baselines multitask-domain
 	cp $(RESULTS_DIR)/comparison.jsonl $(RESULTS_DIR)/comparison.canonical.jsonl
 	$(MAKE) trace-determinism-compare RESULTS_DIR=$(RESULTS_DIR)
-	@if [ -f "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" ]; then cp "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl"; elif [ -f "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl" ]; then echo "reusing existing prime gate seed interval"; else echo "missing prime gate seed interval artifact"
+	@if [ -f "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" ]; then cp "$(PRIME_GATE_SEED_AUDIT_DIR)/seed_interval_summary.jsonl" "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl"; elif [ -f "$(RESULTS_DIR)/prime_gate_delta_seed_interval.jsonl" ]; then echo "reusing existing prime gate seed interval"; else echo "missing prime gate seed interval artifact"; fi
 
 paper-gen:
 	$(RETIRED_SCRIPT_TARGET)

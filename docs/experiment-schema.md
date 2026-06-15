@@ -1,34 +1,23 @@
 # Generalized Experiment Schema
 
-The project is one grounding-gated action-scoring architecture with first-class
-task schemas plus case-study discovery schemas. Certified modular gate search,
-currently instantiated as `prime_gap`, grid paths, delayed claims, Signal flight
-control, program synthesis, and the ARC-AGI sample/loader path must all be
-described with the same contract before they are used as evidence.
-The evidence maturity
-differs by task: the `prime_gap` certified modular gate instance has the
-complete production learned-gate table, grid has budgeted certified cheap-local
-and exact-distance gate families, delayed-claim has parent-hash trace replay plus a
-production threshold+direct/indirect-margin gate/proposer loop with shifted/noisy
-stress rows, and ARC is a
-fixed-sample scorer plus a narrow corpus-loader transform gate. Signal flight now has a counterfactual generated
-trace path: each sampled state enumerates WASD hypotheses, replays them through
-Signal's authoritative simulator, and trains around certified progress,
-hull-loss, damage, and death outcomes. Signal also has a closed-loop rollout
-evaluator that first enumerates certified control-target hypotheses (`direct`,
-`nav_path`, `left_bypass`, `right_bypass`, `brake_escape`) and then lets trained
-checkpoints rank WASD actions around the selected hypothesis. The rollout
-compares `goal_heading_no_safety`, `flight_steer_to`, `neural_raw`, and
-`neural_guarded` controllers on identical deterministic episodes. The external
-websocket pilot records a compatibility hash from Signal's protocol headers
-before active play, so protocol drift turns into underpowered live evidence
-instead of silent decoder reuse.
-The summary rows report neural utility/regret/damage/death metrics beside
-primitive and deterministic flight baselines.
-Signal mining now adds the next tactical layer: sampled states enumerate
-mine/tow/smelt hypotheses, replay each hypothesis through the authoritative
-simulator, and train a tiny scorer to rank certified tactical utility rather
-than imitate an autopilot trace.
+The project is one grounding-gated action-scoring architecture with promoted
+task schemas plus case-study and sandbox schemas. The promoted evidence spine is
+intentionally small: `prime_gap`, `grid_path`, and `delayed_claim`. These are the
+tasks that `make evidence` refreshes and gates as the local truth pass.
+
+The evidence maturity differs by task: the `prime_gap` certified modular gate
+instance has the complete production learned-gate table, grid has budgeted
+certified cheap-local and exact-distance gate families, and delayed-claim has
+parent-hash trace replay plus a production threshold+direct/indirect-margin
+gate/proposer loop with shifted/noisy stress rows.
+
+Application-pressure and sandbox domains must use the same schema contract so
+their rows are reviewable, but they are not promoted evidence until their replay
+inputs, CI availability, matched baselines, and result capture are owned by the
+promoted evidence gate. ARC is currently a fixed-sample scorer plus a narrow
+corpus-loader transform gate. Signal flight/mining exercise deterministic
+replay against Signal's authoritative simulator, but they remain systems
+vignettes rather than members of the canonical promoted spine.
 
 There is also a separate shared-envelope multitask probe that includes the same
 ARC-AGI-1 sample. That probe is useful for testing whether the core C scorer can
@@ -55,11 +44,14 @@ Task T = {
 }
 ```
 
-The machine-readable form is emitted as `crlp.experiment_schema.v1`:
+The promoted machine-readable form is emitted as `crlp.experiment_schema.v1`:
 
 ```sh
-make experiment-schemas
+make experiment-schemas-promoted
 ```
+
+The full schema dump, including application-pressure and sandbox surfaces, is
+available through `make experiment-schemas`.
 
 The current C schema emits both the historical verifier fields
 (`exact_verifier`, `verifier_feedback`) and explicit grounding fields:
@@ -202,13 +194,20 @@ cannot silently add verifier-derived inputs. Comparison rows also carry
 
 ## Current Instantiations
 
-Grounding-backed first-class task schemas:
+Grounding-backed promoted task schemas:
 
 | Task | State | Actions | Grounding operator | Authority | Grammar/certificate | Production gate status |
 | --- | --- | --- | --- | --- | --- | --- |
 | `prime_gap` | prime `p` | candidate gaps | segmented sieve next-prime verifier | `exact_check` | modular predicates plus algebraic divisibility proof | certified modular gate search instance with learned-rule gate plus matched baselines |
 | `grid_path` | grid, start, goal | four moves | BFS shortest-path successor | `exact_check` | legality/topology/bound predicates that cannot reject an optimal move | budgeted certified gate with family/budget proposer sweep |
 | `delayed_claim` | observable claim features | trust/ignore/request/cautious | deterministic hidden-outcome simulator | `deterministic_replay` | threshold and margin predicates plus finite-generator safety check | production threshold+margin gate plus matched proposer baselines and shifted/noisy stress rows; direct clean residual resolved, proxy/noisy frontier exposed |
+
+Application-pressure and sandbox schemas use the same contract, but they are not
+part of the promoted evidence spine until their replay inputs, CI availability,
+and matched-baseline result rows are owned by the promoted evidence gate:
+
+| Task | State | Actions | Grounding operator | Authority | Grammar/certificate | Evidence status |
+| --- | --- | --- | --- | --- | --- | --- |
 | `arc_agi` | ARC-AGI-1 task `0520fde7` input grid plus output coordinate | output colors `0..9` | known ARC train/test output grid | `exact_check` | train-pair consistency plus unique grammar-consistent test prediction | fixed-sample certified transform gate plus ARC JSON directory loader and matched `NNProgram` proposer rows for narrow geometry/object evidence |
 | `signal_flight` | Signal ship kinematics, hull, path, clearance observations, and target/control-point geometry | WASD key combinations around certified control-target hypotheses | Signal simulator replay and live telemetry | `deterministic_replay` | replay-certified progress, hull loss, damage, death outcomes, rollout-time control-target certificates, and protocol compatibility | counterfactual utility scorer, certified-hypothesis rollout evaluator, and protocol-checked external websocket pilot |
 | `signal_mining` | Signal tactical mining state after deterministic scenario prefixes: ship state, tow chain, rocks, fragments, refinery/dock demand | bounded policy hypotheses from target selector, route constraint, speed/contact profile, and interaction primitive | fresh deterministic replay in Signal's authoritative simulator | `deterministic_replay` | replay-certified utility, smelts, pickups, fractures, tow count, repair-kit deltas, hull loss, damage, and death | grammar hypothesis ranker with fixed-priority grammar baseline via `make signal-mining` |
