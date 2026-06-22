@@ -2,7 +2,6 @@
 #define NN_CORE_H
 
 #include <math.h>
-#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -26,7 +25,6 @@ typedef struct NeuralNet NeuralNet;
 #define NN_TRACE_ACTION_ID_CONTRACT "stable_unique_action_ids"
 #define NN_RANKING_POLICY "score_desc_action_id_tiebreak_epsilon"
 #define NN_SCORER_ENVELOPE_FEATURE_COUNT 96u
-#define NN_SCORER_ENVELOPE_EML_FEATURE_COUNT 144u
 #define NN_SCORER_ENVELOPE_EML_FEATURE_COUNT 144u
 
 /* Memory-neuron context extension: 4 features beyond EML envelope. */
@@ -243,7 +241,6 @@ size_t nn_input_size(const NeuralNet *net);
 size_t nn_output_size(const NeuralNet *net);
 size_t nn_parameter_count(const NeuralNet *net);
 size_t nn_forward_flop_count(const NeuralNet *net);
-void nn_set_layer_activation(NeuralNet *net, size_t layer, NNActivation activation);
 
 /* Set a per-layer activation override. Use NN_ACTIVATION_SIGMOID (default=0)
  * to clear the override and fall back to hidden/output. */

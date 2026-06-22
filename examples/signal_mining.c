@@ -901,6 +901,7 @@ static void sm_setup_world(const sm_scenario_init_t *init,
     }
     server_player_t *sp = &w->players[0];
     sm_reset_player(w, sp);
+    sp->ship_asset_id = SHIP_ASSET_ID_NONE;
     sp->ship.pos = init->spawn_pos;
     sp->ship.vel = init->spawn_vel;
     sp->ship.angle = init->spawn_angle;
@@ -1286,6 +1287,32 @@ static void sm_detach_world_heap_pointers(world_t *w)
         w->ships[i].manifest = (manifest_t){0};
         w->ships[i].receipts_opaque = NULL;
     }
+    for (int i = 0; i < MAX_SHIP_ASSETS; ++i) {
+        w->ship_assets[i].ship.manifest = (manifest_t){0};
+        w->ship_assets[i].ship.receipts_opaque = NULL;
+    }
+}
+
+static void sm_cleanup_world(world_t *w)
+{
+    if (w == NULL) return;
+    for (int i = 0; i < MAX_STATIONS; ++i) {
+        w->stations[i].manifest = (manifest_t){0};
+        w->stations[i].receipts_opaque = NULL;
+    }
+    for (int i = 0; i < MAX_PLAYERS; ++i) {
+        w->players[i].ship.manifest = (manifest_t){0};
+        w->players[i].ship.receipts_opaque = NULL;
+    }
+    for (int i = 0; i < MAX_SHIP_ASSETS; ++i) {
+        w->ship_assets[i].ship.manifest = (manifest_t){0};
+        w->ship_assets[i].ship.receipts_opaque = NULL;
+    }
+    for (int i = 0; i < MAX_SHIPS; ++i) {
+        w->ships[i].manifest = (manifest_t){0};
+        w->ships[i].receipts_opaque = NULL;
+    }
+    world_cleanup(w);
 }
 
 static bool sm_clone_world_heap_buffers(world_t *dst, const world_t *src)
@@ -1329,7 +1356,7 @@ static bool sm_clone_world(world_t *dst, const world_t *src)
     return true;
 
 fail:
-    world_cleanup(dst);
+    sm_cleanup_world(dst);
     memset(dst, 0, sizeof(*dst));
     return false;
 }
@@ -1381,28 +1408,32 @@ static bool sm_replay_option(const sm_config_t *config,
 {
     const sm_policy_hypothesis_t *hyp = sm_hypothesis(candidate);
     sm_option_t option = hyp->option;
-    world_t w;
     if (config == NULL || init == NULL || base_world == NULL || outcome == NULL) return false;
     memset(outcome, 0, sizeof(*outcome));
     nav_caches_reset();
-    if (!sm_clone_world(&w, base_world)) return false;
-    server_player_t *sp = &w.players[0];
+    world_t *w = calloc(1u, sizeof(*w));
+    if (w == NULL) return false;
+    if (!sm_clone_world(w, base_world)) {
+        free(w);
+        return false;
+    }
+    server_player_t *sp = &w->players[0];
     double start_hull = sp->ship.hull;
-    double start_dock_dist = sm_repair_dock_distance(&w, sp);
+    double start_dock_dist = sm_repair_dock_distance(w, sp);
     double start_credits = sp->ship.stat_credits_earned;
     double start_ore = sp->ship.stat_ore_mined;
-    int start_ingots = sm_count_station_ingots(&w);
-    int start_repair_kits = sm_count_station_finished(&w, COMMODITY_REPAIR_KIT);
-    int start_shipyard_inputs = sm_count_shipyard_inputs(&w);
-    int start_repair_dock_kits = sm_count_repair_dock_kits(&w);
+    int start_ingots = sm_count_station_ingots(w);
+    int start_repair_kits = sm_count_station_finished(w, COMMODITY_REPAIR_KIT);
+    int start_shipyard_inputs = sm_count_shipyard_inputs(w);
+    int start_repair_dock_kits = sm_count_repair_dock_kits(w);
     outcome->start_repair_kits = start_repair_kits;
     nav_path_t path;
     memset(&path, 0, sizeof(path));
 
     for (int tick = 0; tick < config->horizon_ticks; ++tick) {
-        sm_apply_option_policy(&w, sp, candidate, &path, sticky_target);
-        world_sim_step(&w, SM_SIM_DT);
-        sm_accumulate_events(&w, sp->id, outcome);
+        sm_apply_option_policy(w, sp, candidate, &path, sticky_target);
+        world_sim_step(w, SM_SIM_DT);
+        sm_accumulate_events(w, sp->id, outcome);
         if (sp->ship.towed_count > outcome->peak_towed) {
             outcome->peak_towed = sp->ship.towed_count;
         }
@@ -1413,19 +1444,19 @@ static bool sm_replay_option(const sm_config_t *config,
     outcome->hull_loss = fmax(0.0, start_hull - (double)sp->ship.hull);
     outcome->hull_gain = fmax(0.0, (double)sp->ship.hull - start_hull);
     {
-        double final_dock_dist = sm_repair_dock_distance(&w, sp);
+        double final_dock_dist = sm_repair_dock_distance(w, sp);
         outcome->dock_progress =
             sm_clip((start_dock_dist - final_dock_dist) / 2200.0, 0.0, 1.0);
     }
     outcome->credits_delta = (double)sp->ship.stat_credits_earned - start_credits;
     outcome->ore_delta = (double)sp->ship.stat_ore_mined - start_ore;
-    outcome->station_ingots_delta = sm_count_station_ingots(&w) - start_ingots;
-    outcome->final_repair_kits = sm_count_station_finished(&w, COMMODITY_REPAIR_KIT);
+    outcome->station_ingots_delta = sm_count_station_ingots(w) - start_ingots;
+    outcome->final_repair_kits = sm_count_station_finished(w, COMMODITY_REPAIR_KIT);
     outcome->final_ship_repair_kits = ship_finished_count(&sp->ship, COMMODITY_REPAIR_KIT);
     outcome->final_ship_shipyard_inputs = sm_count_ship_shipyard_inputs(sp);
     outcome->repair_kits_delta = outcome->final_repair_kits - start_repair_kits;
-    outcome->shipyard_inputs_delta = sm_count_shipyard_inputs(&w) - start_shipyard_inputs;
-    outcome->repair_dock_kits_delta = sm_count_repair_dock_kits(&w) - start_repair_dock_kits;
+    outcome->shipyard_inputs_delta = sm_count_shipyard_inputs(w) - start_shipyard_inputs;
+    outcome->repair_dock_kits_delta = sm_count_repair_dock_kits(w) - start_repair_dock_kits;
 
     outcome->utility =
         (double)outcome->smelts * 18.0 +
@@ -1474,7 +1505,8 @@ static bool sm_replay_option(const sm_config_t *config,
         }
     }
 
-    world_cleanup(&w);
+    sm_cleanup_world(w);
+    free(w);
     return true;
 }
 
@@ -1489,26 +1521,26 @@ static void sm_init_scenario(const sm_config_t *config,
     init->world_seed = world_seed;
     init->scenario_seed = rng;
 
-    world_t template_world;
-    memset(&template_world, 0, sizeof(template_world));
-    template_world.rng = world_seed;
-    world_reset(&template_world);
+    world_t *template_world = calloc(1u, sizeof(*template_world));
+    if (template_world == NULL) return;
+    template_world->rng = world_seed;
+    world_reset(template_world);
     for (int n = 0; n < MAX_NPC_SHIPS; ++n) {
-        template_world.npc_ships[n].active = false;
+        template_world->npc_ships[n].active = false;
     }
-    server_player_t *sp = &template_world.players[0];
-    sm_reset_player(&template_world, sp);
+    server_player_t *sp = &template_world->players[0];
+    sm_reset_player(template_world, sp);
 
     init->station_index = (int)(sm_rng_next(&rng) % 3u);
     if (init->station_index < 0 || init->station_index >= MAX_STATIONS) init->station_index = 0;
-    station_t *station = &template_world.stations[init->station_index];
+    station_t *station = &template_world->stations[init->station_index];
     init->scenario_kind = (int)(index % 8u);
     init->enable_npcs = init->scenario_kind >= 6;
 
-    int target = sm_find_nearest_mineable(&template_world, sp, true);
-    if (target < 0) target = sm_find_nearest_mineable(&template_world, sp, false);
+    int target = sm_find_nearest_mineable(template_world, sp, true);
+    if (target < 0) target = sm_find_nearest_mineable(template_world, sp, false);
     if (target >= 0 && (init->scenario_kind == 1 || init->scenario_kind == 5)) {
-        asteroid_t *a = &template_world.asteroids[target];
+        asteroid_t *a = &template_world->asteroids[target];
         float angle = sm_rng_range(&rng, -PI_F, PI_F);
         float radius = a->radius + sm_rng_range(&rng,
                                                  init->scenario_kind == 5 ? 240.0f : 420.0f,
@@ -1527,8 +1559,8 @@ static void sm_init_scenario(const sm_config_t *config,
         init->prefix_ticks = 0;
     } else if (init->scenario_kind >= 6) {
         int station_slot = 1;
-        if (station_slot >= template_world.station_count) station_slot = init->station_index;
-        station = &template_world.stations[station_slot];
+        if (station_slot >= template_world->station_count) station_slot = init->station_index;
+        station = &template_world->stations[station_slot];
         init->station_index = station_slot;
         init->spawn_pos = station->pos;
         init->spawn_vel = v2(0.0f, 0.0f);
@@ -1559,7 +1591,8 @@ static void sm_init_scenario(const sm_config_t *config,
         }
     }
 
-    world_cleanup(&template_world);
+    sm_cleanup_world(template_world);
+    free(template_world);
 }
 
 static void sm_build_state_view(const world_t *w,
@@ -1865,18 +1898,19 @@ static int sm_evaluate_group(const sm_config_t *config,
     group->baseline = 0u;
     group->second_best_utility = -1e18;
 
-    world_t base_world;
+    world_t *base_world = calloc(1u, sizeof(*base_world));
+    if (base_world == NULL) return 0;
     server_player_t *base_sp = NULL;
-    sm_setup_world(init, &base_world, &base_sp);
-    sm_run_prefix(init, &base_world, base_sp);
+    sm_setup_world(init, base_world, &base_sp);
+    sm_run_prefix(init, base_world, base_sp);
     if (init->enable_npcs) {
-        sm_seed_supply_chain_fixture(&base_world, base_sp);
+        sm_seed_supply_chain_fixture(base_world, base_sp);
     }
 
     int sticky_targets[SM_OPTION_COUNT];
     for (size_t option = 0; option < SM_OPTION_COUNT; ++option) {
-        sticky_targets[option] = sm_select_target_for_option(&base_world, base_sp, option);
-        sm_encode_features(init, &base_world, base_sp, option, group->features[option]);
+        sticky_targets[option] = sm_select_target_for_option(base_world, base_sp, option);
+        sm_encode_features(init, base_world, base_sp, option, group->features[option]);
     }
     group->baseline = sm_fixed_priority_baseline(group->features);
 
@@ -1885,11 +1919,12 @@ static int sm_evaluate_group(const sm_config_t *config,
     for (size_t option = 0; option < SM_OPTION_COUNT; ++option) {
         if (!sm_replay_option(config,
                               init,
-                              &base_world,
+                              base_world,
                               option,
                               sticky_targets[option],
                               &group->outcomes[option])) {
-            world_cleanup(&base_world);
+            sm_cleanup_world(base_world);
+            free(base_world);
             return 0;
         }
         double utility = group->outcomes[option].utility;
@@ -1902,7 +1937,8 @@ static int sm_evaluate_group(const sm_config_t *config,
         }
     }
     group->second_best_utility = isfinite(second) ? second : best;
-    world_cleanup(&base_world);
+    sm_cleanup_world(base_world);
+    free(base_world);
 
     for (size_t option = 0; option < SM_OPTION_COUNT; ++option) {
         sm_write_trace_row(trace_fp, split, group, option);

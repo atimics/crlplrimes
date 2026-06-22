@@ -1,0 +1,31 @@
+# ARC hypothesis-library and ARC public-data defaults.
+
+HYPOTHESIS_LIBRARY_PROMOTION_TASK_IDS ?= move_to_anchor,move_to_anchor_x
+HYPOTHESIS_LIBRARY_HELDOUT_TASK_IDS ?= bbox_panel_selection,connect_aligned,extend_aligned_sequence,fill_enclosed,move_to_anchor_both_positive,move_to_anchor_y,object_extract,panel_selection,recolor_by_reference,translate
+HYPOTHESIS_LIBRARY_ABLATION_BASE_FLAGS ?= --task-dir tests/fixtures/arc_hypothesis --task-ids $(HYPOTHESIS_LIBRARY_HELDOUT_TASK_IDS) --max-tasks 10 --program-budget-tight-grid --loader-summary-only --induction --min-induction-evidence 8 --hypothesis-top-k 1 --disable-hypothesis-coverage-selection --disable-hypothesis-structural-score --disable-hypothesis-train-filter
+HYPOTHESIS_LIBRARY_SPLIT_SWEEP_DIR ?= $(BUILD_DIR)/hypothesis_library_split_sweep
+HYPOTHESIS_LIBRARY_FEEDBACK_LOOP_DIR ?= $(BUILD_DIR)/hypothesis_library_feedback_loop
+HYPOTHESIS_LIBRARY_PUBLIC_DIR ?= $(BUILD_DIR)/hypothesis_library_public
+HYPOTHESIS_LIBRARY_PUBLIC_ARC_DIR ?=
+ARC_PUBLIC_DATA_DIR ?= $(BUILD_DIR)/arc_agi_public/data
+ARC_PUBLIC_DATA_SUMMARY ?= $(BUILD_DIR)/arc_agi_public/download_summary.jsonl
+ARC_PUBLIC_DATA_ZIP_URL ?= https://github.com/fchollet/ARC-AGI/archive/refs/heads/master.zip
+ARC_PUBLIC_DATA_EXPECTED_TRAINING ?= 400
+ARC_PUBLIC_DATA_EXPECTED_EVALUATION ?= 400
+HYPOTHESIS_LIBRARY_PUBLIC_TRAIN_MAX_TASKS ?= 400
+HYPOTHESIS_LIBRARY_PUBLIC_EVAL_MAX_TASKS ?= 400
+HYPOTHESIS_LIBRARY_PUBLIC_FILTER_DIR ?= $(BUILD_DIR)/hypothesis_library_public_filter
+HYPOTHESIS_LIBRARY_PUBLIC_FILTER_MAX_TASKS ?= 400
+HYPOTHESIS_LIBRARY_PUBLIC_FILTER_SOURCE_MAX_TASKS ?= $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_MAX_TASKS)
+HYPOTHESIS_LIBRARY_PUBLIC_FILTER_HELDOUT_MAX_TASKS ?= $(HYPOTHESIS_LIBRARY_PUBLIC_FILTER_MAX_TASKS)
+HYPOTHESIS_LIBRARY_PUBLIC_FILTER_SOURCE_COUNT ?= 24
+HYPOTHESIS_LIBRARY_PUBLIC_FILTER_HELDOUT_COUNT ?= 48
+HYPOTHESIS_LIBRARY_PUBLIC_FILTER_EXTRA ?=
+HYPOTHESIS_LIBRARY_PUBLIC_REPORT_TOP_K ?= 20
+HYPOTHESIS_LIBRARY_PUBLIC_TRIAGE_DIR ?= $(BUILD_DIR)/hypothesis_library_public_triage
+HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR ?= $(BUILD_DIR)/hypothesis_library_neural_discovery
+HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_CLUSTERS ?= 12
+HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_VERIFY ?= 0
+HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_MUTATIONS_PER_CLUSTER ?= 2
+HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_MUTATION_VERIFY ?= 1
+HYPOTHESIS_LIBRARY_NEURAL_FAILURE_PROOF_DIR ?= $(HYPOTHESIS_LIBRARY_NEURAL_DISCOVERY_DIR)/failure_proof

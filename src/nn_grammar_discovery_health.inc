@@ -234,7 +234,6 @@ static char *nn_gd_health_experiment_from_target(const char *target) {
         {"modular-gate-search-smoke", "modular_gate_search"},
         {"arc-agi-induction-smoke", "arc_agi"},
         {"haiku-lm-smoke", "haiku_lm"},
-        {"haiku-word-lm-smoke", "haiku_word_lm"},
         {"haiku-understanding-smoke", "haiku_understanding"},
         {"haiku-coherence-hard-negatives", "haiku_coherence_hard_negatives"},
         {"signal-flight", "signal_flight"},
