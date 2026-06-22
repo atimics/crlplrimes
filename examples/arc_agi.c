@@ -1,7 +1,5 @@
 #include "nn.h"
 #include "nn_json.h"
-#include "nn_holographic_ranker.h"
-#include "holographic/leos_engine.h"
 
 #include <ctype.h>
 #include <dirent.h>
@@ -78,14 +76,8 @@ enum {
     ARC_PROGRAM_TASK_FEATURE_COUNT = 32,
     ARC_PROGRAM_FEATURE_COUNT = NN_PROGRAM_FEATURE_COUNT + ARC_PROGRAM_TASK_FEATURE_COUNT,
     ARC_PROGRAM_TRAIN_EPOCHS = 5,
-    ARC_PROGRAM_STRATEGY_COUNT = 11,
+    ARC_PROGRAM_STRATEGY_COUNT = 9,
     ARC_PROPOSAL_TRACE_NEGATIVE_CAP = 64,
-    ARC_HOLO_BUCKET_GATE_FEATURE_COUNT = 8,
-    ARC_HOLO_BUCKET_REVIEW_SELECTOR_BASE_FEATURES = 38,
-    ARC_HOLO_BUCKET_REVIEW_SELECTOR_MAX_HASH_BINS = 256,
-    ARC_HOLO_BUCKET_REVIEW_SELECTOR_MAX_FEATURES =
-        ARC_HOLO_BUCKET_REVIEW_SELECTOR_BASE_FEATURES +
-        ARC_HOLO_BUCKET_REVIEW_SELECTOR_MAX_HASH_BINS,
     ARC_OBJECT_CONNECT_HORIZONTAL = 0,
     ARC_OBJECT_CONNECT_VERTICAL = 1,
     ARC_OBJECT_CONNECT_BOTH = 2,
@@ -188,7 +180,7 @@ typedef enum {
     ARC_RULE_SYMMETRY_V = 51,
     ARC_RULE_MULTISCALE = 52,
     ARC_RULE_OBJECT_LABEL = 53,
-    ARC_RULE_HOLO_TILE = 54,
+    ARC_RULE_PERIOD_TILE = 54,
     ARC_RULE_DILATE = 55,
     ARC_RULE_REFLECT_TILE = 56,
     ARC_RULE_MARKER_MOTIF_TILE = 57,
@@ -462,11 +454,6 @@ static const NNExperimentSpec ARC_AGI_EXPERIMENT_SPEC = {
     .feature_count = sizeof(ARC_AGI_FEATURES) / sizeof(ARC_AGI_FEATURES[0]),
 };
 
-typedef enum {
-    ARC_VSA_REPRESENTATION_GRID = 0,
-    ARC_VSA_REPRESENTATION_OBJECT_SCENE = 1
-} ARCVSARepresentation;
-
 typedef struct {
     size_t epochs;
     size_t steps_per_epoch;
@@ -487,8 +474,6 @@ typedef struct {
     const char *program_train_dir;
     const char *hypothesis_library_prior_path;
     const char *save_hypothesis_prior_path;
-    const char *vsa_ranker_path;
-    ARCVSARepresentation vsa_representation;
     const char *arc_generative_prior_path;
     const char *task_ids;
     const char *exclude_task_ids;
@@ -499,15 +484,6 @@ typedef struct {
     const char *arc_sketch_probe_attempts_path;
     const char *arc_proposal_trace_path;
     int loader_summary_only;
-    int arc_holo_residual_diagnostics;
-    int arc_holo_pressure_residual;
-    size_t arc_holo_bucket_min_budget;
-    size_t arc_holo_bucket_review_slots;
-    size_t arc_holo_bucket_min_pressure_updates;
-    int arc_holo_bucket_learned_gate;
-    size_t arc_holo_bucket_learned_gate_min_examples;
-    nn_real arc_holo_bucket_learned_gate_threshold;
-    const char *arc_holo_bucket_review_selector_shadow_path;
     int shuffle_tasks;
     int unique_task_gate;
     int program_budget_grid;
@@ -525,7 +501,6 @@ typedef struct {
     int disable_marker_motif_tile;
     int disable_axis_tile;
     int disable_period_extend;
-    const char *holo_prior_path;
     const char *save_learned_state_path;
     const char *load_learned_state_path;
     size_t task_epochs;
@@ -838,9 +813,7 @@ typedef enum {
     ARC_PROGRAM_STRATEGY_TRACE_TASK_PRIOR = 5,
     ARC_PROGRAM_STRATEGY_TRACE_LINEAR = 6,
     ARC_PROGRAM_STRATEGY_TRACE_MLP = 7,
-    ARC_PROGRAM_STRATEGY_TRACE_HOLO_RESIDUAL = 8,
-    ARC_PROGRAM_STRATEGY_TRACE_HOLO_BUCKET = 9,
-    ARC_PROGRAM_STRATEGY_ORACLE = 10,
+    ARC_PROGRAM_STRATEGY_ORACLE = 8,
 } ARCProgramStrategy;
 
 typedef struct {
@@ -859,13 +832,6 @@ typedef struct {
 } ARCProgramProposerAggregate;
 
 typedef struct {
-    int enabled;
-    size_t feature_count;
-    size_t hash_bins;
-    double weights[ARC_HOLO_BUCKET_REVIEW_SELECTOR_MAX_FEATURES];
-} ARCHoloBucketReviewSelectorModel;
-
-typedef struct {
     size_t family_seen[32];
     size_t family_success[32];
     size_t op_seen[ARC_RULE_COUNT];
@@ -877,24 +843,6 @@ typedef struct {
     size_t linear_updates;
     NeuralNet *mlp;
     size_t mlp_updates;
-    HolographicRanker *holo_residual;
-    size_t holo_updates;
-    HoloPartitionedRanker *holo_pressure;
-    size_t holo_pressure_updates;
-    int holo_pressure_enabled;
-    size_t holo_bucket_min_budget;
-    size_t holo_bucket_review_slots;
-    size_t holo_bucket_min_pressure_updates;
-    int holo_bucket_learned_gate_enabled;
-    size_t holo_bucket_learned_gate_min_examples;
-    double holo_bucket_learned_gate_threshold;
-    double holo_bucket_gate_weights[ARC_HOLO_BUCKET_GATE_FEATURE_COUNT];
-    double holo_bucket_gate_bias;
-    size_t holo_bucket_gate_updates;
-    size_t holo_bucket_gate_positive_updates;
-    double holo_bucket_gate_target_sum;
-    double holo_bucket_gate_margin_sum;
-    ARCHoloBucketReviewSelectorModel holo_bucket_review_selector_shadow;
     size_t input_color_seen[ARC_COLOR_COUNT];
     size_t input_color_success[ARC_COLOR_COUNT];
     size_t output_color_seen[ARC_COLOR_COUNT];
@@ -1138,8 +1086,6 @@ static int arc_scene_unique_color_object(const ARCScene *scene,
                                          uint8_t color,
                                          ARCObject *object_out);
 static int arc_apply_multiscale_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
-static int arc_grid_to_hologram(const ARCGrid *grid, double *scene_out);
-static int arc_object_scene_to_hologram(const ARCGrid *grid, double *scene_out);
 static int arc_proposal_trace_should_emit(const ARCProgramEval *eval,
                                           size_t rejected_emitted,
                                           size_t rejected_cap);
@@ -1176,58 +1122,12 @@ static int arc_candidate_from_color_map_hypothesis(const NNHypothesis *hypothesi
                                                    ARCTransformCandidate *candidate);
 #include "arc_agi_hypothesis_templates.inc"
 
-static HolographicRanker *g_vsa_ranker = NULL;
-static ARCVSARepresentation g_vsa_representation = ARC_VSA_REPRESENTATION_GRID;
-typedef struct {
-    size_t score_attempts;
-    size_t store_attempts;
-    size_t stores;
-    size_t blocked_no_ranker;
-    size_t blocked_no_engine;
-    size_t blocked_no_train;
-    size_t blocked_hologram;
-    size_t blocked_no_best_rule;
-    size_t blocked_uncertified;
-} ARCVSARankerStats;
-static ARCVSARankerStats g_vsa_stats;
-
-static const char *arc_vsa_representation_name(ARCVSARepresentation representation)
-{
-    switch (representation) {
-    case ARC_VSA_REPRESENTATION_OBJECT_SCENE:
-        return "arc_object_scene_v1";
-    case ARC_VSA_REPRESENTATION_GRID:
-    default:
-        return "arc_grid_hologram_v1";
-    }
-}
-
-static int arc_vsa_encode_grid(const ARCGrid *grid, double *scene_out)
-{
-    if (g_vsa_representation == ARC_VSA_REPRESENTATION_OBJECT_SCENE) {
-        return arc_object_scene_to_hologram(grid, scene_out);
-    }
-    return arc_grid_to_hologram(grid, scene_out);
-}
-
 static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask *task, const ARCTransformCandidate *candidates, size_t candidate_count)
 {
     ARCTransformMetrics metrics; static ARCGrid best[ARC_MAX_PAIRS];
     memset(&metrics,0,sizeof(metrics)); memset(best,0,sizeof(best));
     metrics.test_pairs=task->test_count; metrics.rules=candidate_count;
-    double bs=-1e100; int hp=0; size_t best_rule=SIZE_MAX;
-    double grid_hologram[256];
-    int holo_ready = -1;
-    static LeosEngine *vsa_eng = NULL;
-    if (g_vsa_ranker == NULL) ++g_vsa_stats.blocked_no_ranker;
-    if (g_vsa_ranker && !vsa_eng) { vsa_eng = leos_engine_create(256); }
-    if (g_vsa_ranker && vsa_eng == NULL) ++g_vsa_stats.blocked_no_engine;
-    if (g_vsa_ranker && vsa_eng && task->train_count > 0) {
-        holo_ready = (arc_vsa_encode_grid(&task->train[0].input, grid_hologram) == 0) ? 1 : -1;
-        if (holo_ready <= 0) ++g_vsa_stats.blocked_hologram;
-    } else if (g_vsa_ranker && vsa_eng && task->train_count == 0) {
-        ++g_vsa_stats.blocked_no_train;
-    }
+    double bs=-1e100; int hp=0;
     for(size_t rule=0;rule<metrics.rules;++rule){
         size_t cc=0,mm=0,up=0;
         if(!arc_candidate_matches_train(task,&candidates[rule],&cc,&mm,&up)){metrics.train_checked_cells+=cc;metrics.train_mismatches+=mm;metrics.unsupported_train_pairs+=up;continue;}
@@ -1235,17 +1135,8 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask 
         arc_append_accepted_rule(metrics.accepted_rules,sizeof(metrics.accepted_rules),candidates[rule].name);
         size_t ut=0; ARCGrid pr[ARC_MAX_PAIRS];
         if(!arc_apply_candidate_to_tests(task,&candidates[rule],pr,&ut)){metrics.unsupported_test_pairs+=ut;continue;}
-        /* Blend structural score with holographic similarity when available */
         double sc = arc_structural_program_score(&candidates[rule]);
-        if (g_vsa_ranker && vsa_eng && holo_ready > 0 && holo_ranker_count(g_vsa_ranker) > 0) {
-            double op_vec[256];
-            leos_engine_keygen(vsa_eng, (uint64_t)(candidates[rule].op * 1000 + (size_t)arc_candidate_family(&candidates[rule])), op_vec);
-            double vsa_scores[1];
-            ++g_vsa_stats.score_attempts;
-            holo_ranker_score(g_vsa_ranker, grid_hologram, op_vec, 1, vsa_scores);
-            sc += vsa_scores[0] * 50.0;
-        }
-        if(sc>bs){bs=sc;best_rule=rule;memcpy(best,pr,sizeof(best));hp=1;}
+        if(sc>bs){bs=sc;memcpy(best,pr,sizeof(best));hp=1;}
     }
     if(hp){memcpy(metrics.predictions,best,sizeof(metrics.predictions));metrics.prediction_count=task->test_count;}
     metrics.unique_test_prediction=1;
@@ -1253,16 +1144,6 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates(const ARCTask 
     for(size_t p=0;p<task->test_count;++p){if(!task->test[p].has_output){atk=0;continue;}size_t cells=arc_grid_cells(&task->test[p].output);metrics.test_cells+=cells;if(!hp||p>=metrics.prediction_count||!arc_grid_same_shape(&metrics.predictions[p],&task->test[p].output))continue;for(size_t c=0;c<cells;++c)metrics.test_correct_cells+=metrics.predictions[p].cells[c]==task->test[p].output.cells[c]?1:0;}
     metrics.test_exact=atk&&metrics.test_cells>0&&metrics.test_correct_cells==metrics.test_cells;
     metrics.certified=metrics.train_consistent_rules!=0;
-    /* Store winning (grid, operator) pair in VSA ranker for future tasks */
-    if (g_vsa_ranker) ++g_vsa_stats.store_attempts;
-    if (g_vsa_ranker && !metrics.certified) ++g_vsa_stats.blocked_uncertified;
-    if (g_vsa_ranker && metrics.certified && best_rule == SIZE_MAX) ++g_vsa_stats.blocked_no_best_rule;
-    if (metrics.certified && best_rule != SIZE_MAX && g_vsa_ranker && vsa_eng && holo_ready > 0) {
-        double op_vec[256];
-        leos_engine_keygen(vsa_eng, (uint64_t)(candidates[best_rule].op * 1000 + (size_t)arc_candidate_family(&candidates[best_rule])), op_vec);
-        holo_ranker_store(g_vsa_ranker, grid_hologram, op_vec);
-        ++g_vsa_stats.stores;
-    }
     return metrics;
 }
 
@@ -1274,19 +1155,7 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates_learned(
     ARCTransformMetrics metrics; static ARCGrid best[ARC_MAX_PAIRS];
     memset(&metrics,0,sizeof(metrics)); memset(best,0,sizeof(best));
     metrics.test_pairs=task->test_count; metrics.rules=candidate_count;
-    double bs=-1e100; int hp=0; size_t best_rule=SIZE_MAX;
-    double grid_hologram[256];
-    int holo_ready = -1;
-    static LeosEngine *vsa_eng = NULL;
-    if (g_vsa_ranker == NULL) ++g_vsa_stats.blocked_no_ranker;
-    if (g_vsa_ranker && !vsa_eng) { vsa_eng = leos_engine_create(256); }
-    if (g_vsa_ranker && vsa_eng == NULL) ++g_vsa_stats.blocked_no_engine;
-    if (g_vsa_ranker && vsa_eng && task->train_count > 0) {
-        holo_ready = (arc_vsa_encode_grid(&task->train[0].input, grid_hologram) == 0) ? 1 : -1;
-        if (holo_ready <= 0) ++g_vsa_stats.blocked_hologram;
-    } else if (g_vsa_ranker && vsa_eng && task->train_count == 0) {
-        ++g_vsa_stats.blocked_no_train;
-    }
+    double bs=-1e100; int hp=0;
     for(size_t rule=0;rule<metrics.rules;++rule){
         size_t cc=0,mm=0,up=0;
         if(!arc_candidate_matches_train(task,&candidates[rule],&cc,&mm,&up)){metrics.train_checked_cells+=cc;metrics.train_mismatches+=mm;metrics.unsupported_train_pairs+=up;continue;}
@@ -1296,15 +1165,7 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates_learned(
         if(!arc_apply_candidate_to_tests(task,&candidates[rule],pr,&ut)){metrics.unsupported_test_pairs+=ut;continue;}
         double sc = arc_structural_program_score(&candidates[rule]);
         if (learned) sc += arc_learned_family_score(learned, &candidates[rule]) * 10.0;
-        if (g_vsa_ranker && vsa_eng && holo_ready > 0 && holo_ranker_count(g_vsa_ranker) > 0) {
-            double op_vec[256];
-            leos_engine_keygen(vsa_eng, (uint64_t)(candidates[rule].op * 1000 + (size_t)arc_candidate_family(&candidates[rule])), op_vec);
-            double vsa_scores[1];
-            ++g_vsa_stats.score_attempts;
-            holo_ranker_score(g_vsa_ranker, grid_hologram, op_vec, 1, vsa_scores);
-            sc += vsa_scores[0] * 50.0;
-        }
-        if(sc>bs){bs=sc;best_rule=rule;memcpy(best,pr,sizeof(best));hp=1;}
+        if(sc>bs){bs=sc;memcpy(best,pr,sizeof(best));hp=1;}
     }
     if(hp){memcpy(metrics.predictions,best,sizeof(metrics.predictions));metrics.prediction_count=task->test_count;}
     metrics.unique_test_prediction=1;
@@ -1312,15 +1173,6 @@ static ARCTransformMetrics evaluate_arc_transform_gate_candidates_learned(
     for(size_t p=0;p<task->test_count;++p){if(!task->test[p].has_output){atk=0;continue;}size_t cells=arc_grid_cells(&task->test[p].output);metrics.test_cells+=cells;if(!hp||p>=metrics.prediction_count||!arc_grid_same_shape(&metrics.predictions[p],&task->test[p].output))continue;for(size_t c=0;c<cells;++c)metrics.test_correct_cells+=metrics.predictions[p].cells[c]==task->test[p].output.cells[c]?1:0;}
     metrics.test_exact=atk&&metrics.test_cells>0&&metrics.test_correct_cells==metrics.test_cells;
     metrics.certified=metrics.train_consistent_rules!=0;
-    if (g_vsa_ranker) ++g_vsa_stats.store_attempts;
-    if (g_vsa_ranker && !metrics.certified) ++g_vsa_stats.blocked_uncertified;
-    if (g_vsa_ranker && metrics.certified && best_rule == SIZE_MAX) ++g_vsa_stats.blocked_no_best_rule;
-    if (metrics.certified && best_rule != SIZE_MAX && g_vsa_ranker && vsa_eng && holo_ready > 0) {
-        double op_vec[256];
-        leos_engine_keygen(vsa_eng, (uint64_t)(candidates[best_rule].op * 1000 + (size_t)arc_candidate_family(&candidates[best_rule])), op_vec);
-        holo_ranker_store(g_vsa_ranker, grid_hologram, op_vec);
-        ++g_vsa_stats.stores;
-    }
     return metrics;
 }
 
@@ -2167,31 +2019,6 @@ static void print_arc_loader_summary_json(const char *task_dir, const ARCLoaderS
            (double)summary->test_correct_cells / cells);
 }
 
-static void print_arc_vsa_ranker_summary_json(const char *path)
-{
-    printf("{\"schema\":\"crlp.arc_vsa_ranker.summary.v1\",\"report_version\":1,"
-           "\"path\":");
-    print_json_string(path);
-    printf(",\"representation_condition\":");
-    print_json_string(arc_vsa_representation_name(g_vsa_representation));
-    printf(",\"score_attempts\":%zu,\"store_attempts\":%zu,"
-           "\"stores\":%zu,\"stored_count\":%zu,\"fidelity\":%.8f,"
-           "\"blocked_no_ranker\":%zu,\"blocked_no_engine\":%zu,"
-           "\"blocked_no_train\":%zu,\"blocked_hologram\":%zu,"
-           "\"blocked_no_best_rule\":%zu,\"blocked_uncertified\":%zu}\n",
-           g_vsa_stats.score_attempts,
-           g_vsa_stats.store_attempts,
-           g_vsa_stats.stores,
-           holo_ranker_count(g_vsa_ranker),
-           holo_ranker_fidelity(g_vsa_ranker),
-           g_vsa_stats.blocked_no_ranker,
-           g_vsa_stats.blocked_no_engine,
-           g_vsa_stats.blocked_no_train,
-           g_vsa_stats.blocked_hologram,
-           g_vsa_stats.blocked_no_best_rule,
-           g_vsa_stats.blocked_uncertified);
-}
-
 static void print_arc_hypothesis_selection_json(const char *task_id,
                                                 const ARCHypothesisSelectionStats *stats)
 {
@@ -2715,8 +2542,6 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
     ARCProgramProposerAggregate
         program_aggregates[ARC_PROGRAM_BUDGET_GRID_COUNT][ARC_PROGRAM_STRATEGY_COUNT];
     g_arc_active_config = config;
-    g_vsa_representation = config->vsa_representation;
-    if (config->vsa_ranker_path != NULL) { memset(&g_vsa_stats, 0, sizeof(g_vsa_stats)); g_vsa_ranker = holo_ranker_create(256); if (g_vsa_ranker) { FILE *tf = fopen(config->vsa_ranker_path, "rb"); if (tf) { fclose(tf); holo_ranker_load(g_vsa_ranker, config->vsa_ranker_path); } } }
     ARCProgramLearnedState learned_state;
     if (!arc_program_learned_init(&learned_state,
                                   config,
@@ -2731,18 +2556,6 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         free(files);
         return 0;
     }
-    proposal_trace_prior.holo_pressure_enabled = config->arc_holo_pressure_residual;
-    proposal_trace_prior.holo_bucket_min_budget = config->arc_holo_bucket_min_budget;
-    proposal_trace_prior.holo_bucket_review_slots =
-        config->arc_holo_bucket_review_slots;
-    proposal_trace_prior.holo_bucket_min_pressure_updates =
-        config->arc_holo_bucket_min_pressure_updates;
-    proposal_trace_prior.holo_bucket_learned_gate_enabled =
-        config->arc_holo_bucket_learned_gate;
-    proposal_trace_prior.holo_bucket_learned_gate_min_examples =
-        config->arc_holo_bucket_learned_gate_min_examples;
-    proposal_trace_prior.holo_bucket_learned_gate_threshold =
-        (double)config->arc_holo_bucket_learned_gate_threshold;
     ARCTransformCandidate *candidates =
         calloc(ARC_RULE_CANDIDATE_COUNT, sizeof(*candidates));
     ARCProgramEval *evals = calloc(ARC_RULE_CANDIDATE_COUNT, sizeof(*evals));
@@ -2752,22 +2565,6 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         calloc(ARC_RULE_CANDIDATE_COUNT, sizeof(*learn_evals));
     if (candidates == NULL || evals == NULL ||
         learn_candidates == NULL || learn_evals == NULL) {
-        free(candidates);
-        free(evals);
-        free(learn_candidates);
-        free(learn_evals);
-        arc_proposal_trace_prior_free(&proposal_trace_prior);
-        arc_program_learned_free(&learned_state);
-        free(files);
-        return 0;
-    }
-    if (config->arc_holo_bucket_review_selector_shadow_path != NULL &&
-        !arc_holo_bucket_review_selector_load(
-            &proposal_trace_prior.holo_bucket_review_selector_shadow,
-            config->arc_holo_bucket_review_selector_shadow_path)) {
-        fprintf(stderr,
-                "Failed to load ARC Holo bucket review selector shadow model from %s\n",
-                config->arc_holo_bucket_review_selector_shadow_path);
         free(candidates);
         free(evals);
         free(learn_candidates);
@@ -2865,71 +2662,18 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
             continue;
         }
         ARCHypothesisSelectionStats hypothesis_stats;
-        
-        static uint8_t *solved_kinds = NULL;
-        static size_t solved_kind_count = 0;
-        if (config->holo_prior_path != NULL && solved_kinds == NULL) {
-            solved_kinds = calloc(256, sizeof(uint8_t));
-        }
-
-        /* Cross-task holo cache: try transforms from similar previously-solved tasks */
-        static ARCTransformCandidate *solved_xforms = NULL;
-        static size_t solved_count = 0;
-        if (config->holo_prior_path != NULL && solved_xforms == NULL) {
-            solved_xforms = calloc(ARC_RULE_CANDIDATE_COUNT, sizeof(ARCTransformCandidate));
-        }
-        
-        /* Try cached transforms first */
         ARCTask *rotated = calloc(1, sizeof(ARCTask));
         if (rotated == NULL) break;
         int aug_limit = config->unique_task_gate ? 1 : 8;
         for (int aug = 0; aug < aug_limit; ++aug) {
             int r = aug % 4, flip = aug >= 4 ? 1 : 0;
             if (aug == 0) *rotated = task; else arc_transform_task(&task, rotated, r, flip);
-        int cache_hit = 0;
-        for (size_t ci = 0; ci < solved_count && !cache_hit; ci++) {
-            ARCTransformCandidate tc[1] = {solved_xforms[ci]};
-            ARCTransformMetrics tm = evaluate_arc_transform_gate_candidates_learned(rotated, tc, 1, &learned_state);
-            if (tm.certified) {
-                arc_loader_summary_add(&summary, rotated, &tm);
-                cache_hit = 1;
-            }
-        }
-        if (cache_hit) {
-            continue;
-        }
-        
         size_t candidate_count = arc_build_candidate_set(rotated,
                                                          &learned_state,
                                                          candidates,
                                                          ARC_RULE_CANDIDATE_COUNT,
                                                          config->induction_smoke,
                                                          &hypothesis_stats);
-        
-        /* Reorder candidates: prioritize transform types that solved similar tasks */
-        if (config->holo_prior_path != NULL && solved_kind_count > 0) {
-            ARCTransformCandidate reordered[ARC_RULE_CANDIDATE_COUNT];
-            size_t ri = 0;
-            /* First pass: candidates matching previously-successful transform types */
-            for (size_t k = 0; k < solved_kind_count && k < 10; k++) {
-                for (size_t j = 0; j < candidate_count; j++) {
-                    if (candidates[j].output_selector_kind == solved_kinds[k]) {
-                        reordered[ri++] = candidates[j];
-                    }
-                }
-            }
-            /* Second pass: remaining candidates */
-            for (size_t j = 0; j < candidate_count; j++) {
-                int already = 0;
-                for (size_t r = 0; r < ri; r++) {
-                    if (memcmp(&reordered[r], &candidates[j], sizeof(ARCTransformCandidate)) == 0)
-                        { already = 1; break; }
-                }
-                if (!already) reordered[ri++] = candidates[j];
-            }
-            memcpy(candidates, reordered, ri * sizeof(ARCTransformCandidate));
-        }
-        
         ARCTransformMetrics transform =
             evaluate_arc_transform_gate_candidates_learned(rotated, candidates, candidate_count, &learned_state);
         arc_loader_summary_add(&summary, rotated, &transform);
@@ -2940,20 +2684,6 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
                                      evals,
                                      candidate_count,
                                      ARC_PROPOSAL_TRACE_NEGATIVE_CAP);
-        
-        /* Cache successful transform TYPE for cross-task reuse */
-        if (transform.certified && solved_kinds && solved_kind_count < 200) {
-            for (size_t j = 0; j < candidate_count; j++) {
-                if (candidates[j].output_selector_kind != 0) {
-                    uint8_t kind = candidates[j].output_selector_kind;
-                    int seen = 0;
-                    for (size_t k = 0; k < solved_kind_count; k++)
-                        if (solved_kinds[k] == kind) { seen = 1; break; }
-                    if (!seen) solved_kinds[solved_kind_count++] = kind;
-                    break;
-                }
-            }
-        }
         if (config->induction_smoke) {
             print_arc_hypothesis_selection_json(rotated->id, &hypothesis_stats);
             print_arc_program_task_audit_json(rotated,
@@ -2965,28 +2695,6 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
                 arc_emit_induction_smoke(rotated, candidates, evals, candidate_count);
         }
         for (size_t budget_index = 0; budget_index < budget_count; ++budget_index) {
-            if (config->arc_holo_residual_diagnostics) {
-                arc_emit_holo_residual_diagnostics(&task,
-                                                   candidates,
-                                                   evals,
-                                                   candidate_count,
-                                                   &learned_state,
-                                                   &proposal_trace_prior,
-                                                   budgets[budget_index]);
-                arc_emit_holo_bucket_gate_diagnostic(&task,
-                                                     candidates,
-                                                     evals,
-                                                     candidate_count,
-                                                     &proposal_trace_prior,
-                                                     budgets[budget_index]);
-                arc_emit_holo_bucket_diagnostics(&task,
-                                                 candidates,
-                                                 evals,
-                                                 candidate_count,
-                                                 &learned_state,
-                                                 &proposal_trace_prior,
-                                                 budgets[budget_index]);
-            }
             for (size_t strategy = 0; strategy < ARC_PROGRAM_STRATEGY_COUNT; ++strategy) {
                 arc_program_aggregate_task(&program_aggregates[budget_index][strategy],
                                            &task,
@@ -3067,8 +2775,6 @@ static int ARC_NOINLINE run_arc_task_loader(const ARCConfig *config)
         return 0;
     }
     if (config->save_hypothesis_prior_path != NULL) arc_program_learned_save_hypothesis_library_prior(&learned_state, config->save_hypothesis_prior_path);
-    if (config->vsa_ranker_path != NULL && g_vsa_ranker != NULL) holo_ranker_save(g_vsa_ranker, config->vsa_ranker_path);
-    if (config->vsa_ranker_path != NULL) print_arc_vsa_ranker_summary_json(config->vsa_ranker_path);
     if (proposal_trace_fp != NULL) {
         fclose(proposal_trace_fp);
     }
@@ -3106,14 +2812,6 @@ static void print_usage(FILE *stream)
           "[--arc-sketch-probe-sources path] [--arc-sketch-probe-prior path] "
           "[--arc-sketch-probe-attempts path] "
           "[--arc-proposal-trace path] "
-          "[--arc-holo-residual-diagnostics] [--arc-holo-pressure-residual] "
-          "[--arc-holo-bucket-min-budget count] "
-          "[--arc-holo-bucket-review-slots count] "
-          "[--arc-holo-bucket-min-pressure-updates count] "
-          "[--arc-holo-bucket-learned-gate] "
-          "[--arc-holo-bucket-learned-gate-min-examples count] "
-          "[--arc-holo-bucket-learned-gate-threshold rate] "
-          "[--arc-holo-bucket-review-selector-shadow path] "
           "[--arc-sketches-per-task count] "
           "[--hypothesis-top-k count] [--disable-hypothesis-neural-prior] "
           "[--disable-hypothesis-slot-prior] [--disable-hypothesis-cold-start] "
@@ -3125,9 +2823,8 @@ static void print_usage(FILE *stream)
           "[--disable-axis-tile] [--disable-period-extend] "
           "[--arc-runtime-sketch-mine-cap count] "
           "[--arc-generative-prior-op-cap count] "
-          "[--save-learned-state path] [--load-learned-state path] [--holo-prior path] [--task-epochs count] [--shuffle] [--unique-task-gate] [--vsa-ranker path] [--vsa-representation grid|object-scene] [--save-hypothesis-prior path] [--hypothesis-library-prior path] [--loader-summary-only] [--induction] "
-          "[--min-induction-evidence count] "
-          "[--holo-prior path]\n",
+          "[--save-learned-state path] [--load-learned-state path] [--task-epochs count] [--shuffle] [--unique-task-gate] [--save-hypothesis-prior path] [--hypothesis-library-prior path] [--loader-summary-only] [--induction] "
+          "[--min-induction-evidence count]\n",
           stream);
 }
 
@@ -3152,8 +2849,6 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->program_train_dir = NULL;
     config->hypothesis_library_prior_path = NULL;
     config->save_hypothesis_prior_path = NULL;
-    config->vsa_ranker_path = NULL;
-    config->vsa_representation = ARC_VSA_REPRESENTATION_GRID;
     config->arc_generative_prior_path = NULL;
     config->task_ids = NULL;
     config->exclude_task_ids = NULL;
@@ -3164,15 +2859,6 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->arc_sketch_probe_attempts_path = NULL;
     config->arc_proposal_trace_path = NULL;
     config->loader_summary_only = 0;
-    config->arc_holo_residual_diagnostics = 0;
-    config->arc_holo_pressure_residual = 0;
-    config->arc_holo_bucket_min_budget = 2;
-    config->arc_holo_bucket_review_slots = 0;
-    config->arc_holo_bucket_min_pressure_updates = 4;
-    config->arc_holo_bucket_learned_gate = 0;
-    config->arc_holo_bucket_learned_gate_min_examples = 32;
-    config->arc_holo_bucket_learned_gate_threshold = (nn_real)0.50;
-    config->arc_holo_bucket_review_selector_shadow_path = NULL;
     config->shuffle_tasks = 0;
     config->unique_task_gate = 0;
     config->program_budget_grid = 0;
@@ -3190,7 +2876,6 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
     config->disable_marker_motif_tile = 0;
     config->disable_axis_tile = 0;
     config->disable_period_extend = 0;
-    config->holo_prior_path = NULL;
     config->save_learned_state_path = NULL;
     config->load_learned_state_path = NULL;
     config->task_epochs = 1;
@@ -3251,7 +2936,6 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             if (!nn_parse_real_positive_text(argv[++i], &config->program_learning_rate)) {
                 return 0;
             }
-        } else if (strcmp(argv[i], "--holo-prior") == 0 && i + 1 < argc) { config->holo_prior_path = argv[++i]; if (config->holo_prior_path[0] == '\0') return 0;
         } else if (strcmp(argv[i], "--task-epochs") == 0 && i + 1 < argc) { if (!nn_parse_size_text(argv[++i], &config->task_epochs)) return 0;
         } else if (strcmp(argv[i], "--save-hypothesis-prior") == 0 && i + 1 < argc) { config->save_hypothesis_prior_path = argv[++i]; if (config->save_hypothesis_prior_path[0] == '\0') return 0;
         } else if (strcmp(argv[i], "--hypothesis-library-prior") == 0 && i + 1 < argc) {
@@ -3309,52 +2993,6 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
                    i + 1 < argc) {
             config->arc_proposal_trace_path = argv[++i];
             if (config->arc_proposal_trace_path[0] == '\0') {
-                return 0;
-            }
-        } else if (strcmp(argv[i], "--arc-holo-residual-diagnostics") == 0) {
-            config->arc_holo_residual_diagnostics = 1;
-        } else if (strcmp(argv[i], "--arc-holo-pressure-residual") == 0) {
-            config->arc_holo_pressure_residual = 1;
-        } else if (strcmp(argv[i], "--arc-holo-bucket-min-budget") == 0 &&
-                   i + 1 < argc) {
-            if (!nn_parse_size_text(argv[++i], &config->arc_holo_bucket_min_budget)) {
-                return 0;
-            }
-        } else if (strcmp(argv[i], "--arc-holo-bucket-review-slots") == 0 &&
-                   i + 1 < argc) {
-            const char *value = argv[++i];
-            if (strcmp(value, "0") == 0) {
-                config->arc_holo_bucket_review_slots = 0;
-            } else if (!nn_parse_size_text(value,
-                                           &config->arc_holo_bucket_review_slots)) {
-                return 0;
-            }
-        } else if (strcmp(argv[i], "--arc-holo-bucket-min-pressure-updates") == 0 &&
-                   i + 1 < argc) {
-            if (!nn_parse_size_text(argv[++i],
-                                    &config->arc_holo_bucket_min_pressure_updates)) {
-                return 0;
-            }
-        } else if (strcmp(argv[i], "--arc-holo-bucket-learned-gate") == 0) {
-            config->arc_holo_bucket_learned_gate = 1;
-        } else if (strcmp(argv[i], "--arc-holo-bucket-learned-gate-min-examples") == 0 &&
-                   i + 1 < argc) {
-            if (!nn_parse_size_text(argv[++i],
-                                    &config->arc_holo_bucket_learned_gate_min_examples)) {
-                return 0;
-            }
-        } else if (strcmp(argv[i], "--arc-holo-bucket-learned-gate-threshold") == 0 &&
-                   i + 1 < argc) {
-            nn_real value = 0;
-            if (!nn_parse_real_nonnegative_text(argv[++i], &value) ||
-                value > (nn_real)1) {
-                return 0;
-            }
-            config->arc_holo_bucket_learned_gate_threshold = value;
-        } else if (strcmp(argv[i], "--arc-holo-bucket-review-selector-shadow") == 0 &&
-                   i + 1 < argc) {
-            config->arc_holo_bucket_review_selector_shadow_path = argv[++i];
-            if (config->arc_holo_bucket_review_selector_shadow_path[0] == '\0') {
                 return 0;
             }
         } else if (strcmp(argv[i], "--arc-sketches-per-task") == 0 && i + 1 < argc) {
@@ -3416,10 +3054,6 @@ static int parse_config(int argc, char **argv, ARCConfig *config, int *schema_on
             config->save_learned_state_path = argv[++i];
         } else if (strcmp(argv[i], "--load-learned-state") == 0 && i + 1 < argc) {
             config->load_learned_state_path = argv[++i];
-        } else if (strcmp(argv[i], "--holo-prior") == 0 && i + 1 < argc) {
-            config->holo_prior_path = argv[++i];
-        } else if (strcmp(argv[i], "--vsa-ranker") == 0 && i + 1 < argc) { config->vsa_ranker_path = argv[++i]; if (config->vsa_ranker_path[0] == '\0') return 0;
-        } else if (strcmp(argv[i], "--vsa-representation") == 0 && i + 1 < argc) { const char *value = argv[++i]; if (strcmp(value, "grid") == 0 || strcmp(value, "arc_grid_hologram_v1") == 0) { config->vsa_representation = ARC_VSA_REPRESENTATION_GRID; } else if (strcmp(value, "object-scene") == 0 || strcmp(value, "arc_object_scene_v1") == 0) { config->vsa_representation = ARC_VSA_REPRESENTATION_OBJECT_SCENE; } else { return 0; }
         } else if (strcmp(argv[i], "--shuffle") == 0) { config->shuffle_tasks = 1;
         } else if (strcmp(argv[i], "--unique-task-gate") == 0) { config->unique_task_gate = 1;
         } else if (strcmp(argv[i], "--loader-summary-only") == 0) {
@@ -3578,8 +3212,8 @@ int main(int argc, char **argv)
     }
     return run_builtin_arc_experiment(&config);
 }
-/* Holographic tile detector: detect cyclic pattern period and tile */
-static int arc_apply_holo_tile_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out) {
+/* Periodic tile detector: detect cyclic pattern period and tile */
+static int arc_apply_period_tile_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out) {
     if (out->width > ARC_MAX_GRID_WIDTH || out->height > ARC_MAX_GRID_HEIGHT || out->width * out->height > ARC_MAX_GRID_CELLS) return 0;
     static size_t xs[900],ys[900]; static uint8_t cs[900]; size_t n=0;
     for(size_t y=0;y<in->height&&n<900;++y)for(size_t x=0;x<in->width&&n<900;++x){
@@ -3593,7 +3227,7 @@ static int arc_apply_holo_tile_candidate(const ARCTransformCandidate *c, const A
         if(cs[i]==cs[j]){size_t d=xs[j]>xs[i]?xs[j]-xs[i]:xs[i]-xs[j];if(d>0&&d<period)period=d;}
     if(period<2||period>30)period=in->width;
 
-    /* VSA verification skipped: fast heuristic is sufficient */
+    /* Fast periodic heuristic. */
 
     static uint8_t row[30]; memset(row,0,sizeof(row));
     size_t by=0;int fd=0;
@@ -3606,143 +3240,4 @@ static int arc_apply_holo_tile_candidate(const ARCTransformCandidate *c, const A
     arc_init_grid(out,out->width,out->height);
     for(size_t y=0;y<out->height;++y){size_t sh=y%period;for(size_t x=0;x<out->width;++x)out->cells[y*out->width+x]=row[(x+sh)%period];}
     return 1;
-}
-/* Reusable holographic grid encoder: grid → 256-dim scene vector.
- * Precomputes position keys (900 cells) and color keys (10 colors) once.
- * Caller provides pre-allocated double[256]. Returns 0 on success. */
-static int arc_grid_to_hologram(const ARCGrid *grid, double *scene_out) {
-    static LeosEngine *eng = NULL;
-    static double pos_keys[900][256];
-    static double col_keys[10][256];
-    static int init = 0;
-    if (!init) {
-        eng = leos_engine_create(256);
-        if (!eng) return -1;
-        for (size_t y = 0; y < 30; ++y)
-            for (size_t x = 0; x < 30; ++x)
-                leos_engine_keygen(eng, (uint64_t)(y * 1000 + x), pos_keys[y * 30 + x]);
-        for (uint8_t c = 0; c < 10; ++c)
-            leos_engine_keygen(eng, (uint64_t)(c * 10000 + 1), col_keys[c]);
-        init = 1;
-    }
-    if (!eng) return -1;
-    memset(scene_out, 0, 256 * sizeof(double));
-    double cell[256]; size_t count = 0;
-    for (size_t y = 0; y < grid->height; ++y)
-        for (size_t x = 0; x < grid->width; ++x) {
-            uint8_t v = grid->cells[y * grid->width + x];
-            if (v == 0 || v >= 10) continue;
-            if (++count > 200) break;
-            leos_engine_bind(eng, pos_keys[y * 30 + x], col_keys[v], cell);
-            for (size_t j = 0; j < 256; ++j) scene_out[j] += cell[j];
-        }
-    leos_engine_normalize(eng, scene_out);
-    return 0;
-}
-
-static size_t arc_vsa_bucket_size(size_t value)
-{
-    if (value == 0) return 0;
-    if (value <= 1) return 1;
-    if (value <= 2) return 2;
-    if (value <= 4) return 3;
-    if (value <= 8) return 4;
-    if (value <= 16) return 5;
-    if (value <= 32) return 6;
-    if (value <= 64) return 7;
-    if (value <= 128) return 8;
-    return 9;
-}
-
-static size_t arc_vsa_bucket_coord(double value, size_t limit)
-{
-    if (limit <= 1) return 0;
-    double scaled = value * 7.0 / (double)(limit - 1u);
-    if (scaled < 0.0) return 0;
-    if (scaled > 7.0) return 7;
-    return (size_t)(scaled + 0.5);
-}
-
-static void arc_vsa_add_feature(LeosEngine *eng,
-                                double *out,
-                                uint64_t attr_seed,
-                                uint64_t value_seed,
-                                double *attr_vec,
-                                double *value_vec,
-                                double *bound)
-{
-    leos_engine_keygen(eng, attr_seed, attr_vec);
-    leos_engine_keygen(eng, value_seed, value_vec);
-    leos_engine_bind(eng, attr_vec, value_vec, bound);
-    for (size_t j = 0; j < 256; ++j) out[j] += bound[j];
-}
-
-static void arc_vsa_add_object_feature(LeosEngine *eng,
-                                       double *object_vec,
-                                       uint64_t attr,
-                                       uint64_t value,
-                                       double *attr_vec,
-                                       double *value_vec,
-                                       double *bound)
-{
-    arc_vsa_add_feature(eng,
-                        object_vec,
-                        UINT64_C(0x9a1d000000000000) ^ attr,
-                        UINT64_C(0x9a1e000000000000) ^ value,
-                        attr_vec,
-                        value_vec,
-                        bound);
-}
-
-static int arc_object_scene_to_hologram(const ARCGrid *grid, double *scene_out)
-{
-    static LeosEngine *eng = NULL;
-    if (eng == NULL) {
-        eng = leos_engine_create(256);
-        if (eng == NULL) return -1;
-    }
-    ARCScene scene;
-    int complete_scene = arc_extract_scene(grid, 0, &scene);
-    memset(scene_out, 0, 256 * sizeof(double));
-    double attr_vec[256], value_vec[256], bound[256], object_vec[256], slot_vec[256];
-    size_t color_objects[10] = {0};
-    size_t foreground_cells = 0;
-    for (size_t i = 0; i < scene.object_count; ++i) {
-        const ARCObject *object = &scene.objects[i];
-        if (object->color < 10) ++color_objects[object->color];
-        foreground_cells += object->count;
-    }
-
-    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000001), UINT64_C(0x9b02000000000000) ^ grid->width, attr_vec, value_vec, bound);
-    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000002), UINT64_C(0x9b02000000000020) ^ grid->height, attr_vec, value_vec, bound);
-    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000003), UINT64_C(0x9b02000000000040) ^ arc_vsa_bucket_size(scene.object_count), attr_vec, value_vec, bound);
-    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000004), UINT64_C(0x9b02000000000060) ^ arc_vsa_bucket_size(foreground_cells), attr_vec, value_vec, bound);
-    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000005), UINT64_C(0x9b02000000000080) ^ arc_vsa_bucket_size(scene.repeated_shape_pairs), attr_vec, value_vec, bound);
-    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000006), UINT64_C(0x9b020000000000a0) ^ arc_vsa_bucket_size(scene.aligned_pairs), attr_vec, value_vec, bound);
-    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000007), UINT64_C(0x9b020000000000c0) ^ arc_vsa_bucket_size(scene.adjacent_pairs), attr_vec, value_vec, bound);
-    arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b01000000000008), UINT64_C(0x9b020000000000e0) ^ (complete_scene ? 1u : 0u), attr_vec, value_vec, bound);
-    for (uint8_t color = 1; color < 10; ++color) {
-        arc_vsa_add_feature(eng, scene_out, UINT64_C(0x9b03000000000000) ^ color, UINT64_C(0x9b04000000000000) ^ arc_vsa_bucket_size(color_objects[color]), attr_vec, value_vec, bound);
-    }
-
-    for (size_t i = 0; i < scene.object_count; ++i) {
-        const ARCObject *object = &scene.objects[i];
-        size_t width = object->max_x - object->min_x + 1u;
-        size_t height = object->max_y - object->min_y + 1u;
-        memset(object_vec, 0, sizeof(object_vec));
-        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x01), UINT64_C(0x100) ^ object->color, attr_vec, value_vec, bound);
-        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x02), UINT64_C(0x200) ^ arc_vsa_bucket_size(object->count), attr_vec, value_vec, bound);
-        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x03), UINT64_C(0x300) ^ arc_vsa_bucket_size(width), attr_vec, value_vec, bound);
-        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x04), UINT64_C(0x400) ^ arc_vsa_bucket_size(height), attr_vec, value_vec, bound);
-        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x05), UINT64_C(0x500) ^ arc_vsa_bucket_coord(object->centroid_x, grid->width), attr_vec, value_vec, bound);
-        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x06), UINT64_C(0x600) ^ arc_vsa_bucket_coord(object->centroid_y, grid->height), attr_vec, value_vec, bound);
-        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x07), UINT64_C(0x700) ^ (object->touches_border ? 1u : 0u), attr_vec, value_vec, bound);
-        arc_vsa_add_object_feature(eng, object_vec, UINT64_C(0x08), UINT64_C(0x800) ^ (object->shape_hash & UINT64_C(0xffff)), attr_vec, value_vec, bound);
-        leos_engine_normalize(eng, object_vec);
-        leos_engine_keygen(eng, UINT64_C(0x9b05000000000000) ^ i, slot_vec);
-        leos_engine_bind(eng, slot_vec, object_vec, bound);
-        for (size_t j = 0; j < 256; ++j) scene_out[j] += bound[j];
-    }
-    leos_engine_normalize(eng, scene_out);
-    return 0;
 }

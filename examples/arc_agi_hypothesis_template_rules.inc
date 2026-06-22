@@ -566,7 +566,7 @@ static const struct {
     [ARC_RULE_SYMMETRY_V]               = {1,1,24,100.0},
     [ARC_RULE_MULTISCALE]               = {1,0,25,110.0},
     [ARC_RULE_OBJECT_LABEL]             = {1,0,26,94.0},
-    [ARC_RULE_HOLO_TILE]                = {1,0,22,108.0},
+    [ARC_RULE_PERIOD_TILE]              = {1,0,22,108.0},
     [ARC_RULE_DILATE]                   = {1,1,27,95.0},
     [ARC_RULE_REFLECT_TILE]             = {1,1,28,112.0},
     [ARC_RULE_MARKER_MOTIF_TILE]        = {1,1,29,111.0},
@@ -1966,7 +1966,7 @@ static size_t arc_build_candidates(const ARCTask *task,
     if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_MULTISCALE,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"multiscale");arc_add_candidate(candidates,capacity,&count,&candidate);}
     if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_OBJECT_LABEL,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"object_label");arc_add_candidate(candidates,capacity,&count,&candidate);}
     for(uint8_t dc=1;dc<ARC_COLOR_COUNT;++dc){if(count>=capacity)break;arc_init_candidate(&candidate,ARC_RULE_DILATE,"");candidate.input_color=dc;snprintf(candidate.name,sizeof(candidate.name),"dilate_color_%u",(unsigned)dc);arc_add_candidate(candidates,capacity,&count,&candidate);}
-    if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_HOLO_TILE,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"holo_tile");arc_add_candidate(candidates,capacity,&count,&candidate);}
+    if(count<capacity){arc_init_candidate(&candidate,ARC_RULE_PERIOD_TILE,"");candidate.background_color=0;snprintf(candidate.name,sizeof(candidate.name),"period_tile");arc_add_candidate(candidates,capacity,&count,&candidate);}
     { ARCTransformCandidate cons[32]; size_t nc=0;
       for(size_t i=0;i<count&&nc<32;++i)if(arc_rule_is_composable(candidates[i].op)&&!arc_candidate_is_composed(&candidates[i])){ARCTransformCandidate t=candidates[i];size_t c2=0,m2=0,u2=0;if(arc_candidate_matches_train(task,&t,&c2,&m2,&u2))cons[nc++]=candidates[i];}
       for(size_t a=0;a<nc&&count+4<capacity;++a)for(size_t b=0;b<nc&&count+4<capacity;++b){if(a==b)continue;ARCTransformCandidate comp;if(arc_init_composed_candidate(&comp,&cons[a],&cons[b]))arc_add_candidate(candidates,capacity,&count,&comp);}

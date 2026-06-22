@@ -1,7 +1,6 @@
 static int arc_apply_multiscale_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
 static int arc_apply_object_label_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
-static int arc_apply_holo_tile_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
-static int arc_grid_to_hologram(const ARCGrid *grid, double *scene_out);
+static int arc_apply_period_tile_candidate(const ARCTransformCandidate *c, const ARCGrid *in, ARCGrid *out);
 static int arc_apply_candidate(const ARCTransformCandidate *candidate,
                                const ARCGrid *input,
                                ARCGrid *output)
@@ -85,8 +84,8 @@ static int arc_apply_candidate(const ARCTransformCandidate *candidate,
         return arc_apply_multiscale_candidate(candidate, input, output);
     case ARC_RULE_OBJECT_LABEL:
         return arc_apply_object_label_candidate(candidate, input, output);
-    case ARC_RULE_HOLO_TILE:
-        return arc_apply_holo_tile_candidate(candidate, input, output);
+    case ARC_RULE_PERIOD_TILE:
+        return arc_apply_period_tile_candidate(candidate, input, output);
     case ARC_RULE_OBJECT_CROP_LARGEST:
     case ARC_RULE_OBJECT_CROP_LARGEST_RECOLOR:
     case ARC_RULE_OBJECT_MASK_LARGEST:
@@ -1239,10 +1238,6 @@ static NNProgramProposerStrategy arc_program_strategy_to_nn(ARCProgramStrategy s
         return NN_PROGRAM_PROPOSER_TRACE_LINEAR;
     case ARC_PROGRAM_STRATEGY_TRACE_MLP:
         return NN_PROGRAM_PROPOSER_TRACE_MLP;
-    case ARC_PROGRAM_STRATEGY_TRACE_HOLO_RESIDUAL:
-        return NN_PROGRAM_PROPOSER_TRACE_HOLO_RESIDUAL;
-    case ARC_PROGRAM_STRATEGY_TRACE_HOLO_BUCKET:
-        return NN_PROGRAM_PROPOSER_TRACE_HOLO_BUCKET;
     case ARC_PROGRAM_STRATEGY_ORACLE:
         return NN_PROGRAM_PROPOSER_ORACLE;
     }
@@ -1294,23 +1289,6 @@ static int arc_proposal_trace_prior_init(ARCProposalTracePrior *prior, unsigned 
     if (prior->mlp == NULL) {
         return 0;
     }
-    prior->holo_residual = holo_ranker_create(ARC_PROGRAM_FEATURE_COUNT);
-    if (prior->holo_residual == NULL) {
-        nn_free(prior->mlp);
-        prior->mlp = NULL;
-        return 0;
-    }
-    prior->holo_pressure =
-        holo_partitioned_ranker_create(ARC_PROGRAM_FEATURE_COUNT,
-                                       32u,
-                                       ((uint64_t)seed << 32) ^ UINT64_C(0x484f4c4f50524553));
-    if (prior->holo_pressure == NULL) {
-        holo_ranker_destroy(prior->holo_residual);
-        prior->holo_residual = NULL;
-        nn_free(prior->mlp);
-        prior->mlp = NULL;
-        return 0;
-    }
     return 1;
 }
 
@@ -1321,10 +1299,6 @@ static void arc_proposal_trace_prior_free(ARCProposalTracePrior *prior)
     }
     nn_free(prior->mlp);
     prior->mlp = NULL;
-    holo_ranker_destroy(prior->holo_residual);
-    prior->holo_residual = NULL;
-    holo_partitioned_ranker_destroy(prior->holo_pressure);
-    prior->holo_pressure = NULL;
 }
 
 static NeuralNet *create_arc_hypothesis_prior_model(unsigned int seed, size_t hidden)

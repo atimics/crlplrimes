@@ -5,7 +5,6 @@
     "experiment_families_frozen": true,
     "primary_contributions": [
       "certified_gated_neural_ranking_loop",
-      "holographic_certificate_store",
       "rejected_candidate_feedback_learning",
       "mechanically_checked_paper_claims"
     ],
@@ -42,31 +41,25 @@
   "claim_families": [
     {
       "id": "A",
-      "title": "The Gated Loop \u2014 enumerate, gate, rank, verify",
+      "title": "The Gated Loop — enumerate, gate, rank, verify",
       "role": "architecture_axis",
-      "description": "At decision time: enumerate candidates, eliminate with certified symbolic gates, rank survivors with neural nets, verify the top choice. The neural component ranks; the symbolic component certifies. HoloGate blends holographic and neural confidence when both are available."
-    },
-    {
-      "id": "B",
-      "title": "The Holographic Certificate Store \u2014 fixed-dimension VSA memory",
-      "role": "architecture_axis",
-      "description": "Verified (state, action) pairs are stored in holographic (VSA) memory. Bind/unbind operations provide content-addressable retrieval in fixed O(dim) space. Sparse memory neurons route experiences to nearest centroids. The memory IS the model; training IS storing."
+      "description": "At decision time: enumerate candidates, eliminate with certified symbolic gates, rank survivors with neural nets, verify the top choice. The neural component ranks; the symbolic component certifies."
     },
     {
       "id": "C",
-      "title": "The Feedback Loops \u2014 rejected candidates, hypothesis library, self-play",
+      "title": "The Feedback Loops — rejected candidates, hypothesis library, self-play",
       "role": "architecture_axis",
       "description": "Failed proposals become training data. Successful rules accumulate in the hypothesis library and feed back into proposal ranking. Verified self-play generates new training instances. The system improves without the model owning correctness."
     },
     {
       "id": "D",
-      "title": "The Evidence Contract \u2014 claim compiler, trace determinism, dataset engine",
+      "title": "The Evidence Contract — claim compiler, trace determinism, dataset engine",
       "role": "framework_claim",
       "description": "Every paper assertion is mechanically checked against trace artifacts. Float/double runs produce identical semantic traces. The dataset-first engine exposes shared candidate/verifier/evidence contracts across domains."
     },
     {
       "id": "E",
-      "title": "Domain Instances \u2014 the architecture applied to specific tasks",
+      "title": "Domain Instances — the architecture applied to specific tasks",
       "role": "evidence_surface",
       "description": "The gated-ranking loop and certified-gate framework instantiated on prime gap prediction, ARC visual reasoning, delayed-claim temporal reasoning, grid-path navigation, cross-domain transfer, and Signal flight control."
     }
@@ -87,41 +80,12 @@
         "C4.delayed_claim_sibling_transfer",
         "C4.multitask_capacity_tradeoff",
         "C4.adapter_heads_shared_trunk",
-        "C7.tiny_net_plateau_stop_rule",
-        "A.3.holo_gate_blend"
+        "C7.tiny_net_plateau_stop_rule"
       ],
       "command": "make paper-grade-evidence-core",
-      "agent_instruction": "The gated loop is the core decision-time architecture. Keep neural and symbolic roles separate: neural ranks, symbolic certifies. HoloGate blending (A.3) is a bridge claim registered as aspirational until a domain experiment exercises it.",
+      "agent_instruction": "The gated loop is the core decision-time architecture. Keep neural and symbolic roles separate: neural ranks, symbolic certifies.",
       "success_criteria": [
-        "C1, C2, C3, C4 claims remain supported where evidence exists.",
-        "A.3 is aspirational: keep as roadmap until holo-experiments exist."
-      ]
-    },
-    {
-      "id": "track-holo-store",
-      "title": "Holographic certificate store: VSA retrieval, memory neurons, generalization",
-      "role": "claim_support",
-      "claim_ids": [
-        "B.1.holo_exact_retrieval",
-        "B.2.memory_neuron_routing",
-        "B.3.holo_generalization"
-      ],
-      "command": "make holo-experiments",
-      "agent_instruction": "The holographic store is a central architecture claim, not a footnote. Build the experiment harness (make holo-experiments) before promoting any prose about holonets. Until evidence exists, keep all B claims aspirational.",
-      "success_criteria": [
-        "B.1: exact-match retrieval fidelity follows 1/sqrt(N) curve and reaches 100% on stored examples.",
-        "B.2: memory neuron centroids converge without cross-contamination between cells.",
-        "B.3: unseen-but-similar states retrieve context with above-chance cosine similarity."
-      ],
-      "failure_modes": [
-        "Do not describe the holographic ranker as achieving 100% top-1 without a B.1 trace artifact.",
-        "Do not claim holonet memory properties without B.2 routing evidence.",
-        "Do not present VSA recall as generalization without B.3 similarity evidence."
-      ],
-      "artifacts": [
-        "build/float/holo_results/retrieval_fidelity.jsonl",
-        "build/float/holo_results/memory_neuron_routing.jsonl",
-        "build/float/holo_results/holo_generalization.jsonl"
+        "C1, C2, C3, C4 claims remain supported where evidence exists."
       ]
     },
     {
@@ -151,7 +115,7 @@
         "C8.dataset_engine_evidence_surface"
       ],
       "command": "make paper-support",
-      "agent_instruction": "The evidence contract is the meta-layer: the claim compiler verifies the paper, traces are deterministic, the dataset engine is shared. D.1 is a meta-claim that the compiler checks itself \u2014 acknowledge the recursion.",
+      "agent_instruction": "The evidence contract is the meta-layer: the claim compiler verifies the paper, traces are deterministic, the dataset engine is shared. D.1 is a meta-claim that the compiler checks itself — acknowledge the recursion.",
       "success_criteria": [
         "C8 claims remain supported.",
         "D.1 is aspirational: make paper-support --fail-required exits 0 with all required claims supported."
@@ -167,7 +131,7 @@
         "C9.signal_mining_replay_options"
       ],
       "command": "make paper-grade-evidence",
-      "agent_instruction": "Domain instances demonstrate the architecture on real tasks. Keep them as evidence surfaces, not as claims of general capability. Signal live-active is inherently fragile \u2014 it depends on a live game server.",
+      "agent_instruction": "Domain instances demonstrate the architecture on real tasks. Keep them as evidence surfaces, not as claims of general capability. Signal live-active is inherently fragile — it depends on a live game server.",
       "success_criteria": [
         "C9.signal_flight_replay_control remains supported.",
         "C9.signal_live_neural_active and C9.signal_mining_replay_options are optional."
@@ -912,7 +876,7 @@
         "R-S4"
       ],
       "evidence": {
-        "source": "results/latest/comparison.canonical.jsonl",
+        "source": "build/float/signal_mining_experiment/summary.jsonl",
         "command": "make signal-mining",
         "schemas": [],
         "filters": {},
@@ -925,148 +889,6 @@
         "Signal mining evidence is underpowered."
       ],
       "limitation_when_not_supported": "Signal mining claim is not yet supported."
-    },
-    {
-      "id": "A.3.holo_gate_blend",
-      "family": "A",
-      "title": "HoloGate blends holographic and neural confidence with fidelity-weighted alpha",
-      "claim_type": "architecture_claim",
-      "claim_text": "HoloGate blending with alpha = fidelity^3 transitions from pure holo at fidelity=1 to pure neural at fidelity near 0, never underperforming the better single scorer.",
-      "builtin_evaluator": "holo_gate_blend",
-      "required_for_submission": true,
-      "paper_surfaces": [
-        "holo_store",
-        "architecture",
-        "limitations",
-        "roadmap"
-      ],
-      "roadmap_items": [
-        "R-H.1"
-      ],
-      "evidence": {
-        "source": "build/float/holo_results/holo_gate_blend.jsonl",
-        "command": "make holo-experiments",
-        "freshness_prerequisite": "",
-        "schemas": [
-          "crlp.holo_gate_blend.v1"
-        ]
-      },
-      "decision_rule": {
-        "supported_if": [
-          "blend_vs_max_delta >= 0 at all fidelity levels"
-        ]
-      },
-      "residual_when_not_supported": [
-        "Run make holo-experiments."
-      ],
-      "limitation_when_not_supported": "HoloGate blend evidence is missing."
-    },
-    {
-      "id": "B.1.holo_exact_retrieval",
-      "family": "B",
-      "title": "VSA bind/unbind achieves exact-match retrieval following 1/sqrt(N) fidelity",
-      "claim_type": "architecture_claim",
-      "claim_text": "Holographic VSA memory achieves 100% exact-match on isolated pairs, degrades with 1/sqrt(N) fidelity, and maintains 500x above-random retrieval at N=1000.",
-      "builtin_evaluator": "holo_exact_retrieval",
-      "required_for_submission": true,
-      "paper_surfaces": [
-        "holo_store",
-        "architecture",
-        "limitations",
-        "roadmap"
-      ],
-      "roadmap_items": [
-        "R-H.0"
-      ],
-      "evidence": {
-        "source": "build/float/holo_results/retrieval_fidelity.jsonl",
-        "command": "make holo-experiments",
-        "freshness_prerequisite": "",
-        "schemas": [
-          "crlp.holo_retrieval_fidelity.v1"
-        ]
-      },
-      "decision_rule": {
-        "supported_if": [
-          "top1_accuracy > 0.4 at N=1000",
-          "fidelity follows 1/sqrt(N)"
-        ]
-      },
-      "residual_when_not_supported": [
-        "Run make holo-experiments."
-      ],
-      "limitation_when_not_supported": "Holographic retrieval evidence is missing."
-    },
-    {
-      "id": "B.2.memory_neuron_routing",
-      "family": "B",
-      "title": "Sparse memory neuron routing converges without cross-contamination",
-      "claim_type": "architecture_claim",
-      "claim_text": "Memory neuron centroids converge (drift -> 0), inter-cell cosine < 0.01, cells partition input space without cross-contamination.",
-      "builtin_evaluator": "memory_neuron_routing",
-      "required_for_submission": true,
-      "paper_surfaces": [
-        "holo_store",
-        "architecture",
-        "limitations",
-        "roadmap"
-      ],
-      "roadmap_items": [
-        "R-H.2"
-      ],
-      "evidence": {
-        "source": "build/float/holo_results/memory_neuron_routing.jsonl",
-        "command": "make holo-experiments",
-        "freshness_prerequisite": "",
-        "schemas": [
-          "crlp.memory_neuron_routing.v1"
-        ]
-      },
-      "decision_rule": {
-        "supported_if": [
-          "mean_centroid_drift converges to < 0.01",
-          "inter_cell_cosine < 0.05"
-        ]
-      },
-      "residual_when_not_supported": [
-        "Run make holo-experiments."
-      ],
-      "limitation_when_not_supported": "Memory neuron routing evidence is missing."
-    },
-    {
-      "id": "B.3.holo_generalization",
-      "family": "B",
-      "title": "Holographic recall generalizes to unseen-but-similar states",
-      "claim_type": "architecture_claim",
-      "claim_text": "Similar-state recall cosine is 196x above chance and 2.1x higher than dissimilar-state recall, proving VSA recall generalizes beyond exact memorization.",
-      "builtin_evaluator": "holo_generalization",
-      "required_for_submission": true,
-      "paper_surfaces": [
-        "holo_store",
-        "architecture",
-        "limitations",
-        "roadmap"
-      ],
-      "roadmap_items": [
-        "R-H.3"
-      ],
-      "evidence": {
-        "source": "build/float/holo_results/holo_generalization.jsonl",
-        "command": "make holo-experiments",
-        "freshness_prerequisite": "",
-        "schemas": [
-          "crlp.holo_generalization.v1"
-        ]
-      },
-      "decision_rule": {
-        "supported_if": [
-          "similar_states_mean_recall_cosine > 10x chance_baseline"
-        ]
-      },
-      "residual_when_not_supported": [
-        "Run make holo-experiments."
-      ],
-      "limitation_when_not_supported": "Holographic generalization evidence is missing."
     },
     {
       "id": "D.1.claim_compiler_self_check",
@@ -1100,8 +922,7 @@
       "residual_when_not_supported": [
         "Run make paper-support and inspect paper/generated/claims.json."
       ],
-      "limitation_when_not_supported": "The claim compiler cannot verify that it correctly verifies claims \u2014 this is a known reflexive limitation."
+      "limitation_when_not_supported": "The claim compiler cannot verify that it correctly verifies claims — this is a known reflexive limitation."
     }
   ]
 }
-# test

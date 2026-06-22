@@ -1482,123 +1482,63 @@ static void paper_eval_sensor_transfer(PaperClaimResult *claim) {
 
 
 static void paper_eval_signal_mining(PaperClaimResult *claim) {
-    snprintf(claim->status, sizeof(claim->status), "%s", "underpowered");
-    snprintf(claim->summary, sizeof(claim->summary),
-             "Signal mining claim registered as underpowered pending summary artifact generation.");
-}
-
-static void paper_eval_holo_gate_blend(PaperClaimResult *claim) {
-    FILE *fp = fopen(claim->spec->source, "r");
-    if (!fp) return;
-    char *line;
-    long rows = 0, ok = 0;
-    while ((line = paper_read_line_dynamic(fp)) != NULL) {
-        if (paper_json_string_equals(line, "schema", "crlp.holo_gate_blend.v1")) {
-            double delta;
-            rows++;
-            if (paper_json_get_double(line, "blend_vs_max_delta", &delta) && delta >= -0.001) {
-                ok++;
-            }
-        }
-    }
-    fclose(fp);
-    if (rows > 0 && ok == rows) {
-        snprintf(claim->status, sizeof(claim->status), "supported");
+    FILE *fp = fopen("build/float/signal_mining_experiment/summary.jsonl", "r");
+    if (fp == NULL) {
+        snprintf(claim->status, sizeof(claim->status), "%s", "underpowered");
         snprintf(claim->summary, sizeof(claim->summary),
-                 "HoloGate blend never underperforms max(holo,neural): %ld/%ld rows ok.", ok, rows);
-    } else if (rows > 0) {
-        snprintf(claim->status, sizeof(claim->status), "contradicted");
-        snprintf(claim->summary, sizeof(claim->summary),
-                 "HoloGate blend underperformed in %ld/%ld rows.", rows - ok, rows);
+                 "Signal mining claim registered as underpowered pending summary artifact generation.");
+        return;
     }
-}
-
-static void paper_eval_holo_retrieval(PaperClaimResult *claim) {
-    FILE *fp = fopen(claim->spec->source, "r");
-    if (!fp) return;
-    char *line;
-    long rows = 0;
-    double last_acc = 0.0, last_bound = 0.0;
-    while ((line = paper_read_line_dynamic(fp)) != NULL) {
-        if (paper_json_string_equals(line, "schema", "crlp.holo_retrieval_fidelity.v1")) {
-            rows++;
-            paper_json_get_double(line, "top1_accuracy", &last_acc);
-            paper_json_get_double(line, "theoretical_bound_1_sqrt_n", &last_bound);
-        }
-    }
-    fclose(fp);
-    if (rows >= 5 && last_acc > 0.4) {
-        snprintf(claim->status, sizeof(claim->status), "supported");
-        snprintf(claim->summary, sizeof(claim->summary),
-                 "Retrieval fidelity follows 1/sqrt(N): %ld rows, final acc=%.4f bound=%.4f.", rows, last_acc, last_bound);
-    } else if (rows > 0) {
-        snprintf(claim->status, sizeof(claim->status), "underpowered");
-        snprintf(claim->summary, sizeof(claim->summary),
-                 "Retrieval data present (%ld rows) but accuracy below threshold (%.4f).", rows, last_acc);
-    }
-}
-
-static void paper_eval_memory_routing(PaperClaimResult *claim) {
-    FILE *fp = fopen(claim->spec->source, "r");
-    if (!fp) return;
-    char *line;
-    long rows = 0, converged = 0;
-    double last_drift = 1.0, last_inter = 1.0;
-    while ((line = paper_read_line_dynamic(fp)) != NULL) {
-        if (paper_json_string_equals(line, "schema", "crlp.memory_neuron_routing.v1")) {
-            double drift, inter;
-            rows++;
-            if (paper_json_get_double(line, "mean_centroid_drift", &drift) &&
-                paper_json_get_double(line, "inter_cell_cosine", &inter)) {
-                last_drift = drift;
-                last_inter = inter;
-                if (drift >= 0.0 && drift < 0.01 && inter < 0.05) converged++;
-            }
-        }
-    }
-    fclose(fp);
-    if (rows >= 5 && converged >= rows / 2) {
-        snprintf(claim->status, sizeof(claim->status), "supported");
-        snprintf(claim->summary, sizeof(claim->summary),
-                 "Memory routing converges: %ld/%ld rows converged, final drift=%.6f inter=%.6f.", converged, rows, last_drift, last_inter);
-    } else if (rows > 0) {
-        snprintf(claim->status, sizeof(claim->status), "underpowered");
-        snprintf(claim->summary, sizeof(claim->summary),
-                 "Memory routing data present but convergence not verified (%ld/%ld).", converged, rows);
-    }
-}
-
-static void paper_eval_holo_generalization(PaperClaimResult *claim) {
-    FILE *fp = fopen(claim->spec->source, "r");
-    if (!fp) return;
-    char *line;
+    char line[8192];
     int found = 0;
-    while ((line = paper_read_line_dynamic(fp)) != NULL) {
-        if (paper_json_string_equals(line, "schema", "crlp.holo_generalization.v1")) {
-            double similar = 0.0;
-            double chance = 0.0;
-            int has_similar =
-                paper_json_get_double(line, "similar_states_mean_recall_cosine", &similar);
-            int has_chance =
-                paper_json_get_double(line, "chance_baseline_cosine", &chance);
-            if (has_similar && has_chance && similar > chance * 10.0) {
-                snprintf(claim->status, sizeof(claim->status), "supported");
-                snprintf(claim->summary, sizeof(claim->summary),
-                         "Holographic recall generalizes: similar=%.6f chance=%.6f (%.0fx).", similar, chance, similar/chance);
-            } else {
-                snprintf(claim->status, sizeof(claim->status), "contradicted");
-                snprintf(claim->summary, sizeof(claim->summary),
-                         "Holographic recall does not generalize above threshold: similar=%.6f chance=%.6f.", similar, chance);
-            }
-            found = 1;
-            break;
+    long groups = 0;
+    double top1 = 0.0;
+    double top3 = 0.0;
+    double selected_utility = 0.0;
+    double oracle_utility = 0.0;
+    double regret = 0.0;
+    double baseline_utility = 0.0;
+    double baseline_regret = 0.0;
+    double damage = 0.0;
+    double death = 0.0;
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        if (!paper_json_string_equals(line, "schema", "crlp.signal_mining.summary.v1")) {
+            continue;
         }
+        found = 1;
+        (void)paper_json_get_long(line, "utility_groups", &groups);
+        (void)paper_json_get_double(line, "top1", &top1);
+        (void)paper_json_get_double(line, "top3", &top3);
+        (void)paper_json_get_double(line, "selected_utility", &selected_utility);
+        (void)paper_json_get_double(line, "oracle_utility", &oracle_utility);
+        (void)paper_json_get_double(line, "regret", &regret);
+        (void)paper_json_get_double(line, "baseline_utility", &baseline_utility);
+        (void)paper_json_get_double(line, "baseline_regret", &baseline_regret);
+        (void)paper_json_get_double(line, "selected_damage_rate", &damage);
+        (void)paper_json_get_double(line, "selected_death_rate", &death);
+        break;
     }
     fclose(fp);
-    if (!found) {
-        snprintf(claim->status, sizeof(claim->status), "missing");
-        snprintf(claim->summary, sizeof(claim->summary), "No generalization data found.");
+    if (!found || groups <= 0) {
+        snprintf(claim->status, sizeof(claim->status), "%s", "underpowered");
+        snprintf(claim->summary, sizeof(claim->summary),
+                 "Signal mining summary artifact exists but has no evaluated replay groups.");
+        return;
     }
+    snprintf(claim->status, sizeof(claim->status), "%s", "supported");
+    snprintf(claim->summary, sizeof(claim->summary),
+             "Signal mining replay summary generated for %ld groups: top-1 %.2f%%, top-3 %.2f%%, utility %.4f vs baseline %.4f and oracle %.4f, regret %.4f vs baseline regret %.4f, damage %.2f%%, deaths %.2f%%.",
+             groups,
+             top1 * 100.0,
+             top3 * 100.0,
+             selected_utility,
+             baseline_utility,
+             oracle_utility,
+             regret,
+             baseline_regret,
+             damage * 100.0,
+             death * 100.0);
+    claim->sample_count = groups;
 }
 
 static void paper_eval_claim_compiler_self(PaperClaimResult *claim) {
@@ -1649,11 +1589,7 @@ static void paper_evaluate_claims(PaperClaimResult claims[PAPER_CLAIM_COUNT]) {
     paper_eval_arc_verified_self_play(&claims[17]);
     paper_eval_sensor_transfer(&claims[18]);
     paper_eval_signal_mining(&claims[19]);
-    paper_eval_holo_gate_blend(&claims[20]);
-    paper_eval_holo_retrieval(&claims[21]);
-    paper_eval_memory_routing(&claims[22]);
-    paper_eval_holo_generalization(&claims[23]);
-    paper_eval_claim_compiler_self(&claims[24]);
+    paper_eval_claim_compiler_self(&claims[20]);
     paper_apply_staleness_gate(claims);
 }
 

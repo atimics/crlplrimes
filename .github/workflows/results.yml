@@ -14,7 +14,7 @@ on:
 
 env:
   CC: gcc-13
-  REAL: float
+  REAL: double
 
 jobs:
   capture:
@@ -29,11 +29,11 @@ jobs:
       - name: Pin toolchain
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y gcc-13 make
+          sudo apt-get install -y gcc-13 make libopenblas-dev
           ${CC} --version
 
       - name: Build all binaries
-        run: make -j$(nproc) all
+        run: make -j$(nproc) all NN_BLAS=openblas
 
       - name: Capture environment manifest
         run: |
@@ -41,7 +41,7 @@ jobs:
           printf '{"schema":"crlp.environment_manifest.v1","cc":"%s","real":"%s"}\n' "$CC" "$REAL" > results/latest/environment.json
 
       - name: Run make results
-        run: make results
+        run: make results NN_BLAS=openblas
 
       - name: Diff canonical results against main
         id: diff

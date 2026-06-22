@@ -1,6 +1,6 @@
-/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240516 --arc-eval-suite 0520fde7 --task-heads
-/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240516 --arc-eval-suite ood --task-heads --arc-ood-task all
-/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240517 --arc-eval-suite 0520fde7 --task-heads
-/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240517 --arc-eval-suite ood --task-heads --arc-ood-task all
-/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240518 --arc-eval-suite 0520fde7 --task-heads
-/Users/ratimics/develop/crlplrimes/build/float/multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240518 --arc-eval-suite ood --task-heads --arc-ood-task all
+multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240516 --arc-eval-suite 0520fde7 --task-heads
+multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240516 --arc-eval-suite ood --task-heads --arc-ood-task all
+multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240517 --arc-eval-suite 0520fde7 --task-heads
+multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240517 --arc-eval-suite ood --task-heads --arc-ood-task all
+multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240518 --arc-eval-suite 0520fde7 --task-heads
+multitask_domain --tasks all --eval-tasks all --epochs 16 --steps-per-epoch 12000 --eval-samples 1000 --hidden 64x32 --seed 20240518 --arc-eval-suite ood --task-heads --arc-ood-task all
