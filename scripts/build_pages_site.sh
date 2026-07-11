@@ -90,7 +90,7 @@ write_index() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CRLPLRIMES Live Evidence Report</title>
+  <title>CRLPLRIMES Live Paper</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -172,6 +172,31 @@ write_index() {
       font-size: 1.08rem;
       margin: 16px 0 0;
     }
+    .paper-title {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+      align-items: end;
+    }
+    .paper-kicker {
+      color: var(--muted);
+      font-size: 0.95rem;
+      margin: 8px 0 0;
+      max-width: 820px;
+    }
+    .paper-note {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 14px;
+    }
+    .paper-note strong {
+      display: block;
+      font-size: 0.92rem;
+      margin-bottom: 6px;
+    }
+    .paper-note p { margin: 0; }
     .run-meta {
       display: flex;
       flex-wrap: wrap;
@@ -243,6 +268,69 @@ write_index() {
     .metric span, .metric small { color: var(--muted); display: block; }
     .metric small { margin-top: 8px; }
     .panel { padding: 16px; }
+    .panel.figure {
+      display: grid;
+      gap: 12px;
+      min-height: 330px;
+    }
+    .figure-label {
+      color: var(--accent-2);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .caption {
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin: 0;
+      padding-top: 10px;
+    }
+    .argument-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .argument-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }
+    .argument-card strong {
+      color: var(--accent);
+      display: block;
+      font-size: 0.82rem;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+    .argument-card p { margin: 8px 0 0; }
+    .comparison-bars {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .comparison-row {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: minmax(120px, 0.7fr) minmax(180px, 1.5fr);
+    }
+    .paired-bars {
+      display: grid;
+      gap: 5px;
+    }
+    .paired-bar {
+      align-items: center;
+      display: grid;
+      gap: 8px;
+      grid-template-columns: 84px minmax(120px, 1fr) 64px;
+    }
+    .paired-bar span {
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
     .task-card { padding: 14px; }
     .task-card p { margin: 8px 0 0; }
     .task-meta {
@@ -399,6 +487,22 @@ write_index() {
       width: 100%;
     }
     .hash { color: var(--muted); }
+    .ledger-status {
+      border-radius: 999px;
+      display: inline-flex;
+      font-size: 0.78rem;
+      font-weight: 750;
+      padding: 3px 8px;
+      white-space: nowrap;
+    }
+    .ledger-status.live {
+      background: rgba(20, 108, 120, 0.12);
+      color: var(--accent);
+    }
+    .ledger-status.check {
+      background: rgba(99, 123, 61, 0.14);
+      color: var(--accent-3);
+    }
     details {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -421,9 +525,10 @@ write_index() {
     }
     @keyframes pulse { 50% { opacity: 0.45; } }
     @media (max-width: 780px) {
-      .section-head, .two-col { grid-template-columns: 1fr; }
+      .section-head, .two-col, .paper-title, .argument-grid, .comparison-row { grid-template-columns: 1fr; }
       .tools { justify-content: flex-start; }
       .bar-row { grid-template-columns: 1fr; }
+      .paired-bar { grid-template-columns: 72px minmax(120px, 1fr) 58px; }
       .bar-value { text-align: left; }
       header { margin-bottom: 16px; }
     }
@@ -445,12 +550,24 @@ HTML
     cat >> "$site_dir/index.html" <<'HTML'
 <header>
   <div class="header-inner">
-    <div class="eyebrow">Published evidence workflow</div>
-    <h1>CRLPLRIMES live evidence report</h1>
-    <p class="lede">A static, reproducible report generated from the same JSONL artifacts and model checkpoints that ship with the repository. The page parses the latest comparison rows, certified rule search summaries, calibration bins, and checkpoint manifest directly in the browser.</p>
+    <div class="paper-title">
+      <div>
+        <div class="eyebrow">Live paper generated from the evidence workflow</div>
+        <h1>CRLPLRIMES: certified rule learning for verifier-grounded action ranking</h1>
+        <p class="lede">The paper argument, figures, model results, and reproducibility ledger are all rendered from the current JSONL evidence and checkpoint manifest.</p>
+        <p class="paper-kicker">This is not a static screenshot of results. It is the published paper surface reading <code>comparison.jsonl</code>, <code>manifest.tsv</code>, calibration bins, rule-search summaries, and model hashes directly from GitHub Pages.</p>
+      </div>
+      <aside class="paper-note">
+        <strong>How to read this page</strong>
+        <p>Start with the abstract and main figures. Use the claim ledger to jump from each public claim to the exact rows and artifacts supporting it.</p>
+      </aside>
+    </div>
     <div class="run-meta" id="run-meta"></div>
     <nav aria-label="Report sections">
       <a href="#abstract">Abstract</a>
+      <a href="#argument">Argument</a>
+      <a href="#figures">Figures</a>
+      <a href="#ledger">Claim ledger</a>
       <a href="#claims">Claims</a>
       <a href="#model-results">Model results</a>
       <a href="#rule-search">Rule search</a>
@@ -472,10 +589,78 @@ HTML
     </div>
   </section>
 
+  <section id="argument">
+    <div class="section-head">
+      <div>
+        <h2>Argument</h2>
+        <p>The live paper follows the same spine as the experiment: declare the task and leakage policy, certify rules against a verifier, then measure model ranking, saved verifier work, false rejections, and calibration.</p>
+      </div>
+    </div>
+    <div class="argument-grid">
+      <article class="argument-card">
+        <strong>Question</strong>
+        <p>Can a learned rule proposer discover certified gates that shrink verifier work while preserving the correct action?</p>
+      </article>
+      <article class="argument-card">
+        <strong>Mechanism</strong>
+        <p>Every task exposes candidates, verifier feedback, and rule grammars. Accepted rules become certificates; the residual neural scorer ranks what survives.</p>
+      </article>
+      <article class="argument-card">
+        <strong>Evidence</strong>
+        <p>The figures below are built from comparison rows, rule-search summaries, reliability bins, and published checkpoint hashes.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="figures">
+    <div class="section-head">
+      <div>
+        <h2>Main Figures</h2>
+        <p>Paper-style figures emphasize the central deltas before exposing the full tables. Values are recomputed in the browser from the published evidence files.</p>
+      </div>
+    </div>
+    <div class="grid wide">
+      <figure class="panel figure">
+        <div>
+          <div class="figure-label">Figure 1</div>
+          <h3>Certified gates change the ranking problem</h3>
+        </div>
+        <div id="figure-gate" class="comparison-bars"></div>
+        <figcaption class="caption" id="figure-gate-caption">Loading gate comparison...</figcaption>
+      </figure>
+      <figure class="panel figure">
+        <div>
+          <div class="figure-label">Figure 2</div>
+          <h3>Rule search reduces exact verifier work</h3>
+        </div>
+        <div id="figure-work" class="bar-list"></div>
+        <figcaption class="caption" id="figure-work-caption">Loading rule-search leaders...</figcaption>
+      </figure>
+      <figure class="panel figure">
+        <div>
+          <div class="figure-label">Figure 3</div>
+          <h3>Calibration remains inspectable</h3>
+        </div>
+        <div id="figure-calibration" class="bar-list"></div>
+        <figcaption class="caption" id="figure-calibration-caption">Loading calibration rows...</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="ledger">
+    <div class="section-head">
+      <div>
+        <h2>Claim Ledger</h2>
+        <p>Each row links a paper claim to the live evidence class that supports it. The raw files remain available, but the ledger is the reader-facing map.</p>
+      </div>
+    </div>
+    <div class="table-wrap" id="claim-ledger"></div>
+  </section>
+
   <section id="claims">
     <div class="section-head">
       <div>
-        <h2>Task Claims</h2>
+        <h2>Task Declarations</h2>
         <p>Experiment declarations are rendered from <code>crlp.experiment_schema.v1</code> rows so the displayed claim scope follows the captured evidence.</p>
       </div>
     </div>
@@ -607,6 +792,13 @@ HTML
     runMeta: document.getElementById("run-meta"),
     summary: document.getElementById("summary-text"),
     metrics: document.getElementById("headline-metrics"),
+    figureGate: document.getElementById("figure-gate"),
+    figureGateCaption: document.getElementById("figure-gate-caption"),
+    figureWork: document.getElementById("figure-work"),
+    figureWorkCaption: document.getElementById("figure-work-caption"),
+    figureCalibration: document.getElementById("figure-calibration"),
+    figureCalibrationCaption: document.getElementById("figure-calibration-caption"),
+    claimLedger: document.getElementById("claim-ledger"),
     claims: document.getElementById("claim-cards"),
     accuracyChart: document.getElementById("accuracy-chart"),
     workChart: document.getElementById("work-chart"),
@@ -671,6 +863,18 @@ HTML
     return String(row.evaluation_mode || row.selection_strategy || "unspecified")
       .replace(/^certified_threshold_margin_gate_/, "certified ")
       .replace(/_/g, " ");
+  }
+
+  function isRawRow(row) {
+    return String(row.evaluation_mode || "") === "raw";
+  }
+
+  function isCertifiedOrGatedRow(row) {
+    const mode = String(row.evaluation_mode || "");
+    return mode.indexOf("certified") >= 0
+      || mode.indexOf("expanded") >= 0
+      || finite(row.accepted_rules) > 0
+      || (row.rule_set_hash && row.rule_set_hash !== "unknown" && row.rule_set_hash !== "hand-wheel");
   }
 
   function weightedAccuracy(row) {
@@ -776,7 +980,10 @@ HTML
     }));
 
     els.summary.textContent =
-      "CRLPLRIMES evaluates verifier-grounded action ranking, certified candidate pruning, and rule-proposer behavior across declared task families. This page is regenerated from the promoted evidence workflow and keeps the paper claims, charts, comparison rows, calibration bins, and model artifacts in one inspectable report.";
+      "CRLPLRIMES studies verifier-grounded action ranking: enumerate candidate actions, certify rules that can reject impossible candidates, and train residual scorers on the surviving set. The current evidence bundle covers "
+      + tasks.size + " declared task families, " + state.compareRows.length + " comparison rows, and " + state.ruleRows.length
+      + " rule-search summaries. The strongest published rule-search row saves " + (bestSaved === -Infinity ? "n/a" : formatPctPoints(bestSaved))
+      + " of exact verifier work; the tables below keep every row, checkpoint hash, calibration bin, and raw artifact inspectable.";
 
     els.metrics.innerHTML = [
       { value: tasks.size, label: "declared task families", sub: state.schemaRows.length + " experiment-schema rows" },
@@ -810,6 +1017,168 @@ HTML
         + '</div>'
         + '</article>';
     }).join("");
+  }
+
+  function renderMainFigures() {
+    renderGateFigure();
+    renderWorkFigure();
+    renderCalibrationFigure();
+  }
+
+  function renderGateFigure() {
+    const rawByTask = new Map();
+    const gatedByTask = new Map();
+    state.compareRows.forEach(function (row) {
+      if (!row.task) return;
+      const acc = weightedAccuracy(row);
+      if (acc == null) return;
+      if (isRawRow(row)) {
+        const current = rawByTask.get(row.task);
+        if (!current || acc > current.acc) rawByTask.set(row.task, { row: row, acc: acc });
+      } else if (isCertifiedOrGatedRow(row)) {
+        const current = gatedByTask.get(row.task);
+        if (!current || acc > current.acc || (acc === current.acc && rowScore(row) > rowScore(current.row))) {
+          gatedByTask.set(row.task, { row: row, acc: acc });
+        }
+      }
+    });
+    const rows = Array.from(rawByTask.keys()).filter(function (task) {
+      return gatedByTask.has(task);
+    }).map(function (task) {
+      return {
+        task: task,
+        raw: rawByTask.get(task),
+        gated: gatedByTask.get(task)
+      };
+    }).sort(function (a, b) {
+      return (b.gated.acc - b.raw.acc) - (a.gated.acc - a.raw.acc);
+    }).slice(0, 7);
+
+    if (!rows.length) {
+      els.figureGate.innerHTML = '<div class="empty">No raw/gated task pairs were found.</div>';
+      els.figureGateCaption.textContent = "Figure 1 has no paired evidence in the current comparison file.";
+      return;
+    }
+
+    els.figureGate.innerHTML = rows.map(function (item) {
+      return '<div class="comparison-row">'
+        + '<div class="bar-label"><strong>' + escapeHtml(item.task) + '</strong><small>' + escapeHtml(modeLabel(item.gated.row)) + '</small></div>'
+        + '<div class="paired-bars">'
+        + pairedBar("Raw", item.raw.acc, "fill")
+        + pairedBar("Gated", item.gated.acc, "fill orange")
+        + '</div>'
+        + '</div>';
+    }).join("");
+
+    const gains = rows.map(function (item) { return item.gated.acc - item.raw.acc; });
+    const bestGain = Math.max.apply(null, gains);
+    els.figureGateCaption.textContent =
+      "Figure 1. For each task with both raw and gated rows, the chart compares raw accuracy with the strongest certified or rule-gated row. Largest displayed gain: "
+      + (bestGain * 100).toFixed(1) + " percentage points.";
+  }
+
+  function pairedBar(label, value, klass) {
+    const width = Math.max(1, Math.min(100, value * 100));
+    return '<div class="paired-bar">'
+      + '<span>' + escapeHtml(label) + '</span>'
+      + '<div class="track"><div class="' + klass + '" style="width:' + width.toFixed(2) + '%"></div></div>'
+      + '<div class="bar-value">' + escapeHtml(formatPct(value)) + '</div>'
+      + '</div>';
+  }
+
+  function renderWorkFigure() {
+    const leaders = state.ruleRows.slice().filter(function (row) {
+      return workSavedPct(row) != null;
+    }).sort(function (a, b) {
+      return (workSavedPct(b) || -1) - (workSavedPct(a) || -1);
+    }).slice(0, 7).map(function (row) {
+      return {
+        label: row.task || "task",
+        sub: String(row.selection_strategy || "strategy").replace(/_/g, " ") + " / " + (row.accepted_rules == null ? "n/a" : row.accepted_rules) + " rules",
+        value: workSavedPct(row),
+        display: formatPctPoints(workSavedPct(row)),
+        kind: "orange"
+      };
+    });
+    renderBarList(els.figureWork, leaders, { max: Math.max(100, leaders.reduce(function (max, row) { return Math.max(max, row.value); }, 0)) });
+    els.figureWorkCaption.textContent =
+      "Figure 2. Rule-search leaders ranked by exact verifier work saved, with accepted-rule counts shown in each row label.";
+  }
+
+  function renderCalibrationFigure() {
+    const rows = state.compareRows.filter(function (row) {
+      return finite(row.ece) != null && Array.isArray(row.reliability_bins) && row.reliability_bins.length;
+    }).sort(function (a, b) {
+      return (finite(a.ece) || Infinity) - (finite(b.ece) || Infinity);
+    }).slice(0, 7).map(function (row) {
+      return {
+        label: row.task || "task",
+        sub: modeLabel(row),
+        value: finite(row.ece),
+        display: formatPct(row.ece),
+        kind: "warn"
+      };
+    });
+    renderBarList(els.figureCalibration, rows, { max: Math.max(0.12, rows.reduce(function (max, row) { return Math.max(max, row.value || 0); }, 0)) });
+    els.figureCalibrationCaption.textContent =
+      "Figure 3. Lowest expected calibration error rows with reliability bins available. Smaller bars are better; the interactive calibration panel expands the bins.";
+  }
+
+  function renderClaimLedger() {
+    const bestSaved = state.ruleRows.concat(state.compareRows).reduce(function (best, row) {
+      const saved = workSavedPct(row);
+      return saved == null ? best : Math.max(best, saved);
+    }, -Infinity);
+    const zeroFalseRejectRows = state.compareRows.filter(function (row) {
+      return finite(row.false_rejections) === 0;
+    }).length;
+    const reliabilityRows = state.compareRows.filter(function (row) {
+      return Array.isArray(row.reliability_bins) && row.reliability_bins.length;
+    }).length;
+    const modelFiles = state.manifestRows.filter(function (row) { return row.category === "models"; }).length;
+    const resultFiles = state.manifestRows.filter(function (row) { return row.category === "results"; }).length;
+
+    els.claimLedger.innerHTML = renderTable(
+      ["Claim", "Live evidence", "Primary artifact", "Status"],
+      [
+        [
+          escapeHtml("Task scope and leakage policy are explicit."),
+          escapeHtml(state.schemaRows.length + " crlp.experiment_schema.v1 rows declare task roles, claim scope, features, and leakage policy."),
+          '<a href="results/comparison.jsonl"><code>comparison.jsonl</code></a>',
+          '<span class="ledger-status live">live row-backed</span>'
+        ],
+        [
+          escapeHtml("Certified gates can shrink exact verification."),
+          escapeHtml("Best observed saved work is " + (bestSaved === -Infinity ? "n/a" : formatPctPoints(bestSaved)) + " across rule-search and comparison rows."),
+          '<a href="#rule-search"><code>rule_search.summary</code></a>',
+          '<span class="ledger-status check">quantified</span>'
+        ],
+        [
+          escapeHtml("False-rejection behavior is audited, not hidden."),
+          escapeHtml(zeroFalseRejectRows + " comparison rows explicitly report false_rejections = 0; nonzero rows remain visible in the full table."),
+          '<a href="#model-results"><code>crlp.compare.v1</code></a>',
+          '<span class="ledger-status live">inspectable</span>'
+        ],
+        [
+          escapeHtml("Calibration is part of the evidence surface."),
+          escapeHtml(reliabilityRows + " comparison rows include reliability bins for confidence versus empirical correctness."),
+          '<a href="#calibration"><code>reliability_bins</code></a>',
+          '<span class="ledger-status live">interactive</span>'
+        ],
+        [
+          escapeHtml("Models and certified rules are published artifacts."),
+          escapeHtml(modelFiles + " checkpoint or rule files are published with byte counts and SHA-256 hashes."),
+          '<a href="manifest.tsv"><code>manifest.tsv</code></a>',
+          '<span class="ledger-status check">reproducible</span>'
+        ],
+        [
+          escapeHtml("Raw evidence stays available for independent checks."),
+          escapeHtml(resultFiles + " result files are mirrored under results/ with commands and canonical comparison output."),
+          '<a href="#artifacts"><code>results/</code></a>',
+          '<span class="ledger-status live">downloadable</span>'
+        ]
+      ]
+    );
   }
 
   function bestRowsByTask(rows, valueFn) {
@@ -1057,6 +1426,8 @@ HTML
       els.summary.textContent = summaryText.trim().replace(/^#.*$/gm, "").replace(/\s+/g, " ").trim();
     }
     renderMetrics();
+    renderMainFigures();
+    renderClaimLedger();
     renderClaims();
     renderModelCharts();
     renderModelHashTable();
