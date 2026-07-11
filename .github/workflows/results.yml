@@ -69,6 +69,7 @@ jobs:
 
       - name: Open results-update PR
         if: steps.diff.outputs.results_changed == 'true' && github.event_name != 'pull_request'
+        continue-on-error: true
         uses: peter-evans/create-pull-request@v7
         with:
           branch: ci/results-${{ github.run_id }}
