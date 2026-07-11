@@ -37,13 +37,48 @@ jobs:
       - name: Build promoted binaries
         run: make -j$(nproc) promoted NN_BLAS=openblas
 
+      - name: Run make results
+        run: make results NN_BLAS=openblas
+
       - name: Capture environment manifest
         run: |
           mkdir -p results/latest
-          printf '{"schema":"crlp.environment_manifest.v1","cc":"%s","real":"%s"}\n' "$CC" "$REAL" > results/latest/environment.json
+          node <<'NODE'
+          const fs = require("fs");
+          const os = require("os");
+          const cp = require("child_process");
 
-      - name: Run make results
-        run: make results NN_BLAS=openblas
+          function sh(command) {
+            try {
+              return cp.execSync(command, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+            } catch {
+              return "";
+            }
+          }
+
+          const manifest = {
+            schema: "crlp.environment_manifest.v1",
+            schema_version: 2,
+            real: process.env.REAL || "",
+            cc: process.env.CC || "",
+            compiler_version: sh(`${process.env.CC || "cc"} --version`).split(/\r?\n/)[0] || "",
+            make_version: sh("make --version").split(/\r?\n/)[0] || "",
+            libc: sh("ldd --version 2>&1").split(/\r?\n/)[0] || "",
+            openblas_version: sh("pkg-config --modversion openblas 2>/dev/null") || "",
+            runner_os: process.env.RUNNER_OS || os.platform(),
+            runner_arch: process.env.RUNNER_ARCH || os.arch(),
+            uname: sh("uname -a"),
+            cpu_model: sh("awk -F: '/model name/{sub(/^ /, \"\", $2); print $2; exit}' /proc/cpuinfo"),
+            cpu_count: os.cpus().length,
+            github_repository: process.env.GITHUB_REPOSITORY || "",
+            github_sha: process.env.GITHUB_SHA || "",
+            github_run_id: process.env.GITHUB_RUN_ID || "",
+            github_workflow: process.env.GITHUB_WORKFLOW || "",
+            captured_utc: new Date().toISOString().replace(/\.\d{3}Z$/, "Z")
+          };
+
+          fs.writeFileSync("results/latest/environment.json", JSON.stringify(manifest, null, 2) + "\n");
+          NODE
 
       - name: Diff canonical results against main
         id: diff

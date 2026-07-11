@@ -5,6 +5,15 @@ real="${REAL:-float}"
 results_dir="${PAGES_RESULTS_DIR:-results/latest}"
 site_dir="${PAGES_SITE_DIR:-build/pages-site}"
 model_dirs="${PAGES_MODEL_DIRS:-build/$real}"
+generated_utc="${PAGES_GENERATED_UTC:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+run_id="${GITHUB_RUN_ID:-local}"
+if [ -n "${GITHUB_SHA:-}" ]; then
+    source_commit="$GITHUB_SHA"
+elif git rev-parse HEAD >/dev/null 2>&1; then
+    source_commit="$(git rev-parse HEAD)"
+else
+    source_commit="unknown"
+fi
 
 if [ -e "$site_dir" ]; then
     echo "refusing to overwrite existing site dir: $site_dir" >&2
@@ -19,6 +28,10 @@ fi
 mkdir -p "$site_dir/results" "$site_dir/models"
 cp -R "$results_dir"/. "$site_dir/results/"
 : > "$site_dir/.nojekyll"
+
+if [ -f paper/generated/claims.json ]; then
+    cp paper/generated/claims.json "$site_dir/results/paper_claims.json"
+fi
 
 for model_dir in $model_dirs; do
     if [ ! -d "$model_dir" ]; then
@@ -56,9 +69,15 @@ js_escape() {
     sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
+write_text_mirrors() {
+    find "$site_dir/results" -type f -name '*.jsonl' | sort | while IFS= read -r file; do
+        cp "$file" "$file.txt"
+    done
+}
+
 write_manifest() {
     manifest="$site_dir/manifest.tsv"
-    printf 'category\tpath\tbytes\tsha256\n' > "$manifest"
+    printf 'category\tpath\tbytes\tsha256\tsource_commit\tgithub_run\tgenerated_utc\n' > "$manifest"
     for category in results models; do
         if [ ! -d "$site_dir/$category" ]; then
             continue
@@ -67,7 +86,8 @@ write_manifest() {
             rel="${file#"$site_dir"/}"
             bytes="$(file_size "$file")"
             sha="$(hash_file "$file")"
-            printf '%s\t%s\t%s\t%s\n' "$category" "$rel" "$bytes" "$sha"
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "$category" "$rel" "$bytes" "$sha" "$source_commit" "$run_id" "$generated_utc"
         done
     done >> "$manifest"
 }
@@ -1464,7 +1484,13 @@ HTML
 HTML
 }
 
-write_manifest
-write_index
+write_text_mirrors
+
+if command -v node >/dev/null 2>&1; then
+    node scripts/render_pages_report.mjs "$site_dir" "$real" "$run_id" "$source_commit" "$generated_utc"
+else
+    write_manifest
+    write_index
+fi
 
 echo "pages site staged at $site_dir"
