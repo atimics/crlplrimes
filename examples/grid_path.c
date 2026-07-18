@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 enum {
     GP_GRID = 7,
@@ -45,6 +46,10 @@ enum {
     GP_CALIBRATION_BINS = 10,
     GP_INF = 1000000,
 };
+
+/* Evaluation seed is configurable so replication varies the generated test
+ * distribution rather than only the scorer initialization. */
+static uint64_t gp_eval_test_seed_start = GP_TEST_SEED_START;
 
 static const NNFeatureSchema GRID_PATH_SCORER_FEATURES[] = {
     {"start_x", NN_FEATURE_STATE_OBSERVATION, 1},
@@ -223,6 +228,9 @@ typedef struct {
     double baseline_steps;
     double verifier_nodes;
     double baseline_nodes;
+    double candidate_gate_ms;
+    double scorer_rank_ms;
+    double verifier_ms;
     size_t bin_count[GP_CALIBRATION_BINS];
     double bin_confidence[GP_CALIBRATION_BINS];
     double bin_accuracy[GP_CALIBRATION_BINS];
@@ -2212,6 +2220,7 @@ static GridMetrics evaluate_grid_model_with_rules_and_features(NeuralNet *net,
         if (!generate_grid_state(seed_start + (uint64_t)i, &state)) {
             continue;
         }
+        clock_t component_start = clock();
         size_t candidate_count = rules == NULL
                                      ? fill_grid_candidates_with_feature_set(&state,
                                                                             candidate_inputs,
@@ -2225,8 +2234,13 @@ static GridMetrics evaluate_grid_model_with_rules_and_features(NeuralNet *net,
                                            action_ids,
                                            &target_index,
                                            feature_set);
-        if (candidate_count == 0 || target_index >= candidate_count ||
-            !GP_SCORE_ACTIONS(net,
+        metrics.candidate_gate_ms +=
+            1000.0 * (double)(clock() - component_start) / (double)CLOCKS_PER_SEC;
+        if (candidate_count == 0 || target_index >= candidate_count) {
+            continue;
+        }
+        component_start = clock();
+        if (!GP_SCORE_ACTIONS(net,
                                   candidate_inputs,
                                   candidate_count,
                                   scores,
@@ -2234,6 +2248,8 @@ static GridMetrics evaluate_grid_model_with_rules_and_features(NeuralNet *net,
             !nn_rank_action_scores(scores, candidate_count, ranked)) {
             continue;
         }
+        metrics.scorer_rank_ms +=
+            1000.0 * (double)(clock() - component_start) / (double)CLOCKS_PER_SEC;
 
         size_t target_rank = candidate_count;
         for (size_t rank = 0; rank < candidate_count; ++rank) {
@@ -2262,6 +2278,7 @@ static GridMetrics evaluate_grid_model_with_rules_and_features(NeuralNet *net,
         metrics.bin_confidence[bin] += confidence;
         metrics.bin_accuracy[bin] += selected == target_index ? 1.0 : 0.0;
 
+        component_start = clock();
         for (size_t rank = 0; rank <= target_rank; ++rank) {
             size_t action = (size_t)action_ids[ranked[rank]];
             metrics.verifier_nodes +=
@@ -2276,6 +2293,8 @@ static GridMetrics evaluate_grid_model_with_rules_and_features(NeuralNet *net,
                                             state.sx + ACTION_DX[action],
                                             state.sy + ACTION_DY[action]);
         }
+        metrics.verifier_ms +=
+            1000.0 * (double)(clock() - component_start) / (double)CLOCKS_PER_SEC;
     }
 
     double sample_count = metrics.samples == 0 ? 1.0 : (double)metrics.samples;
@@ -2287,6 +2306,9 @@ static GridMetrics evaluate_grid_model_with_rules_and_features(NeuralNet *net,
     metrics.baseline_steps /= sample_count;
     metrics.verifier_nodes /= sample_count;
     metrics.baseline_nodes /= sample_count;
+    metrics.candidate_gate_ms /= sample_count;
+    metrics.scorer_rank_ms /= sample_count;
+    metrics.verifier_ms /= sample_count;
     for (size_t bin = 0; bin < GP_CALIBRATION_BINS; ++bin) {
         if (metrics.bin_count[bin] == 0) {
             continue;
@@ -2393,6 +2415,35 @@ static void print_grid_metrics(const char *label, const char *hash, GridMetrics 
            metrics.baseline_nodes,
            node_saved_pct,
            metrics.samples);
+}
+
+static void print_grid_cost_breakdown_json(const char *evaluation_mode,
+                                           const char *rule_set_hash,
+                                           const GridMetrics *metrics)
+{
+    double total_ms = metrics->candidate_gate_ms + metrics->scorer_rank_ms +
+                      metrics->verifier_ms;
+    printf("{\"schema\":\"crlp.cost_breakdown.v1\",\"task\":\"grid_path\","
+           "\"evaluation_mode\":\"%s\",\"rule_set_hash\":\"%s\","
+           "\"benchmark_seed\":%llu,\"sample_count\":%zu,"
+           "\"timing_scope\":\"candidate_enumeration_and_gate_plus_scorer_rank_plus_verifier\","
+           "\"certificate_construction_included\":false,"
+           "\"candidate_gate_ms_per_sample\":%.10f,"
+           "\"scorer_rank_ms_per_sample\":%.10f,"
+           "\"verifier_ms_per_sample\":%.10f,"
+           "\"total_ms_per_sample\":%.10f,"
+           "\"verifier_nodes_per_sample\":%.10f,"
+           "\"candidate_count_per_sample\":%.10f}\n",
+           evaluation_mode == NULL ? "raw" : evaluation_mode,
+           rule_set_hash == NULL ? "none" : rule_set_hash,
+           (unsigned long long)gp_eval_test_seed_start,
+           metrics->samples,
+           metrics->candidate_gate_ms,
+           metrics->scorer_rank_ms,
+           metrics->verifier_ms,
+           total_ms,
+           metrics->verifier_nodes,
+           metrics->candidate_count);
 }
 
 static uint64_t grid_state_hash(uint64_t seed)
@@ -2819,7 +2870,7 @@ static void print_grid_compare_json(const NNCheckpointMeta *meta,
            "\"baseline_nodes\":%.8f,\"search_saved\":%.8f",
            meta == NULL ? (unsigned int)GP_FEATURE_ENCODER_VERSION
                         : (unsigned int)meta->feature_encoder_version,
-           (unsigned int)GP_TEST_SEED_START,
+           (unsigned int)gp_eval_test_seed_start,
            metrics->samples,
            (double)metrics->correct / samples,
            metrics->nll,
@@ -2887,7 +2938,7 @@ static void print_grid_prior_ablation_json(const NNCheckpointMeta *meta,
                ? reference_set->enabled_structural_prior_features -
                      ablation_set->enabled_structural_prior_features
                : 0u,
-           (unsigned int)GP_TEST_SEED_START,
+           (unsigned int)gp_eval_test_seed_start,
            ablated->samples,
            ablated_accuracy - reference_accuracy,
            ablated->nll - reference->nll,
@@ -2911,6 +2962,13 @@ static int compare_grid_models(int argc, char **argv)
     size_t model_count = 0;
 
     for (int i = 2; i < argc; ++i) {
+        if (strcmp(argv[i], "--test-seed") == 0 && i + 1 < argc) {
+            if (!nn_parse_u64_text(argv[++i], &gp_eval_test_seed_start)) {
+                print_usage(stderr);
+                return 0;
+            }
+            continue;
+        }
         if (strcmp(argv[i], "--rule-family") == 0 && i + 1 < argc) {
             if (!parse_grid_rule_family(argv[++i], &rule_config.rule_family)) {
                 print_usage(stderr);
@@ -3008,7 +3066,7 @@ static int compare_grid_models(int argc, char **argv)
         GridMetrics metrics = evaluate_grid_model_with_rules_and_features(
             net,
             NULL,
-            GP_TEST_SEED_START,
+            gp_eval_test_seed_start,
             GP_TEST_SAMPLES,
             candidate_inputs,
             action_ids,
@@ -3022,13 +3080,14 @@ static int compare_grid_models(int argc, char **argv)
                                 0,
                                 checkpoint_feature_set,
                                 &metrics);
+        print_grid_cost_breakdown_json("raw", "none", &metrics);
         print_grid_metrics(model_paths[i], hash, metrics);
 
         if (checkpoint_feature_set->use_manhattan_priors) {
             GridMetrics no_prior_metrics = evaluate_grid_model_with_rules_and_features(
                 net,
                 NULL,
-                GP_TEST_SEED_START,
+                gp_eval_test_seed_start,
                 GP_TEST_SAMPLES,
                 candidate_inputs,
                 action_ids,
@@ -3042,6 +3101,9 @@ static int compare_grid_models(int argc, char **argv)
                                     0,
                                     &GRID_FEATURE_SET_NO_PRIORS,
                                     &no_prior_metrics);
+            print_grid_cost_breakdown_json("raw_prior_disabled_ablation",
+                                           "none",
+                                           &no_prior_metrics);
             print_grid_prior_ablation_json(&meta,
                                            hash,
                                            "raw_prior_disabled_ablation",
@@ -3058,7 +3120,7 @@ static int compare_grid_models(int argc, char **argv)
             GridMetrics gated_metrics = evaluate_grid_model_with_rules_and_features(
                 net,
                 &family_rules[family_i],
-                GP_TEST_SEED_START,
+                gp_eval_test_seed_start,
                 GP_TEST_SAMPLES,
                 candidate_inputs,
                 action_ids,
@@ -3072,6 +3134,9 @@ static int compare_grid_models(int argc, char **argv)
                                     family_rules[family_i].accepted_rules,
                                     checkpoint_feature_set,
                                     &gated_metrics);
+            print_grid_cost_breakdown_json("budgeted_legality_gate_model",
+                                           grid_rule_set_hash(&family_configs[family_i]),
+                                           &gated_metrics);
             print_grid_metrics("budgeted-certified-gate", hash, gated_metrics);
 
             if (checkpoint_feature_set->use_manhattan_priors) {
@@ -3079,7 +3144,7 @@ static int compare_grid_models(int argc, char **argv)
                     evaluate_grid_model_with_rules_and_features(
                         net,
                         &family_rules[family_i],
-                        GP_TEST_SEED_START,
+                        gp_eval_test_seed_start,
                         GP_TEST_SAMPLES,
                         candidate_inputs,
                         action_ids,
@@ -3093,6 +3158,10 @@ static int compare_grid_models(int argc, char **argv)
                                         family_rules[family_i].accepted_rules,
                                         &GRID_FEATURE_SET_NO_PRIORS,
                                         &gated_no_prior_metrics);
+                print_grid_cost_breakdown_json(
+                    "budgeted_legality_gate_prior_disabled_ablation",
+                    grid_rule_set_hash(&family_configs[family_i]),
+                    &gated_no_prior_metrics);
                 print_grid_prior_ablation_json(
                     &meta,
                     hash,
@@ -3132,6 +3201,7 @@ static void print_usage(FILE *stream)
           "[--proposer neural|random|grammar|structural|validation-oracle] "
           "[--proposer-seed seed]\n"
           "       grid_path --compare "
+          "[--test-seed seed] "
           "[--rule-family all|cheap|bound|cheap-bound|exact-distance] "
           "[--rule-family-sweep] "
           "model_a.nnckpt model_b.nnckpt [...]\n"

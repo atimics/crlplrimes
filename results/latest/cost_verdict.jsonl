@@ -1,0 +1,2 @@
+{"schema":"crlp.cost_breakdown.verdict.v1","task":"grid_path","comparison":"cheap_bound_vs_raw","mean_total_ms_delta":-0.0005520000,"ci95_low":-0.0007348139,"ci95_high":-0.0003691861,"verdict":"improves_total_cost","efficiency_claim_promotable":true,"certificate_construction_included":false}
+{"schema":"crlp.cost_breakdown.verdict.v1","task":"grid_path","comparison":"mixed_vs_raw","mean_total_ms_delta":-0.0000586000,"ci95_low":-0.0001707710,"ci95_high":0.0000535710,"verdict":"inconclusive","efficiency_claim_promotable":false,"certificate_construction_included":false}
