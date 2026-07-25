@@ -1,1 +1,20 @@
-{"schema":"crlp.environment_manifest.v1","real":"double","cc":"cc"}
+{
+  "schema": "crlp.environment_manifest.v1",
+  "schema_version": 2,
+  "real": "double",
+  "cc": "gcc-13",
+  "compiler_version": "gcc-13 (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "make_version": "GNU Make 4.3",
+  "libc": "ldd (Ubuntu GLIBC 2.39-0ubuntu8.7) 2.39",
+  "openblas_version": "0.3.26",
+  "runner_os": "Linux",
+  "runner_arch": "X64",
+  "uname": "Linux runnervmvrwv9 6.17.0-1020-azure #20~24.04.1-Ubuntu SMP Fri Jun 19 20:09:14 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux",
+  "cpu_model": "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz",
+  "cpu_count": 2,
+  "github_repository": "atimics/crlplrimes",
+  "github_sha": "e48d8c002877831f18acb4d4a3a7cb214d5261a1",
+  "github_run_id": "30150502186",
+  "github_workflow": "results",
+  "captured_utc": "2026-07-25T08:07:49Z"
+}
