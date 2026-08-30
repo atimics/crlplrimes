@@ -62,6 +62,41 @@ static void fill_targets(nn_real *targets, size_t count)
     }
 }
 
+static int test_eml_derivatives_match_forward_operator(void)
+{
+#if NN_REAL_IS_FLOAT
+    const nn_real step = (nn_real)1e-3f;
+    const nn_real abs_tol = (nn_real)2e-3f;
+    const nn_real rel_tol = (nn_real)2e-3f;
+#else
+    const nn_real step = (nn_real)1e-6;
+    const nn_real abs_tol = (nn_real)2e-7;
+    const nn_real rel_tol = (nn_real)2e-7;
+#endif
+    const nn_real x = (nn_real)0.3;
+    const nn_real positive_y = (nn_real)0.7;
+    const nn_real negative_y = (nn_real)-0.7;
+    nn_real numeric_dx =
+        (nn_eml(x + step, positive_y) - nn_eml(x - step, positive_y)) /
+        ((nn_real)2 * step);
+    nn_real numeric_positive_dy =
+        (nn_eml(x, positive_y + step) - nn_eml(x, positive_y - step)) /
+        ((nn_real)2 * step);
+    nn_real numeric_negative_dy =
+        (nn_eml(x, negative_y + step) - nn_eml(x, negative_y - step)) /
+        ((nn_real)2 * step);
+    nn_real negative_tail_gradient = nn_eml_activation_dx((nn_real)-5);
+    nn_real positive_growth_gradient = nn_eml_activation_dx((nn_real)3);
+
+    return nearly_equal(nn_eml_dx(x), numeric_dx, abs_tol, rel_tol) &&
+           nearly_equal(nn_eml_dy(positive_y), numeric_positive_dy, abs_tol, rel_tol) &&
+           nearly_equal(nn_eml_dy(negative_y), numeric_negative_dy, abs_tol, rel_tol) &&
+           nn_eml_dy((nn_real)0) == (nn_real)0 &&
+           negative_tail_gradient > (nn_real)0 &&
+           negative_tail_gradient < (nn_real)1e-4 &&
+           positive_growth_gradient > (nn_real)10;
+}
+
 static int test_experiment_schema_json_contract(void)
 {
     const NNFeatureSchema features[] = {
@@ -4453,6 +4488,8 @@ int main(void)
     check(test_clone_matches_and_detaches(), "clone matches and detaches");
     check(test_gradient_buffers_are_lazy(), "gradient buffers are lazy");
     check(test_batch_size_one_matches_sample_training(), "batch size 1 matches sample training");
+    check(test_eml_derivatives_match_forward_operator(),
+          "EML derivatives match the implemented operator without hidden clamps");
     check(test_batched_gradient_matches_finite_difference(),
           "batched gradient matches finite difference");
     check(test_softmax_cross_entropy_config_learns(),

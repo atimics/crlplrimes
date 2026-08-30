@@ -90,7 +90,7 @@ static nn_real activate(nn_real x, NNActivation activation)
     case NN_ACTIVATION_LINEAR:
         return x;
     case NN_ACTIVATION_EML:
-        { nn_real ex = NN_EXP(x); return ex - NN_LOG((nn_real)1 + ex); }
+        return nn_eml_activation(x);
     case NN_ACTIVATION_SIGMOID:
     default:
         return sigmoid(x);
@@ -112,7 +112,11 @@ static nn_real activation_derivative_from_activation(nn_real activation_value,
     case NN_ACTIVATION_LINEAR:
         return (nn_real)1;
     case NN_ACTIVATION_EML:
-        { nn_real a = activation_value; return a < 2 ? (a < 0 ? 0 : a) : 2; }
+        /* EML requires its pre-activation. Callers handle it separately. */
+        return (nn_real)NAN;
+    case NN_ACTIVATION_EML_PAIRWISE:
+        /* Pairwise derivatives are expanded from the output delta separately. */
+        return (nn_real)1;
     case NN_ACTIVATION_SIGMOID:
     default:
         return sigmoid_derivative_from_activation(activation_value);
@@ -121,12 +125,11 @@ static nn_real activation_derivative_from_activation(nn_real activation_value,
 
 /*
  * Derivative of EML activation given the *pre-activation* value x.
- * activation = exp(x) - log(1+exp(x))
- * d/dx = exp(2x) / (1+exp(x))
+ * activation = exp(x) - softplus(x)
+ * d/dx = exp(x) - sigmoid(x)
  */
 static nn_real eml_activation_derivative(nn_real x) {
-    nn_real ex = NN_EXP(x); nn_real d = (ex*ex)/(1+ex);
-    return d > 10 ? 10 : (d < 0.01f ? 0.01f : d);
+    return nn_eml_activation_dx(x);
 }
 
 static NNActivation activation_for_layer(const NeuralNet *net, size_t layer)
@@ -134,6 +137,18 @@ static NNActivation activation_for_layer(const NeuralNet *net, size_t layer)
     if (net->layer_activations != NULL && net->layer_activations[layer] != NN_ACTIVATION_SIGMOID)
         return net->layer_activations[layer];
     return layer + 1 == net->layer_count ? net->output_activation : net->hidden_activation;
+}
+
+static nn_real activation_derivative_for_neuron(const NeuralNet *net,
+                                                size_t layer,
+                                                size_t neuron)
+{
+    NNActivation activation = activation_for_layer(net, layer);
+    if (activation == NN_ACTIVATION_EML) {
+        return eml_activation_derivative(net->pre_activations[layer][neuron]);
+    }
+    return activation_derivative_from_activation(net->activations[layer][neuron],
+                                                 activation);
 }
 
 static void *checked_calloc(size_t count, size_t size)
@@ -331,20 +346,11 @@ static void dense_forward_layer(const nn_real *restrict previous_activations,
             const nn_real *w2 = &weights[(2 * i + 1) * previous];
             nn_real z1 = biases[2 * i] + dot_product(w1, previous_activations, previous);
             nn_real z2 = biases[2 * i + 1] + dot_product(w2, previous_activations, previous);
-            /* cap pre-acts to prevent exp overflow in eml */
-            if (z1 > (nn_real)5) z1 = (nn_real)5;
-            if (z1 < (nn_real)-5) z1 = (nn_real)-5;
-            if (z2 > (nn_real)5) z2 = (nn_real)5;
-            if (z2 < (nn_real)-5) z2 = (nn_real)-5;
             if (pre_activations != NULL) {
                 pre_activations[2 * i]     = z1;
                 pre_activations[2 * i + 1] = z2;
             }
-            nn_real val = nn_eml(z1, z2);
-            /* clip tightly: stacked EML layers compound exp(exp(x)) */
-            if (val > (nn_real)5) val = (nn_real)5;
-            if (val < (nn_real)-5) val = (nn_real)-5;
-            activations[i] = val;
+            activations[i] = nn_eml(z1, z2);
         }
         return;
     }
@@ -381,14 +387,7 @@ static void dense_forward_layer_batch(const nn_real *restrict previous_activatio
                 const nn_real *w2 = &weights[(2 * i + 1) * previous];
                 nn_real z1 = biases[2 * i] + dot_product(w1, in, previous);
                 nn_real z2 = biases[2 * i + 1] + dot_product(w2, in, previous);
-                if (z1 > (nn_real)5) z1 = (nn_real)5;
-                if (z1 < (nn_real)-5) z1 = (nn_real)-5;
-                if (z2 > (nn_real)5) z2 = (nn_real)5;
-                if (z2 < (nn_real)-5) z2 = (nn_real)-5;
-                nn_real val = nn_eml(z1, z2);
-                if (val > (nn_real)5) val = (nn_real)5;
-                if (val < (nn_real)-5) val = (nn_real)-5;
-                out[i] = val;
+                out[i] = nn_eml(z1, z2);
             }
         }
         return;
@@ -706,8 +705,8 @@ static nn_real compute_deltas_and_loss(NeuralNet *net, const nn_real *target)
 
         for (size_t neuron = 0; neuron < output_width; ++neuron) {
             output_deltas[neuron] -= target[neuron];
-            output_deltas[neuron] *= activation_derivative_from_activation(
-                output_activations[neuron], net->output_activation);
+            output_deltas[neuron] *=
+                activation_derivative_for_neuron(net, output_layer, neuron);
         }
     } else {
         for (size_t neuron = 0; neuron < output_width; ++neuron) {
@@ -715,7 +714,7 @@ static nn_real compute_deltas_and_loss(NeuralNet *net, const nn_real *target)
             nn_real error = activation - target[neuron];
             loss += (nn_real)0.5 * error * error;
             output_deltas[neuron] =
-                error * activation_derivative_from_activation(activation, net->output_activation);
+                error * activation_derivative_for_neuron(net, output_layer, neuron);
         }
     }
 
@@ -725,7 +724,6 @@ static nn_real compute_deltas_and_loss(NeuralNet *net, const nn_real *target)
         nn_real *current_deltas = net->deltas[layer];
         const nn_real *next_deltas = net->deltas[layer + 1];
         const nn_real *next_weights = net->weights[layer + 1];
-        const nn_real *current_activations = net->activations[layer];
 
         memset(current_deltas, 0, current * sizeof(*current_deltas));
 
@@ -737,14 +735,11 @@ static nn_real compute_deltas_and_loss(NeuralNet *net, const nn_real *target)
 
         for (size_t neuron = 0; neuron < current; ++neuron) {
             NNActivation act = activation_for_layer(net, layer);
-            if (act == NN_ACTIVATION_EML && net->pre_activations != NULL) {
-                current_deltas[neuron] *= eml_activation_derivative(
-                    net->pre_activations[layer][neuron]);
-            } else if (act == NN_ACTIVATION_EML_PAIRWISE) {
+            if (act == NN_ACTIVATION_EML_PAIRWISE) {
                 /* derivative applied in eml_pairwise_backprop_post */
             } else {
-                current_deltas[neuron] *= activation_derivative_from_activation(
-                    current_activations[neuron], act);
+                current_deltas[neuron] *=
+                    activation_derivative_for_neuron(net, layer, neuron);
             }
         }
     }

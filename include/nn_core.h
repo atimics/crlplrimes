@@ -34,22 +34,22 @@ typedef struct NeuralNet NeuralNet;
 #define NN_SCORER_ENVELOPE_FEATURE_SET "task_role_tagged_action_rule_rows_v1"
 #if NN_REAL_IS_FLOAT
 #define NN_RANK_SCORE_EPSILON ((nn_real)1e-6f)
+#define NN_EML_EPSILON ((nn_real)1e-6f)
 #else
 #define NN_RANK_SCORE_EPSILON ((nn_real)1e-12)
+#define NN_EML_EPSILON ((nn_real)1e-12)
 #endif
 
 /*
- * EML operator: eml(x, y) = exp(x) - ln(y).
- * Universal primitive for continuous mathematics (analogous to NAND for
- * digital logic). Composition through EML can recover addition,
- * multiplication, and arbitrary continuous functions.
+ * Experimental EML operator: eml(x, y) = exp(x) - ln(|y| + epsilon).
+ * No claim of EML-only functional completeness is made by this API.
  */
 static inline nn_real nn_eml(nn_real x, nn_real y)
 {
 #if NN_REAL_IS_FLOAT
-    return expf(x) - logf(fabsf(y) + 1e-6f);
+    return expf(x) - logf(fabsf(y) + NN_EML_EPSILON);
 #else
-    return exp(x) - log(fabs(y) + 1e-12);
+    return exp(x) - log(fabs(y) + NN_EML_EPSILON);
 #endif
 }
 
@@ -74,9 +74,11 @@ static inline void nn_eml_enrich_features(const nn_real *features, size_t n,
     nn_eml_pairwise(features, enriched + n, n / 2);
 }
 
-/* EML activation derivative for backprop:
+/* EML partial derivatives for backprop:
  *   d/dx eml(x,y) = exp(x)
- *   d/dy eml(x,y) = -1/y
+ *   d/dy eml(x,y) = -sign(y) / (|y| + epsilon), for y != 0
+ * The absolute value is not differentiable at y == 0. We choose the zero
+ * subgradient there instead of inventing a large finite derivative.
  */
 static inline nn_real nn_eml_dx(nn_real x)   {
 #if NN_REAL_IS_FLOAT
@@ -86,9 +88,56 @@ static inline nn_real nn_eml_dx(nn_real x)   {
 #endif
 }
 static inline nn_real nn_eml_dy(nn_real y)   {
-    nn_real ay = y < (nn_real)0 ? -y : y;
-    if (ay < (nn_real)1e-4f) return y < (nn_real)0 ? (nn_real)1e4f : -(nn_real)1e4f;
-    return -(nn_real)1 / y;
+    if (y > (nn_real)0) {
+        return -(nn_real)1 / (y + NN_EML_EPSILON);
+    }
+    if (y < (nn_real)0) {
+        return (nn_real)1 / (-y + NN_EML_EPSILON);
+    }
+    return (nn_real)0;
+}
+
+/* Unary experimental activation used by NN_ACTIVATION_EML:
+ *   a(x) = exp(x) - softplus(x)
+ * Its exact derivative is exp(x) - sigmoid(x). The derivative approaches
+ * zero exponentially for negative x and grows exponentially for positive x.
+ */
+static inline nn_real nn_eml_activation(nn_real x) {
+#if NN_REAL_IS_FLOAT
+    nn_real exponential = expf(x);
+    nn_real softplus = x > (nn_real)0
+                           ? x + log1pf(expf(-x))
+                           : log1pf(exponential);
+#else
+    nn_real exponential = exp(x);
+    nn_real softplus = x > (nn_real)0
+                           ? x + log1p(exp(-x))
+                           : log1p(exponential);
+#endif
+    return exponential - softplus;
+}
+
+static inline nn_real nn_eml_activation_dx(nn_real x) {
+    nn_real exponential;
+    nn_real sigmoid_value;
+#if NN_REAL_IS_FLOAT
+    exponential = expf(x);
+    if (x >= (nn_real)0) {
+        nn_real negative_exponential = expf(-x);
+        sigmoid_value = (nn_real)1 / ((nn_real)1 + negative_exponential);
+    } else {
+        sigmoid_value = exponential / ((nn_real)1 + exponential);
+    }
+#else
+    exponential = exp(x);
+    if (x >= (nn_real)0) {
+        nn_real negative_exponential = exp(-x);
+        sigmoid_value = (nn_real)1 / ((nn_real)1 + negative_exponential);
+    } else {
+        sigmoid_value = exponential / ((nn_real)1 + exponential);
+    }
+#endif
+    return exponential - sigmoid_value;
 }
 
 typedef enum {
