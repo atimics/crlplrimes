@@ -1,0 +1,29 @@
+{
+  "schema": "crlp.ilxyr_cloud_job.v1",
+  "id": "bridge-smoke-v1",
+  "purpose": "infrastructure_smoke",
+  "claim_ids": [],
+  "grounding_authority": "exact_check",
+  "source": {
+    "repository": "https://github.com/atimics/crlplrimes.git",
+    "commit": "CURRENT",
+    "artifacts": [
+      {
+        "path": "scripts/ilxyr_bridge_smoke.mjs",
+        "sha256": "de2630ed94b766314be3e8d7608976ac6552fe28275d9443e1ea2161ee99f166"
+      }
+    ]
+  },
+  "control_plane": {
+    "repository": "https://github.com/cenetex/ilxyr.git",
+    "commit": "2c91792f8dd452408ddf8bdd408cb9ab3835bb84",
+    "family_manifest": "integrations/ilxyr/families/bridge-smoke/family.json"
+  },
+  "corpus": {
+    "kind": "none"
+  },
+  "outputs": {
+    "directory": "build/ilxyr/bridge-smoke-v1",
+    "retention_days": 30
+  }
+}

@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/atimics/crlplrimes/blob/main/integrations/ilxyr/cloud-job.schema.json",
+  "title": "CRLPLRIMES ilXyr cloud job",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "purpose",
+    "claim_ids",
+    "grounding_authority",
+    "source",
+    "control_plane",
+    "corpus",
+    "outputs"
+  ],
+  "properties": {
+    "schema": { "const": "crlp.ilxyr_cloud_job.v1" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+    "purpose": { "enum": ["infrastructure_smoke", "experiment"] },
+    "claim_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "grounding_authority": {
+      "enum": ["exact_check", "deterministic_replay", "corpus_proxy", "human_review"]
+    },
+    "source": { "$ref": "#/$defs/source" },
+    "control_plane": { "$ref": "#/$defs/controlPlane" },
+    "corpus": {
+      "oneOf": [
+        { "$ref": "#/$defs/noCorpus" },
+        { "$ref": "#/$defs/braidRelease" }
+      ]
+    },
+    "outputs": { "$ref": "#/$defs/outputs" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "grounding_authority": { "const": "corpus_proxy" }
+        },
+        "required": ["grounding_authority"]
+      },
+      "then": {
+        "properties": {
+          "corpus": { "$ref": "#/$defs/braidRelease" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "repository": {
+      "type": "string",
+      "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\\.git)?$"
+    },
+    "path": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+      "not": { "pattern": "(^|/)\\.\\.?(/|$)|//" }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "artifacts"],
+      "properties": {
+        "repository": { "$ref": "#/$defs/repository" },
+        "commit": {
+          "oneOf": [
+            { "$ref": "#/$defs/commit" },
+            { "const": "CURRENT" }
+          ]
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/artifact" }
+        }
+      }
+    },
+    "controlPlane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "family_manifest"],
+      "properties": {
+        "repository": { "$ref": "#/$defs/repository" },
+        "commit": { "$ref": "#/$defs/commit" },
+        "family_manifest": { "$ref": "#/$defs/path" }
+      }
+    },
+    "noCorpus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": { "kind": { "const": "none" } }
+    },
+    "braidRelease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "repository",
+        "commit",
+        "release_id",
+        "release_manifest_sha256",
+        "release_directory",
+        "materialization"
+      ],
+      "properties": {
+        "kind": { "const": "braid_release" },
+        "repository": { "$ref": "#/$defs/repository" },
+        "commit": { "$ref": "#/$defs/commit" },
+        "release_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "release_manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "release_directory": { "$ref": "#/$defs/path" },
+        "materialization": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind"],
+              "properties": { "kind": { "const": "existing" } }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "spec_path", "output_root"],
+              "properties": {
+                "kind": { "const": "build" },
+                "spec_path": { "$ref": "#/$defs/path" },
+                "output_root": { "$ref": "#/$defs/path" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["directory", "retention_days"],
+      "properties": {
+        "directory": { "$ref": "#/$defs/path" },
+        "retention_days": { "type": "integer", "minimum": 1, "maximum": 90 }
+      }
+    }
+  }
+}

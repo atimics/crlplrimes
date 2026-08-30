@@ -95,7 +95,7 @@ test: $(TEST_RUNNER)
 sanitize: $(SANITIZE_TEST_RUNNER)
 	./$(SANITIZE_TEST_RUNNER)
 
-check: source-policy-check test sanitize action-score symbolic-domains modular-gate-search-smoke delayed-claim-self-test delayed-claim-eval grid-path-eval prime-rule-search-smoke prime-gap-eval
+check: source-policy-check ilxyr-integration-check test sanitize action-score symbolic-domains modular-gate-search-smoke delayed-claim-self-test delayed-claim-eval grid-path-eval prime-rule-search-smoke prime-gap-eval
 	$(MAKE) test REAL=double
 	$(MAKE) numeric-certificate-mandatory
 	$(MAKE) paper-support

@@ -1,0 +1,15 @@
+{
+  "schema": "ilxyr.forecast.v1",
+  "id": "crlp.ilxyr.bridge_smoke.forecast.runner.v1",
+  "experiment_id": "crlp.ilxyr.bridge_smoke.seed1.v1",
+  "forecaster": {
+    "id": "service://crlp/cloud-integration-forecast-runner",
+    "kind": "service"
+  },
+  "probabilities": {
+    "execution_failure": 0.001,
+    "ready": 0.999
+  },
+  "stake": 1,
+  "rationale": "The runner has no inputs and emits one fixed metrics object."
+}

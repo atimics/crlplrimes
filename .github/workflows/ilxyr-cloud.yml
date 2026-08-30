@@ -1,0 +1,126 @@
+name: ilXyr cloud experiment
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_manifest:
+        description: Checked-in crlp.ilxyr_cloud_job.v1 path
+        required: true
+        type: string
+      execute:
+        description: Run and settle after freeze and admission checks
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  run-family:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Check out CRLPLRIMES
+        uses: actions/checkout@v4
+
+      - name: Read the frozen cloud job
+        id: job
+        env:
+          JOB_MANIFEST: ${{ inputs.job_manifest }}
+        run: node scripts/ilxyr_cloud_bridge.mjs --manifest "$JOB_MANIFEST" --github-outputs >> "$GITHUB_OUTPUT"
+
+      - name: Check out pinned ilXyr
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.job.outputs.ilxyr_repository }}
+          ref: ${{ steps.job.outputs.ilxyr_commit }}
+          path: _deps/ilxyr
+
+      - name: Check out pinned Braid
+        if: steps.job.outputs.braid_required == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.job.outputs.braid_repository }}
+          ref: ${{ steps.job.outputs.braid_commit }}
+          path: _deps/braid
+
+      - name: Install the ilXyr toolchain
+        uses: dtolnay/rust-toolchain@1.85.0
+
+      - name: Build ilXyr
+        working-directory: _deps/ilxyr
+        run: cargo build --release --locked -p ilxyr-cli
+
+      - name: Install the Braid toolchain
+        if: steps.job.outputs.braid_required == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+
+      - name: Build Braid
+        if: steps.job.outputs.braid_required == 'true'
+        working-directory: _deps/braid
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.19.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Install the CRLPLRIMES toolchain
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-13 make libopenblas-dev
+
+      - name: Materialize the deployment-neutral workspace
+        run: |
+          sudo mkdir -p /workspace
+          sudo ln -s "$GITHUB_WORKSPACE" /workspace/crlplrimes
+          sudo ln -s "$GITHUB_WORKSPACE/_deps/ilxyr" /workspace/ilxyr
+          if [ -d "$GITHUB_WORKSPACE/_deps/braid" ]; then
+            sudo ln -s "$GITHUB_WORKSPACE/_deps/braid" /workspace/braid
+          fi
+
+      - name: Freeze and check the ilXyr family
+        if: ${{ !inputs.execute }}
+        env:
+          JOB_MANIFEST: ${{ inputs.job_manifest }}
+        run: |
+          args=(
+            --manifest "$JOB_MANIFEST"
+            --repo "$GITHUB_WORKSPACE"
+            --ilxyr-repo "$GITHUB_WORKSPACE/_deps/ilxyr"
+            --ilxyr-cli "$GITHUB_WORKSPACE/_deps/ilxyr/target/release/ilxyr"
+          )
+          if [ "${{ steps.job.outputs.braid_required }}" = true ]; then
+            args+=(--braid-repo "$GITHUB_WORKSPACE/_deps/braid")
+            args+=(--braid-cli "$GITHUB_WORKSPACE/_deps/braid/dist/cli.js")
+          fi
+          node scripts/ilxyr_cloud_bridge.mjs "${args[@]}"
+
+      - name: Run, settle, and verify the ilXyr family
+        if: inputs.execute
+        env:
+          JOB_MANIFEST: ${{ inputs.job_manifest }}
+        run: |
+          args=(
+            --manifest "$JOB_MANIFEST"
+            --repo "$GITHUB_WORKSPACE"
+            --ilxyr-repo "$GITHUB_WORKSPACE/_deps/ilxyr"
+            --ilxyr-cli "$GITHUB_WORKSPACE/_deps/ilxyr/target/release/ilxyr"
+            --execute
+          )
+          if [ "${{ steps.job.outputs.braid_required }}" = true ]; then
+            args+=(--braid-repo "$GITHUB_WORKSPACE/_deps/braid")
+            args+=(--braid-cli "$GITHUB_WORKSPACE/_deps/braid/dist/cli.js")
+          fi
+          node scripts/ilxyr_cloud_bridge.mjs "${args[@]}"
+
+      - name: Upload the ledger and evidence handoff
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ilxyr-${{ steps.job.outputs.job_id }}-${{ github.run_id }}
+          path: ${{ steps.job.outputs.output_directory }}
+          if-no-files-found: warn
+          retention-days: ${{ steps.job.outputs.retention_days }}

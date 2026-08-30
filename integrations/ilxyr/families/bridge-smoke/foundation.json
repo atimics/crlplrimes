@@ -1,0 +1,18 @@
+{
+  "schema": "ilxyr.contribution.v1",
+  "id": "crlp.ilxyr.bridge_smoke.foundation.v1",
+  "stage": "mathematical_foundation",
+  "actor": {
+    "id": "service://crlp/cloud-integration-foundation",
+    "kind": "service"
+  },
+  "title": "Complete smoke-test outcome partition",
+  "body": "A successful run emits bridge_ready=1. A failed process resolves as execution_failure. These outcomes cover the smoke-test contract.",
+  "input_refs": [
+    "crlp.ilxyr.bridge_smoke.hypothesis.v1"
+  ],
+  "claims": [
+    "Exactly one declared outcome resolves for the bounded smoke runner."
+  ],
+  "confidence": 1.0
+}

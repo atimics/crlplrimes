@@ -1,0 +1,29 @@
+{
+  "schema": "ilxyr.family_manifest.v1",
+  "id": "crlp.ilxyr.bridge_smoke.family.v1",
+  "title": "CRLPLRIMES ilXyr cloud bridge infrastructure check",
+  "contributions": [
+    "hypothesis.json",
+    "foundation.json",
+    "engineering-review.json",
+    "experiment-design.json"
+  ],
+  "members": [
+    {
+      "seed": 1,
+      "required_outcome": "ready",
+      "experiment": "experiment.json",
+      "forecasts": [
+        "forecast-control-plane.json",
+        "forecast-runner.json"
+      ],
+      "funding": [
+        "funding.json"
+      ]
+    }
+  ],
+  "prior_outcomes": [],
+  "run_all": true,
+  "success_outcome": "ready",
+  "failure_outcome": "no_go"
+}
