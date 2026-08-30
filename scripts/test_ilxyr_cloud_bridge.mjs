@@ -119,7 +119,11 @@ try {
 import { mkdirSync } from "node:fs";
 if (process.argv[2] === "init") mkdirSync(process.argv[3], { recursive: true });
 if (process.argv[2] === "family" && process.argv[3] === "check") {
-  process.stdout.write(JSON.stringify({ ready: true, members: [] }));
+  const ready = process.env.ILXYR_REJECT !== "1";
+  process.stdout.write(JSON.stringify({
+    ready,
+    members: ready ? [] : [{ experiment_id: "fixture.rejected.v1", ready: false, failed_gates: ["fixture_gate"] }],
+  }));
 }
 `);
   chmodSync(fakeIlxyr, 0o755);
@@ -168,6 +172,11 @@ if (process.argv[2] === "family" && process.argv[3] === "check") {
     },
   };
   writeFileSync(jobPath, `${JSON.stringify(job, null, 2)}\n`);
+  const rejectedJobPath = join(sourceRepo, "integrations", "ilxyr", "bridge-rejected-job.json");
+  const rejectedJob = structuredClone(job);
+  rejectedJob.id = "bridge-rejected-v1";
+  rejectedJob.outputs.directory = "build/ilxyr/bridge-rejected-v1";
+  writeFileSync(rejectedJobPath, `${JSON.stringify(rejectedJob, null, 2)}\n`);
   const sourceCommit = commitAll(sourceRepo);
 
   const bridgePath = resolve(scriptsDirectory, "ilxyr_cloud_bridge.mjs");
@@ -189,6 +198,18 @@ if (process.argv[2] === "family" && process.argv[3] === "check") {
   assert.equal(rendered.commit, sourceCommit);
   assert.equal(rendered.release, releaseId);
   assert.equal(rendered.artifact, job.source.artifacts[0].sha256);
+
+  const rejected = spawnSync(process.execPath, [
+    bridgePath,
+    "--manifest", rejectedJobPath,
+    "--repo", sourceRepo,
+    "--ilxyr-repo", ilxyrRepo,
+    "--ilxyr-cli", fakeIlxyr,
+    "--braid-repo", braidRepo,
+    "--braid-cli", fakeBraid,
+  ], { encoding: "utf8", env: { ...process.env, ILXYR_REJECT: "1" } });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /ilXyr rejected family bridge-rejected-v1: fixture\.rejected\.v1: fixture_gate/u);
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });
 }
