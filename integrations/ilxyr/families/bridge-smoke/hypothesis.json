@@ -6,8 +6,8 @@
     "id": "service://crlp/cloud-integration-proposer",
     "kind": "service"
   },
-  "title": "The cloud bridge can complete one deterministic ilXyr run",
-  "body": "The checked-in smoke runner will emit bridge_ready=1 when ilXyr invokes it through the cloud bridge.",
+  "title": "The cloud bridge can complete a deterministic ilXyr family",
+  "body": "The checked-in smoke runner will emit bridge_ready=1 for both required family members when ilXyr invokes it through the cloud bridge.",
   "input_refs": [],
   "claims": [
     "This is an infrastructure check, not scientific evidence."

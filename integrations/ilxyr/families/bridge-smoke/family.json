@@ -20,6 +20,18 @@
       "funding": [
         "funding.json"
       ]
+    },
+    {
+      "seed": 2,
+      "required_outcome": "ready",
+      "experiment": "experiment-seed2.json",
+      "forecasts": [
+        "forecast-control-plane-seed2.json",
+        "forecast-runner-seed2.json"
+      ],
+      "funding": [
+        "funding-seed2.json"
+      ]
     }
   ],
   "prior_outcomes": [],

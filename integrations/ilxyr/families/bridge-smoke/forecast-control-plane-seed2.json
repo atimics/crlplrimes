@@ -1,0 +1,15 @@
+{
+  "schema": "ilxyr.forecast.v1",
+  "id": "crlp.ilxyr.bridge_smoke.forecast.control_plane.seed2.v1",
+  "experiment_id": "crlp.ilxyr.bridge_smoke.seed2.v1",
+  "forecaster": {
+    "id": "service://crlp/cloud-integration-forecast-control-plane",
+    "kind": "service"
+  },
+  "probabilities": {
+    "execution_failure": 0.01,
+    "ready": 0.99
+  },
+  "stake": 1,
+  "rationale": "The second member uses the same already-tested bridge path."
+}
