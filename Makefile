@@ -174,6 +174,7 @@ include mk/grammar.mk
 include mk/evidence.mk
 include mk/paper.mk
 include mk/eml.mk
+include mk/ilxyr.mk
 include mk/runtime.mk
 
 $(BUILD_DIR):

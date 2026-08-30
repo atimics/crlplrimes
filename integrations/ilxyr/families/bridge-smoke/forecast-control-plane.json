@@ -1,0 +1,16 @@
+{
+  "schema": "ilxyr.forecast.v1",
+  "id": "crlp.ilxyr.bridge_smoke.forecast.control_plane.v1",
+  "experiment_id": "crlp.ilxyr.bridge_smoke.seed1.v1",
+  "forecaster": {
+    "id": "service://crlp/cloud-integration-forecast-control-plane",
+    "kind": "service"
+  },
+  "probabilities": {
+    "below_ready": 0.005,
+    "execution_failure": 0.005,
+    "ready": 0.99
+  },
+  "stake": 1,
+  "rationale": "The bridge contract tests pass locally, leaving a small cloud toolchain risk."
+}

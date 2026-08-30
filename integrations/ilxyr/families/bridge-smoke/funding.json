@@ -1,0 +1,11 @@
+{
+  "schema": "ilxyr.funding.v1",
+  "id": "crlp.ilxyr.bridge_smoke.funding.v1",
+  "experiment_id": "crlp.ilxyr.bridge_smoke.seed1.v1",
+  "funder": {
+    "id": "service://crlp/cloud-integration-budget",
+    "kind": "service"
+  },
+  "compute_credits": 1,
+  "rationale": "Reserve one compute credit for the bounded infrastructure check."
+}

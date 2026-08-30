@@ -1,0 +1,19 @@
+{
+  "schema": "ilxyr.contribution.v1",
+  "id": "crlp.ilxyr.bridge_smoke.engineering_review.v1",
+  "stage": "engineering_review",
+  "actor": {
+    "id": "service://crlp/cloud-integration-reviewer",
+    "kind": "service"
+  },
+  "title": "Bounded cloud bridge smoke runner",
+  "body": "The runner uses the pinned Node executable, accepts no arguments, performs no network requests, writes one bounded JSON object, and has a ten-second timeout. The experiment declares network=open because the current ilXyr local-command adapter rejects all other network policies.",
+  "input_refs": [
+    "crlp.ilxyr.bridge_smoke.hypothesis.v1",
+    "crlp.ilxyr.bridge_smoke.foundation.v1"
+  ],
+  "claims": [
+    "The public local-command lane is sufficient for this infrastructure check."
+  ],
+  "confidence": 0.99
+}

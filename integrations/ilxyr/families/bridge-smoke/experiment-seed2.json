@@ -1,0 +1,97 @@
+{
+  "schema": "ilxyr.experiment.v1",
+  "id": "crlp.ilxyr.bridge_smoke.seed2.v1",
+  "title": "CRLPLRIMES ilXyr cloud bridge smoke run, seed 2",
+  "hypothesis": "The checked-in smoke runner emits bridge_ready=1 for the second family member.",
+  "rationale": "Exercise the same Ilxyr cloud path as seed 1 so the native family contract has two prospective members.",
+  "proposer": {
+    "id": "service://crlp/cloud-integration-proposer",
+    "kind": "service"
+  },
+  "lineage": {
+    "hypothesis": "crlp.ilxyr.bridge_smoke.hypothesis.v1",
+    "mathematical_foundation": "crlp.ilxyr.bridge_smoke.foundation.v1",
+    "engineering_review": "crlp.ilxyr.bridge_smoke.engineering_review.v1",
+    "experiment_design": "crlp.ilxyr.bridge_smoke.experiment_design.v1"
+  },
+  "baseline": "baseline://crlp/ilxyr-cloud-unwired",
+  "datasets": [],
+  "models": [],
+  "metrics": [
+    {
+      "name": "bridge_ready",
+      "unit": "boolean",
+      "description": "One only when the pinned smoke runner completes."
+    }
+  ],
+  "seeds": [2],
+  "outcome_contract": {
+    "primary_metric": "bridge_ready",
+    "success_outcome": "ready",
+    "outcomes": [
+      {
+        "id": "ready",
+        "description": "The runner emitted bridge_ready=1.",
+        "predicate": {
+          "kind": "metric",
+          "metric": "bridge_ready",
+          "operator": "gte",
+          "threshold": 1.0
+        }
+      },
+      {
+        "id": "below_ready",
+        "description": "The runner completed but emitted bridge_ready below one.",
+        "predicate": {
+          "kind": "metric",
+          "metric": "bridge_ready",
+          "operator": "lt",
+          "threshold": 1.0
+        }
+      },
+      {
+        "id": "execution_failure",
+        "description": "The process failed or timed out.",
+        "predicate": {
+          "kind": "execution_failure"
+        }
+      }
+    ]
+  },
+  "execution": {
+    "executor": "local-command",
+    "program": "__NODE_EXECUTABLE__",
+    "args": [
+      "__CRLP_ROOT__/scripts/ilxyr_bridge_smoke.mjs"
+    ],
+    "timeout_seconds": 10,
+    "max_cost_credits": 1,
+    "network": "open"
+  },
+  "funding": {
+    "required_compute_credits": 1,
+    "minimum_forecasters": 2,
+    "minimum_total_stake": 2
+  },
+  "security": {
+    "weight_class": "public",
+    "code_policy": "arbitrary",
+    "export_policy": "artifacts"
+  },
+  "evidence_authority": {
+    "level": "exact_check",
+    "scope": {
+      "seeds": [2],
+      "coverage": 1.0
+    },
+    "provenance": {
+      "artifact_hashes": [],
+      "checker": "checker://crlp/ilxyr-cloud-bridge-smoke/v1"
+    }
+  },
+  "expected_outputs": [
+    "metrics.bridge_ready",
+    "resolved_outcome",
+    "forecast_settlements"
+  ]
+}

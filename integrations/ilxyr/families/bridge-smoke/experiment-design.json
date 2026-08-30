@@ -1,0 +1,20 @@
+{
+  "schema": "ilxyr.contribution.v1",
+  "id": "crlp.ilxyr.bridge_smoke.experiment_design.v1",
+  "stage": "experiment_design",
+  "actor": {
+    "id": "service://crlp/cloud-integration-designer",
+    "kind": "service"
+  },
+  "title": "One-command ilXyr cloud lifecycle check",
+  "body": "Freeze the package, admit the exact executable and argument vector, run once, settle the declared outcome, and verify the ledger.",
+  "input_refs": [
+    "crlp.ilxyr.bridge_smoke.hypothesis.v1",
+    "crlp.ilxyr.bridge_smoke.foundation.v1",
+    "crlp.ilxyr.bridge_smoke.engineering_review.v1"
+  ],
+  "claims": [
+    "A passing result shows that the integration lifecycle works; it does not support a scientific claim."
+  ],
+  "confidence": 0.99
+}

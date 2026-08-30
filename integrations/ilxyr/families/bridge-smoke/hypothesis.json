@@ -1,0 +1,16 @@
+{
+  "schema": "ilxyr.contribution.v1",
+  "id": "crlp.ilxyr.bridge_smoke.hypothesis.v1",
+  "stage": "hypothesis",
+  "actor": {
+    "id": "service://crlp/cloud-integration-proposer",
+    "kind": "service"
+  },
+  "title": "The cloud bridge can complete a deterministic ilXyr family",
+  "body": "The checked-in smoke runner will emit bridge_ready=1 for both required family members when ilXyr invokes it through the cloud bridge.",
+  "input_refs": [],
+  "claims": [
+    "This is an infrastructure check, not scientific evidence."
+  ],
+  "confidence": 0.99
+}
