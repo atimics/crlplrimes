@@ -45,7 +45,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "C1",
         "Expanded certified next-prime filter improves top-1 over raw and hand-wheel gates",
         "results/latest/comparison.canonical.jsonl",
-        0,
+        1,
         "Holding the scorer checkpoint fixed, the expanded certified next-prime filter improves top-1 ranking over raw and hand-wheel filter conditions without verifier-counted true-answer deletions.",
         "",
         "",
@@ -61,7 +61,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "C1",
         "Top-1 rank is invariant across five registered seed checkpoints",
         "results/latest/prime_gate_delta_seed_interval.jsonl",
-        0,
+        1,
         "The expanded-filter top-1 metric is invariant across five registered checkpoints on one fixed prime-range evaluation set; this is not a confidence interval or broad robustness result.",
         "",
         "",
@@ -100,7 +100,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "pp",
         "shared minus single top-1",
         "",
-        "",
+        "make experimental-results",
         "measured_run",
         0,
     },
@@ -116,7 +116,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "correct cells",
         "certified correct cells",
         "",
-        "",
+        "make arc-gate-invariance ARC_AGI_TASK_DIR=/path/to/ARC-AGI/data",
         "measured_run",
         0,
     },
@@ -132,7 +132,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "correct cells",
         "evaluation correct cells",
         "",
-        "",
+        "make arc-agi-evidence-surface",
         "measured_run",
         0,
     },
@@ -148,7 +148,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "pp",
         "shared ECE improvement vs single",
         "",
-        "",
+        "make experimental-results",
         "measured_run",
         0,
     },
@@ -164,7 +164,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "pp",
         "top-1 delta vs claim-only",
         "",
-        "",
+        "make experimental-results",
         "measured_run",
         0,
     },
@@ -180,7 +180,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "pp",
         "shared minus single top-1",
         "",
-        "",
+        "make experimental-results",
         "measured_run",
         0,
     },
@@ -196,7 +196,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "pp",
         "task-head top-1 delta",
         "",
-        "",
+        "make multitask-domain",
         "measured_run",
         0,
     },
@@ -212,7 +212,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "validation utility",
         "budget-8 validation utility",
         "",
-        "",
+        "make prime-rule-search-baselines",
         "measured_run",
         0,
     },
@@ -228,7 +228,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "budget-1 certifications",
         "certified tasks",
         "",
-        "",
+        "make arc-agi-induction-smoke",
         "measured_run",
         0,
     },
@@ -244,7 +244,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "",
         "",
-        "",
+        "make tiny-net-plateau-audit",
         "measured_run",
         0,
     },
@@ -292,7 +292,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "utility",
         "selected utility",
         "",
-        "",
+        "make signal-flight",
         "measured_run",
         0,
     },
@@ -308,7 +308,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "rows",
         "live rows",
         "",
-        "",
+        "make signal-live-active-summary SIGNAL_LIVE_ACTIVE_LOG=<live-brain-log>",
         "measured_run",
         0,
     },
@@ -324,7 +324,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "certified tasks",
         "public eval certified tasks",
         "",
-        "",
+        "make arc-verified-self-play-public",
         "measured_run",
         0,
     },
@@ -334,13 +334,13 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "Cross-domain meta-learner certifies structural transfer with gated refusal",
         "build/float/traces/cross_domain_leave_out.jsonl",
         0,
-        "Cross-domain meta-learner with typed payload regions certifies transfer on 9/11 domains.",
+        "Cross-domain meta-learner with typed payload regions certifies transfer on multiple domains while refusing transfer where certification fails.",
         "",
         "",
         "",
         "",
         "",
-        "",
+        "make cross-domain-transfer",
         "measured_run",
         0,
     },
@@ -356,7 +356,7 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         "",
         "",
         "",
-        "",
+        "make signal-mining",
         "measured_run",
         0,
     },
@@ -516,15 +516,21 @@ static void paper_apply_staleness_gate(PaperClaimResult claims[PAPER_CLAIM_COUNT
 }
 
 typedef struct {
+    char *title;
+    char *claim_text;
     char *source;
     char *command;
     char *freshness_prerequisite;
+    int required;
+    int required_valid;
 } PaperClaimRegistryEvidence;
 
 static void paper_claim_registry_evidence_free(PaperClaimRegistryEvidence *evidence) {
     if (evidence == NULL) {
         return;
     }
+    free(evidence->title);
+    free(evidence->claim_text);
     free(evidence->source);
     free(evidence->command);
     free(evidence->freshness_prerequisite);
@@ -674,6 +680,23 @@ static int paper_registry_read_claim_evidence(const char *content,
     if (evidence_start == NULL || *evidence_start != '{') {
         return -1;
     }
+    out->title = paper_json_dup_string_value(
+        paper_json_find_key_value_bounded(claim_start, claim_end, "title"));
+    out->claim_text = paper_json_dup_string_value(
+        paper_json_find_key_value_bounded(claim_start, claim_end, "claim_text"));
+    {
+        const char *required_value = paper_skip_ws(
+            paper_json_find_key_value_bounded(claim_start,
+                                              claim_end,
+                                              "required_for_submission"));
+        if (required_value != NULL && strncmp(required_value, "true", 4U) == 0) {
+            out->required = 1;
+            out->required_valid = 1;
+        } else if (required_value != NULL && strncmp(required_value, "false", 5U) == 0) {
+            out->required = 0;
+            out->required_valid = 1;
+        }
+    }
     evidence_end = paper_json_value_end(evidence_start);
     if (evidence_end == NULL || evidence_end > claim_end) {
         return -1;
@@ -686,7 +709,8 @@ static int paper_registry_read_claim_evidence(const char *content,
         paper_json_find_key_value_bounded(evidence_start,
                                           evidence_end,
                                           "freshness_prerequisite"));
-    if (out->source == NULL || out->command == NULL || out->freshness_prerequisite == NULL) {
+    if (out->title == NULL || out->claim_text == NULL || !out->required_valid ||
+        out->source == NULL || out->command == NULL || out->freshness_prerequisite == NULL) {
         paper_claim_registry_evidence_free(out);
         return -1;
     }
@@ -715,6 +739,35 @@ static int paper_validate_claim_registry(const char *claims_path,
                      error_size,
                      "claim registry is missing evidence metadata for %s",
                      spec->id);
+            free(content);
+            return -1;
+        }
+        if (strcmp(evidence.title, spec->title) != 0) {
+            snprintf(error,
+                     error_size,
+                     "claim %s title mismatch between registry and runtime",
+                     spec->id);
+            paper_claim_registry_evidence_free(&evidence);
+            free(content);
+            return -1;
+        }
+        if (strcmp(evidence.claim_text, spec->claim_text) != 0) {
+            snprintf(error,
+                     error_size,
+                     "claim %s text mismatch between registry and runtime",
+                     spec->id);
+            paper_claim_registry_evidence_free(&evidence);
+            free(content);
+            return -1;
+        }
+        if (evidence.required != spec->required) {
+            snprintf(error,
+                     error_size,
+                     "claim %s required status mismatch: registry=%s runtime=%s",
+                     spec->id,
+                     evidence.required ? "true" : "false",
+                     spec->required ? "true" : "false");
+            paper_claim_registry_evidence_free(&evidence);
             free(content);
             return -1;
         }

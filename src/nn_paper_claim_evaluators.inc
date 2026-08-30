@@ -1599,7 +1599,7 @@ static void paper_eval_claim_compiler_self(PaperClaimResult *claim) {
         snprintf(claim->status, sizeof(claim->status), "%s", "supported");
         snprintf(claim->summary,
                  sizeof(claim->summary),
-                 "Registry evidence metadata matches all %u runtime claims; paper generation separately rejects literal empirical percentages.",
+                 "Registry metadata matches all %u runtime claims; paper generation separately rejects literal empirical percentages.",
                  (unsigned)PAPER_CLAIM_COUNT);
         return;
     }

@@ -999,7 +999,7 @@
       },
       "decision_rule": {
         "supported_if": [
-          "all runtime claim IDs have matching evidence metadata in the registry",
+          "all runtime claim IDs, titles, texts, required statuses, and evidence metadata match the registry",
           "paper generation rejects literal empirical percentages"
         ]
       },
