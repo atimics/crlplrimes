@@ -7,7 +7,8 @@
     "kind": "service"
   },
   "probabilities": {
-    "execution_failure": 0.001,
+    "below_ready": 0.0005,
+    "execution_failure": 0.0005,
     "ready": 0.999
   },
   "stake": 1,

@@ -35,7 +35,17 @@
         "predicate": {
           "kind": "metric",
           "metric": "bridge_ready",
-          "operator": "eq",
+          "operator": "gte",
+          "threshold": 1.0
+        }
+      },
+      {
+        "id": "below_ready",
+        "description": "The runner completed but emitted bridge_ready below one.",
+        "predicate": {
+          "kind": "metric",
+          "metric": "bridge_ready",
+          "operator": "lt",
           "threshold": 1.0
         }
       },
