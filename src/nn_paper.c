@@ -1389,7 +1389,7 @@ done:
     return status;
 }
 
-#define PAPER_CLAIM_COUNT 21U
+#define PAPER_CLAIM_COUNT 23U
 #define PAPER_CLAIM_SUMMARY_SIZE 1536U
 #define PAPER_CLAIM_EXPLANATION_SIZE 1024U
 #define PAPER_CLAIM_CHART_SIZE 4096U
@@ -1503,7 +1503,6 @@ int nn_paper_write_claims(const char *claims_path,
     char typ_path[4096];
     char registry_error[512];
     int ok;
-    (void)paper_path;
     (void)agent_candidates_dir;
     (void)fail_unlinked_roadmap;
     if (claims_path == NULL || claims_path[0] == '\0') {
@@ -1519,6 +1518,12 @@ int nn_paper_write_claims(const char *claims_path,
                                       registry_error,
                                       sizeof(registry_error)) != 0) {
         fprintf(stderr, "paper claim registry validation failed: %s\n", registry_error);
+        return -1;
+    }
+    if (paper_validate_empirical_percentage_literals(paper_path,
+                                                      registry_error,
+                                                      sizeof(registry_error)) != 0) {
+        fprintf(stderr, "paper source governance failed: %s\n", registry_error);
         return -1;
     }
     paper_evaluate_claims(claims);

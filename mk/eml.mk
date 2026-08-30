@@ -1,4 +1,4 @@
-.PHONY: prime-gap-eml grid-path-eml delayed-claim-eml eml-benchmarks eml-clean
+.PHONY: prime-gap-eml grid-path-eml delayed-claim-eml eml-benchmarks eml-claim-evidence eml-clean
 
 EML_PRIME_GAP := $(BUILD_DIR)/prime_gap_eml
 EML_GRID_PATH := $(BUILD_DIR)/grid_path_eml
@@ -33,6 +33,10 @@ grid-path-eml: $(EML_GRID_PATH)
 	./$(EML_GRID_PATH) --trace /tmp/gp_eml.jsonl --save /tmp/gp_eml.nnckpt --trace-train --trace-samples 200
 
 eml-benchmarks: $(BUILD_DIR)/eml_benchmarks
+
+eml-claim-evidence:
+	@echo "EML claim evidence is unavailable: add persistent matched-parameter, multi-seed artifacts before promoting paper metrics."
+	@exit 2
 
 $(BUILD_DIR)/eml_benchmarks: $(EML_PRIME_GAP) $(EML_GRID_PATH)
 	@echo "=== EML Benchmark Suite ==="
