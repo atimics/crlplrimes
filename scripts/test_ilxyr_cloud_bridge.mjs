@@ -13,6 +13,11 @@ const commit = "b".repeat(40);
 const scriptsDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptsDirectory, "..");
 
+{
+  const workflow = readFileSync(join(repositoryRoot, ".github", "workflows", "ilxyr-cloud.yml"), "utf8");
+  assert.match(workflow, /^\s+include-hidden-files: true$/mu);
+}
+
 function manifest() {
   return {
     schema: "crlp.ilxyr_cloud_job.v1",

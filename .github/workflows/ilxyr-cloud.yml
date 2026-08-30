@@ -123,4 +123,5 @@ jobs:
           name: ilxyr-${{ steps.job.outputs.job_id }}-${{ github.run_id }}
           path: ${{ steps.job.outputs.output_directory }}
           if-no-files-found: warn
+          include-hidden-files: true
           retention-days: ${{ steps.job.outputs.retention_days }}
