@@ -186,6 +186,16 @@ function run(program, args, options = {}) {
   return result.stdout ?? "";
 }
 
+function runJson(program, args) {
+  const output = run(program, args, { capture: true });
+  process.stdout.write(output);
+  try {
+    return JSON.parse(output);
+  } catch (error) {
+    fail(`${program} ${args.join(" ")} did not return JSON: ${error.message}`);
+  }
+}
+
 function gitHead(repoPath) {
   return run("git", ["-C", repoPath, "rev-parse", "HEAD"], { capture: true }).trim();
 }
@@ -396,12 +406,22 @@ function executeBridge(manifest, options) {
   const family = renderFamily(manifest, options.repo, sourceCommit, outputDirectory);
   if (!existsSync(ledger)) run(options.ilxyrCli, ["init", ledger]);
   run(options.ilxyrCli, ["family", "freeze", ledger, family.manifest]);
-  run(options.ilxyrCli, ["family", "check", ledger, family.manifest]);
+  const admission = runJson(options.ilxyrCli, ["family", "check", ledger, family.manifest]);
+  if (admission.ready !== true) {
+    const failures = Array.isArray(admission.members)
+      ? admission.members
+        .filter((member) => member.ready !== true)
+        .map((member) => `${member.experiment_id}: ${(member.failed_gates ?? []).join(", ")}`)
+        .join("; ")
+      : "no member report";
+    fail(`ilXyr rejected family ${manifest.id}: ${failures}`);
+  }
   const lifecycle = ["freeze", "check"];
   if (options.execute) {
     run(options.ilxyrCli, ["family", "run", ledger, family.manifest, "--execute"]);
     run(options.ilxyrCli, ["family", "settle", ledger, family.manifest]);
-    run(options.ilxyrCli, ["verify", ledger]);
+    const verification = runJson(options.ilxyrCli, ["verify", ledger]);
+    if (verification.valid !== true) fail(`ilXyr ledger verification failed for ${manifest.id}`);
     lifecycle.push("run", "settle", "verify");
   }
   const receipt = {

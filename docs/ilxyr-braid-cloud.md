@@ -15,6 +15,11 @@ rules without claiming that GitHub Actions has become part of the scientific
 authority. The runner supplies compute. ilXyr owns what was allowed to run and
 what outcome resolved.
 
+The current ilXyr `local-command` adapter also requires `network=open` at
+admission. The smoke runner makes no network requests, but its contract states
+that adapter policy truthfully. A future isolated executor should replace this
+instead of describing the current runner as network-denied.
+
 ## Hard boundaries
 
 - A corpus-proxy job must name a Braid release. The bridge rejects

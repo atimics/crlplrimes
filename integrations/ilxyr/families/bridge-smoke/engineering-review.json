@@ -7,7 +7,7 @@
     "kind": "service"
   },
   "title": "Bounded cloud bridge smoke runner",
-  "body": "The runner uses the pinned Node executable, accepts no arguments, performs no network access, writes one bounded JSON object, and has a ten-second timeout.",
+  "body": "The runner uses the pinned Node executable, accepts no arguments, performs no network requests, writes one bounded JSON object, and has a ten-second timeout. The experiment declares network=open because the current ilXyr local-command adapter rejects all other network policies.",
   "input_refs": [
     "crlp.ilxyr.bridge_smoke.hypothesis.v1",
     "crlp.ilxyr.bridge_smoke.foundation.v1"

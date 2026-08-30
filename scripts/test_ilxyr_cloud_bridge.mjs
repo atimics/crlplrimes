@@ -118,6 +118,9 @@ try {
   writeFileSync(fakeIlxyr, `#!/usr/bin/env node
 import { mkdirSync } from "node:fs";
 if (process.argv[2] === "init") mkdirSync(process.argv[3], { recursive: true });
+if (process.argv[2] === "family" && process.argv[3] === "check") {
+  process.stdout.write(JSON.stringify({ ready: true, members: [] }));
+}
 `);
   chmodSync(fakeIlxyr, 0o755);
   const ilxyrCommit = commitAll(ilxyrRepo);
