@@ -28,6 +28,7 @@ typedef struct {
     double hand_top10;
     double learned_top10;
     double learned_vs_hand_delta_pp;
+    long accepted_rules;
     long false_rejections;
     long sample_count;
 } PaperClaimResult;
@@ -42,10 +43,10 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
     {
         "C1.prime_gate_delta",
         "C1",
-        "Audited next-prime filter improves top-1 over raw and hand-wheel gates",
+        "Expanded certified next-prime filter improves top-1 over raw and hand-wheel gates",
         "results/latest/comparison.canonical.jsonl",
         0,
-        "The verified learned next-prime filter improves top-1 ranking over both raw and hand-wheel baselines without verifier-counted true-answer deletions.",
+        "Holding the scorer checkpoint fixed, the expanded certified next-prime filter improves top-1 ranking over raw and hand-wheel filter conditions without verifier-counted true-answer deletions.",
         "",
         "",
         "",
@@ -58,10 +59,10 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
     {
         "C1.prime_gate_delta_ci",
         "C1",
-        "Audited next-prime filter headline is stable across seeds",
+        "Top-1 rank is invariant across five registered seed checkpoints",
         "results/latest/prime_gate_delta_seed_interval.jsonl",
         0,
-        "The next-prime learned-filter headline remains stable across the registered seed interval.",
+        "The expanded-filter top-1 metric is invariant across five registered checkpoints on one fixed prime-range evaluation set; this is not a confidence interval or broad robustness result.",
         "",
         "",
         "",
@@ -360,12 +361,44 @@ static const PaperClaimSpec PAPER_CLAIM_SPECS[PAPER_CLAIM_COUNT] = {
         0,
     },
     {
+        "C11.eml_scorer_benchmarks",
+        "C11",
+        "EML scorer comparisons require matched multi-seed evidence",
+        "results/eml/scorer_benchmarks.jsonl",
+        0,
+        "Any EML scorer performance delta must come from a persistent, matched-parameter, multi-seed artifact.",
+        "The current smoke benchmarks are not claim evidence, so the paper reports no EML accuracy delta until this artifact exists.",
+        "",
+        "",
+        "",
+        "",
+        "make eml-claim-evidence",
+        "measured_run",
+        0,
+    },
+    {
+        "C11.eml_binding_recall",
+        "C11",
+        "EML binding recall requires persistent multi-seed evidence",
+        "results/eml/binding_recall.jsonl",
+        0,
+        "Any EML binding recall comparison must come from a persistent, multi-seed artifact with its configuration and hashes recorded.",
+        "The current exploratory binding result is not promoted into paper prose until this artifact exists.",
+        "",
+        "",
+        "",
+        "",
+        "make eml-claim-evidence",
+        "measured_run",
+        0,
+    },
+    {
         "D.1.claim_compiler_self_check",
         "D",
-        "The claim compiler mechanically verifies every required paper assertion",
-        "paper/generated/claims.json",
+        "Claim registry and empirical-percentage source gate align",
+        "paper/claims.yaml",
         1,
-        "Running make paper-support --fail-required exits 0, meaning every required claim is mechanically supported by trace artifacts.",
+        "Runtime claim metadata matches the registry, and paper generation rejects literal empirical percentages that bypass generated claim surfaces.",
         "",
         "",
         "",
@@ -399,7 +432,7 @@ static void paper_claim_set_missing(PaperClaimResult *claim) {
     snprintf(claim->status, sizeof(claim->status), "%s", "missing");
     snprintf(claim->summary,
              sizeof(claim->summary),
-             "missing required source artifact %s.",
+             "missing source artifact %s.",
              claim->spec->source);
     claim->chart_rows[0] = '\0';
 }
@@ -723,6 +756,57 @@ static int paper_validate_claim_registry(const char *claims_path,
         paper_claim_registry_evidence_free(&evidence);
     }
     free(content);
+    return 0;
+}
+
+static int paper_validate_empirical_percentage_literals(const char *paper_path,
+                                                        char *error,
+                                                        size_t error_size) {
+    FILE *fp;
+    char *line;
+    long line_number = 0;
+    if (error != NULL && error_size > 0U) {
+        error[0] = '\0';
+    }
+    if (!paper_claim_has_text(paper_path)) {
+        snprintf(error, error_size, "paper source path is empty");
+        return -1;
+    }
+    fp = fopen(paper_path, "r");
+    if (fp == NULL) {
+        snprintf(error, error_size, "cannot read paper source %s", paper_path);
+        return -1;
+    }
+    while ((line = paper_read_line_dynamic(fp)) != NULL) {
+        const char *cursor;
+        line_number += 1;
+        if (strstr(line, "width:") != NULL || strstr(line, "height:") != NULL) {
+            free(line);
+            continue;
+        }
+        for (cursor = line; *cursor != '\0'; ++cursor) {
+            const char *before;
+            if (*cursor != '%') {
+                continue;
+            }
+            before = cursor;
+            while (before > line && isspace((unsigned char)before[-1])) {
+                --before;
+            }
+            if (before > line && isdigit((unsigned char)before[-1])) {
+                snprintf(error,
+                         error_size,
+                         "literal empirical percentage at %s:%ld; use a generated claim value",
+                         paper_path,
+                         line_number);
+                free(line);
+                fclose(fp);
+                return -1;
+            }
+        }
+        free(line);
+    }
+    fclose(fp);
     return 0;
 }
 

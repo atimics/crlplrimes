@@ -1,6 +1,7 @@
 #import "@preview/cetz:0.3.4"
 #import "@preview/cetz-plot:0.1.1": plot
-#import "generated/claims.typ": paper_claim_limitations, paper_claim_support_ok, paper_claim_support_surfaces, paper_claim_status_counts, claim_C1_prime_gate_delta_summary, claim_C1_prime_gate_delta_ci_summary, claim_C1_prime_gate_delta_raw_top1, claim_C1_prime_gate_delta_hand_top1, claim_C1_prime_gate_delta_raw_top10, claim_C1_prime_gate_delta_hand_top10, claim_C1_prime_gate_delta_learned_top1, claim_C1_prime_gate_delta_learned_top10, claim_C1_prime_gate_delta_learned_vs_hand_delta_pp, claim_C1_prime_gate_delta_false_rejections, claim_C1_prime_gate_delta_sample_count, claim_C2_prime_proposer_fixed_budget_summary, claim_C1_arc_public_evidence_surface_chart_rows, claim_C1_arc_public_evidence_surface_summary, claim_C3_arc_ood_calibration_tradeoff_chart_rows, claim_C3_arc_ood_calibration_tradeoff_summary, claim_C4_delayed_claim_sibling_transfer_summary, claim_C4_multitask_capacity_tradeoff_chart_rows, claim_C4_multitask_capacity_tradeoff_summary, claim_C4_adapter_heads_shared_trunk_summary, claim_C5_rejected_candidate_reason_learning_chart_rows, claim_C5_rejected_candidate_reason_learning_summary, claim_C5_hypothesis_library_promotion_chart_rows, claim_C5_hypothesis_library_promotion_summary, claim_C7_tiny_net_plateau_stop_rule_summary, claim_C8_trace_determinism_audit_summary, claim_C8_dataset_engine_evidence_surface_chart_rows, claim_C8_dataset_engine_evidence_surface_summary, claim_C9_signal_flight_replay_control_chart_rows, claim_C9_signal_flight_replay_control_summary, claim_C9_signal_live_neural_active_chart_rows, claim_C9_signal_live_neural_active_summary
+#import "generated/claims.typ": paper_claim_limitations, paper_claim_support_ok, paper_claim_support_surfaces, paper_claim_status_counts, claim_C1_prime_gate_delta_summary, claim_C1_prime_gate_delta_ci_summary, claim_C1_prime_gate_delta_raw_top1, claim_C1_prime_gate_delta_hand_top1, claim_C1_prime_gate_delta_raw_top10, claim_C1_prime_gate_delta_hand_top10, claim_C1_prime_gate_delta_learned_top1, claim_C1_prime_gate_delta_learned_top10, claim_C1_prime_gate_delta_learned_vs_hand_delta_pp, claim_C1_prime_gate_delta_accepted_rules, claim_C1_prime_gate_delta_false_rejections, claim_C1_prime_gate_delta_sample_count, claim_C2_prime_proposer_fixed_budget_summary, claim_C1_arc_public_evidence_surface_chart_rows, claim_C1_arc_public_evidence_surface_summary, claim_C3_arc_ood_calibration_tradeoff_chart_rows, claim_C3_arc_ood_calibration_tradeoff_summary, claim_C4_delayed_claim_sibling_transfer_summary, claim_C4_multitask_capacity_tradeoff_chart_rows, claim_C4_multitask_capacity_tradeoff_summary, claim_C4_adapter_heads_shared_trunk_summary, claim_C5_rejected_candidate_reason_learning_chart_rows, claim_C5_rejected_candidate_reason_learning_summary, claim_C5_hypothesis_library_promotion_chart_rows, claim_C5_hypothesis_library_promotion_summary, claim_C7_tiny_net_plateau_stop_rule_summary, claim_C8_trace_determinism_audit_summary, claim_C8_dataset_engine_evidence_surface_chart_rows, claim_C8_dataset_engine_evidence_surface_summary, claim_C9_signal_flight_replay_control_chart_rows, claim_C9_signal_flight_replay_control_summary, claim_C9_signal_live_neural_active_chart_rows, claim_C9_signal_live_neural_active_summary
+#import "generated/claims.typ": claim_C11_eml_scorer_benchmarks_status, claim_C11_eml_scorer_benchmarks_summary, claim_C11_eml_binding_recall_status, claim_C11_eml_binding_recall_summary
 #import "generated/experiment_matrix.typ": experiment_matrix_rows
 
 #set document(
@@ -408,8 +409,12 @@ next-prime answer inside the declared support. The machine-readable trace id rem
 In formal terms, candidate actions are possible next-prime gaps after a segmented-sieve
 window. Candidate filters are modular rejection predicates. A filter is accepted only if its
 certificate has zero false rejections; the scorer then ranks the remaining candidates. The
-`hand wheel` baseline is a deterministic hand-coded wheel-factorization filter over small
-modular divisibility rules.
+`hand wheel` baseline uses the first ten prime moduli, from 3 through 31. The expanded
+certified condition searches every integer modulus from 3 through 255 and accepts
+#claim_C1_prime_gate_delta_accepted_rules rules.
+The same checkpoint and ranker are used in all three rows. This is therefore a filter
+ablation, not a measure of neural-ranker contribution. It also does not compare matched
+arithmetic capacity: the expanded condition is a wider certified filter.
 
 #figure(
   table(
@@ -419,19 +424,17 @@ modular divisibility rules.
     table.header[*Condition*][*Top-1*][*Top-10*][*False rejections*],
     [no gate], [#pct(claim_C1_prime_gate_delta_raw_top1)], [#pct(claim_C1_prime_gate_delta_raw_top10)], [0],
     [hand wheel], [#pct(claim_C1_prime_gate_delta_hand_top1)], [#pct(claim_C1_prime_gate_delta_hand_top10)], [0],
-    [learned wheel], [#strong[#pct(claim_C1_prime_gate_delta_learned_top1)]],
+    [expanded certified filter], [#strong[#pct(claim_C1_prime_gate_delta_learned_top1)]],
       [#strong[#pct(claim_C1_prime_gate_delta_learned_top10)]],
       [#strong[#claim_C1_prime_gate_delta_false_rejections]],
   ),
   caption: [Arithmetic sequence filtering on the canonical next-prime sample of
     #claim_C1_prime_gate_delta_sample_count rows: #claim_C1_prime_gate_delta_summary
-    Learned-vs-hand top-1 delta: #pp(claim_C1_prime_gate_delta_learned_vs_hand_delta_pp).],
+    Expanded-vs-hand top-1 delta: #pp(claim_C1_prime_gate_delta_learned_vs_hand_delta_pp).],
 ) <tab:prime-anchor>
 
-The seed audit checks that the headline does not depend on one lucky training run:
-#claim_C1_prime_gate_delta_ci_summary
-The zero spread is a seed-stability audit over this deterministic benchmark: seeds vary
-checkpoints and proposer runs, not the declared prime-range evaluation distribution.
+The five-seed audit checks top-1 rank invariance on one fixed evaluation distribution. It is
+not a confidence interval or a broad robustness result: #claim_C1_prime_gate_delta_ci_summary
 
 This result is intentionally narrow. It shows that verified structure can shrink the search
 space sharply while preserving correctness under the declared support. It does not show that
@@ -654,50 +657,64 @@ structural priors. The network is intentionally small---typically two or three h
 layers of 8--48 units---to keep training cost low and to avoid overfitting on the
 modest per-task sample counts that verifier-grounded experiments provide.
 
-== EML: A Universal Primitive for Continuous Functions
+== EML: An Experimental Nonpolynomial Operator
 
-We introduce a new computational primitive into the scorer. The EML operator is
-defined as
+The scorer includes an experimental EML operator,
 
 #set math.equation(numbering: none)
-$ "eml"(x, y) = exp(x) - ln(|y| + epsilon) $
+$ "eml"(x, y) = exp(x) - ln(|y| + epsilon). $
 
-where the absolute value and small $epsilon$ term ensure the operator is defined for
-all real inputs. The operator is a universal primitive for continuous mathematics
-@eml2026, analogous to the NAND gate for digital logic: repeated composition of EML
-operations can approximate any continuous function.
+The absolute value and small $epsilon$ term keep the logarithm defined. For $y != 0$,
+the partial derivatives are
 
-We integrate EML into the scorer in three forms:
+$ partial "eml" / partial x = exp(x), quad partial "eml" / partial y = -"sign"(y) / (|y| + epsilon). $
 
-*Feature enrichment.* Before the first dense layer, pairwise EML features are appended
-to the envelope: $f_(96+i) = "eml"(f_(2i), f_(2i+1))$. This adds 48 interaction terms,
-expanding the input to 144 dimensions. On synthetic nonlinear benchmarks, EML-enriched
-ReLU networks achieve 94.8% accuracy versus 92.2% for the same-width plain ReLU
-network, and outperform wider and deeper alternatives with fewer total parameters.
+The absolute-value term is not differentiable at $y = 0$; the implementation uses the
+zero subgradient there. The code and finite-difference tests use this derivative rather
+than $-1/y$.
 
-*EML activation.* As a drop-in replacement for sigmoid or ReLU, the activation
-$"eml"(x, 1 + e^x) = exp(x) - "softplus"(x)$ is smooth, non-negative, and has non-zero
-gradient everywhere. With appropriate initialization it matches ReLU on standard
-classification tasks while eliminating the dead-neuron problem.
+The unary activation used by the scorer is
 
-*EML pairwise layer.* The most architecturally novel form is a dedicated layer that
-applies EML to adjacent pre-activation pairs:
+$ a(x) = exp(x) - "softplus"(x), quad a'(x) = exp(x) - sigma(x). $
 
-$ "output"_i = "eml"(z_(2i), z_(2i+1)) $
+This derivative is about $4.5 times 10^(-5)$ at $x = -5$ and falls exponentially on the
+negative side, so it can be effectively inactive even when it is not exactly zero. On the
+positive side it grows like $exp(x)$, which creates a separate stability risk. The
+implementation no longer hides either behavior behind derivative floors or caps.
 
-where $z_j = w_j · x + b_j$ are learned pre-activations. Each output neuron consumes
-two learned weight vectors, halving the effective width of the layer while doubling the
-per-output parameter budget. The forward pass, backpropagation through
-$partial "eml" / partial x = exp(x)$ and $partial "eml" / partial y = -1/y$, and
-weight update are all handled inside the standard training loop. Stacked EML pairwise
-layers compose correctly: a network with two consecutive EML layers
-(24 $->$ eml_pair(16) $->$ eml_pair(8) $->$ 3) achieves 94.5% accuracy on nonlinear
-synthetic tasks, demonstrating that the universal-primitive property holds in practice
-under gradient-based optimization.
+Leshno et al. show that a standard feedforward network with learned affine maps and
+thresholds is a universal approximator when its locally bounded, piecewise-continuous
+activation is nonpolynomial @leshno1993. EML's unary activation fits that ordinary
+setting, as do many familiar nonpolynomial activations. This does not establish that EML
+composition alone is complete, and the paper makes no NAND analogy.
+
+The code exposes feature-enrichment, unary-activation, and pairwise-layer experiments.
+The pairwise layer applies EML to adjacent learned pre-activations,
+
+$ "output"_i = "eml"(z_(2i), z_(2i+1)), $
+
+where $z_j = w_j dot x + b_j$. These forms remain engineering experiments, not promoted
+performance claims. The registered scorer-benchmark claim is
+#claim_C11_eml_scorer_benchmarks_status:
+#claim_C11_eml_scorer_benchmarks_summary Until a persistent matched-parameter,
+multi-seed artifact exists, the paper reports no EML accuracy delta.
 
 == Holographic Extension
 
-The scorer pipeline also integrates a vector-symbolic memory substrate.
+The scorer pipeline also has an experimental vector-symbolic memory substrate. A future
+hypothesis library could encode a rule as
+$ "bind"("task_sig", "rule_vec") $ and retrieve related rules with
+$ "unbind"(M, "new_task_sig") $
+
+Vector symbolic architectures provide the broader
+bind, bundle, and permutation setting @kleyko2022vsa. The leOS projects explore this
+design space @leos2025 @leosc2026, but it remains outside the paper's validated core.
+
+An EML-based frequency-domain binding operation is present as a sandbox idea. Its recall
+comparison is registered rather than stated as prose. The claim is
+#claim_C11_eml_binding_recall_status:
+#claim_C11_eml_binding_recall_summary No binding-performance number is promoted until the
+registered artifact includes seeds, configuration, and hashes.
 
 = Conclusion
 
@@ -710,36 +727,8 @@ into later proposal structure. The dataset-first engine shows how future experim
 enter the system as candidate rows plus verifier labels before becoming paper claims. ARC,
 Signal, tiny-net, adapter, and haiku rows mark the boundary rather than widening the thesis.
 
-
-A natural next step for the hypothesis library is a vector-symbolic memory substrate.
-Rather than maintaining a flat file of certified rules, holographic storage @leosc2026
-encodes each rule as \( \text{bind}(\text{task\_sig}, \text{rule\_vec}) \) and
-accumulates them into a single fixed-size memory trace on the unit hypersphere.
-Retrieval --- \( \text{unbind}(M, \text{new\_task\_sig}) \) --- returns a weighted
-blend of all previously learned rules relevant to the current task in one vector look-up.
-This inherits the theoretical guarantees of vector symbolic architectures @kleyko2022vsa
---- Turing completeness of the bind/bundle/permute primitives, concentration of measure
-in high dimensions, and the blessing of near-orthogonal random vectors --- while keeping
-memory cost fixed at \( O(d) \) regardless of how many rules are stored.
-The leOS project @leos2025 explores the broader agent-operating-system implications of
-this approach; the leOS-C engine isolates the holographic store as a compact C library
-that can be linked directly into the crlplrimes scorer pipeline, adding holographic
-retrieval features to the 96-dimensional scorer envelope without changing the neural
-architecture. We also introduce an EML-based binding operation in the holographic
-engine, $ "eml_bind"(a, b) = "normalize(ifft(exp(fft(a)) - log(fft(b))))" $,
-which applies complex exp and log elementwise in the frequency domain. However, we
-find that EML binding degrades holographic memory recall (1.4% vs.\ 48.6% for
-standard bind/unbind) because it breaks the linear superposition that content-addressable
-retrieval depends on. EML's strengths lie in the gradient-trained scorer, not in the
-memory substrate.
-
 The broader lesson is pragmatic. When correctness, safety, or auditability matter, the model
 should not own the whole decision and prose should not outrun the evidence. The checker or
-
-// --- Claim-Anchored Bibliography (holographically generated) ---
-#import "generated/claim_bibliography.typ": claim_bibliography_section
-#claim_bibliography_section
-
 replay system owns validity and consequence. The learned component owns ranking pressure.
 The repository trace owns what empirical reporting is allowed to say.
 

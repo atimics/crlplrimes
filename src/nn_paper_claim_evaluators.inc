@@ -1,9 +1,13 @@
 static void paper_eval_prime_gate_delta(PaperClaimResult *claim) {
     FILE *fp;
     char *line;
+    char raw_model_hash[65] = {0};
+    char hand_model_hash[65] = {0};
+    char expanded_model_hash[65] = {0};
     int have_raw = 0;
     int have_hand = 0;
     int have_learned = 0;
+    int have_expanded_rule_count = 0;
     fp = fopen(claim->spec->source, "r");
     if (fp == NULL) {
         return;
@@ -11,21 +15,44 @@ static void paper_eval_prime_gate_delta(PaperClaimResult *claim) {
     while ((line = paper_read_line_dynamic(fp)) != NULL) {
         char *mode = NULL;
         if (!paper_json_string_equals(line, "schema", "crlp.compare.v1") ||
-            !paper_json_string_equals(line, "task", "prime_gap") ||
-            !paper_json_string_equals(line, "feature_set", "minimal")) {
+            !paper_json_string_equals(line, "task", "prime_gap")) {
             free(line);
             continue;
         }
         mode = paper_json_dup_key_string(line, "evaluation_mode");
+        if (mode != NULL && strcmp(mode, "expanded_rules") == 0 &&
+            !have_expanded_rule_count) {
+            have_expanded_rule_count =
+                paper_json_get_long(line, "accepted_rules", &claim->accepted_rules);
+            free(mode);
+            free(line);
+            continue;
+        }
+        if (!paper_json_string_equals(line, "feature_set", "minimal")) {
+            free(mode);
+            free(line);
+            continue;
+        }
         if (mode != NULL && strcmp(mode, "raw") == 0 && !have_raw) {
+            char *hash = paper_json_dup_key_string(line, "model_hash");
             have_raw = paper_json_get_double(line, "top1", &claim->raw_top1);
             (void)paper_json_get_double(line, "top10", &claim->raw_top10);
+            if (hash != NULL) {
+                snprintf(raw_model_hash, sizeof(raw_model_hash), "%s", hash);
+            }
+            free(hash);
         } else if (mode != NULL && strcmp(mode, "hand_wheel_model") == 0 &&
                    !have_hand) {
+            char *hash = paper_json_dup_key_string(line, "model_hash");
             have_hand = paper_json_get_double(line, "top1", &claim->hand_top1);
             (void)paper_json_get_double(line, "top10", &claim->hand_top10);
+            if (hash != NULL) {
+                snprintf(hand_model_hash, sizeof(hand_model_hash), "%s", hash);
+            }
+            free(hash);
         } else if (mode != NULL && strcmp(mode, "expanded_rule_model") == 0 &&
                    !have_learned) {
+            char *hash = paper_json_dup_key_string(line, "model_hash");
             long false_rejections = 0;
             long sample_count = 0;
             have_learned = paper_json_get_double(line, "top1", &claim->learned_top1);
@@ -34,15 +61,19 @@ static void paper_eval_prime_gate_delta(PaperClaimResult *claim) {
             (void)paper_json_get_long(line, "sample_count", &sample_count);
             claim->false_rejections = false_rejections;
             claim->sample_count = sample_count;
+            if (hash != NULL) {
+                snprintf(expanded_model_hash, sizeof(expanded_model_hash), "%s", hash);
+            }
+            free(hash);
         }
         free(mode);
         free(line);
-        if (have_raw && have_hand && have_learned) {
+        if (have_raw && have_hand && have_learned && have_expanded_rule_count) {
             break;
         }
     }
     fclose(fp);
-    if (!(have_raw && have_hand && have_learned)) {
+    if (!(have_raw && have_hand && have_learned && have_expanded_rule_count)) {
         return;
     }
     claim->learned_vs_hand_delta_pp = 100.0 * (claim->learned_top1 - claim->hand_top1);
@@ -50,12 +81,15 @@ static void paper_eval_prime_gate_delta(PaperClaimResult *claim) {
              sizeof(claim->status),
              "%s",
              claim->learned_top1 > claim->hand_top1 && claim->hand_top1 > claim->raw_top1 &&
-                     claim->false_rejections == 0
+                     claim->false_rejections == 0 && raw_model_hash[0] != '\0' &&
+                     strcmp(raw_model_hash, hand_model_hash) == 0 &&
+                     strcmp(raw_model_hash, expanded_model_hash) == 0
                  ? "supported"
                  : "contradicted");
     snprintf(claim->summary,
              sizeof(claim->summary),
-             "the verified learned filter raises top-1 ranking to %.2f%% from %.2f%% for the hand-coded wheel and %.2f%% raw, with %ld verifier-counted true-answer deletions.",
+             "holding the model hash and ranker fixed, the %ld-rule expanded certified filter raises top-1 ranking to %.2f%% from %.2f%% for the hand-coded wheel and %.2f%% raw, with %ld verifier-counted true-answer deletions; this is a filter effect, not a neural-ranker gain.",
+             claim->accepted_rules,
              100.0 * claim->learned_top1,
              100.0 * claim->hand_top1,
              100.0 * claim->raw_top1,
@@ -65,18 +99,38 @@ static void paper_eval_prime_gate_delta(PaperClaimResult *claim) {
 static void paper_eval_prime_gate_delta_ci(PaperClaimResult *claim) {
     FILE *fp;
     char *line;
+    char checkpoint_hashes[8][65];
+    size_t checkpoint_hash_count = 0U;
+    memset(checkpoint_hashes, 0, sizeof(checkpoint_hashes));
     fp = fopen(claim->spec->source, "r");
     if (fp == NULL) {
         return;
     }
     while ((line = paper_read_line_dynamic(fp)) != NULL) {
+        if (paper_json_string_equals(line, "row_type", "seed")) {
+            char *hash = paper_json_dup_key_string(line, "raw_model_hash");
+            size_t hash_index;
+            int seen = 0;
+            for (hash_index = 0U; hash_index < checkpoint_hash_count; ++hash_index) {
+                if (hash != NULL && strcmp(checkpoint_hashes[hash_index], hash) == 0) {
+                    seen = 1;
+                    break;
+                }
+            }
+            if (!seen && hash != NULL && strlen(hash) == 64U &&
+                checkpoint_hash_count < 8U) {
+                snprintf(checkpoint_hashes[checkpoint_hash_count],
+                         sizeof(checkpoint_hashes[checkpoint_hash_count]),
+                         "%s",
+                         hash);
+                checkpoint_hash_count += 1U;
+            }
+            free(hash);
+        }
         if (paper_json_string_equals(line, "row_type", "summary")) {
             double raw_mean = 0.0;
-            double raw_std = 0.0;
             double hand_mean = 0.0;
-            double hand_std = 0.0;
             double learned_mean = 0.0;
-            double learned_std = 0.0;
             double delta_min = 0.0;
             double learned_top10_min = 0.0;
             long seed_count = 0;
@@ -84,11 +138,8 @@ static void paper_eval_prime_gate_delta_ci(PaperClaimResult *claim) {
             long sample_count_min = 0;
             (void)paper_json_get_long(line, "seed_count", &seed_count);
             (void)paper_json_get_nested_double(line, "raw_top1", "mean", &raw_mean);
-            (void)paper_json_get_nested_double(line, "raw_top1", "stdev", &raw_std);
             (void)paper_json_get_nested_double(line, "hand_top1", "mean", &hand_mean);
-            (void)paper_json_get_nested_double(line, "hand_top1", "stdev", &hand_std);
             (void)paper_json_get_nested_double(line, "learned_top1", "mean", &learned_mean);
-            (void)paper_json_get_nested_double(line, "learned_top1", "stdev", &learned_std);
             (void)paper_json_get_nested_double(
                 line, "learned_vs_hand_delta_pp", "min", &delta_min);
             (void)paper_json_get_double(line, "learned_top10_min", &learned_top10_min);
@@ -104,20 +155,19 @@ static void paper_eval_prime_gate_delta_ci(PaperClaimResult *claim) {
             snprintf(claim->status,
                      sizeof(claim->status),
                      "%s",
-                     seed_count >= 5 && delta_min > 0.0 && learned_top10_min >= 1.0 &&
+                     seed_count >= 5 && checkpoint_hash_count >= 5U && delta_min > 0.0 &&
+                             learned_top10_min >= 1.0 &&
                              false_rejections_max == 0
                          ? "supported"
                          : "underpowered");
             snprintf(claim->summary,
                      sizeof(claim->summary),
-                     "across %ld seeds, the learned filter stays at %.2f%% +/- %.2fpp, versus %.2f%% +/- %.2fpp for the hand wheel and %.2f%% +/- %.2fpp raw; the worst learned-vs-hand gain is +%.2fpp, learned top-10 never falls below %.2f%%, and false rejections never exceed %ld; promotion requires 5 seeds.",
+                     "across %ld registered seeds and %lu distinct checkpoint hashes, top-1 is invariant on the fixed prime-range evaluation set: expanded filter %.2f%%, hand wheel %.2f%%, and raw %.2f%%; the minimum expanded-vs-hand gain is +%.2fpp, expanded-filter top-10 never falls below %.2f%%, and false rejections never exceed %ld. This is rank invariance, not a confidence interval or broad robustness result.",
                      seed_count,
+                     (unsigned long)checkpoint_hash_count,
                      100.0 * learned_mean,
-                     100.0 * learned_std,
                      100.0 * hand_mean,
-                     100.0 * hand_std,
                      100.0 * raw_mean,
-                     100.0 * raw_std,
                      delta_min,
                      100.0 * learned_top10_min,
                      false_rejections_max);
@@ -1542,26 +1592,22 @@ static void paper_eval_signal_mining(PaperClaimResult *claim) {
 }
 
 static void paper_eval_claim_compiler_self(PaperClaimResult *claim) {
-    /* D.1 is the meta-claim: the claim compiler produces a valid claims.json.
-       The actual support check is make paper-support --fail-required.
-       Here we verify the claims.json artifact exists and is non-empty. */
-    FILE *fp = fopen(claim->spec->source, "r");
-    if (!fp) return;
-    long lines = 0;
-    char *line;
-    while ((line = paper_read_line_dynamic(fp)) != NULL) {
-        lines++;
+    char error[512];
+    if (paper_validate_claim_registry(claim->spec->source,
+                                      error,
+                                      sizeof(error)) == 0) {
+        snprintf(claim->status, sizeof(claim->status), "%s", "supported");
+        snprintf(claim->summary,
+                 sizeof(claim->summary),
+                 "Registry evidence metadata matches all %u runtime claims; paper generation separately rejects literal empirical percentages.",
+                 (unsigned)PAPER_CLAIM_COUNT);
+        return;
     }
-    fclose(fp);
-    if (lines > 10) {
-        snprintf(claim->status, sizeof(claim->status), "supported");
-        snprintf(claim->summary, sizeof(claim->summary),
-                 "Claim compiler produces claims.json artifact (%ld lines).", lines);
-    } else {
-        snprintf(claim->status, sizeof(claim->status), "underpowered");
-        snprintf(claim->summary, sizeof(claim->summary),
-                 "Claim compiler artifact too small (%ld lines).", lines);
-    }
+    snprintf(claim->status, sizeof(claim->status), "%s", "contradicted");
+    snprintf(claim->summary,
+             sizeof(claim->summary),
+             "Claim registry mismatch: %.1200s",
+             error);
 }
 
 static void paper_evaluate_claims(PaperClaimResult claims[PAPER_CLAIM_COUNT]) {
@@ -1589,7 +1635,7 @@ static void paper_evaluate_claims(PaperClaimResult claims[PAPER_CLAIM_COUNT]) {
     paper_eval_arc_verified_self_play(&claims[17]);
     paper_eval_sensor_transfer(&claims[18]);
     paper_eval_signal_mining(&claims[19]);
-    paper_eval_claim_compiler_self(&claims[20]);
+    paper_eval_claim_compiler_self(&claims[22]);
     paper_apply_staleness_gate(claims);
 }
 
@@ -1715,8 +1761,9 @@ static int paper_write_claims_json(const char *path,
         fputs(",\"learned_top10\":", fp);
         paper_write_json_number(fp, claims[i].learned_top10);
         fprintf(fp,
-                ",\"learned_vs_hand_delta_pp\":%.12g,\"false_rejections\":%ld,\"sample_count\":%ld}",
+                ",\"learned_vs_hand_delta_pp\":%.12g,\"accepted_rules\":%ld,\"false_rejections\":%ld,\"sample_count\":%ld}",
                 claims[i].learned_vs_hand_delta_pp,
+                claims[i].accepted_rules,
                 claims[i].false_rejections,
                 claims[i].sample_count);
         fputs("}", fp);
@@ -1886,7 +1933,8 @@ static int paper_write_claims_typ(const char *path,
     fputs("\n#let claim_C1_prime_gate_delta_learned_vs_hand_delta_pp = ", fp);
     paper_write_typ_float(fp, claims[0].learned_vs_hand_delta_pp);
     fprintf(fp,
-            "\n#let claim_C1_prime_gate_delta_false_rejections = %ld\n#let claim_C1_prime_gate_delta_sample_count = %ld\n",
+            "\n#let claim_C1_prime_gate_delta_accepted_rules = %ld\n#let claim_C1_prime_gate_delta_false_rejections = %ld\n#let claim_C1_prime_gate_delta_sample_count = %ld\n",
+            claims[0].accepted_rules,
             claims[0].false_rejections,
             claims[0].sample_count);
     fclose(fp);

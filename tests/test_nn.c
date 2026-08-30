@@ -4522,7 +4522,7 @@ int main(void)
               NN_REAL_IS_FLOAT ? "build/float/paper_claim_governance_test"
                                : "build/double/paper_claim_governance_test",
               "paper/claims.yaml"),
-          "paper claim governance checks staleness and registry alignment");
+          "paper claim governance checks staleness, registry alignment, and percentage gating");
     check(test_json_cursor_contract(),
           "json cursor parses strings, values, and unsigned integers");
     check(test_text_helpers_contract(),

@@ -48,6 +48,8 @@ int nn_paper_test_claim_governance_contract(const char *work_dir,
     char prereq_old[4096];
     char prereq_new[4096];
     char prereq_missing[4096];
+    char paper_allowed[4096];
+    char paper_rejected[4096];
     char registry_error[512];
     int written;
     if (!paper_claim_has_text(work_dir) || !paper_claim_has_text(claims_path)) {
@@ -79,11 +81,21 @@ int nn_paper_test_claim_governance_contract(const char *work_dir,
     if (written <= 0 || (size_t)written >= sizeof(prereq_missing)) {
         return 0;
     }
+    written = snprintf(paper_allowed, sizeof(paper_allowed), "%s/paper_allowed.typ", work_dir);
+    if (written <= 0 || (size_t)written >= sizeof(paper_allowed)) {
+        return 0;
+    }
+    written = snprintf(paper_rejected, sizeof(paper_rejected), "%s/paper_rejected.typ", work_dir);
+    if (written <= 0 || (size_t)written >= sizeof(paper_rejected)) {
+        return 0;
+    }
     (void)remove(prereq_missing);
     if (!paper_test_write_timed_file(source_old, (time_t)1000) ||
         !paper_test_write_timed_file(source_new, (time_t)1010) ||
         !paper_test_write_timed_file(prereq_old, (time_t)1000) ||
-        !paper_test_write_timed_file(prereq_new, (time_t)1005)) {
+        !paper_test_write_timed_file(prereq_new, (time_t)1005) ||
+        paper_write_text_file(paper_allowed, "#box(width: 85%)[layout]\n") != 0 ||
+        paper_write_text_file(paper_rejected, "accuracy 94.8%\n") != 0) {
         return 0;
     }
     registry_error[0] = '\0';
@@ -109,6 +121,12 @@ int nn_paper_test_claim_governance_contract(const char *work_dir,
                                      prereq_new,
                                      "contradicted",
                                      "contradicted",
-                                     "supported fixture");
+                                     "supported fixture") &&
+           paper_validate_empirical_percentage_literals(paper_allowed,
+                                                         registry_error,
+                                                         sizeof(registry_error)) == 0 &&
+           paper_validate_empirical_percentage_literals(paper_rejected,
+                                                         registry_error,
+                                                         sizeof(registry_error)) != 0;
 }
 #endif

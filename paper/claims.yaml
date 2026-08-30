@@ -106,6 +106,20 @@
       ]
     },
     {
+      "id": "track-eml-sandbox",
+      "title": "EML sandbox: implementation checks before empirical promotion",
+      "role": "roadmap",
+      "claim_ids": [
+        "C11.eml_scorer_benchmarks",
+        "C11.eml_binding_recall"
+      ],
+      "command": "make eml-claim-evidence",
+      "agent_instruction": "Keep EML performance statements out of the paper until persistent, matched, multi-seed evidence exists.",
+      "success_criteria": [
+        "Both C11 claims remain missing or underpowered until their registered artifacts exist."
+      ]
+    },
+    {
       "id": "track-evidence-contract",
       "title": "Evidence contract: claim compiler, trace determinism, dataset engine",
       "role": "claim_support",
@@ -115,10 +129,10 @@
         "C8.dataset_engine_evidence_surface"
       ],
       "command": "make paper-support",
-      "agent_instruction": "The evidence contract is the meta-layer: the claim compiler verifies the paper, traces are deterministic, the dataset engine is shared. D.1 is a meta-claim that the compiler checks itself — acknowledge the recursion.",
+      "agent_instruction": "The evidence contract is the meta-layer: runtime claim metadata must match the registry, empirical percentages must enter prose through generated claim surfaces, traces are deterministic, and the dataset engine is shared.",
       "success_criteria": [
         "C8 claims remain supported.",
-        "D.1 is aspirational: make paper-support --fail-required exits 0 with all required claims supported."
+        "D.1 confirms registry alignment and the empirical-percentage source gate."
       ]
     },
     {
@@ -142,9 +156,9 @@
     {
       "id": "C1.prime_gate_delta",
       "family": "A",
-      "title": "Audited next-prime filter improves top-1 over raw and hand-wheel gates",
+      "title": "Expanded certified next-prime filter improves top-1 over raw and hand-wheel gates",
       "claim_type": "architecture_claim",
-      "claim_text": "The verified learned next-prime filter improves top-1 ranking over both raw and hand-wheel baselines without verifier-counted true-answer deletions.",
+      "claim_text": "Holding the scorer checkpoint fixed, the expanded certified next-prime filter improves top-1 ranking over raw and hand-wheel filter conditions without verifier-counted true-answer deletions.",
       "builtin_evaluator": "prime_gate_delta",
       "required_for_submission": true,
       "paper_surfaces": [
@@ -170,22 +184,22 @@
       },
       "decision_rule": {
         "supported_if": [
-          "learned gate top-1 > hand-wheel top-1",
-          "learned gate top-1 > raw scorer top-1",
+          "expanded certified filter top-1 > hand-wheel top-1 with the same ranker",
+          "expanded certified filter top-1 > raw top-1 with the same ranker",
           "false rejections == 0 for all gate conditions"
         ]
       },
       "residual_when_not_supported": [
         "Re-run make results and inspect prime_gap compare rows."
       ],
-      "limitation_when_not_supported": "The audited next-prime learned-gate delta is not currently supported by the canonical comparison rows."
+      "limitation_when_not_supported": "The audited next-prime expanded-filter delta is not currently supported by the canonical comparison rows."
     },
     {
       "id": "C1.prime_gate_delta_ci",
       "family": "A",
-      "title": "Audited next-prime filter headline is stable across seeds",
+      "title": "Top-1 rank is invariant across five registered seed checkpoints",
       "claim_type": "architecture_claim",
-      "claim_text": "The next-prime learned-filter headline remains stable across the registered seed interval.",
+      "claim_text": "The expanded-filter top-1 metric is invariant across five registered checkpoints on one fixed prime-range evaluation set; this is not a confidence interval or broad robustness result.",
       "builtin_evaluator": "prime_gate_delta_ci",
       "required_for_submission": true,
       "paper_surfaces": [
@@ -206,13 +220,14 @@
       },
       "decision_rule": {
         "supported_if": [
-          "seed audit shows stability across the registered seed interval"
+          "at least five distinct checkpoint hashes are present",
+          "top-1 rank metrics are invariant on the fixed evaluation set"
         ]
       },
       "residual_when_not_supported": [
-        "Run make prime-gate-seed-audit and verify seed stability."
+        "Run make prime-gate-seed-audit and verify distinct checkpoints plus fixed-set rank invariance."
       ],
-      "limitation_when_not_supported": "The seed-stability audit is not currently supported."
+      "limitation_when_not_supported": "The fixed-set checkpoint rank-invariance audit is not currently supported."
     },
     {
       "id": "C1.arc_gate_scorer_invariance",
@@ -891,11 +906,79 @@
       "limitation_when_not_supported": "Signal mining claim is not yet supported."
     },
     {
+      "id": "C11.eml_scorer_benchmarks",
+      "family": "C11",
+      "title": "EML scorer comparisons require matched multi-seed evidence",
+      "claim_type": "experimental_operator_claim",
+      "claim_text": "Any EML scorer performance delta must come from a persistent, matched-parameter, multi-seed artifact.",
+      "builtin_evaluator": "missing_until_artifact",
+      "required_for_submission": false,
+      "paper_surfaces": [
+        "neural_scorer_architecture",
+        "limitations"
+      ],
+      "roadmap_items": [
+        "R-EML.1"
+      ],
+      "evidence": {
+        "source": "results/eml/scorer_benchmarks.jsonl",
+        "command": "make eml-claim-evidence",
+        "freshness_prerequisite": "",
+        "schemas": [
+          "crlp.eml.scorer_benchmark.v1"
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "matched architecture and parameter budgets are recorded",
+          "seeds, intervals, configuration, and artifact hashes are present"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Keep EML accuracy deltas out of paper prose."
+      ],
+      "limitation_when_not_supported": "EML scorer performance remains an unpromoted sandbox result."
+    },
+    {
+      "id": "C11.eml_binding_recall",
+      "family": "C11",
+      "title": "EML binding recall requires persistent multi-seed evidence",
+      "claim_type": "experimental_operator_claim",
+      "claim_text": "Any EML binding recall comparison must come from a persistent, multi-seed artifact with its configuration and hashes recorded.",
+      "builtin_evaluator": "missing_until_artifact",
+      "required_for_submission": false,
+      "paper_surfaces": [
+        "holographic_extension",
+        "limitations"
+      ],
+      "roadmap_items": [
+        "R-EML.2"
+      ],
+      "evidence": {
+        "source": "results/eml/binding_recall.jsonl",
+        "command": "make eml-claim-evidence",
+        "freshness_prerequisite": "",
+        "schemas": [
+          "crlp.eml.binding_recall.v1"
+        ]
+      },
+      "decision_rule": {
+        "supported_if": [
+          "binding baselines use matched dimensions and loads",
+          "seeds, intervals, configuration, and artifact hashes are present"
+        ]
+      },
+      "residual_when_not_supported": [
+        "Keep EML binding recall numbers out of paper prose."
+      ],
+      "limitation_when_not_supported": "EML binding recall remains an unpromoted exploratory result."
+    },
+    {
       "id": "D.1.claim_compiler_self_check",
       "family": "D",
-      "title": "The claim compiler mechanically verifies every required paper assertion",
+      "title": "Claim registry and empirical-percentage source gate align",
       "claim_type": "framework_claim",
-      "claim_text": "Running make paper-support --fail-required exits 0, meaning every required claim is mechanically supported by trace artifacts.",
+      "claim_text": "Runtime claim metadata matches the registry, and paper generation rejects literal empirical percentages that bypass generated claim surfaces.",
       "builtin_evaluator": "claim_compiler_self_check",
       "required_for_submission": true,
       "paper_surfaces": [
@@ -907,7 +990,7 @@
         "R-P.6"
       ],
       "evidence": {
-        "source": "paper/generated/claims.json",
+        "source": "paper/claims.yaml",
         "command": "make paper-support",
         "freshness_prerequisite": "",
         "schemas": [
@@ -916,13 +999,14 @@
       },
       "decision_rule": {
         "supported_if": [
-          "all required claims have status supported in claims.json"
+          "all runtime claim IDs have matching evidence metadata in the registry",
+          "paper generation rejects literal empirical percentages"
         ]
       },
       "residual_when_not_supported": [
-        "Run make paper-support and inspect paper/generated/claims.json."
+        "Run make paper-support and inspect the registry or paper-source gate error."
       ],
-      "limitation_when_not_supported": "The claim compiler cannot verify that it correctly verifies claims — this is a known reflexive limitation."
+      "limitation_when_not_supported": "Runtime claim metadata or the empirical-percentage source gate is inconsistent."
     }
   ]
 }
