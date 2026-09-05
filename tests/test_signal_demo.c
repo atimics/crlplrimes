@@ -226,7 +226,7 @@ int main(int argc, char **argv)
         install_signal_cleanup();
         demo_execute_phase = 1;
         demo_phase_deadline = seconds_now() + 280;
-        CMD(parent(argv[2]), NULL, 0, 10, 0, "/bin/sh", "-c", "trap '' TERM; printf ready > \"$2\"; (sleep 3; printf leaked > \"$1\") & wait", "signal-demo-nested", argv[2], format("%s.ready", argv[2]));
+        CMD(parent(argv[2]), NULL, 0, 10, 0, "/bin/sh", "-c", "trap '' TERM; (printf ready > \"$2\"; sleep 3; printf leaked > \"$1\") & wait", "signal-demo-nested", argv[2], format("%s.ready", argv[2]));
         release_allocations();
         return 0;
     }
