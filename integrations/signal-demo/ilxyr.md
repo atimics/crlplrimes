@@ -75,6 +75,12 @@ and output needs a unique simple name and absolute file path. The first runner
 argument is its script and must appear in the hashed input list. Commit the
 source scripts before the authoritative run.
 
+For a compiled runner, set `runner.mode` to `"native"`, set `runner.program`
+to its absolute executable path, and include that executable in `inputs`
+with its SHA-256. Its `args` are ordinary command arguments. Script runners
+use `runner.mode: "script"`, which is also the default, and hash-bind the
+script at `args[0]`. Both modes bind the program under `runtime/runner`.
+
 Declare every returned metric in `metrics`. The runner writes exactly one JSON
 object to stdout:
 
@@ -136,3 +142,4 @@ node --test scripts/signal_demo_ilxyr.test.mjs
 The native tests check ordering before execution, all three numerical outcome
 cases, output hash recording, and input mutation handling. With the two
 environment variables omitted, the native integration cases are skipped.
+The compiled-runner test uses a C compiler available as `cc`.

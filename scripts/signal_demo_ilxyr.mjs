@@ -40,6 +40,8 @@ export function validateConfig(config) {
   checkout(config.ilxyr, 'ilxyr');
   absoluteFile(config.ilxyr.cli, 'ilxyr.cli');
   absoluteFile(config.runner?.program, 'runner.program');
+  const runnerMode = config.runner.mode ?? 'script';
+  if (!['script', 'native'].includes(runnerMode)) fail('runner.mode must be script or native');
   if (!Array.isArray(config.runner.args) || config.runner.args.some((arg) => typeof arg !== 'string')) fail('runner.args must be strings');
   if (!isAbsolute(config.runner.cwd || '') || !statSync(config.runner.cwd).isDirectory()) fail('runner.cwd requires an absolute directory');
   if (!Number.isSafeInteger(config.runner.timeout_seconds) || config.runner.timeout_seconds < 1 || config.runner.timeout_seconds > 300) fail('runner timeout must be between 1 and 300 seconds');
@@ -60,8 +62,10 @@ export function validateConfig(config) {
     }
   }
   const inputPaths = new Set(config.inputs.map((input) => realpathSync(input.path)));
-  absoluteFile(config.runner.args[0], 'runner script');
-  if (!inputPaths.has(realpathSync(config.runner.args[0]))) fail('inputs must hash-bind the runner script');
+  const runnerEntry = runnerMode === 'native' ? config.runner.program : config.runner.args[0];
+  const runnerLabel = runnerMode === 'native' ? 'runner executable' : 'runner script';
+  absoluteFile(runnerEntry, runnerLabel);
+  if (!inputPaths.has(realpathSync(runnerEntry))) fail(`inputs must hash-bind the ${runnerLabel}`);
   for (const output of config.outputs) {
     if (inputPaths.has(resolve(output.path))) fail(`output overlaps an input: ${output.name}`);
   }
