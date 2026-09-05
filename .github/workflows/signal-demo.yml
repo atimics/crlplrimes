@@ -3,8 +3,10 @@ name: Connected Signal demonstration
 on:
   pull_request:
     paths:
-      - scripts/signal_demo*
-      - scripts/test_signal_demo.py
+      - examples/signal_demo*
+      - scripts/signal_demo_ilxyr*
+      - tests/test_signal_demo.c
+      - mk/signal_demo.mk
       - integrations/signal-demo/**
       - examples/signal_flight*.c
       - mk/options_signal_wiring.mk
@@ -13,8 +15,10 @@ on:
   push:
     branches: [main]
     paths:
-      - scripts/signal_demo*
-      - scripts/test_signal_demo.py
+      - examples/signal_demo*
+      - scripts/signal_demo_ilxyr*
+      - tests/test_signal_demo.c
+      - mk/signal_demo.mk
       - integrations/signal-demo/**
       - examples/signal_flight*.c
       - mk/options_signal_wiring.mk
@@ -31,6 +35,14 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - name: Read the private pinned Braid source
+        uses: actions/checkout@v4
+        with:
+          repository: cenetex/braid
+          ref: 4904f92b9281e7a68568f2a1ff34201bd8a6d4aa
+          path: build/demo-deps/braid
+          ssh-key: ${{ secrets.BRAID_DEMO_READ_KEY }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22.12.0'
@@ -38,9 +50,11 @@ jobs:
         with:
           version: 10.19.0
       - name: Check data and measurement contracts
-        run: python3 scripts/test_signal_demo.py
+        run: make signal-demo-contract-check NN_BLAS=none
       - name: Run two full pinned local studies
-        run: python3 scripts/signal_demo.py reproduce --workspace "$RUNNER_TEMP/signal-connected-study"
+        run: |
+          make build/float/signal_demo NN_BLAS=none
+          ./build/float/signal_demo reproduce --workspace "$RUNNER_TEMP/signal-connected-study" --braid-root "$GITHUB_WORKSPACE/build/demo-deps/braid"
       - name: Check native ilXyr failure and outcome contracts
         env:
           ILXYR_TEST_CLI: ${{ runner.temp }}/signal-connected-study/ilxyr/target/debug/ilxyr

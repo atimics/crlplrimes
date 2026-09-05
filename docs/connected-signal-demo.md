@@ -12,17 +12,31 @@ when the guarded model's mean utility exceeds `flight_steer_to`, and
 measurements. The fixed seeds and small scenario set define the scope of the
 result. Wider game performance and live deployment need further studies.
 
+Utility rewards reaching the goal and distance gained. It subtracts damage,
+deaths, stuck episodes, and elapsed time. The evaluator computes each episode as:
+
+```text
+2 × reached + clip(progress / 3000, -1, 1)
+− 0.03 × damage_amount − 10 × died − stuck − 0.05 × ticks / max_ticks
+```
+
+The primary comparison uses the mean of these episode scores. Damage and
+death rates remain separate measurements so a change in utility can be read
+alongside its safety cost.
+
 ## Run it
 
-Use a clean CRLPLRIMES checkout on Linux or macOS with Git, Python 3.10+, a C11
-compiler, Make, CMake, Node 22+, pnpm 10.19.0, and Rust 1.85+ available.
+Use a clean CRLPLRIMES checkout on Linux or macOS with Git, a C11 compiler,
+Make, CMake, Node 22+, pnpm 10.19.0, and Rust 1.85+ available.
+Braid and CRLPLRIMES are private repositories; the caller needs read access.
 The initial setup downloads the source pins and locked Braid/Rust dependencies.
 The simulation and model run locally on the CPU.
 
 From the checkout:
 
 ```sh
-python3 scripts/signal_demo.py reproduce --workspace /tmp/signal-connected-study
+make build/float/signal_demo NN_BLAS=none
+./build/float/signal_demo reproduce --workspace /tmp/signal-connected-study
 ```
 
 Choose a new workspace directory for each reproduction. The command fetches
@@ -37,10 +51,12 @@ The trace generator needs a larger main-thread stack. The driver sets a
 process-local limit of up to 64 MiB before launching it. A hard limit of at
 least 32 MiB is required. The flight evaluator stores its world on the heap.
 
-Existing pinned checkouts can be used directly:
+An existing Braid checkout can be supplied to `reproduce` with `--braid-root`.
+The driver verifies its pinned commit. Existing pinned checkouts for all three
+companions can also be used directly:
 
 ```sh
-python3 scripts/signal_demo.py run \
+./build/float/signal_demo run \
   --signal-root /path/to/signal \
   --braid-root /path/to/braid \
   --ilxyr-root /path/to/ilxyr \
@@ -84,7 +100,7 @@ Each run contains:
 | File | Meaning |
 |---|---|
 | `prepared.json` | Source commits, fixed configuration, Braid release ID, CSV counts, and frozen inputs |
-| `releases/*/release.json` | Official Braid release manifest |
+| `releases/<dataset>/<version>/<release-id>/release.json` | Official Braid release manifest |
 | `exports/*.csv` | Exact data consumed by the model |
 | `checkpoint.nnckpt` | Trained model, including its feature contract |
 | `training.jsonl` | Held-out ranking, utility, and model-size measurements |
@@ -94,8 +110,8 @@ Each run contains:
 | `verification.json` | Fresh verification against native records |
 
 ```sh
-python3 scripts/signal_demo.py verify --output /tmp/signal-connected-study/run-1
-python3 scripts/signal_demo.py compare \
+./build/float/signal_demo verify --output /tmp/signal-connected-study/run-1
+./build/float/signal_demo compare \
   /tmp/signal-connected-study/run-1 /tmp/signal-connected-study/run-2 \
   --receipt /tmp/signal-connected-study/repeatability.json
 ```
@@ -111,8 +127,16 @@ own executable and environment bindings.
 Contract checks:
 
 ```sh
-python3 scripts/test_signal_demo.py
+make signal-demo-contract-check NN_BLAS=none
 ILXYR_TEST_CLI=/path/to/ilxyr/target/debug/ilxyr \
   ILXYR_TEST_REPO=/path/to/ilxyr \
   node --test scripts/signal_demo_ilxyr.test.mjs
 ```
+
+## CI source access
+
+The connected-study workflow uses the read-only `BRAID_DEMO_READ_KEY` deploy
+key to check out the pinned private Braid source. The key is an encrypted
+CRLPLRIMES repository secret. Checkout uses `persist-credentials: false`; the
+study consumes the resulting checkout. The workflow runs two complete studies
+and uploads their native evidence records to the private repository artifacts.

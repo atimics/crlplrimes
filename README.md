@@ -1,5 +1,11 @@
 # CRLPLRIMES: Certificate-Gated Neural Proposers for Verifier-Grounded Action Scoring
 
+The [connected Signal demonstration](docs/connected-signal-demo.md) provides a
+complete local example: build a Braid dataset, train a 2,113-parameter model,
+record the frozen experiment in ilXyr, and compare four Signal controllers.
+One command runs the study twice and checks that the data, model, and measured
+results match.
+
 This repository is a compact C neural-network library and a grounding-gated research harness for **certified neural-symbolic action scoring**. The code exposes one architecture across task schemas: enumerate candidates, ground them with an explicit operator, train a small scorer to rank the residual, and emit replayable trace rows. The promoted research spine is **certified modular gate search** and replay-grounded action scoring, not every experiment in the tree. Default checks and result capture focus on `prime_gap` -> `grid_path` -> `delayed_claim`, with Signal as the systems vignette. ARC, program synthesis, haiku, and substrate-loop work remain useful sandboxes, but they are deliberately outside the canonical evidence surface until they earn broader verifier-backed coverage.
 
 Promoted evidence spine:
