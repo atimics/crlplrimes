@@ -169,6 +169,7 @@ include mk/arc.mk
 include mk/program.mk
 include mk/examples.mk
 include mk/signal.mk
+include mk/signal_demo.mk
 include mk/haiku.mk
 include mk/grammar.mk
 include mk/evidence.mk
