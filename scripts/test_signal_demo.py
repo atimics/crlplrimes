@@ -30,6 +30,37 @@ class DemoContractTests(unittest.TestCase):
         next(row for row in self.rollout if row["controller"] == "neural_guarded")["avg_utility"] = -0.2
         self.assertEqual(self.metrics()["utility_delta"], -0.4)
 
+    def test_changed_outcome_contract_is_rejected(self):
+        self.config["outcome"]["threshold"] = 0.1
+        with self.assertRaisesRegex(ValueError, "fixed.*utility rule"):
+            demo.validate_config(self.config)
+
+    def test_overlapping_split_seeds_are_rejected(self):
+        self.config["rollout"]["seed"] = self.config["data"]["heldout"]["seed"]
+        with self.assertRaisesRegex(ValueError, "seeds must differ"):
+            demo.validate_config(self.config)
+
+    def test_same_run_and_symlink_alias_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            alias = root / "alias"
+            alias.symlink_to(root, target_is_directory=True)
+            for second in (root, alias):
+                with self.assertRaisesRegex(ValueError, "two distinct"):
+                    demo.distinct_runs(root, second)
+
+    def test_local_receipt_must_match_native_evidence(self):
+        bindings = [{"name": "outputs/result.json", "sha256": "a" * 64}]
+        status = {"latest_run": {"metrics": {"utility_delta": 0.2},
+                                  "source_attestation": {"artifacts": [{"path": "outputs/result.json", "sha256": "a" * 64}]}},
+                  "latest_evidence": {"resolved_outcome": "improved"}}
+        demo.verify_native_record(status, {"utility_delta": 0.2}, "improved", bindings)
+        with self.assertRaisesRegex(ValueError, "native ilXyr record"):
+            demo.verify_native_record(status, {"utility_delta": 0.3}, "improved", bindings)
+        bindings[0]["sha256"] = "b" * 64
+        with self.assertRaisesRegex(ValueError, "Artifact bindings differ"):
+            demo.verify_native_record(status, {"utility_delta": 0.2}, "improved", bindings)
+
     def test_future_information_model_is_rejected(self):
         self.training["feature_mode"] = "replay_outcome"
         with self.assertRaisesRegex(ValueError, "outcome features"):

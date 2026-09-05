@@ -41,6 +41,16 @@ def require(condition, message):
         raise ValueError(message)
 
 
+def validate_config(config):
+    require(config["schema"] == "crlp.signal_demo.config.v1", "Unexpected demo config schema")
+    require(config["outcome"] == {"primary_metric": "utility_delta", "threshold": 0,
+                                  "comparison": "neural_guarded minus flight_steer_to"},
+            "This version supports the fixed neural_guarded minus flight_steer_to utility rule at zero")
+    require(config["training"]["feature_mode"] == "live_observable", "The model needs live-observable features")
+    seeds = [config["data"][split]["seed"] for split in ("train", "heldout")]
+    require(len(set(seeds + [config["rollout"]["seed"]])) == 3, "Train, held-out, and rollout seeds must differ")
+
+
 def command(args, *, cwd=ROOT, log=None, capture=False, timeout=1200):
     args = [str(arg) for arg in args]
     if log:
@@ -107,10 +117,7 @@ def verify_bindings(bindings):
 def prepare(args):
     config_path = Path(args.config).resolve()
     config = read_json(config_path)
-    require(config["schema"] == "crlp.signal_demo.config.v1", "Unexpected demo config schema")
-    require(config["training"]["feature_mode"] == "live_observable", "The model needs live-observable features")
-    seeds = [config["data"][split]["seed"] for split in ("train", "heldout")]
-    require(len(set(seeds + [config["rollout"]["seed"]])) == 3, "Train, held-out, and rollout seeds must differ")
+    validate_config(config)
     out = Path(args.output).resolve()
     require(not out.exists(), f"Choose a fresh output directory: {out}")
     crlp = source_state(ROOT)
@@ -247,6 +254,7 @@ def result_metrics(training, rollout, config, model_hash):
 
 def execute(args):
     prepared = read_json(args.prepared)
+    validate_config(prepared["config"])
     verify_bindings(prepared["inputs"])
     for state in prepared["sources"].values():
         source_state(state["root"], state["commit"])
@@ -313,21 +321,27 @@ def run(args):
 def verify(args):
     out = Path(args.output).resolve()
     prepared = read_json(out / "prepared.json")
+    validate_config(prepared["config"])
+    require(Path(prepared["output"]).resolve() == out, "Prepared execution belongs to a different output directory")
     result = read_json(out / "result.json")
     verify_bindings(prepared["inputs"])
     verify_bindings(result["outputs"])
     native = read_json(out / "ilxyr/frozen-config.json")["config"]
-    verify_bindings(read_json(out / "ilxyr/artifact-bindings.json"))
+    recorded_bindings = read_json(out / "ilxyr/artifact-bindings.json")
+    verify_bindings(recorded_bindings)
     braid_cli = Path(prepared["sources"]["braid"]["root"]) / "dist/cli.js"
     node = next(item["path"] for item in prepared["inputs"] if item["name"] == "node")
     command([node, braid_cli, "verify", prepared["braid"]["release_directory"],
              "--expected", prepared["braid"]["release_id"]], log=out / "logs/braid-final-verify.log")
     ledger_check = json.loads(command([native["ilxyr"]["cli"], "verify", out / "ilxyr/ledger"], capture=True))
     require(ledger_check["valid"], "ilXyr ledger verification failed")
+    status = json.loads(command([native["ilxyr"]["cli"], "status", out / "ilxyr/ledger", native["id"]], capture=True))
     expected = result_metrics(json_lines(out / "training.jsonl")[0], json_lines(out / "rollout.jsonl"),
                               prepared["config"], digest(out / "checkpoint.nnckpt"))
     receipt = read_json(out / "ilxyr/receipt.json")
+    require(Path(receipt["ledger"]).resolve() == out / "ilxyr/ledger", "Receipt belongs to a different ledger")
     require(result["metrics"] == expected == receipt["metrics"], "Recorded metrics differ from the measured artifacts")
+    verify_native_record(status, expected, receipt["outcome"], recorded_bindings)
     require(receipt["executed"] and receipt["outcome"] in ("improved", "not_improved"), "Experiment did not finish")
     require((receipt["outcome"] == "improved") == (expected["utility_delta"] > 0), "Outcome differs from its frozen rule")
     check = {"schema": "crlp.signal_demo.verification.v1", "valid": True, "outcome": receipt["outcome"],
@@ -338,8 +352,48 @@ def verify(args):
     print(json.dumps(check, indent=2, allow_nan=False))
 
 
+def verify_native_record(status, metrics, outcome, bindings):
+    require(status["latest_run"]["metrics"] == metrics and
+            status["latest_evidence"]["resolved_outcome"] == outcome,
+            "Metrics or outcome differ from the native ilXyr record")
+    artifacts = status["latest_run"]["source_attestation"]["artifacts"]
+    recorded = {item["path"]: item["sha256"] for item in artifacts}
+    require(len(recorded) == len(artifacts), "Native artifact names are repeated")
+    expected = {item["name"]: item["sha256"] for item in bindings}
+    require(recorded == expected, "Artifact bindings differ from the native ilXyr record")
+
+
+def distinct_runs(first, second):
+    require(Path(first).resolve() != Path(second).resolve(), "Repeatability requires two distinct run directories")
+
+
+def reproduce(args):
+    """Create pinned companion checkouts and run the complete study twice."""
+    workspace = Path(args.workspace).resolve()
+    require(not workspace.exists(), f"Choose a fresh demonstration workspace: {workspace}")
+    source_state(ROOT)
+    config = read_json(DEFAULT_CONFIG)
+    validate_config(config)
+    workspace.mkdir(parents=True)
+    for name, source in config["sources"].items():
+        path = workspace / name
+        path.mkdir()
+        command(["git", "init", "--quiet"], cwd=path)
+        command(["git", "remote", "add", "origin", source["repository"]], cwd=path)
+        command(["git", "fetch", "--depth", "1", "origin", source["commit"]], cwd=path)
+        command(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=path)
+    command(["pnpm", "install", "--frozen-lockfile"], cwd=workspace / "braid")
+    for name in ("run-1", "run-2"):
+        run(argparse.Namespace(config=str(DEFAULT_CONFIG), signal_root=str(workspace / "signal"),
+                               braid_root=str(workspace / "braid"), ilxyr_root=str(workspace / "ilxyr"),
+                               output=str(workspace / name)))
+    compare(argparse.Namespace(first=str(workspace / "run-1"), second=str(workspace / "run-2"),
+                               receipt=str(workspace / "repeatability.json")))
+
+
 def compare(args):
     runs = [Path(path).resolve() for path in (args.first, args.second)]
+    distinct_runs(*runs)
     prepared = [read_json(path / "prepared.json") for path in runs]
     results = [read_json(path / "result.json") for path in runs]
     for path, before, result in zip(runs, prepared, results):
@@ -347,6 +401,8 @@ def compare(args):
         verify_bindings(before["inputs"])
         verify_bindings(result["outputs"])
     checks = {"config": prepared[0]["config"] == prepared[1]["config"],
+              "source_commits": {name: state["commit"] for name, state in prepared[0]["sources"].items()} ==
+                                {name: state["commit"] for name, state in prepared[1]["sources"].items()},
               "braid_release_id": results[0]["braid_release_id"] == results[1]["braid_release_id"],
               "exported_csv": prepared[0]["traces"] == prepared[1]["traces"],
               "checkpoint": results[0]["checkpoint_sha256"] == results[1]["checkpoint_sha256"],
@@ -375,12 +431,15 @@ def main():
     execution.add_argument("--prepared", required=True)
     verification = sub.add_parser("verify")
     verification.add_argument("--output", required=True)
+    reproduction = sub.add_parser("reproduce", help="Fetch pinned companions and run two complete local studies")
+    reproduction.add_argument("--workspace", required=True)
     repeat = sub.add_parser("compare")
     repeat.add_argument("first")
     repeat.add_argument("second")
     repeat.add_argument("--receipt")
     args = parser.parse_args()
-    {"prepare": prepare, "run": run, "execute": execute, "verify": verify, "compare": compare}[args.mode](args)
+    {"prepare": prepare, "run": run, "execute": execute, "verify": verify,
+     "reproduce": reproduce, "compare": compare}[args.mode](args)
 
 
 if __name__ == "__main__":
