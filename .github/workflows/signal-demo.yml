@@ -1,0 +1,72 @@
+name: Connected Signal demonstration
+
+on:
+  pull_request:
+    paths:
+      - examples/signal_demo*
+      - scripts/signal_demo_ilxyr*
+      - tests/test_signal_demo.c
+      - mk/signal_demo.mk
+      - integrations/signal-demo/**
+      - examples/signal_flight*.c
+      - mk/options_signal_wiring.mk
+      - Makefile
+      - .github/workflows/signal-demo.yml
+  push:
+    branches: [main]
+    paths:
+      - examples/signal_demo*
+      - scripts/signal_demo_ilxyr*
+      - tests/test_signal_demo.c
+      - mk/signal_demo.mk
+      - integrations/signal-demo/**
+      - examples/signal_flight*.c
+      - mk/options_signal_wiring.mk
+      - Makefile
+      - .github/workflows/signal-demo.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  connected-study:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the private pinned Braid source
+        uses: actions/checkout@v4
+        with:
+          repository: cenetex/braid
+          ref: 4904f92b9281e7a68568f2a1ff34201bd8a6d4aa
+          path: build/demo-deps/braid
+          ssh-key: ${{ secrets.BRAID_DEMO_READ_KEY }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.19.0
+      - name: Check data and measurement contracts
+        run: make signal-demo-contract-check signal-demo-contract-sanitize NN_BLAS=none
+      - name: Run two full pinned local studies
+        run: |
+          make build/float/signal_demo NN_BLAS=none
+          ./build/float/signal_demo reproduce --workspace "$RUNNER_TEMP/signal-connected-study" --braid-root "$GITHUB_WORKSPACE/build/demo-deps/braid"
+      - name: Check native ilXyr failure and outcome contracts
+        env:
+          ILXYR_TEST_CLI: ${{ runner.temp }}/signal-connected-study/ilxyr/target/debug/ilxyr
+          ILXYR_TEST_REPO: ${{ runner.temp }}/signal-connected-study/ilxyr
+        run: node --test scripts/signal_demo_ilxyr.test.mjs
+      - name: Upload the measured result and native records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: connected-signal-study-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/signal-connected-study/run-1
+            ${{ runner.temp }}/signal-connected-study/run-2
+            ${{ runner.temp }}/signal-connected-study/repeatability.json
+          retention-days: 14

@@ -1,0 +1,49 @@
+{
+  "schema": "crlp.signal_demo.config.v1",
+  "id": "signal-flight-connected-v1",
+  "sources": {
+    "signal": {
+      "repository": "https://github.com/cenetex/signal.git",
+      "commit": "9337c7eeacd00e91d058172e98ba7d2f99ec2d6a"
+    },
+    "braid": {
+      "repository": "https://github.com/cenetex/braid.git",
+      "commit": "4904f92b9281e7a68568f2a1ff34201bd8a6d4aa"
+    },
+    "ilxyr": {
+      "repository": "https://github.com/cenetex/ilXyr.git",
+      "commit": "46ce1e1e038f44e87fe76939366dbc9db13ffe84"
+    }
+  },
+  "data": {
+    "train": {
+      "episodes": 32,
+      "seed": 4242
+    },
+    "heldout": {
+      "episodes": 12,
+      "seed": 4243
+    },
+    "ticks": 160,
+    "sample_stride": 24,
+    "horizon_ticks": 48,
+    "explore_random": 0.35,
+    "wall_probe": true
+  },
+  "training": {
+    "epochs": 3,
+    "learning_rate": 0.004,
+    "seed": 4242,
+    "feature_mode": "live_observable"
+  },
+  "rollout": {
+    "episodes": 24,
+    "ticks": 900,
+    "seed": 4244
+  },
+  "outcome": {
+    "primary_metric": "utility_delta",
+    "threshold": 0,
+    "comparison": "neural_guarded minus flight_steer_to"
+  }
+}
