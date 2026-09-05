@@ -51,8 +51,10 @@ def validate_config(config):
     require(len(set(seeds + [config["rollout"]["seed"]])) == 3, "Train, held-out, and rollout seeds must differ")
 
 
-def command(args, *, cwd=ROOT, log=None, capture=False, timeout=1200):
+def command(args, *, cwd=ROOT, log=None, capture=False, timeout=1200, simulation=False):
     args = [str(arg) for arg in args]
+    if simulation:
+        args = simulation_command(args)
     if log:
         with Path(log).open("w") as output:
             subprocess.run(args, cwd=cwd, stdout=output, stderr=subprocess.STDOUT,
@@ -63,17 +65,19 @@ def command(args, *, cwd=ROOT, log=None, capture=False, timeout=1200):
     return result.stdout if capture else ""
 
 
-def simulation_stack():
+def simulation_command(args):
     # Signal's flight_trace keeps several world_t values on its main thread stack.
     # This limit belongs to this command and its children, and leaves the shell alone.
     import resource
-    soft, hard = resource.getrlimit(resource.RLIMIT_STACK)
-    requested = 64 * 1024 * 1024
+    _, hard = resource.getrlimit(resource.RLIMIT_STACK)
+    requested = (65520 if sys.platform == "darwin" else 65536) * 1024
     if hard != resource.RLIM_INFINITY:
         requested = min(requested, hard)
     require(requested >= 32 * 1024 * 1024, "Signal trace generation needs a 32 MiB or larger stack limit")
-    if soft != resource.RLIM_INFINITY and soft < requested:
-        resource.setrlimit(resource.RLIMIT_STACK, (requested, hard))
+    # Set the limit in the launcher before exec. macOS can refuse to grow the
+    # already-running Python interpreter's stack even within its reported limit.
+    return ["/bin/sh", "-c", 'ulimit -s "$1" || exit; shift; exec "$@"',
+            "signal-demo-stack", str(requested // 1024), *args]
 
 
 def source_state(root, expected=None):
@@ -145,7 +149,6 @@ def prepare(args):
     command([pnpm, "build"], cwd=braid_root, log=logs / "braid-tool-build.log")
     require(braid_cli.is_file(), f"Install pinned Braid dependencies with pnpm install --frozen-lockfile in {braid_root}")
     cli = [node, braid_cli]
-    simulation_stack()
     traces, sources = {}, []
     for split, target_split in (("train", "train"), ("heldout", "validation")):
         raw = out / "raw" / split
@@ -159,7 +162,7 @@ def prepare(args):
                       "--out", path]
         if data["wall_probe"]:
             generation.append("--wall-probe")
-        command(generation, log=logs / f"generate-{split}.log")
+        command(generation, log=logs / f"generate-{split}.log", simulation=True)
         traces[split] = inspect_trace(path)
         snapshot = command(cli + ["snapshot", raw], capture=True)
         match = re.search(r"^sha256: ([a-f0-9]{64})$", snapshot, re.MULTILINE)
@@ -269,7 +272,6 @@ def execute(args):
              "--epochs", train["epochs"], "--learning-rate", train["learning_rate"], "--seed", train["seed"],
              "--live-features", "--save", out / "checkpoint.nnckpt", "--summary", out / "training.jsonl"],
             log=out / "logs/train.log")
-    simulation_stack()
     rollout_config = config["rollout"]
     command([paths["evaluator"], "--checkpoint", out / "checkpoint.nnckpt", "--episodes", rollout_config["episodes"],
              "--ticks", rollout_config["ticks"], "--seed", rollout_config["seed"], "--summary", out / "rollout.jsonl"],
