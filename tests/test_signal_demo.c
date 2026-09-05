@@ -164,6 +164,8 @@ static void json_and_csv_bytes(void)
     const char nul_data[] = "{}\0INVALID";
     require(fwrite(nul_data, 1, sizeof(nul_data) - 1, nul) == sizeof(nul_data) - 1 && !fclose(nul), "Cannot finish NUL fixture");
     REJECT("Embedded NUL", read_json(path));
+    write_text(path, "{\"value\":1}\v\n");
+    REJECT("Trailing JSON text", json_lines(path));
     unlink(path);
 }
 static void recursive_release(void)
@@ -222,7 +224,9 @@ int main(int argc, char **argv)
     if (setjmp(demo_failure)) { fprintf(stderr, "%s\n", demo_error); release_allocations(); return 1; }
     if (argc == 3 && !strcmp(argv[1], "--nested-runtime")) {
         install_signal_cleanup();
-        CMD(parent(argv[2]), NULL, 0, 10, 0, "/bin/sh", "-c", "printf ready > \"$2\"; (sleep 3; printf leaked > \"$1\") & wait", "signal-demo-nested", argv[2], format("%s.ready", argv[2]));
+        demo_execute_phase = 1;
+        demo_phase_deadline = seconds_now() + 280;
+        CMD(parent(argv[2]), NULL, 0, 10, 0, "/bin/sh", "-c", "trap '' TERM; printf ready > \"$2\"; (sleep 3; printf leaked > \"$1\") & wait", "signal-demo-nested", argv[2], format("%s.ready", argv[2]));
         release_allocations();
         return 0;
     }

@@ -178,8 +178,11 @@ static Json *json_lines(const char *path)
 {
     char *text = read_text(path), *saved = NULL;
     Json *lines = array();
-    for (char *line = strtok_r(text, "\n", &saved); line; line = strtok_r(NULL, "\n", &saved))
-        if (*trim(line)) append(lines, parse_json(line));
+    for (char *line = strtok_r(text, "\n", &saved); line; line = strtok_r(NULL, "\n", &saved)) {
+        const char *content = line;
+        while (*content && strchr(" \t\r", *content)) ++content;
+        if (*content) append(lines, parse_json(line));
+    }
     return lines;
 }
 
@@ -379,6 +382,7 @@ static Json *prepare(DemoArgs args)
 static void execute(DemoArgs args)
 {
     demo_phase_deadline = seconds_now() + 280;
+    demo_execute_phase = 1;
     Json *prepared = read_json(args.prepared), *config = get(prepared, "config"), *inputs = get(prepared, "inputs");
     validate_config(config);
     verify_bindings(inputs);
@@ -406,6 +410,7 @@ static void execute(DemoArgs args)
     write_json(join(out, "result.json"), result);
     Json *stdout_record = object(); put(stdout_record, "metrics", metrics); emit_json(stdout, stdout_record); fputc('\n', stdout);
     demo_phase_deadline = 0;
+    demo_execute_phase = 0;
 }
 
 static void verify(DemoArgs args)

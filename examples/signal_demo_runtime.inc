@@ -29,6 +29,7 @@ static DemoAllocation *demo_allocations;
 static jmp_buf demo_failure;
 static char demo_error[2048];
 static double demo_phase_deadline;
+static volatile sig_atomic_t demo_execute_phase;
 static volatile sig_atomic_t demo_child;
 
 static void stop_child(int signal_number)
@@ -37,10 +38,12 @@ static void stop_child(int signal_number)
     if (child > 0) {
         /* A nested native runner owns its own trainer group. Let its signal
          * handler stop that group before the outer group is forced to exit. */
-        kill(-child, SIGTERM);
-        for (int n = 0; n < 20; ++n) {
-            struct timespec pause = {0, 50000000};
-            while (nanosleep(&pause, &pause) < 0 && errno == EINTR) {}
+        if (!demo_execute_phase) {
+            kill(-child, SIGTERM);
+            for (int n = 0; n < 20; ++n) {
+                struct timespec pause = {0, 50000000};
+                while (nanosleep(&pause, &pause) < 0 && errno == EINTR) {}
+            }
         }
         kill(-child, SIGKILL);
         while (waitpid(child, NULL, 0) < 0 && errno == EINTR) {}
