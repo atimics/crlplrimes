@@ -127,7 +127,7 @@ own executable and environment bindings.
 Contract checks:
 
 ```sh
-make signal-demo-contract-check NN_BLAS=none
+make signal-demo-contract-check signal-demo-contract-sanitize NN_BLAS=none
 ILXYR_TEST_CLI=/path/to/ilxyr/target/debug/ilxyr \
   ILXYR_TEST_REPO=/path/to/ilxyr \
   node --test scripts/signal_demo_ilxyr.test.mjs

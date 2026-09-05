@@ -50,7 +50,7 @@ jobs:
         with:
           version: 10.19.0
       - name: Check data and measurement contracts
-        run: make signal-demo-contract-check NN_BLAS=none
+        run: make signal-demo-contract-check signal-demo-contract-sanitize NN_BLAS=none
       - name: Run two full pinned local studies
         run: |
           make build/float/signal_demo NN_BLAS=none
