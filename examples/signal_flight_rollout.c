@@ -19,6 +19,8 @@
 #define SFR_HYPOTHESIS_COUNT 5u
 #define SFR_SIM_DT (1.0f / 120.0f)
 #define SFR_SUMMARY_SCHEMA "crlp.signal_flight_rollout.summary.v1"
+#define SFR_FEATURE_SET "signal-flight-live-v2"
+#define SFR_FEATURE_ENCODER_VERSION 2u
 
 typedef enum {
     SFR_CONTROLLER_GOAL = 0,
@@ -326,7 +328,8 @@ static void sfr_apply_action(server_player_t *sp, size_t action_id)
 
 static void sfr_reset_player(world_t *w, server_player_t *sp)
 {
-    ship_cleanup(&sp->ship);
+    world_tow_links_clear_source(w, sp->ship_ref);
+    ship_cleanup(sp->ship);
     memset(sp, 0, sizeof(*sp));
     player_init_ship(sp, w);
     sp->id = 0;
@@ -350,12 +353,12 @@ static void sfr_setup_world(const sfr_episode_init_t *init,
     }
     server_player_t *sp = &w->players[0];
     sfr_reset_player(w, sp);
-    sp->ship.pos = init->spawn_pos;
-    sp->ship.vel = init->spawn_vel;
-    sp->ship.angle = init->spawn_angle;
-    sp->ship.hull = ship_max_hull(&sp->ship);
-    sp->ship.towed_count = 0;
-    sp->ship.towed_scaffold = -1;
+    sp->ship->pos = init->spawn_pos;
+    sp->ship->vel = init->spawn_vel;
+    sp->ship->angle = init->spawn_angle;
+    sp->ship->hull = ship_max_hull(sp->ship);
+    sp->ship->towed_count = 0;
+    sp->ship->towed_scaffold = -1;
     sp->docked = false;
     memset(&sp->input, 0, sizeof(sp->input));
     *out_sp = sp;
@@ -364,17 +367,18 @@ static void sfr_setup_world(const sfr_episode_init_t *init,
 static void sfr_init_episode(const sfr_config_t *config,
                              int episode,
                              uint32_t *rng,
-                             sfr_episode_init_t *init)
+                             sfr_episode_init_t *init,
+                             world_t *template_world)
 {
-    world_t template_world = {0};
+    memset(template_world, 0, sizeof(*template_world));
     uint32_t world_seed =
         config->seed ^ ((uint32_t)episode * 0x9e3779b9u) ^ 0x51f11a7eu;
     memset(init, 0, sizeof(*init));
-    template_world.rng = world_seed;
-    world_reset(&template_world);
+    template_world->rng = world_seed;
+    world_reset(template_world);
     init->world_seed = world_seed;
     init->station_index = (int)(sfr_rng_next(rng) % 3u);
-    station_t *station = &template_world.stations[init->station_index];
+    station_t *station = &template_world->stations[init->station_index];
 
     if (config->include_wall_probes && (episode % 3) == 2) {
         float outer = STATION_RING_RADIUS[STATION_NUM_RINGS] + 100.0f;
@@ -401,7 +405,7 @@ static void sfr_init_episode(const sfr_config_t *config,
         init->scenario = "transit";
     }
 
-    world_cleanup(&template_world);
+    world_cleanup(template_world);
 }
 
 static double sfr_control_alignment(vec2 pos, vec2 goal, vec2 control_target)
@@ -422,24 +426,24 @@ static void sfr_certify_hypothesis(const world_t *w,
                                    float clearance,
                                    sfr_hypothesis_t *hyp)
 {
-    vec2 pos = sp->ship.pos;
+    vec2 pos = sp->ship->pos;
     vec2 to_control = v2_sub(hyp->control_target, pos);
     float control_dist = sqrtf(v2_len_sq(to_control));
     float control_heading = control_dist > 0.001f
                           ? atan2f(to_control.y, to_control.x)
-                          : sp->ship.angle;
-    float speed = sqrtf(v2_len_sq(sp->ship.vel));
+                          : sp->ship->angle;
+    float speed = sqrtf(v2_len_sq(sp->ship->vel));
     float vel_heading = speed > 0.5f
-                      ? atan2f(sp->ship.vel.y, sp->ship.vel.x)
-                      : sp->ship.angle;
+                      ? atan2f(sp->ship->vel.y, sp->ship->vel.x)
+                      : sp->ship->angle;
     float fwd_clear = sfr_forward_clearance(w,
                                             pos,
-                                            sp->ship.vel,
+                                            sp->ship->vel,
                                             clearance,
                                             control_heading);
     float vel_clear = sfr_forward_clearance(w,
                                             pos,
-                                            sp->ship.vel,
+                                            sp->ship->vel,
                                             clearance,
                                             vel_heading);
     int segment_clear = nav_segment_clear(w, pos, hyp->control_target, clearance);
@@ -487,13 +491,13 @@ static size_t sfr_enumerate_hypotheses(const world_t *w,
                                        sfr_hypothesis_t *out,
                                        size_t capacity)
 {
-    const hull_def_t *hull = ship_hull_def(&sp->ship);
+    const hull_def_t *hull = ship_hull_def(sp->ship);
     float clearance = hull->ship_radius + 30.0f;
-    vec2 pos = sp->ship.pos;
+    vec2 pos = sp->ship->pos;
     vec2 to_goal = v2_sub(goal, pos);
     float goal_dist = sqrtf(v2_len_sq(to_goal));
-    float speed = sqrtf(v2_len_sq(sp->ship.vel));
-    vec2 goal_dir = sfr_safe_unit(to_goal, ship_forward(sp->ship.angle));
+    float speed = sqrtf(v2_len_sq(sp->ship->vel));
+    vec2 goal_dir = sfr_safe_unit(to_goal, ship_forward(sp->ship->angle));
     vec2 side = v2(-goal_dir.y, goal_dir.x);
     float leg = fminf(fmaxf(goal_dist * 0.25f, 420.0f), 1100.0f);
     float offset = fminf(fmaxf(goal_dist * 0.18f, 360.0f), 850.0f);
@@ -538,9 +542,9 @@ static size_t sfr_enumerate_hypotheses(const world_t *w,
     count++;
 
     vec2 brake_dir = speed > 0.5f
-                   ? sfr_safe_unit(v2_scale(sp->ship.vel, -1.0f),
-                                   v2_scale(ship_forward(sp->ship.angle), -1.0f))
-                   : v2_scale(ship_forward(sp->ship.angle), -1.0f);
+                   ? sfr_safe_unit(v2_scale(sp->ship->vel, -1.0f),
+                                   v2_scale(ship_forward(sp->ship->angle), -1.0f))
+                   : v2_scale(ship_forward(sp->ship->angle), -1.0f);
     float brake_leg = fminf(fmaxf(speed * 2.5f, 320.0f), 900.0f);
     out[count] = (sfr_hypothesis_t){
         .kind = SFR_HYPOTHESIS_BRAKE_ESCAPE,
@@ -617,21 +621,21 @@ static void sfr_fill_state(const world_t *w,
                            vec2 goal,
                            sfr_state_t *state)
 {
-    const hull_def_t *hull = ship_hull_def(&sp->ship);
-    vec2 to_goal = v2_sub(goal, sp->ship.pos);
+    const hull_def_t *hull = ship_hull_def(sp->ship);
+    vec2 to_goal = v2_sub(goal, sp->ship->pos);
     vec2 control_target = goal;
     if (path != NULL && path->count > 0 && path->current < path->count) {
         control_target = path->waypoints[path->current];
     }
-    vec2 to_control = v2_sub(control_target, sp->ship.pos);
-    vec2 forward = ship_forward(sp->ship.angle);
+    vec2 to_control = v2_sub(control_target, sp->ship->pos);
+    vec2 forward = ship_forward(sp->ship->angle);
     vec2 right = v2(-forward.y, forward.x);
-    float speed = sqrtf(v2_len_sq(sp->ship.vel));
-    float max_hull = ship_max_hull(&sp->ship);
+    float speed = sqrtf(v2_len_sq(sp->ship->vel));
+    float max_hull = ship_max_hull(sp->ship);
     float goal_angle = atan2f(to_goal.y, to_goal.x);
     float control_angle = atan2f(to_control.y, to_control.x);
-    float heading_diff = wrap_angle(goal_angle - sp->ship.angle);
-    float control_heading_diff = wrap_angle(control_angle - sp->ship.angle);
+    float heading_diff = wrap_angle(goal_angle - sp->ship->angle);
+    float control_heading_diff = wrap_angle(control_angle - sp->ship->angle);
 
     memset(state, 0, sizeof(*state));
     state->dist = sqrtf(v2_len_sq(to_goal));
@@ -641,33 +645,33 @@ static void sfr_fill_state(const world_t *w,
     state->control_heading_cos = cosf(control_heading_diff);
     state->control_heading_sin = sinf(control_heading_diff);
     state->speed = speed;
-    state->forward_speed = v2_dot(sp->ship.vel, forward);
-    state->lateral_speed = v2_dot(sp->ship.vel, right);
+    state->forward_speed = v2_dot(sp->ship->vel, forward);
+    state->lateral_speed = v2_dot(sp->ship->vel, right);
     state->brake_distance = (speed * speed) / (2.0f * SHIP_BRAKE);
     state->fwd_clear = sfr_forward_clearance(w,
-                                             sp->ship.pos,
-                                             sp->ship.vel,
+                                             sp->ship->pos,
+                                             sp->ship->vel,
                                              hull->ship_radius,
-                                             sp->ship.angle);
+                                             sp->ship->angle);
     state->left_clear = sfr_forward_clearance(w,
-                                              sp->ship.pos,
-                                              sp->ship.vel,
+                                              sp->ship->pos,
+                                              sp->ship->vel,
                                               hull->ship_radius,
-                                              sp->ship.angle + 0.7f);
+                                              sp->ship->angle + 0.7f);
     state->right_clear = sfr_forward_clearance(w,
-                                               sp->ship.pos,
-                                               sp->ship.vel,
+                                               sp->ship->pos,
+                                               sp->ship->vel,
                                                hull->ship_radius,
-                                               sp->ship.angle - 0.7f);
+                                               sp->ship->angle - 0.7f);
     state->vel_clear = speed > 0.5f
                      ? sfr_forward_clearance(w,
-                                             sp->ship.pos,
-                                             sp->ship.vel,
+                                             sp->ship->pos,
+                                             sp->ship->vel,
                                              hull->ship_radius,
-                                             atan2f(sp->ship.vel.y, sp->ship.vel.x))
+                                             atan2f(sp->ship->vel.y, sp->ship->vel.x))
                      : state->fwd_clear;
-    state->signal = signal_strength_at(w, sp->ship.pos);
-    state->hull_ratio = max_hull > 0.0f ? sp->ship.hull / max_hull : 1.0f;
+    state->signal = signal_strength_at(w, sp->ship->pos);
+    state->hull_ratio = max_hull > 0.0f ? sp->ship->hull / max_hull : 1.0f;
     state->path_count = path != NULL ? path->count : 0;
     state->path_current = path != NULL ? path->current : 0;
     state->progress = 0.0;
@@ -817,9 +821,9 @@ static void sfr_scan_events(const world_t *w,
 static sfr_episode_result_t sfr_run_episode(const sfr_episode_init_t *init,
                                             sfr_controller_t controller,
                                             NeuralNet *net,
-                                            int max_ticks)
+                                            int max_ticks,
+                                            world_t *w)
 {
-    world_t w = {0};
     server_player_t *sp = NULL;
     nav_path_t path = {0};
     sfr_episode_result_t result = {0};
@@ -828,26 +832,26 @@ static sfr_episode_result_t sfr_run_episode(const sfr_episode_init_t *init,
     double last_progress_dist;
     int stuck_ticks = 0;
 
-    sfr_setup_world(init, &w, &sp);
-    start_hull = sp->ship.hull;
-    max_hull = ship_max_hull(&sp->ship);
-    result.start_dist = sqrtf(v2_dist_sq(sp->ship.pos, init->goal));
+    sfr_setup_world(init, w, &sp);
+    start_hull = sp->ship->hull;
+    max_hull = ship_max_hull(sp->ship);
+    result.start_dist = sqrtf(v2_dist_sq(sp->ship->pos, init->goal));
     result.min_dist = result.start_dist;
-    result.min_hull_ratio = max_hull > 0.0 ? sp->ship.hull / max_hull : 1.0;
+    result.min_hull_ratio = max_hull > 0.0 ? sp->ship->hull / max_hull : 1.0;
     last_progress_dist = result.start_dist;
 
     for (int tick = 0; tick < max_ticks; tick++) {
         sfr_state_t state;
         nav_path_t control_path = path;
         size_t action = 0;
-        float dist = sqrtf(v2_dist_sq(sp->ship.pos, init->goal));
+        float dist = sqrtf(v2_dist_sq(sp->ship->pos, init->goal));
         if (dist < result.min_dist) result.min_dist = dist;
         if (dist < 120.0f) {
             result.reached = 1;
             result.ticks = tick;
             break;
         }
-        if (sp->ship.hull <= 0.0f) {
+        if (sp->ship->hull <= 0.0f) {
             result.died = 1;
             result.ticks = tick;
             break;
@@ -855,15 +859,15 @@ static sfr_episode_result_t sfr_run_episode(const sfr_episode_init_t *init,
 
         if (controller == SFR_CONTROLLER_NEURAL_RAW ||
             controller == SFR_CONTROLLER_NEURAL_GUARDED) {
-            sfr_select_hypothesis(&w, sp, init->goal, &path, &control_path, &result);
+            sfr_select_hypothesis(w, sp, init->goal, &path, &control_path, &result);
         }
-        sfr_fill_state(&w, sp, &control_path, init->goal, &state);
+        sfr_fill_state(w, sp, &control_path, init->goal, &state);
         switch (controller) {
         case SFR_CONTROLLER_GOAL:
             action = sfr_goal_heading_action(&state);
             break;
         case SFR_CONTROLLER_HEURISTIC: {
-            flight_cmd_t cmd = flight_steer_to(&w, &sp->ship, &path, init->goal, 0.0f, 160.0f, SFR_SIM_DT);
+            flight_cmd_t cmd = flight_steer_to(w, sp->ship, &path, init->goal, 0.0f, 160.0f, SFR_SIM_DT);
             action = sfr_quantize_flight_cmd(cmd);
             break;
         }
@@ -879,19 +883,19 @@ static sfr_episode_result_t sfr_run_episode(const sfr_episode_init_t *init,
         }
 
         sfr_apply_action(sp, action);
-        world_sim_step(&w, SFR_SIM_DT);
-        sfr_scan_events(&w, &result.damage_events, &result.death_events, &result.damage_amount);
+        world_sim_step(w, SFR_SIM_DT);
+        sfr_scan_events(w, &result.damage_events, &result.death_events, &result.damage_amount);
         if (result.death_events > 0) {
             result.died = 1;
             result.ticks = tick + 1;
             break;
         }
 
-        double hull_ratio = max_hull > 0.0 ? sp->ship.hull / max_hull : 1.0;
+        double hull_ratio = max_hull > 0.0 ? sp->ship->hull / max_hull : 1.0;
         if (hull_ratio < result.min_hull_ratio) result.min_hull_ratio = hull_ratio;
 
         if (tick > 0 && (tick % 120) == 0) {
-            double current_dist = sqrtf(v2_dist_sq(sp->ship.pos, init->goal));
+            double current_dist = sqrtf(v2_dist_sq(sp->ship->pos, init->goal));
             if (last_progress_dist - current_dist < 20.0) {
                 stuck_ticks += 120;
             } else {
@@ -907,10 +911,10 @@ static sfr_episode_result_t sfr_run_episode(const sfr_episode_init_t *init,
         result.ticks = tick + 1;
     }
 
-    result.final_dist = sqrtf(v2_dist_sq(sp->ship.pos, init->goal));
+    result.final_dist = sqrtf(v2_dist_sq(sp->ship->pos, init->goal));
     if (result.final_dist < result.min_dist) result.min_dist = result.final_dist;
     result.progress = result.start_dist - result.final_dist;
-    result.hull_loss = start_hull - sp->ship.hull;
+    result.hull_loss = start_hull - sp->ship->hull;
     if (result.hull_loss < 0.0) result.hull_loss = 0.0;
     result.utility =
         (result.reached ? 2.0 : 0.0) +
@@ -920,7 +924,7 @@ static sfr_episode_result_t sfr_run_episode(const sfr_episode_init_t *init,
         (result.stuck ? 1.0 : 0.0) -
         ((double)result.ticks / (double)max_ticks) * 0.05;
 
-    world_cleanup(&w);
+    world_cleanup(w);
     return result;
 }
 
@@ -1125,10 +1129,27 @@ int main(int argc, char **argv)
         nn_free(net);
         return EXIT_FAILURE;
     }
+    if (meta.feature_encoder_version != SFR_FEATURE_ENCODER_VERSION ||
+        strncmp(meta.feature_set, SFR_FEATURE_SET, sizeof(meta.feature_set)) != 0) {
+        fprintf(stderr,
+                "checkpoint feature mismatch: set=%.32s version=%" PRIu32
+                " expected=%s/%u\n",
+                meta.feature_set, meta.feature_encoder_version,
+                SFR_FEATURE_SET, SFR_FEATURE_ENCODER_VERSION);
+        nn_free(net);
+        return EXIT_FAILURE;
+    }
 
     char checkpoint_hash[65] = "";
     if (!nn_hash_checkpoint_hex(config.checkpoint_path, checkpoint_hash)) {
         strcpy(checkpoint_hash, "unknown");
+    }
+
+    world_t *world = calloc(1, sizeof(*world));
+    if (world == NULL) {
+        fputs("failed to allocate rollout world\n", stderr);
+        nn_free(net);
+        return EXIT_FAILURE;
     }
 
     sfr_summary_t summaries[SFR_CONTROLLER_COUNT];
@@ -1137,14 +1158,16 @@ int main(int argc, char **argv)
 
     for (int episode = 0; episode < config.episodes; episode++) {
         sfr_episode_init_t init;
-        sfr_init_episode(&config, episode, &rng, &init);
+        sfr_init_episode(&config, episode, &rng, &init, world);
         for (int c = 0; c < SFR_CONTROLLER_COUNT; c++) {
             if (!config.controller_enabled[c]) continue;
             sfr_episode_result_t result =
-                sfr_run_episode(&init, (sfr_controller_t)c, net, config.ticks);
+                sfr_run_episode(&init, (sfr_controller_t)c, net, config.ticks, world);
             sfr_summary_add(&summaries[c], &result);
         }
     }
+
+    free(world);
 
     FILE *summary = NULL;
     if (config.summary_path != NULL) {
