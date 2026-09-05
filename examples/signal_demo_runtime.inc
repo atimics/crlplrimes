@@ -35,6 +35,13 @@ static void stop_child(int signal_number)
 {
     pid_t child = (pid_t)demo_child;
     if (child > 0) {
+        /* A nested native runner owns its own trainer group. Let its signal
+         * handler stop that group before the outer group is forced to exit. */
+        kill(-child, SIGTERM);
+        for (int n = 0; n < 20; ++n) {
+            struct timespec pause = {0, 50000000};
+            while (nanosleep(&pause, &pause) < 0 && errno == EINTR) {}
+        }
         kill(-child, SIGKILL);
         while (waitpid(child, NULL, 0) < 0 && errno == EINTR) {}
     }

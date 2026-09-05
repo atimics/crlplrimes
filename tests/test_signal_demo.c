@@ -193,12 +193,45 @@ static void command_contract(void)
     unlink(path);
 }
 
-int main(void)
+static void nested_cancellation(void)
+{
+    const char *marker = join(temporary, "nested-orphan"), *ready = format("%s.ready", marker);
+    fflush(NULL);
+    pid_t outer = fork();
+    require(outer >= 0, "Cannot fork nested cancellation test");
+    if (!outer) {
+        install_signal_cleanup();
+        CMD(temporary, NULL, 0, 10, 0, demo_self, "--nested-runtime", marker);
+        _exit(4);
+    }
+    double deadline = seconds_now() + 5;
+    while (!exists(ready) && seconds_now() < deadline) {
+        struct timespec pause = {0, 10000000}; nanosleep(&pause, NULL);
+    }
+    int started = exists(ready);
+    kill(outer, SIGTERM);
+    int status = 0;
+    while (waitpid(outer, &status, 0) < 0 && errno == EINTR) {}
+    CMD(temporary, NULL, 0, 5, 0, "/bin/sleep", "3");
+    check(started && WIFEXITED(status) && WEXITSTATUS(status) == 128 + SIGTERM && !exists(marker), "outer cancellation reaches nested trainer and grandchild");
+    unlink(ready);
+}
+
+int main(int argc, char **argv)
 {
     if (setjmp(demo_failure)) { fprintf(stderr, "%s\n", demo_error); release_allocations(); return 1; }
+    if (argc == 3 && !strcmp(argv[1], "--nested-runtime")) {
+        install_signal_cleanup();
+        CMD(parent(argv[2]), NULL, 0, 10, 0, "/bin/sh", "-c", "printf ready > \"$2\"; (sleep 3; printf leaked > \"$1\") & wait", "signal-demo-nested", argv[2], format("%s.ready", argv[2]));
+        release_allocations();
+        return 0;
+    }
     snprintf(temporary, sizeof(temporary), "/tmp/signal-demo-contract-XXXXXX");
     require(mkdtemp(temporary) != NULL, "Cannot create temporary test directory");
     demo_root = SIGNAL_DEMO_ROOT;
+    char executable[PATH_MAX];
+    require(realpath(argv[0], executable) != NULL, "Cannot resolve test executable");
+    demo_self = executable;
     struct { const char *name; void (*test)(void); } cases[] = {
         {"negative measured result", negative_result}, {"fixed outcome rule", changed_rule},
         {"separate split seeds", overlapping_seeds}, {"distinct real directories", same_directory},
@@ -207,7 +240,8 @@ int main(void)
         {"frozen rollout seed", changed_seed}, {"finite metrics", nonfinite_result},
         {"frozen training schedule", changed_schedule}, {"artifact bytes", changed_artifact},
         {"nine replay actions", complete_actions}, {"JSON and CSV bytes", json_and_csv_bytes},
-        {"nested Braid releases", recursive_release}, {"process and hash runtime", command_contract}
+        {"nested Braid releases", recursive_release}, {"process and hash runtime", command_contract},
+        {"nested cancellation", nested_cancellation}
     };
     for (size_t n = 0; n < sizeof(cases) / sizeof(cases[0]); ++n) {
         fixture();
@@ -217,6 +251,6 @@ int main(void)
         release_allocations();
     }
     require(!rmdir(temporary), "Cannot remove temporary test directory");
-    printf("16 contract tests passed (%u assertions)\n", assertions);
+    printf("17 contract tests passed (%u assertions)\n", assertions);
     return 0;
 }
