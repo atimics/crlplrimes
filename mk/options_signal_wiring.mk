@@ -10,50 +10,20 @@ endif
 SIGNAL_FLIGHT_INCLUDE_FLAGS := \
 	-I$(SIGNAL_FLIGHT_SIGNAL_DIR)/server \
 	-I$(SIGNAL_FLIGHT_SIGNAL_DIR)/shared \
-	-I$(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/tweetnacl
+	-I$(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/tweetnacl \
+	-I$(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/raticross \
+	-I$(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/fastfilter \
+	-I$(SIGNAL_FLIGHT_SIGNAL_DIR)/server/connectome
 SIGNAL_FLIGHT_SIM_SOURCES := \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/game_sim.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_ai.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/signal_brain.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/signal_contract_brain.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/signal_npc_worker_brain.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/gossip.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_autopilot.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_flight.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_nav.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_save.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_catalog.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/station_authority.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/chain_log.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/chain_log_verify.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/cargo_receipt_issue.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_asteroid.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_physics.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_production.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_construction.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_mining.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_anchor.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/sim_ship.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/commodity.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/manifest.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/ship.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/economy.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/asteroid.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/rng.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/belt.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/module_schema.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/station_util.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/cargo_receipt.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/handoff_ticket.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/tractor.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/laser.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/trade_paging.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/holographic_nn.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/tweetnacl/tweetnacl.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/tweetnacl/randombytes.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/tweetnacl/signal_crypto_tweetnacl.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/fixpoint.c) \
-	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/settlement_engine.c) \
+	$(filter-out \
+		$(SIGNAL_FLIGHT_SIGNAL_DIR)/server/main.c \
+		$(SIGNAL_FLIGHT_SIGNAL_DIR)/server/mongoose.c, \
+		$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/*.c)) \
+	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/server/connectome/*.c) \
+	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/shared/*.c) \
+	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/tweetnacl/*.c) \
+	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/raticross/*.c) \
+	$(wildcard $(SIGNAL_FLIGHT_SIGNAL_DIR)/vendor/fastfilter/*.c)
 
 SIGNAL_FLIGHT_TRACE_EXTRA :=
 ifeq ($(SIGNAL_FLIGHT_COUNTERFACTUAL),1)

@@ -4,6 +4,7 @@
 #include "game_sim.h"
 #include "manifest.h"
 #include "sim_ai.h"
+#include "signal_npc_worker_brain.h"
 #include "station_authority.h"
 #include "station_util.h"
 
@@ -23,6 +24,10 @@
 #define SNW_TASK_NAME "signal_npc_worker"
 #define SNW_OPTION_COUNT 12u
 #define SNW_FEATURE_COUNT 78u
+_Static_assert(SNW_FEATURE_COUNT == (unsigned)SIGNAL_NPC_WORKER_FEATURE_COUNT,
+               "trainer feature count must match the runtime contract");
+_Static_assert(SNW_OPTION_COUNT == (unsigned)SIGNAL_NPC_WORKER_OPTION_COUNT,
+               "trainer option count must match the runtime contract");
 #define SNW_PERSONA_COUNT 3u
 #define SNW_PERSISTENT_MAX_STATIONS 128u
 #define SNW_PERSISTENT_FACTIONS 3u
@@ -542,16 +547,14 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
     }
     npc->state = NPC_STATE_DOCKED;
     npc->state_timer = 0.0f;
-    npc->known_contract_count = 0;
-    memset(npc->known_contracts, 0, sizeof(npc->known_contracts));
-    memset(&npc->knowledge, 0, sizeof(npc->knowledge));
+    memset(&npc->ship->knowledge, 0, sizeof(npc->ship->knowledge));
 
     int mining_level = (int)(snw_rng_next(&rng) % 3u);
     int hold_level = (int)(snw_rng_next(&rng) % 3u);
     int tractor_level = (int)(snw_rng_next(&rng) % 3u);
-    npc->ship.mining_level = ship->mining_level = mining_level;
-    npc->ship.hold_level = ship->hold_level = hold_level;
-    npc->ship.tractor_level = ship->tractor_level = tractor_level;
+    npc->ship->mining_level = ship->mining_level = mining_level;
+    npc->ship->hold_level = ship->hold_level = hold_level;
+    npc->ship->tractor_level = ship->tractor_level = tractor_level;
 
     group->desired_upgrade = snw_preferred_upgrade(npc, ship);
     group->desired_commodity = snw_upgrade_commodity(group->desired_upgrade);
@@ -815,75 +818,61 @@ static int snw_setup_group(snw_group_t *group, uint32_t seed)
         nn_real *f = group->features[oi];
         memset(f, 0, sizeof(group->features[oi]));
         const snw_hypothesis_t *h = snw_hypothesis(oi);
-        f[0] = 1.0f;
-        f[1] = (nn_real)oi / (nn_real)(SNW_OPTION_COUNT - 1u);
-        for (size_t k = 0; k < SNW_OPTION_COUNT; ++k) f[2 + k] = oi == k ? 1.0f : 0.0f;
-        f[14] = npc->role == NPC_ROLE_MINER ? 1.0f : 0.0f;
-        f[15] = npc->role == NPC_ROLE_HAULER ? 1.0f : 0.0f;
-        f[16] = (nn_real)ship->mining_level / 5.0f;
-        f[17] = (nn_real)ship->hold_level / 5.0f;
-        f[18] = (nn_real)ship->tractor_level / 5.0f;
-        f[19] = (nn_real)group->home_station / 2.0f;
-        f[20] = (nn_real)snw_clip(group->home_balance / 1500.0, 0.0, 1.5);
-        f[21] = (nn_real)home_refit_stock / 24.0f;
-        f[22] = (nn_real)remote_refit_stock / 24.0f;
-        f[23] = (nn_real)group->desired_units / 20.0f;
-        f[24] = (nn_real)snw_clip(refit_cost / 1500.0, 0.0, 2.0);
-        f[25] = (nn_real)can_pay_refit;
-        f[26] = group->desired_upgrade == SHIP_UPGRADE_MINING ? 1.0f : 0.0f;
-        f[27] = group->desired_upgrade == SHIP_UPGRADE_HOLD ? 1.0f : 0.0f;
-        f[28] = group->desired_upgrade == SHIP_UPGRADE_TRACTOR ? 1.0f : 0.0f;
-        f[29] = group->desired_commodity == COMMODITY_FRAME ? 1.0f : 0.0f;
-        f[30] = group->desired_commodity == COMMODITY_LASER_MODULE ? 1.0f : 0.0f;
-        f[31] = group->desired_commodity == COMMODITY_TRACTOR_MODULE ? 1.0f : 0.0f;
-        f[32] = (nn_real)snw_clip(best_contract_value / 600.0, 0.0, 2.0);
-        f[33] = (nn_real)best_contract_stock / 24.0f;
-        f[34] = best_contract_dest >= 0 && best_contract_dest != group->home_station ? 1.0f : 0.0f;
-        f[35] = mine_pressure ? 1.0f : 0.0f;
-        f[36] = (nn_real)group->persona_risk;
-        f[37] = (nn_real)group->persona_growth;
-        f[38] = (nn_real)group->persona_patience;
-        f[39] = (nn_real)snw_clip(route_km / 20.0, 0.0, 1.0);
-        f[40] = station_has_module(home, MODULE_DOCK) ? 1.0f : 0.0f;
-        f[41] = station_has_module(home, MODULE_SHIPYARD) ? 1.0f : 0.0f;
-        f[42] = station_has_module(home, MODULE_FURNACE) ? 1.0f : 0.0f;
-        f[43] = station_has_module(home, MODULE_FRAME_PRESS) ? 1.0f : 0.0f;
-        f[44] = station_has_module(home, MODULE_LASER_FAB) ? 1.0f : 0.0f;
-        f[45] = station_has_module(home, MODULE_TRACTOR_FAB) ? 1.0f : 0.0f;
-        f[46] = h->option == SNW_OPT_WAIT ? 1.0f : 0.0f;
-        f[47] = h->option == SNW_OPT_SELF_REFIT_HOME ? (nn_real)(home_refit_stock >= group->desired_units) : 0.0f;
-        f[48] = (h->option == SNW_OPT_IMPORT_FRAME ||
-                 h->option == SNW_OPT_IMPORT_LASER ||
-                 h->option == SNW_OPT_IMPORT_TRACTOR) ? 1.0f : 0.0f;
-        f[49] = group->outcomes[oi].legal ? 1.0f : 0.0f;
-        f[50] = group->outcomes[oi].travel ? 1.0f : 0.0f;
-        f[51] = group->outcomes[oi].self_upgrade ? 1.0f : 0.0f;
-        f[52] = group->outcomes[oi].import_module ? 1.0f : 0.0f;
-        f[53] = (nn_real)snw_clip(group->outcomes[oi].credit_delta / 1000.0, -1.5, 2.0);
-        f[54] = (nn_real)group->outcomes[oi].refit_progress;
-        f[55] = (nn_real)snw_clip(group->outcomes[oi].contract_value / 600.0, 0.0, 2.0);
-        f[56] = (nn_real)snw_clip(group->outcomes[oi].cargo_moved / 16.0, 0.0, 1.0);
-        f[57] = (nn_real)group->faction_id / 2.0f;
-        f[58] = (nn_real)group->faction_goal / 3.0f;
-        f[59] = (nn_real)group->faction_reputation;
-        f[60] = (nn_real)snw_clip(group->frontier_need / 1.5, 0.0, 1.0);
-        f[61] = (nn_real)snw_clip(group->expansion_pressure / 1.5, 0.0, 1.0);
-        f[62] = (nn_real)snw_clip(group->route_pirate_risk / 1.6, 0.0, 1.0);
-        f[63] = (nn_real)snw_clip(group->route_recent_attack / 1.5, 0.0, 1.0);
-        f[64] = (nn_real)group->escort_available;
-        f[65] = (nn_real)snw_clip(group->convoy_bonus / 1.4, 0.0, 1.0);
-        f[66] = (nn_real)snw_clip(group->pirate_bounty / 1.7, 0.0, 1.0);
-        f[67] = (nn_real)snw_clip(pirate_pressure / 1.7, 0.0, 1.0);
-        f[68] = group->outcomes[oi].faction_work ? 1.0f : 0.0f;
-        f[69] = group->outcomes[oi].pirate_work ? 1.0f : 0.0f;
-        f[70] = (nn_real)snw_clip(group->outcomes[oi].faction_delta, -1.0, 1.0);
-        f[71] = (nn_real)snw_clip(group->outcomes[oi].frontier_delta, 0.0, 1.0);
-        f[72] = (nn_real)snw_clip(group->outcomes[oi].pirate_delta, -1.0, 1.0);
-        f[73] = best_contract_commodity == COMMODITY_FERRITE_INGOT ? 1.0f : 0.0f;
-        f[74] = best_contract_commodity == COMMODITY_CUPRITE_INGOT ? 1.0f : 0.0f;
-        f[75] = best_contract_commodity == COMMODITY_CRYSTAL_INGOT ? 1.0f : 0.0f;
-        f[76] = contract_at_own_station ? 1.0f : 0.0f;
-        f[77] = contract_at_faction_station ? 1.0f : 0.0f;
+        const snw_outcome_t *o = &group->outcomes[oi];
+
+        /* One encoder, not two: build the runtime's own candidate and call
+         * its v2 feature builder so the trainer and the server cannot drift
+         * apart again. Fields the synthetic world does not model stay 0. */
+        signal_npc_worker_candidate_t cand;
+        memset(&cand, 0, sizeof(cand));
+        cand.option = (signal_npc_worker_option_t)oi;
+        cand.role = npc->role;
+        cand.home_station = group->home_station;
+        cand.mining_level = ship->mining_level;
+        cand.hold_level = ship->hold_level;
+        cand.tractor_level = ship->tractor_level;
+        cand.desired_upgrade = (int)group->desired_upgrade;
+        cand.desired_commodity = group->desired_commodity;
+        cand.desired_units = group->desired_units;
+        cand.home_balance = (float)group->home_balance;
+        cand.home_refit_stock = (float)home_refit_stock;
+        cand.remote_refit_stock = (float)remote_refit_stock;
+        cand.refit_cost = (float)refit_cost;
+        cand.best_contract_value = (float)best_contract_value;
+        cand.best_contract_stock = (float)best_contract_stock;
+        cand.best_contract_dest = best_contract_dest;
+        cand.best_contract_commodity = best_contract_commodity;
+        cand.mine_pressure = mine_pressure != 0;
+        cand.frontier_pressure = (float)snw_clip(group->frontier_need, 0.0, 1.5);
+        cand.route_danger_memory = (float)snw_clip(
+            fmax(group->route_pirate_risk, group->route_recent_attack), 0.0, 1.6);
+        cand.black_market_acceptance = (float)snw_clip(pirate_pressure, 0.0, 1.7);
+        cand.escort_bonus = (float)group->escort_available;
+        cand.convoy_bonus = (float)snw_clip(group->convoy_bonus, -1.0, 1.0);
+        cand.persona_risk = (float)group->persona_risk;
+        cand.persona_growth = (float)group->persona_growth;
+        cand.persona_patience = (float)group->persona_patience;
+        cand.route_km = (float)route_km;
+        cand.home_has_dock = station_has_module(home, MODULE_DOCK);
+        cand.home_has_shipyard = station_has_module(home, MODULE_SHIPYARD);
+        cand.home_has_furnace = station_has_module(home, MODULE_FURNACE);
+        cand.home_has_frame_press = station_has_module(home, MODULE_FRAME_PRESS);
+        cand.home_has_laser_fab = station_has_module(home, MODULE_LASER_FAB);
+        cand.home_has_tractor_fab = station_has_module(home, MODULE_TRACTOR_FAB);
+        cand.legal = o->legal != 0;
+        cand.travel = o->travel != 0;
+        cand.self_upgrade = o->self_upgrade != 0;
+        cand.import_module = o->import_module != 0;
+        cand.frontier_supply = h->option == SNW_OPT_SUPPLY_FRONTIER;
+        cand.escort = h->option == SNW_OPT_ESCORT_CONVOY;
+        cand.patrol = h->option == SNW_OPT_PATROL_ROUTE;
+        cand.risky_profit = h->option == SNW_OPT_RISKY_PROFIT;
+        cand.credit_delta = (float)o->credit_delta;
+        cand.refit_progress = (float)o->refit_progress;
+        cand.contract_value = (float)o->contract_value;
+        cand.cargo_moved = (float)o->cargo_moved;
+
+        if (!signal_npc_worker_build_features(&cand, f)) return 0;
     }
     free(w);
     return 1;
@@ -1306,7 +1295,7 @@ static int snw_save_checkpoint(NeuralNet *net, const char *path, const char *tra
 {
     if (net == NULL || path == NULL) return 0;
     NNCheckpointMeta meta;
-    nn_checkpoint_meta_init(&meta, 1u);
+    nn_checkpoint_meta_init(&meta, 2u);
     if (!nn_checkpoint_meta_set_parent_model_hash(&meta, "none") ||
         !nn_checkpoint_meta_set_benchmark_report_hash(&meta, "pending") ||
         !nn_checkpoint_meta_set_training_trace_root(&meta, trace_path != NULL ? trace_path : "generated_in_memory") ||
@@ -1641,9 +1630,9 @@ static int snw_persistent_run(const snw_config_t *config)
         if (ship == NULL) continue;
         npc->state = NPC_STATE_DOCKED;
         npc->home_station = home;
-        npc->ship.mining_level = ship->mining_level = (int)(1u + (i % 3u));
-        npc->ship.hold_level = ship->hold_level = (int)(1u + ((i / 3u) % 3u));
-        npc->ship.tractor_level = ship->tractor_level = (int)(1u + ((i / 7u) % 3u));
+        npc->ship->mining_level = ship->mining_level = (int)(1u + (i % 3u));
+        npc->ship->hold_level = ship->hold_level = (int)(1u + ((i / 3u) % 3u));
+        npc->ship->tractor_level = ship->tractor_level = (int)(1u + ((i / 7u) % 3u));
         ledger_earn(&w->stations[home], npc->session_token, 250.0f + (float)(i % 9u) * 45.0f);
         if (snw_persistent_is_pirate_market((size_t)home, station_count)) metrics.pirate_npcs++;
         else metrics.lawful_npcs++;
@@ -1985,7 +1974,7 @@ static int snw_persistent_run(const snw_config_t *config)
                                     (selected == SNW_OPT_RISKY_PROFIT ? 12.0 : 0.0));
                 apply_npc_ship_damage(w, slot, dmg);
                 ship = world_npc_ship_for(w, slot);
-                float hull_now = ship != NULL ? ship->hull : npc->hull;
+                float hull_now = ship != NULL ? ship->hull : (npc->ship ? npc->ship->hull : 0.0f);
                 pirate_damage = (double)fmaxf(0.0f, hull_before - hull_now);
                 metrics.pirate_damage_events++;
                 metrics.pirate_damage += pirate_damage;
@@ -1993,7 +1982,7 @@ static int snw_persistent_run(const snw_config_t *config)
         }
         world_sim_step(w, 1.0f / 30.0f);
         ship = world_npc_ship_for(w, slot);
-        double hull_after = ship != NULL ? (double)ship->hull : (double)npc->hull;
+        double hull_after = ship != NULL ? (double)ship->hull : (double)(npc->ship ? npc->ship->hull : 0.0f);
         if (active_before && (!npc->active || hull_after <= 0.0)) metrics.npc_losses++;
 
         metrics.ticks++;
