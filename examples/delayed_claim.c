@@ -24,6 +24,9 @@ enum {
     DC_RULE_FEATURE_COUNT = 13,
 };
 
+/* Configurable evaluation band for independent generated-test replication. */
+static uint64_t dc_eval_test_seed_start = DC_TEST_SEED_START;
+
 static const NNFeatureSchema DELAYED_CLAIM_SCORER_FEATURES[] = {
     {"claim_reliability", NN_FEATURE_STATE_OBSERVATION, 1},
     {"claim_evidence", NN_FEATURE_STATE_OBSERVATION, 1},
@@ -94,6 +97,7 @@ typedef struct {
     size_t samples;
     size_t correct;
     size_t false_rejections;
+    size_t support_fallbacks;
     double nll;
     double ece;
     double utility;
@@ -164,6 +168,7 @@ typedef struct {
     double observation_noise;
     double uncertainty_band;
     size_t scan_limit;
+    double support_fallback_margin;
 } ClaimEvalConfig;
 
 typedef struct {
@@ -752,18 +757,19 @@ static ClaimMetrics evaluate_claim_model(NeuralNet *net,
 }
 
 static const ClaimEvalConfig DC_EVAL_CANONICAL = {
-    "canonical", DC_TEST_SEED_START, DC_TEST_SAMPLES, 0.0, 0.0, DC_TEST_SAMPLES,
+    "canonical", DC_TEST_SEED_START, DC_TEST_SAMPLES, 0.0, 0.0, DC_TEST_SAMPLES, 0.0,
 };
 
 static const ClaimEvalConfig DC_EVAL_STRESS_BANDS[] = {
-    {"shifted_seed", DC_SHIFTED_TEST_SEED_START, DC_TEST_SAMPLES, 0.0, 0.0, DC_TEST_SAMPLES},
-    {"observation_noise_0p03", DC_TEST_SEED_START, DC_TEST_SAMPLES, 0.03, 0.0, DC_TEST_SAMPLES},
+    {"shifted_seed", DC_SHIFTED_TEST_SEED_START, DC_TEST_SAMPLES, 0.0, 0.0, DC_TEST_SAMPLES, 0.0},
+    {"observation_noise_0p03", DC_TEST_SEED_START, DC_TEST_SAMPLES, 0.03, 0.0, DC_TEST_SAMPLES, 0.0},
     {"uncertainty_band_noise_0p03",
      DC_UNCERTAINTY_TEST_SEED_START,
      DC_TEST_SAMPLES,
      0.03,
      0.04,
-     DC_UNCERTAINTY_SCAN_LIMIT},
+     DC_UNCERTAINTY_SCAN_LIMIT,
+     0.0},
 };
 
 static ClaimMetrics evaluate_claim_model_with_gate_on_band(NeuralNet *net,
@@ -808,7 +814,13 @@ static ClaimMetrics evaluate_claim_model_with_gate_on_band(NeuralNet *net,
 
         uint8_t rejected[DC_ACTION_COUNT] = {0};
         size_t rejected_count = 0;
-        for (size_t action = 0; action < DC_ACTION_COUNT; ++action) {
+        int support_fallback = config->support_fallback_margin > 0.0 &&
+                               claim_uncertainty_from_state(&observed_state) <=
+                                   config->support_fallback_margin;
+        if (support_fallback) {
+            ++metrics.support_fallbacks;
+        }
+        for (size_t action = 0; !support_fallback && action < DC_ACTION_COUNT; ++action) {
             for (size_t rule_index = 0; rule_index < rule_count; ++rule_index) {
                 if (claim_rule_rejects_state(&rules[rule_index], &observed_state, action)) {
                     rejected[action] = 1;
@@ -1634,6 +1646,8 @@ static int emit_claim_compare_json(const char *model_hash,
            "\"target_source\":\"hidden_clean_state\","
            "\"accepted_rules\":%zu,"
            "\"false_rejections\":%zu,"
+           "\"support_fallback_margin\":%.8f,"
+           "\"support_fallbacks\":%zu,"
            "\"leakage_policy\":\"%s\","
            "\"model_hash\":\"%s\",\"parent_hash\":\"%s\","
            "\"feature_encoder_version\":1,"
@@ -1650,6 +1664,8 @@ static int emit_claim_compare_json(const char *model_hash,
            config->uncertainty_band,
            accepted_rules,
            metrics->false_rejections,
+           config->support_fallback_margin,
+           metrics->support_fallbacks,
            nn_leakage_policy_name(DELAYED_CLAIM_EXPERIMENT_SPEC.leakage_policy),
            model_hash == NULL ? "unknown" : model_hash,
            parent_hash == NULL || parent_hash[0] == '\0' ? "unknown" : parent_hash,
@@ -1667,6 +1683,39 @@ static int emit_claim_compare_json(const char *model_hash,
     print_claim_reliability_bins_json(metrics);
     printf("}\n");
     return 1;
+}
+
+static void emit_claim_robustness_json(const ClaimMetrics *metrics,
+                                       const ClaimEvalConfig *config,
+                                       const char *policy)
+{
+    double n = metrics->samples == 0 ? 1.0 : (double)metrics->samples;
+    double p = (double)metrics->false_rejections / n;
+    const double z = 1.959963984540054;
+    double denominator = 1.0 + z * z / n;
+    double center = (p + z * z / (2.0 * n)) / denominator;
+    double half = z * sqrt((p * (1.0 - p) / n) + z * z / (4.0 * n * n)) /
+                  denominator;
+    printf("{\"schema\":\"crlp.delayed_claim.robustness.v1\","
+           "\"task\":\"delayed_claim\",\"policy\":\"%s\","
+           "\"observation_noise\":%.8f,\"support_fallback_margin\":%.8f,"
+           "\"sample_count\":%zu,\"false_rejections\":%zu,"
+           "\"false_rejection_rate\":%.10f,\"wilson95_low\":%.10f,"
+           "\"wilson95_high\":%.10f,\"support_fallbacks\":%zu,"
+           "\"support_fallback_rate\":%.10f,\"accuracy\":%.10f,"
+           "\"decision_utility\":%.10f}\n",
+           policy,
+           config->observation_noise,
+           config->support_fallback_margin,
+           metrics->samples,
+           metrics->false_rejections,
+           p,
+           fmax(0.0, center - half),
+           fmin(1.0, center + half),
+           metrics->support_fallbacks,
+           (double)metrics->support_fallbacks / n,
+           (double)metrics->correct / n,
+           metrics->utility);
 }
 
 static void emit_claim_rule_summary_json(const ClaimRuleSearchConfig *config,
@@ -1991,6 +2040,38 @@ static int run_claim_rule_search_for_mode(NeuralNet *net,
                                 config.rule_family);
         print_claim_metrics(stress_mode_name, model_hash, stress_metrics);
     }
+
+    if (config.mode == CLAIM_PROPOSER_NEURAL &&
+        config.rule_family == CLAIM_RULE_FAMILY_DIRECT) {
+        static const double noise_levels[] = {0.0, 0.01, 0.02, 0.03, 0.05, 0.08};
+        for (size_t noise_index = 0;
+             noise_index < sizeof(noise_levels) / sizeof(noise_levels[0]);
+             ++noise_index) {
+            for (size_t policy_index = 0; policy_index < 2; ++policy_index) {
+                ClaimEvalConfig robustness = {
+                    "robustness_sweep",
+                    DC_TEST_SEED_START,
+                    DC_TEST_SAMPLES,
+                    noise_levels[noise_index],
+                    0.0,
+                    DC_TEST_SAMPLES,
+                    policy_index == 0 ? 0.0 : 0.08,
+                };
+                ClaimMetrics robustness_metrics =
+                    evaluate_claim_model_with_gate_on_band(net,
+                                                           &robustness,
+                                                           selected_rules,
+                                                           accepted_count,
+                                                           candidate_inputs,
+                                                           scores,
+                                                           probabilities);
+                emit_claim_robustness_json(&robustness_metrics,
+                                           &robustness,
+                                           policy_index == 0 ? "direct_gate"
+                                                             : "support_aware_fallback");
+            }
+        }
+    }
     free(selected_rules);
     free(accepted);
     return 1;
@@ -2105,6 +2186,8 @@ static int run_claim_rule_search(const char *model_path,
     return ok;
 }
 
+static void print_usage(FILE *stream);
+
 static int compare_claim_models(int argc, char **argv)
 {
     nn_real *candidate_inputs = calloc((size_t)DC_ACTION_COUNT * DC_FEATURE_COUNT,
@@ -2118,8 +2201,27 @@ static int compare_claim_models(int argc, char **argv)
         return 0;
     }
 
+    int model_start = 2;
+    if (argc >= 4 && strcmp(argv[2], "--test-seed") == 0) {
+        if (!nn_parse_u64_text(argv[3], &dc_eval_test_seed_start)) {
+            print_usage(stderr);
+            free(candidate_inputs);
+            free(scores);
+            free(probabilities);
+            return 0;
+        }
+        model_start = 4;
+    }
+    if (model_start >= argc) {
+        print_usage(stderr);
+        free(candidate_inputs);
+        free(scores);
+        free(probabilities);
+        return 0;
+    }
+
     int ok = 1;
-    for (int i = 2; i < argc; ++i) {
+    for (int i = model_start; i < argc; ++i) {
         NNCheckpointMeta meta;
         NeuralNet *net = nn_load_checkpoint(argv[i], &meta);
         char hash[65] = "unknown";
@@ -2130,7 +2232,7 @@ static int compare_claim_models(int argc, char **argv)
         }
         nn_hash_checkpoint_hex(argv[i], hash);
         ClaimMetrics metrics = evaluate_claim_model(net,
-                                                    DC_TEST_SEED_START,
+                                                    dc_eval_test_seed_start,
                                                     DC_TEST_SAMPLES,
                                                     candidate_inputs,
                                                     scores,
@@ -2158,7 +2260,7 @@ static int compare_claim_models(int argc, char **argv)
                hash,
                meta.parent_model_hash[0] == '\0' ? "unknown" : meta.parent_model_hash,
                meta.feature_encoder_version,
-               (unsigned int)DC_TEST_SEED_START,
+               (unsigned int)dc_eval_test_seed_start,
                metrics.samples,
                metrics.samples == 0 ? 0.0 : (double)metrics.correct / (double)metrics.samples,
                metrics.nll,
@@ -2187,7 +2289,7 @@ static void print_usage(FILE *stream)
           "[--trace-train] [--trace-seed seed] [--trace-samples count]\n"
           "       delayed_claim --replay trace.jsonl --out model.nnckpt "
           "[--epochs count] [--hard-weight value] [--soft-weight value]\n"
-          "       delayed_claim --compare model_a.nnckpt model_b.nnckpt [...]\n"
+          "       delayed_claim --compare [--test-seed seed] model_a.nnckpt model_b.nnckpt [...]\n"
           "       delayed_claim --rule-search model.nnckpt "
           "[--max-rules count] [--rule-family direct|indirect|all] "
           "[--proposer all|neural|closed-loop|random|grammar|structural|validation-oracle] "
