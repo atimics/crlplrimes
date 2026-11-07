@@ -1,4 +1,4 @@
-make REAL=double experiment-schemas
+make REAL=double experiment-schemas-promoted
 make REAL=double delayed-claim-eval
 make REAL=double grid-path-eval
 make REAL=double grid-path-budget-sweep
